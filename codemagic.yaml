@@ -10,6 +10,15 @@ workflows:
       vars:
         PYTHONUNBUFFERED: "1"
     scripts:
+      - name: Install and verify Metal compiler
+        script: |
+          set -euo pipefail
+          xcodebuild -downloadComponent MetalToolchain
+          probe_dir="$(mktemp -d)"
+          trap 'rm -rf "$probe_dir"' EXIT
+          printf '#include <metal_stdlib>\nusing namespace metal;\nkernel void ayu_probe(device uint *out [[buffer(0)]], uint id [[thread_position_in_grid]]) { out[id] = id; }\n' > "$probe_dir/probe.metal"
+          xcrun --sdk iphoneos metal -c -target air64-apple-ios15.0 "$probe_dir/probe.metal" -o "$probe_dir/probe.air"
+          test -s "$probe_dir/probe.air"
       - name: Validate Telegram login credentials
         script: |
           python3 - <<'PY'

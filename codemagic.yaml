@@ -1,0 +1,47 @@
+workflows:
+  ayugram-ios-unsigned:
+    name: AyuGram native iOS (unsigned)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      xcode: "27.1"
+      vars:
+        PYTHONUNBUFFERED: "1"
+    scripts:
+      - name: Fetch pinned Telegram source and dependencies
+        script: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess
+          pin = json.load(open('upstream.json'))
+          subprocess.run(['git', 'init', 'telegram'], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'remote', 'add', 'origin', pin['repository']], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'fetch', '--depth=1', 'origin', pin['commit']], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'checkout', '--detach', 'FETCH_HEAD'], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'submodule', 'update', '--init', '--recursive', '--jobs=4'], check=True)
+          PY
+      - name: Apply port and run settings tests
+        script: |
+          set -euo pipefail
+          export RUNNER_TEMP="$CM_BUILD_DIR/.ayu-temp"
+          mkdir -p "$RUNNER_TEMP"
+          python3 ci/prepare.py telegram
+          git -C telegram diff --check
+          xcrun swiftc -swift-version 5 -warnings-as-errors \
+            telegram/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift \
+            telegram/tools/ayu-tests/main.swift -o "$RUNNER_TEMP/ayu-tests"
+          "$RUNNER_TEMP/ayu-tests" | tee "$RUNNER_TEMP/ayu-tests.log"
+      - name: Build port directly without baseline
+        script: |
+          set -euo pipefail
+          export RUNNER_TEMP="$CM_BUILD_DIR/.ayu-temp"
+          export GITHUB_RUN_NUMBER="${BUILD_NUMBER:-1}"
+          mkdir -p "$RUNNER_TEMP"
+          xcodebuild -version
+          sw_vers
+          df -h
+          python3 -u ci/build.py telegram --phase port --configuration debug_arm64
+    artifacts:
+      - telegram/artifacts/port/*.ipa
+      - telegram/artifacts/port/manifest.json
+      - .ayu-temp/ayu-tests.log

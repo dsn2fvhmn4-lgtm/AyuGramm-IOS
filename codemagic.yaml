@@ -5,9 +5,21 @@ workflows:
     max_build_duration: 120
     environment:
       xcode: "27.1"
+      groups:
+        - telegram_credentials
       vars:
         PYTHONUNBUFFERED: "1"
     scripts:
+      - name: Validate Telegram login credentials
+        script: |
+          python3 - <<'PY'
+          import os, re
+          api_id = os.environ.get('TELEGRAM_API_ID', '').strip()
+          api_hash = os.environ.get('TELEGRAM_API_HASH', '').strip()
+          if not api_id.isdigit() or int(api_id) <= 0 or not re.fullmatch(r'[0-9a-fA-F]{32}', api_hash):
+              raise SystemExit('Set Secure TELEGRAM_API_ID and TELEGRAM_API_HASH in the telegram_credentials variable group before building.')
+          print('Telegram API credentials are configured; values are hidden.')
+          PY
       - name: Fetch pinned Telegram source and dependencies
         script: |
           set -euo pipefail

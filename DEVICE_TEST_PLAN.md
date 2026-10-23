@@ -8,6 +8,8 @@ The current CI pipeline builds without provisioning profiles. Signing and instal
 
 Free-account signing may impose extension/app-ID/capability limits. Record the install log and actual entitlements; do not assume upstream push notifications, app groups, keychain sharing or all extensions work under a different signature. Removing extensions may change notification/share behavior and must be documented. No device-side changes have been performed by this task.
 
+Concrete startup gate in this snapshot: `submodules/TelegramUI/Sources/AppDelegate.swift` requests `group.<bundle_id>` and presents `Error 2` if `containerURL(forSecurityApplicationGroupIdentifier:)` is nil (around line 699). Thus a signature that merely installs the app but drops its app-group entitlement is insufficient. PasscodeEnvironment also configures its group/keychain at startup. Signing must preserve compatible capabilities; a generic sideloading tool's device support does not establish that.
+
 ## Functional tests after a signed installation
 
 Use a second account/device to observe server-visible behavior. Keep other sessions of the test account inactive so their read/online updates do not contaminate the test.

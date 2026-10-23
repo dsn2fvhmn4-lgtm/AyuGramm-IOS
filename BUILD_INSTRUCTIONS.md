@@ -10,6 +10,8 @@ Run `Native iOS port` from Actions. It tests the actual settings-store source, p
 
 The repository contains upstream.json plus patches/ayugram-ghost-mode.patch; ci/prepare.py checks the pinned commit before applying it. The baseline uses only a build-level no-provisioning Bazel flag. Port Make.py additionally exposes that existing flag through --disableProvisioningProfiles.
 
+For unsigned device compilation, ci/build.py applies unsigned-build-rules.patch to the exact pinned rules_apple submodule. An explicit `ayu_unsigned_compilation` feature skips profile embedding, paired with rules_apple's existing `disable_legacy_signing` feature. Normal signed builds do not enable these features. App sources remain unchanged in the baseline, but its packaging is deliberately unsigned. No fabricated provisioning profile is generated. iOS still requires legitimate signing for installation.
+
 ## Exact current upstream pins
 
 `Telegram-iOS/versions.json`: app 13.1.1, Xcode 27.1, macOS 27, Bazel 9.2.0. Bazel pin includes SHA-256 `dd466352a3e4d3581b8898740ee1ff208866ccbe25f8d367c5dcb950219587e6`. `Telegram/BUILD` sets minimum iOS to 15.0. Availability of a matching cloud machine has not been verified. Do not use version-check overrides as evidence of compatibility.

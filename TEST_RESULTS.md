@@ -2,6 +2,10 @@
 
 ## Ghost Mode implementation update
 
+- Target device supplied: iPhone 11 Pro, iOS 27 Developer Beta 1. No device install/run yet.
+- Inspected the user-provided signing pair locally. Password unlocks a private key and its certificate matches the profile's developer certificate. Profile metadata is specific to a different app's WidgetKit identifier/groups and lacks APNs entitlement; it is not a compatible main-app provisioning configuration for this port. CMS trust/revocation and device installation were not verified. Private key/profile were not committed or uploaded as artifacts. Certificate password is stored as a GitHub Secret.
+- Run 40016100634: settings/syntax checks passed; native baseline build was still in progress at 2026-10-23 23:13 Europe/Kiev. It includes recursive pinned dependencies and explicit unsigned packaging support. No successful native artifact claimed yet.
+
 - Run 40015266585: recursive dependency checkout succeeded; checks passed again. Baseline Bazel analysis reached 74,722 targets, then stopped because rules_apple requires device provisioning even when Telegram's profile attribute is disabled. Added an explicit, build-only unsigned-packaging feature against the pinned rules_apple commit; no fake profile or install claim. Rerun pending.
 
 - GitHub run 40014935999: checks job PASSED on Xcode 27.1. Actual output: `PASS: 16 AyuGhostMode persistence/observation checks`. Changed Swift sources parsed successfully.

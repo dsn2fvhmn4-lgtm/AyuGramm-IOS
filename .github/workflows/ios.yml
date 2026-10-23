@@ -1,0 +1,99 @@
+name: Native iOS port
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: Native build configuration (both outputs require separate install verification)
+        type: choice
+        default: debug_arm64
+        options: [debug_arm64, debug_sim_arm64]
+      baseline:
+        description: Build unchanged upstream app sources before applying the port
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ayu-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: TelegramMessenger/Telegram-iOS
+          ref: fb0e62ba8a147f0821da6aa63c09da7d79a10111
+          path: telegram
+          persist-credentials: false
+      - name: Select pinned Xcode
+        run: sudo xcode-select --switch /Applications/Xcode_27.1.app/Contents/Developer
+      - name: Apply and validate native patch
+        run: |
+          python3 ci/prepare.py telegram
+          git -C telegram diff --check
+          python3 -m py_compile ci/prepare.py ci/build.py telegram/build-system/Make/Make.py
+      - name: Compile and run actual settings storage tests
+        run: |
+          xcrun swiftc -swift-version 5 -warnings-as-errors \
+            telegram/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift \
+            telegram/tools/ayu-tests/main.swift -o "$RUNNER_TEMP/ayu-tests"
+          "$RUNNER_TEMP/ayu-tests" | tee "$RUNNER_TEMP/ayu-tests.log"
+      - name: Parse every changed Swift source
+        shell: bash
+        run: |
+          git -C telegram ls-files --others --exclude-standard -z > "$RUNNER_TEMP/ayu-new-files"
+          git -C telegram diff --name-only -z > "$RUNNER_TEMP/ayu-changed-files"
+          cat "$RUNNER_TEMP/ayu-new-files" "$RUNNER_TEMP/ayu-changed-files" | while IFS= read -r -d '' path; do
+            if [[ "$path" == *.swift ]]; then xcrun swiftc -frontend -parse "telegram/$path"; fi
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: settings-test-log
+          path: ${{ runner.temp }}/ayu-tests.log
+          if-no-files-found: ignore
+
+  native-build:
+    needs: checks
+    runs-on: xcode-27
+    timeout-minutes: 180
+    env:
+      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: TelegramMessenger/Telegram-iOS
+          ref: fb0e62ba8a147f0821da6aa63c09da7d79a10111
+          path: telegram
+          persist-credentials: false
+      - name: Select pinned toolchain and report resources
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_27.1.app/Contents/Developer
+          xcodebuild -version
+          sw_vers
+          df -h
+      - name: Baseline upstream native build
+        if: github.event_name == 'push' || inputs.baseline
+        run: python3 ci/build.py telegram --phase baseline --configuration "${{ inputs.configuration || 'debug_arm64' }}"
+      - name: Apply AyuGram native port
+        run: python3 ci/prepare.py telegram
+      - name: Build native AyuGram changes
+        run: python3 ci/build.py telegram --phase port --configuration "${{ inputs.configuration || 'debug_arm64' }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-arm64-unsigned-${{ github.run_number }}
+          path: telegram/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

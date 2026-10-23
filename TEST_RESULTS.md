@@ -2,6 +2,9 @@
 
 ## Ghost Mode implementation update
 
+- GitHub run 40014935999: checks job PASSED on Xcode 27.1. Actual output: `PASS: 16 AyuGhostMode persistence/observation checks`. Changed Swift sources parsed successfully.
+- The same run's unmodified-app baseline failed before application compilation because the workflow omitted Git submodule initialization (`rules_swift+`: missing MODULE.bazel/WORKSPACE). Fixed native checkout to fetch recursive submodules; rerun pending. No IPA from this run.
+
 - GitHub CLI installed from the official release archive and verified against its published SHA-256 list; authenticated to the user's existing repository.
 - The user's own API credentials stored in GitHub Actions Secrets; no credentials added to tracked files.
 - Added native persistence/UI/presence/input-activity/cloud-read hooks; secret read/expiry and media-consumption paths unchanged.

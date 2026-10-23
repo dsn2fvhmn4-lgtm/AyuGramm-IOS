@@ -40,7 +40,7 @@ python3 build-system/Make/Make.py \
   --configuration=release_arm64
 ```
 
-Follow README.md for profile layout and simulator provisioning options. Inspect all application/extension entitlements before configuring signing. Inspect `.gitmodules` and initialize dependencies if a pinned snapshot requires them. The current clone's `git submodule status` returned no entries; many directories named submodules are ordinary tracked source trees.
+Follow README.md for profile layout and simulator provisioning options. Inspect all application/extension entitlements before configuring signing. Initialize the pinned dependencies with `git submodule update --init --recursive`. The recovered checkout has 13 Git submodule entries, including Bazel rules and native engines; many other directories named submodules are ordinary tracked source trees. The first cloud build established that omitting these dependencies fails at rules_swift resolution.
 
 ## Windows and CI
 

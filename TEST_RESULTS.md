@@ -2,6 +2,8 @@
 
 ## Ghost Mode implementation update
 
+- Run 40015266585: recursive dependency checkout succeeded; checks passed again. Baseline Bazel analysis reached 74,722 targets, then stopped because rules_apple requires device provisioning even when Telegram's profile attribute is disabled. Added an explicit, build-only unsigned-packaging feature against the pinned rules_apple commit; no fake profile or install claim. Rerun pending.
+
 - GitHub run 40014935999: checks job PASSED on Xcode 27.1. Actual output: `PASS: 16 AyuGhostMode persistence/observation checks`. Changed Swift sources parsed successfully.
 - The same run's unmodified-app baseline failed before application compilation because the workflow omitted Git submodule initialization (`rules_swift+`: missing MODULE.bazel/WORKSPACE). Fixed native checkout to fetch recursive submodules; rerun pending. No IPA from this run.
 

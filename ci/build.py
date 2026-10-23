@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import struct
 import subprocess
 import sys
 import zipfile
@@ -17,6 +18,7 @@ parser.add_argument("--phase", choices=["baseline", "port"], required=True)
 parser.add_argument("--configuration", choices=["debug_arm64", "debug_sim_arm64"], default="debug_arm64")
 args = parser.parse_args()
 source = args.source.resolve()
+port_root = Path(__file__).resolve().parent.parent
 versions = json.loads((source / "versions.json").read_text())
 if sys.platform != "darwin":
     raise SystemExit("Native build requires the macOS runner")
@@ -26,6 +28,20 @@ if actual_xcode != versions["xcode"]:
 macos = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
 if macos.split(".")[0] != versions["macos"].split(".")[0]:
     raise SystemExit(f"Required macOS major {versions['macos']}; found {macos}")
+
+# This changes only build-time packaging for explicitly unsigned compilation. It neither
+# supplies a fake profile nor changes the OS signing/install requirements on an iPhone.
+if args.configuration == "debug_arm64":
+    rules = source / "build-system/bazel-rules/rules_apple"
+    rules_pin = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=rules, text=True).strip()
+    if rules_pin != "485016eb5b0948cc17307064e7977a6d68e94046":
+        raise SystemExit("Unsigned build support requires the pinned rules_apple revision")
+    rules_patch = str(port_root / "patches/unsigned-build-rules.patch")
+    reverse = subprocess.run(["git", "apply", "--reverse", "--check", rules_patch], cwd=rules,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if reverse.returncode != 0:
+        subprocess.run(["git", "apply", "--check", rules_patch], cwd=rules, check=True)
+        subprocess.run(["git", "apply", rules_patch], cwd=rules, check=True)
 
 api_id = os.environ.get("TELEGRAM_API_ID", "").strip()
 api_hash = os.environ.get("TELEGRAM_API_HASH", "").strip()
@@ -53,6 +69,11 @@ flag = "build --//Telegram:disableProvisioningProfiles\n"
 if flag not in rc.read_text():
     with rc.open("a") as output:
         output.write("\n" + flag)
+if args.configuration == "debug_arm64":
+    unsigned_flags = "build --features=ayu_unsigned_compilation --features=disable_legacy_signing\n"
+    if unsigned_flags not in rc.read_text():
+        with rc.open("a") as output:
+            output.write(unsigned_flags)
 
 artifacts = source / "artifacts" / args.phase
 artifacts.mkdir(parents=True, exist_ok=True)
@@ -77,10 +98,25 @@ with zipfile.ZipFile(ipa) as archive:
         raise SystemExit("Expected a 64-bit Mach-O executable")
     if int.from_bytes(binary[4:8], "little") != 0x0100000C:
         raise SystemExit("Expected arm64 CPU type")
+    expected_platform = 7 if args.configuration == "debug_sim_arm64" else 2
+    platform_id = None
+    cursor = 32
+    for _ in range(struct.unpack_from("<I", binary, 16)[0]):
+        if cursor + 8 > len(binary):
+            raise SystemExit("Truncated Mach-O load command")
+        command_id, command_size = struct.unpack_from("<II", binary, cursor)
+        if command_size < 8 or cursor + command_size > len(binary):
+            raise SystemExit("Invalid Mach-O load command size")
+        if command_id == 0x32 and command_size >= 24:  # LC_BUILD_VERSION
+            platform_id = struct.unpack_from("<I", binary, cursor + 8)[0]
+        cursor += command_size
+    if platform_id != expected_platform:
+        raise SystemExit(f"Wrong Mach-O platform: expected {expected_platform}, found {platform_id}")
     if any(name.endswith("embedded.mobileprovision") for name in archive.namelist()):
         raise SystemExit("Unsigned compilation artifact unexpectedly contains provisioning material")
 manifest = dict(phase=args.phase, configuration=args.configuration, xcode=actual_xcode, macos=macos,
-                native_arm64=True, signing="unsigned / no provisioning", install_verified=False,
+                native_arm64=True, macho_platform=platform_id,
+                signing="unsigned or ad-hoc / no provisioning", install_verified=False,
                 telegram_credentials_configured=has_credentials,
                 sha256=hashlib.sha256(ipa.read_bytes()).hexdigest())
 (artifacts / "manifest.json").write_text(json.dumps(manifest, indent=2))

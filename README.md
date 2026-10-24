@@ -1,6 +1,6 @@
 # AyuGramm-IOS
 
-An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. The first [Ghost Mode preview](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/tag/v0.1.0-ghost-preview) is available. The owner reports it works on their device; independent device verification is pending.
+An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. The latest [v0.2.0 Feature Preview, build 8](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/tag/v0.2.0-preview) is available. See the [release description](docs/releases/v0.2.0.md) for features, installation and verification limits. The earlier v0.1.0 release contains Ghost Mode only.
 
 ## Current implementation
 
@@ -10,11 +10,11 @@ Experimental Ghost Mode adds per-account persistent controls for cloud chat/disc
 
 Ghost Mode conflicts with [Telegram API Terms section 1.4](https://core.telegram.org/api/terms). Server Premium features are not unlocked. The complete AyuGram feature set is still being ported.
 
-The development sources add a local edit/deletion ledger, formatting and reaction snapshots, a bot-capture preference, message metadata, silent-send modes, local regex filtering and opt-in local media archiving. These changes have not passed full native/device integration verification and are absent from the published IPA. See [history verification](docs/LOCAL_HISTORY.md) and the [complete parity checklist](docs/PARITY_CHECKLIST.md).
+The development sources add a local edit/deletion ledger, formatting and reaction snapshots, a bot-capture preference, message metadata, silent-send modes, local regex filtering and opt-in local media archiving. The build 8 preview is now published; feature-by-feature device regression remains pending. See [history verification](docs/LOCAL_HISTORY.md) and the [complete parity checklist](docs/PARITY_CHECKLIST.md).
 
 ## Chat appearance (development source)
 
-Open **Settings → AyuGram → Chat Appearance**. Per-account controls show/hide the header ghost button, display timestamp seconds, and customize deleted/edited labels. Empty labels use the current app language. Save labels applies text; switches apply immediately. Reset affects appearance only. Deleted-text capture remains a separate opt-in under Message History. These changes require native/device verification and are absent from the initial published preview.
+Open **Settings → AyuGram → Chat Appearance**. Per-account controls show/hide the header ghost button, display timestamp seconds, and customize deleted/edited labels. Empty labels use the current app language. Save labels applies text; switches apply immediately. Reset affects appearance only. Deleted-text capture remains a separate opt-in under Message History. These changes are part of the build 8 preview; device verification remains pending.
 
 ## Media sending (development source)
 
@@ -30,7 +30,7 @@ Builds are run manually by the owner in **Codemagic**, using `release_arm64` and
 
 Codemagic uses the same release configuration on the free Mac M2 tier. Import the `telegram_credentials` variable group with Secure `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. Its reusable Bazel disk cache is capped at 2.5 GB to fit the personal-plan quota; the first successful release build populates it. Cache reuse and speed gains still require measurement.
 
-### Next build (not included in v0.1.0)
+### Branding and Ghost Mode controls (build 8 preview)
 
 - AyuGram branding using the original AyuGram Desktop SVG (see upstream attribution below).
 - A direct **AyuGram · Ghost Mode** entry near the top of Settings, retaining the existing Privacy and Security entry.
@@ -39,7 +39,7 @@ Codemagic uses the same release configuration on the free Mac M2 tier. Import th
 
 The current source also fixes a Postbox raw-enum serialization trap and retains eligible deleted text inline with a Deleted label beside the message time. Clear Archive, expiry and eviction remove these local text tombstones. The app icon uses an edge-to-edge native background with a separate airplane foreground.
 
-These next-build changes require native compilation and simulator/device verification, including light/dark themes, narrow screens, selection mode and returning from settings. They are not present in the already uploaded IPA. Full AyuGram feature parity remains unfinished; see `FEATURE_MATRIX.md`.
+Build 8 is published as an owner-supplied preview. Simulator/device verification remains pending, including light/dark themes, narrow screens, selection mode and returning from settings. These changes are absent from the original v0.1.0 IPA. Full AyuGram feature parity remains unfinished; see `FEATURE_MATRIX.md`.
 
 Configure your own `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` as Secure Codemagic variables in the `telegram_credentials` group. The Codemagic workflow checks these before building. The variables are not copied from GitHub secrets.
 

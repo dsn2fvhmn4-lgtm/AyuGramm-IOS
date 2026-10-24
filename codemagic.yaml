@@ -1,6 +1,6 @@
 workflows:
   ayugram-ios-unsigned:
-    name: AyuGram native iOS (unsigned)
+    name: AyuGram iOS Release (unsigned)
     instance_type: mac_mini_m2
     max_build_duration: 120
     environment:
@@ -9,32 +9,12 @@ workflows:
         - telegram_credentials
       vars:
         PYTHONUNBUFFERED: "1"
+    cache:
+      cache_paths:
+        - $CM_BUILD_DIR/.ayu-temp/ayu-bazel-cache
     scripts:
-      - name: Prepare tools for Bazel restricted PATH
-        script: |
-          set -euo pipefail
-          if ! command -v ccache >/dev/null 2>&1; then
-            brew install ccache
-          fi
-          ccache_bin="$(command -v ccache)"
-          sudo mkdir -p /usr/local/bin
-          if ! env PATH=/bin:/usr/bin:/usr/local/bin ccache --version >/dev/null 2>&1; then
-            sudo ln -s "$ccache_bin" /usr/local/bin/ccache
-          fi
-          if ! env PATH=/bin:/usr/bin:/usr/local/bin sysctl -n hw.ncpu >/dev/null 2>&1; then
-            sudo ln -s /usr/sbin/sysctl /usr/local/bin/sysctl
-          fi
-          env -i PATH=/bin:/usr/bin:/usr/local/bin ccache --version
-          env -i PATH=/bin:/usr/bin:/usr/local/bin sysctl -n hw.ncpu
-      - name: Install and verify Metal compiler
-        script: |
-          set -euo pipefail
-          xcodebuild -downloadComponent MetalToolchain
-          probe_dir="$(mktemp -d)"
-          trap 'rm -rf "$probe_dir"' EXIT
-          printf '#include <metal_stdlib>\nusing namespace metal;\nkernel void ayu_probe(device uint *out [[buffer(0)]], uint id [[thread_position_in_grid]]) { out[id] = id; }\n' > "$probe_dir/probe.metal"
-          xcrun --sdk iphoneos metal -c -target air64-apple-ios15.0 "$probe_dir/probe.metal" -o "$probe_dir/probe.air"
-          test -s "$probe_dir/probe.air"
+      - name: Verify macOS build dependencies
+        script: bash ci/prepare_macos.sh
       - name: Validate Telegram login credentials
         script: |
           python3 - <<'PY'
@@ -77,7 +57,9 @@ workflows:
           xcodebuild -version
           sw_vers
           df -h
-          python3 -u ci/build.py telegram --phase port --configuration debug_arm64
+          python3 -u ci/build.py telegram --phase port --configuration release_arm64
+      - name: Bound reusable cache to free plan quota
+        script: python3 ci/trim_cache.py
     artifacts:
       - telegram/artifacts/port/*.ipa
       - telegram/artifacts/port/manifest.json

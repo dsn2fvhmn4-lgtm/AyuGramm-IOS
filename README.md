@@ -1,6 +1,6 @@
 # AyuGramm-IOS
 
-An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. Under development; no verified installable release yet.
+An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. The first [Ghost Mode preview](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/tag/v0.1.0-ghost-preview) is available. The owner reports it works on their device; independent device verification is pending.
 
 ## Current implementation
 
@@ -12,7 +12,18 @@ Ghost Mode conflicts with [Telegram API Terms section 1.4](https://core.telegram
 
 ## Cloud builds from Windows
 
-GitHub Actions checks the real settings-store source, parses changed Swift files and then builds the native application on the `xcode-27` runner with Xcode 27.1. By default the app sources are first built without the port, then patched and rebuilt. See **Actions → Native iOS port** for actual results.
+GitHub Actions checks the real settings-store source, parses changed Swift files and builds the native application on the `xcode-27` runner with Xcode 27.1. New builds default to `release_arm64` and build the port directly. An upstream baseline is optional through manual dispatch. See **Actions → Native iOS port** for actual results.
+
+Codemagic uses the same release configuration on the free Mac M2 tier. Import the `telegram_credentials` variable group with Secure `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. Its reusable Bazel disk cache is capped at 2.5 GB to fit the personal-plan quota; the first successful release build populates it. Cache reuse and speed gains still require measurement.
+
+### Next build (not included in v0.1.0)
+
+- AyuGram branding using the original AyuGram Desktop SVG (see upstream attribution below).
+- A direct **AyuGram · Ghost Mode** entry near the top of Settings, retaining the existing Privacy and Security entry.
+- A ghost button next to the chat header controls: outlined ghost when any Ghost Mode option is active, crossed ghost when all are off. Tapping opens the settings. The indicator reflects local policy, not server-confirmed invisibility.
+- After a successful cloud-message send, reassert offline status when Hide Online is enabled. A brief server-visible activity window remains possible; failures do not alter send results.
+
+These next-build changes require native compilation and simulator/device verification, including light/dark themes, narrow screens, selection mode and returning from settings. They are not present in the already uploaded IPA. Full AyuGram feature parity remains unfinished; see `docs/FEATURE_MATRIX.md`.
 
 Configure your own `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` as repository secrets. The workflow does not use third-party API credentials. Artifacts built without those secrets are compilation-only and cannot log in.
 

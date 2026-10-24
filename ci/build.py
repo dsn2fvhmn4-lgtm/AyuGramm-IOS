@@ -15,7 +15,7 @@ import zipfile
 parser = argparse.ArgumentParser()
 parser.add_argument("source", type=Path)
 parser.add_argument("--phase", choices=["baseline", "port"], required=True)
-parser.add_argument("--configuration", choices=["debug_arm64", "debug_sim_arm64"], default="debug_arm64")
+parser.add_argument("--configuration", choices=["release_arm64", "debug_arm64", "debug_sim_arm64"], default="release_arm64")
 args = parser.parse_args()
 source = args.source.resolve()
 port_root = Path(__file__).resolve().parent.parent
@@ -31,7 +31,7 @@ if macos.split(".")[0] != versions["macos"].split(".")[0]:
 
 # This changes only build-time packaging for explicitly unsigned compilation. It neither
 # supplies a fake profile nor changes the OS signing/install requirements on an iPhone.
-if args.configuration == "debug_arm64":
+if args.configuration in ("debug_arm64", "release_arm64"):
     rules = source / "build-system/bazel-rules/rules_apple"
     rules_pin = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=rules, text=True).strip()
     if rules_pin != "485016eb5b0948cc17307064e7977a6d68e94046":
@@ -69,7 +69,7 @@ flag = "build --//Telegram:disableProvisioningProfiles\n"
 if flag not in rc.read_text():
     with rc.open("a") as output:
         output.write("\n" + flag)
-if args.configuration == "debug_arm64":
+if args.configuration in ("debug_arm64", "release_arm64"):
     unsigned_flags = "build --features=ayu_unsigned_compilation --features=disable_legacy_signing\n"
     if unsigned_flags not in rc.read_text():
         with rc.open("a") as output:
@@ -83,6 +83,7 @@ command = [sys.executable, "build-system/Make/Make.py", "--cacheDir=" + str(temp
            "--configuration=" + args.configuration, "--outputBuildArtifactsPath=" + str(artifacts)]
 if args.phase == "port":
     command.append("--disableProvisioningProfiles")
+command.append("--continueOnError")
 try:
     subprocess.run(command, cwd=source, check=True)
 finally:

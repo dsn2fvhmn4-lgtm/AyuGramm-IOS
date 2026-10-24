@@ -2,7 +2,7 @@ Feature parity tracking
 
 Reference Android source: AyuGram/AyuGram4A rewrite, 7013145676d36d82ee13c02a89f72097b7490dcd. This snapshot is from 2023 and imports missing AyuMessageUtils; it does not supply a complete ready-made iOS implementation. Desktop dev 0f2a31bb420de98f331990432265b131b8d836b5 supplies additional behavioral references. Flags alone are not counted as implemented features.
 
-The published v0.1.0 IPA contains the initial Ghost Mode preview. All subsequent rows marked "source" still require full native compilation/device verification. Builds are run manually by the owner in Codemagic; GitHub Actions is disabled and push triggering is removed.
+The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview is the owner-supplied build 8 with expanded features. See its release notes for artifact evidence and verification limits. The Message Menu block was added after build 8 and awaits native compilation/device checks. Builds are run manually by the owner in Codemagic; GitHub Actions is disabled and push triggering is removed.
 
 | Android option / feature | iOS state |
 | --- | --- |
@@ -44,6 +44,11 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview. All subsequent
 | hideNotificationBadge (Desktop) | Partial iOS adaptation: Chats tab unread badge visibility only; read state and system app-icon badge unchanged, in source |
 | showMessageShot (Desktop) | Local selected-message card image, cached image previews, spoiler masking and native image share preview, in source |
 | source sync URL/token settings | Pending; no token has been stored or transmitted |
+| showReactionsPanelInContextMenu (Desktop) | Main long-press reaction-picker visibility in source after build 8; Saved Messages tags preserved |
+| showViewsPanelInContextMenu (Desktop) | Combined native read/reaction-summary visibility in source after build 8; does not change receipts |
+| showMessageDetailsInContextMenu (Desktop) | Metadata-action visibility in source after build 8 |
+| showUserMessagesInContextMenu (Desktop) | Native author-filter search action for known user authors in cloud groups, in source after build 8 |
+| edited information in menu (iOS) | Edited-header visibility independent of inline labels/history, in source after build 8 |
 
 Additional Desktop-only scope (not implemented by these flags): translation providers, shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.
 

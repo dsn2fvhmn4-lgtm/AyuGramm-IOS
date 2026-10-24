@@ -24,6 +24,10 @@ Open **Settings → AyuGram → Sending Options**. Independent per-account switc
 
 **Settings → AyuGram → Interface** controls copyable IDs in profiles, ordinary bubble quick-share buttons, the Chats tab unread badge and MessageShot visibility. MessageShot appears in a message context menu or the Share choices after selecting messages. It creates a bounded card image with authors, formatted text, dates and cached image previews; other media has a label. Preview/zoom and the native share/save sheet are available before export. Protected/expiring content is excluded and spoilers remain masked. See [scope and verification](docs/MESSAGE_SHOT_AND_INTERFACE.md). Native/device verification is pending.
 
+## Message menu (development source after build 8)
+
+The next source revision adds **Settings → AyuGram → Message Menu**: reaction-picker, read/reaction-summary, edit-information and Message Details visibility, plus **Messages from Author** using native group search. These per-account controls apply on the next menu opening and are not included in published build 8. See [scope and pending device checks](docs/MESSAGE_MENU.md).
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

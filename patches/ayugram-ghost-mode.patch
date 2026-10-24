@@ -625,10 +625,10 @@ index 00000000..ba3acdfe
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..2f94a0e7
+index 00000000..c67c6cca
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,306 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -727,6 +727,7 @@ index 00000000..2f94a0e7
 +        case 3: push?(ayuChatOptionsController(context: context, regex: true))
 +        case 4: push?(ayuAppearanceController(context: context))
 +        case 5: push?(ayuInterfaceSettingsController(context: context))
++        case 6: push?(ayuInterfaceSettingsController(context: context, contextMenu: true))
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
@@ -741,7 +742,8 @@ index 00000000..2f94a0e7
 +            .link(3, ru ? "Regex-фильтры" : "Regex Filters"),
 +            .link(4, ru ? "Оформление чатов" : "Chat Appearance"),
 +            .link(5, ru ? "Интерфейс" : "Interface"),
-+            .info(6, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
++            .link(6, ru ? "Меню сообщения" : "Message Menu"),
++            .info(7, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
@@ -751,12 +753,23 @@ index 00000000..2f94a0e7
 +    return controller
 +}
 +
-+private func ayuInterfaceSettingsController(context: AccountContext) -> ViewController {
++private func ayuInterfaceSettingsController(context: AccountContext, contextMenu: Bool = false) -> ViewController {
 +    let store = context.account.network.ayuGhostMode
 +    var presentError: (() -> Void)?
 +    let arguments = AyuSettingsArguments(open: { _ in }, update: { id, value in
 +        do {
 +            try store.update {
++                if contextMenu {
++                    switch id {
++                    case 0: $0.interface.showReactionPicker = value
++                    case 1: $0.interface.showReadSummary = value
++                    case 2: $0.interface.showEditedInfo = value
++                    case 3: $0.interface.showMessageDetails = value
++                    case 4: $0.interface.showAuthorSearch = value
++                    default: break
++                    }
++                    return
++                }
 +                switch id {
 +                case 0: $0.interface.showPeerIds = value
 +                case 1: $0.interface.hideFastShare = value
@@ -772,7 +785,14 @@ index 00000000..2f94a0e7
 +    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
 +        let value = settings.interface
-+        let entries: [AyuSettingsEntry] = [
++        let entries: [AyuSettingsEntry] = contextMenu ? [
++            .toggle(0, ru ? "Панель выбора реакций" : "Reaction picker", value.showReactionPicker),
++            .toggle(1, ru ? "Сводка прочтений и реакций" : "Read and reaction summary", value.showReadSummary),
++            .toggle(2, ru ? "Время правки в меню" : "Edit information in menu", value.showEditedInfo),
++            .toggle(3, ru ? "Данные сообщения" : "Message Details", value.showMessageDetails),
++            .toggle(4, ru ? "Поиск сообщений автора" : "Messages from Author", value.showAuthorSearch),
++            .info(5, ru ? "Изменения видны при следующем открытии меню сообщения. Поиск автора доступен в группах для сообщений с известным пользователем-автором. Скрытие сводки не меняет уведомления о прочтении. Теги Избранного сохраняются; MessageShot настраивается в разделе «Интерфейс»." : "Changes apply the next time a message menu opens. Author search is available in groups for messages with a known user author. Hiding the summary does not change read receipts. Saved Messages tags remain available; configure MessageShot under Interface.")
++        ] : [
 +            .toggle(0, ru ? "ID в профилях" : "Show IDs in profiles", value.showPeerIds),
 +            .toggle(1, ru ? "Скрыть быструю пересылку" : "Hide bubble quick-share buttons", value.hideFastShare),
 +            .toggle(2, ru ? "Скрыть счётчик вкладки «Чаты»" : "Hide Chats tab unread badge", value.hideChatsBadge),
@@ -780,7 +800,8 @@ index 00000000..2f94a0e7
 +            .info(4, ru ? "Нажатие на ID копирует его. Счётчик меняется только на вкладке «Чаты»; состояние прочтения сохраняется. Быстрая пересылка скрывается возле обычных пузырьков, а комментарии и рекламные действия остаются доступны. MessageShot находится в меню сообщения и в действиях «Поделиться» для выбранных сообщений." : "Tap a profile ID to copy it. The badge setting affects the Chats tab and preserves read state. Quick-share hiding applies to ordinary bubbles; comment and sponsored-message actions remain available. MessageShot appears in the message menu and selected-message Share choices.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
-+        return (ItemListControllerState(presentationData: data, title: .text(ru ? "Интерфейс" : "Interface"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++        let title = contextMenu ? (ru ? "Меню сообщения" : "Message Menu") : (ru ? "Интерфейс" : "Interface")
++        return (ItemListControllerState(presentationData: data, title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    presentError = { [weak controller] in
@@ -1425,10 +1446,10 @@ index 00000000..a6bb6d35
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..3c291443
+index 00000000..99506d34
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,44 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -1436,10 +1457,16 @@ index 00000000..3c291443
 +    public var hideFastShare = false
 +    public var hideChatsBadge = false
 +    public var showMessageShot = true
++    public var showReactionPicker = true
++    public var showReadSummary = true
++    public var showEditedInfo = true
++    public var showMessageDetails = true
++    public var showAuthorSearch = true
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case showPeerIds, hideFastShare, hideChatsBadge, showMessageShot
++        case showReactionPicker, showReadSummary, showEditedInfo, showMessageDetails, showAuthorSearch
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -1447,6 +1474,11 @@ index 00000000..3c291443
 +        self.hideFastShare = try values.decodeIfPresent(Bool.self, forKey: .hideFastShare) ?? false
 +        self.hideChatsBadge = try values.decodeIfPresent(Bool.self, forKey: .hideChatsBadge) ?? false
 +        self.showMessageShot = try values.decodeIfPresent(Bool.self, forKey: .showMessageShot) ?? true
++        self.showReactionPicker = try values.decodeIfPresent(Bool.self, forKey: .showReactionPicker) ?? true
++        self.showReadSummary = try values.decodeIfPresent(Bool.self, forKey: .showReadSummary) ?? true
++        self.showEditedInfo = try values.decodeIfPresent(Bool.self, forKey: .showEditedInfo) ?? true
++        self.showMessageDetails = try values.decodeIfPresent(Bool.self, forKey: .showMessageDetails) ?? true
++        self.showAuthorSearch = try values.decodeIfPresent(Bool.self, forKey: .showAuthorSearch) ?? true
 +    }
 +}
 +
@@ -2839,6 +2871,19 @@ index 00000000..a355ab8b
 +        })
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
+index 5bf77c1b..fb452084 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
+@@ -128,7 +128,7 @@ extension ChatControllerImpl {
+                 actions.context = self.context
+                 actions.animationCache = self.controllerInteraction?.presentationContext.animationCache
+                                                          
+-                if canAddMessageReactions(message: EngineMessage(topMessage)), let allowedReactions = allowedReactions, !topReactions.isEmpty {
++                if (self.context.account.network.ayuGhostMode.current.interface.showReactionPicker || message.areReactionsTags(accountPeerId: self.context.account.peerId)), canAddMessageReactions(message: EngineMessage(topMessage)), let allowedReactions = allowedReactions, !topReactions.isEmpty {
+                     actions.reactionItems = topReactions.map { ReactionContextItem.reaction(item: $0, icon: .none) }
+                     actions.selectedReactionItems = selectedReactions.reactions
+                     if message.areReactionsTags(accountPeerId: self.context.account.peerId) {
 diff --git a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 index face5ae7..f32f529c 100644
 --- a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
@@ -3082,7 +3127,7 @@ index 0fb1ee10..31255099 100644
              updatingMedia |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_updatingMedia"),
              automaticDownloadNetworkType |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_automaticDownloadNetworkType"),
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..da41e59c 100644
+index 1ade8c01..2246da01 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -3112,15 +3157,34 @@ index 1ade8c01..da41e59c 100644
      var loadStickerSaveStatusSignal: Signal<Bool?, NoError> = .single(nil)
      if let loadStickerSaveStatus = loadStickerSaveStatus {
          loadStickerSaveStatusSignal = context.engine.stickers.isStickerSaved(id: loadStickerSaveStatus)
-@@ -2479,6 +2485,26 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2195,7 +2201,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             }), false), at: 0)
+         }
+         
+-        if let peer = message.peers[message.id.peerId], (canViewStats || reactionCount != 0) {
++        if context.account.network.ayuGhostMode.current.interface.showReadSummary, let peer = message.peers[message.id.peerId], (canViewStats || reactionCount != 0) {
+             var hasReadReports = false
+             if let channel = peer as? TelegramChannel {
+                 if case .group = channel.info {
+@@ -2324,7 +2330,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             }
+         }
+         
+-        if isEdited {
++        if isEdited && context.account.network.ayuGhostMode.current.interface.showEditedInfo {
+             if !actions.isEmpty {
+                 actions.insert(.separator, at: 0)
+             }
+@@ -2479,6 +2485,44 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
 +        if message.id.namespace == Namespaces.Message.Cloud {
-+            actions.append(.separator)
 +            let ru = chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru")
-+            if context.account.network.ayuGhostMode.current.interface.showMessageShot, !chatPresentationInterfaceState.copyProtectionEnabled, messages.allSatisfy({ EngineMessage($0).ayuCanMessageShot }) {
-+                actions.append(.action(ContextMenuActionItem(text: "AyuGram · MessageShot", icon: { theme in
++            let ayuInterface = context.account.network.ayuGhostMode.current.interface
++            var ayuActions: [ContextMenuItem] = []
++            if ayuInterface.showMessageShot, !chatPresentationInterfaceState.copyProtectionEnabled, messages.allSatisfy({ EngineMessage($0).ayuCanMessageShot }) {
++                ayuActions.append(.action(ContextMenuActionItem(text: "AyuGram · MessageShot", icon: { theme in
 +                    return UIImage(systemName: "photo.on.rectangle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
 +                }, action: { controller, _ in
 +                    controller?.dismiss(completion: {
@@ -3128,23 +3192,40 @@ index 1ade8c01..da41e59c 100644
 +                    })
 +                })))
 +            }
-+            actions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Данные сообщения" : "AyuGram · Message Details", icon: { theme in
-+                return UIImage(systemName: "info.circle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
-+            }, action: { controller, _ in
-+                controller?.dismiss(completion: {
-+                    (interfaceInteraction.chatController() as? ChatControllerImpl)?.push(ayuMessageDetailsController(context: context, message: EngineMessage(message)))
-+                })
-+            })))
++            if ayuInterface.showMessageDetails {
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Данные сообщения" : "AyuGram · Message Details", icon: { theme in
++                    return UIImage(systemName: "info.circle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                }, action: { controller, _ in
++                    controller?.dismiss(completion: {
++                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.push(ayuMessageDetailsController(context: context, message: EngineMessage(message)))
++                    })
++                })))
++            }
++            var isGroup = message.peers[message.id.peerId] is TelegramGroup
++            if let channel = message.peers[message.id.peerId] as? TelegramChannel, case .group = channel.info { isGroup = true }
++            if ayuInterface.showAuthorSearch, isGroup, let author = message.author, author.id.namespace == Namespaces.Peer.CloudUser, EngineMessage(message).adAttribute == nil {
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Сообщения автора" : "AyuGram · Messages from Author", icon: { theme in
++                    return UIImage(systemName: "person.crop.circle.badge.magnifyingglass")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                }, action: { controller, _ in
++                    controller?.dismiss(completion: {
++                        interfaceInteraction.beginMessageSearch(.member(author), "")
++                    })
++                })))
++            }
++            if !ayuActions.isEmpty {
++                if !actions.isEmpty { actions.append(.separator) }
++                actions.append(contentsOf: ayuActions)
++            }
 +        }
          return ContextController.Items(content: .list(actions), tip: nil)
      }
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..dfe2bba8
+index 00000000..24879a87
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,319 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -3414,6 +3495,15 @@ index 00000000..dfe2bba8
 +let partialInterface = try JSONDecoder().decode(AyuInterfaceSettings.self, from: Data("{\"hideChatsBadge\":true}".utf8))
 +check(partialInterface.hideChatsBadge && !partialInterface.showPeerIds && partialInterface.showMessageShot, "Partial interface settings migrate independently")
 +check(oldGhost.interface == AyuInterfaceSettings(), "Legacy files acquire interface defaults")
++check(partialInterface.showReactionPicker && partialInterface.showReadSummary && partialInterface.showEditedInfo && partialInterface.showMessageDetails && partialInterface.showAuthorSearch, "Build 8 settings migrate to visible message-menu controls")
++interfaceSettings.showReactionPicker = false
++interfaceSettings.showReadSummary = false
++interfaceSettings.showEditedInfo = false
++interfaceSettings.showMessageDetails = false
++interfaceSettings.showAuthorSearch = false
++let hiddenMenu = try JSONDecoder().decode(AyuInterfaceSettings.self, from: JSONEncoder().encode(interfaceSettings))
++check(hiddenMenu == interfaceSettings && !hiddenMenu.showReactionPicker && !hiddenMenu.showReadSummary && !hiddenMenu.showEditedInfo && !hiddenMenu.showMessageDetails && !hiddenMenu.showAuthorSearch, "All message-menu controls preserve explicit false values on reload")
++check(hiddenMenu.showPeerIds && hiddenMenu.hideFastShare && hiddenMenu.hideChatsBadge && hiddenMenu.showMessageShot, "Message-menu controls preserve existing interface choices")
 +try appearanceStore.update { $0.interface = interfaceSettings; $0.appearance.showMessageSeconds = true }
 +try appearanceStore.update { $0.appearance = AyuAppearanceSettings() }
 +let savedInterface = AyuGhostModeStore(accountPath: appearancePath.path).current

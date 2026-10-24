@@ -10,11 +10,11 @@ Experimental Ghost Mode adds per-account persistent controls for cloud chat/disc
 
 Ghost Mode conflicts with [Telegram API Terms section 1.4](https://core.telegram.org/api/terms). Server Premium features are not unlocked. Message history and other AyuGram features are not implemented yet.
 
-On `feature/local-message-history`, a text-only edit/deletion ledger and native archive screens are being implemented. This development feature has not passed native/device integration verification and is absent from published IPAs. See [local history scope and verification](docs/LOCAL_HISTORY.md).
+The development sources add a local edit/deletion ledger, formatting and reaction snapshots, a bot-capture preference, message metadata, silent-send modes and local regex filtering. These changes have not passed full native/device integration verification and are absent from the published IPA. See [history verification](docs/LOCAL_HISTORY.md) and the [complete parity checklist](docs/PARITY_CHECKLIST.md).
 
 ## Cloud builds from Windows
 
-GitHub Actions checks the real settings-store source, parses changed Swift files and builds the native application on the `xcode-27` runner with Xcode 27.1. New builds default to `release_arm64` and build the port directly. An upstream baseline is optional through manual dispatch. See **Actions → Native iOS port** for actual results.
+Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.
 
 Codemagic uses the same release configuration on the free Mac M2 tier. Import the `telegram_credentials` variable group with Secure `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. Its reusable Bazel disk cache is capped at 2.5 GB to fit the personal-plan quota; the first successful release build populates it. Cache reuse and speed gains still require measurement.
 
@@ -27,7 +27,7 @@ Codemagic uses the same release configuration on the free Mac M2 tier. Import th
 
 These next-build changes require native compilation and simulator/device verification, including light/dark themes, narrow screens, selection mode and returning from settings. They are not present in the already uploaded IPA. Full AyuGram feature parity remains unfinished; see `FEATURE_MATRIX.md`.
 
-Configure your own `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` as repository secrets. The workflow does not use third-party API credentials. Artifacts built without those secrets are compilation-only and cannot log in.
+Configure your own `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` as Secure Codemagic variables in the `telegram_credentials` group. The Codemagic workflow checks these before building. The variables are not copied from GitHub secrets.
 
 Current pipeline outputs have **no provisioning profiles or distribution signature**. They require a separate signing/install process and device verification. A successful compile does not establish successful login, hidden network receipts or installation on an iPhone. No App Store/TestFlight publishing is configured.
 

@@ -233,6 +233,124 @@ index 4c3a6419..8d103a44 100644
      buildParser.add_argument(
          '--buildNumber',
          required=True,
+diff --git a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
+new file mode 100644
+index 00000000..5118283a
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
+@@ -0,0 +1,112 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++private struct AyuOptionsArguments {
++    let toggle: (Int32, Bool) -> Void
++    let text: (String) -> Void
++    let save: () -> Void
++}
++
++private enum AyuOptionsEntry: ItemListNodeEntry {
++    case toggle(Int32, String, Bool)
++    case input(String)
++    case save(String)
++    case info(Int32, String)
++
++    var section: ItemListSectionId { return 0 }
++    var stableId: Int32 {
++        switch self {
++        case let .toggle(id, _, _), let .info(id, _): return id
++        case .input: return 10
++        case .save: return 11
++        }
++    }
++    static func < (lhs: AyuOptionsEntry, rhs: AyuOptionsEntry) -> Bool { return lhs.stableId < rhs.stableId }
++
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! AyuOptionsArguments
++        switch self {
++        case let .toggle(id, title, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
++        case let .input(text):
++            return ItemListMultilineInputItem(presentationData: presentationData, systemStyle: .glass, text: text, placeholder: "pattern", maxLength: ItemListMultilineInputItemTextLimit(value: 16500, display: true), sectionId: self.section, style: .blocks, capitalization: false, autocorrection: false, textUpdated: arguments.text)
++        case let .save(title):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: arguments.save)
++        case let .info(_, text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        }
++    }
++}
++
++public func ayuChatOptionsController(context: AccountContext, regex: Bool) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    let draft = ValuePromise<String>(store.current.regexFilters.patterns.joined(separator: "\n"), ignoreRepeated: true)
++    let draftText = Atomic<String>(value: store.current.regexFilters.patterns.joined(separator: "\n"))
++    var presentError: ((String) -> Void)?
++    let arguments = AyuOptionsArguments(toggle: { id, value in
++        do {
++            try store.update { settings in
++                if regex {
++                    switch id {
++                    case 0: settings.regexFilters.enabled = value
++                    case 1: settings.regexFilters.includeChats = value
++                    case 2: settings.regexFilters.caseInsensitive = value
++                    default: break
++                    }
++                } else {
++                    let mode: AyuGhostModeSettings.SilentSendMode = id == 0 ? .always : .inGhostMode
++                    if value { settings.silentSendMode = mode }
++                    else if settings.silentSendMode == mode { settings.silentSendMode = .never }
++                }
++            }
++        } catch { presentError?(error.localizedDescription) }
++    }, text: { text in
++        let _ = draftText.swap(text)
++        draft.set(text)
++    }, save: {
++        do {
++            try store.update { settings in
++                settings.regexFilters.patterns = draftText.with { $0.components(separatedBy: .newlines).filter { !$0.isEmpty } }
++            }
++        } catch { presentError?(error.localizedDescription) }
++    })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal, draft.get())
++    |> deliverOnMainQueue
++    |> map { presentationData, settings, text -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let entries: [AyuOptionsEntry]
++        if regex {
++            entries = [
++                .toggle(0, ru ? "Скрывать совпавшие сообщения" : "Hide matching messages", settings.regexFilters.enabled),
++                .toggle(1, ru ? "Также в личных чатах и группах" : "Also in private chats and groups", settings.regexFilters.includeChats),
++                .toggle(2, ru ? "Без учёта регистра" : "Case insensitive", settings.regexFilters.caseInsensitive),
++                .info(3, ru ? "Одно регулярное выражение на строку, до 32 правил по 512 байт. По умолчанию фильтруются только каналы. Сообщения скрываются локально; база и синхронизация сохраняются. Альбом скрывается целиком при совпадении загруженной подписи. Реклама, служебные и секретные сообщения не фильтруются. Поиск и выбор сообщений показывают оригиналы. При исчерпании бюджета обработки часть сообщений может остаться видимой." : "One regular expression per line; up to 32 rules of 512 bytes. Channels only by default. Messages are hidden locally; database and synchronization are unchanged. Albums are hidden when a loaded caption matches. Ads, service and secret messages are excluded. Search/navigation and selection show originals. Messages can remain visible if the processing budget is exceeded."),
++                .input(text),
++                .save(ru ? "Сохранить правила" : "Save rules")
++            ]
++        } else {
++            entries = [
++                .toggle(0, ru ? "Всегда отправлять без звука" : "Always send without sound", settings.silentSendMode == .always),
++                .toggle(1, ru ? "Без звука в Ghost Mode" : "Send silently in Ghost Mode", settings.silentSendMode == .inGhostMode),
++                .info(2, ru ? "Режимы взаимоисключающие. Если оба выключены, используется обычный способ отправки. Явная отправка без звука в меню Telegram сохраняется при любом режиме. Настройка применяется к новым облачным сообщениям, медиа, альбомам и пересылкам." : "Choose either mode, or turn both off for ordinary sending. Telegram's explicit Send Without Sound option remains effective in every mode. Applies to new cloud messages, media, albums and forwards.")
++            ]
++        }
++        let data = ItemListPresentationData(presentationData)
++        let title = regex ? (ru ? "Regex-фильтры" : "Regex Filters") : (ru ? "Отправка сообщений" : "Sending Options")
++        let state = ItemListControllerState(presentationData: data, title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    presentError = { [weak controller] message in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: message, actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++    return controller
++}
 diff --git a/submodules/SettingsUI/Sources/AyuGhostModeController.swift b/submodules/SettingsUI/Sources/AyuGhostModeController.swift
 new file mode 100644
 index 00000000..ba3acdfe
@@ -341,10 +459,10 @@ index 00000000..ba3acdfe
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..f59678d6
+index 00000000..4a36441f
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,209 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -354,11 +472,19 @@ index 00000000..f59678d6
 +import PresentationDataUtils
 +import ItemListUI
 +import AccountContext
++import TextFormat
 +
 +private struct AyuSettingsArguments {
 +    let open: (Int32) -> Void
 +    let update: (Int32, Bool) -> Void
 +    let record: (Int32) -> Void
++    let context: AccountContext?
++    init(open: @escaping (Int32) -> Void, update: @escaping (Int32, Bool) -> Void, record: @escaping (Int32) -> Void, context: AccountContext? = nil) {
++        self.open = open
++        self.update = update
++        self.record = record
++        self.context = context
++    }
 +}
 +
 +private enum AyuSettingsEntry: ItemListNodeEntry {
@@ -367,6 +493,7 @@ index 00000000..f59678d6
 +    case info(Int32, String)
 +    case clear(String)
 +    case record(AyuMessageHistoryRecord)
++    case richText(AyuMessageHistoryRecord)
 +
 +    var section: ItemListSectionId {
 +        switch self {
@@ -380,6 +507,7 @@ index 00000000..f59678d6
 +        case let .link(id, _), let .toggle(id, _, _), let .info(id, _): return Int64(id)
 +        case .clear: return 10
 +        case let .record(record): return 100 + Int64(record.id)
++        case .richText: return 1
 +        }
 +    }
 +
@@ -399,6 +527,13 @@ index 00000000..f59678d6
 +            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { arguments.update(id, $0) })
 +        case let .info(_, text):
 +            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        case let .richText(record):
++            guard let context = arguments.context else {
++                return ItemListTextItem(presentationData: presentationData, text: .plain(record.text), sectionId: self.section)
++            }
++            let size = presentationData.fontSize.itemListBaseFontSize
++            let text = stringWithAppliedEntities(record.text, entities: record.formattingEntities, baseColor: presentationData.theme.list.itemPrimaryTextColor, linkColor: presentationData.theme.list.itemAccentColor, baseFont: Font.regular(size), linkFont: Font.regular(size), boldFont: Font.semibold(size), italicFont: Font.italic(size), boldItalicFont: Font.semiboldItalic(size), fixedFont: Font.monospace(size), blockQuoteFont: Font.regular(size), message: nil)
++            return ItemListTextItem(presentationData: presentationData, text: .custom(context: context, string: text), sectionId: self.section)
 +        case let .clear(title):
 +            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: { arguments.open(10) })
 +        case let .record(record):
@@ -413,7 +548,13 @@ index 00000000..f59678d6
 +public func ayuSettingsController(context: AccountContext) -> ViewController {
 +    var push: ((ViewController) -> Void)?
 +    let arguments = AyuSettingsArguments(open: { id in
-+        push?(id == 0 ? ayuGhostModeController(context: context) : ayuMessageHistoryController(context: context))
++        switch id {
++        case 0: push?(ayuGhostModeController(context: context))
++        case 1: push?(ayuMessageHistoryController(context: context))
++        case 2: push?(ayuChatOptionsController(context: context, regex: false))
++        case 3: push?(ayuChatOptionsController(context: context, regex: true))
++        default: break
++        }
 +    }, update: { _, _ in }, record: { _ in })
 +    let signal = context.sharedContext.presentationData
 +    |> deliverOnMainQueue
@@ -422,7 +563,9 @@ index 00000000..f59678d6
 +        let entries: [AyuSettingsEntry] = [
 +            .link(0, "Ghost Mode"),
 +            .link(1, ru ? "История сообщений" : "Message History"),
-+            .info(2, ru ? "Неофициальный клиент. Доступны Ghost Mode и экспериментальный локальный архив текста. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Includes Ghost Mode and an experimental local text archive. Full AyuGram feature parity is still in progress.")
++            .link(2, ru ? "Отправка сообщений" : "Sending Options"),
++            .link(3, ru ? "Regex-фильтры" : "Regex Filters"),
++            .info(4, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
@@ -446,7 +589,7 @@ index 00000000..f59678d6
 +            })
 +        ]))
 +    }, update: { id, value in
-+        let _ = context.engine.messages.updateAyuMessageHistory(saveEdits: id == 0 ? value : nil, saveDeleted: id == 1 ? value : nil).startStandalone()
++        let _ = context.engine.messages.updateAyuMessageHistory(saveEdits: id == 0 ? value : nil, saveDeleted: id == 1 ? value : nil, saveFormatting: id == 2 ? value : nil, saveReactions: id == 3 ? value : nil, saveForBots: id == 4 ? value : nil).startStandalone()
 +    }, record: { id in
 +        push?(ayuHistoryRecordController(context: context, recordId: id))
 +    })
@@ -457,14 +600,17 @@ index 00000000..f59678d6
 +        var entries: [AyuSettingsEntry] = [
 +            .toggle(0, ru ? "Сохранять текст до правки" : "Save text before edits", history.saveEdits),
 +            .toggle(1, ru ? "Сохранять удалённый текст" : "Save deleted text", history.saveDeleted),
-+            .info(2, ru ? "Только уже загруженный текст обычных облачных сообщений. До 100 записей за 7 дней, до 8 КБ каждая. Фото и файлы не копируются. Защищённые, секретные и исчезающие сообщения исключены; неизвестный срок хранения чата также исключает сохранение. Архив находится в базе этого аккаунта на устройстве." : "Only text already received in ordinary cloud messages. Up to 100 entries for 7 days, up to 8 KB each. Photos and files are not copied. Protected, secret and disappearing messages are excluded, including chats whose lifetime is unknown. The archive stays in this account's local database.")
++            .toggle(2, ru ? "Сохранять форматирование" : "Save formatting", history.saveFormatting),
++            .toggle(3, ru ? "Сохранять реакции" : "Save reactions", history.saveReactions),
++            .toggle(4, ru ? "Сохранять сообщения ботов" : "Save bot messages", history.saveForBots),
++            .info(5, ru ? "Только уже загруженный текст обычных облачных сообщений. До 100 записей за 7 дней, до 8 КБ каждая. Фото и файлы не копируются. Защищённые, секретные и исчезающие сообщения исключены; неизвестный срок хранения чата также исключает сохранение. Архив находится в базе этого аккаунта на устройстве." : "Only text already received in ordinary cloud messages. Up to 100 entries for 7 days, up to 8 KB each. Photos and files are not copied. Protected, secret and disappearing messages are excluded, including chats whose lifetime is unknown. The archive stays in this account's local database.")
 +        ]
 +        let records = history.records.filter { record in
 +            guard let messageId else { return true }
 +            return record.peerId == messageId.peerId.toInt64() && record.messageId == messageId.id
 +        }
 +        if records.isEmpty {
-+            entries.append(.info(3, ru ? "Архив пока пуст. Записи появятся после новых правок или удалений при включённых переключателях." : "The archive is empty. Entries are collected from future edits or deletions while enabled."))
++            entries.append(.info(6, ru ? "Архив пока пуст. Записи появятся после новых правок или удалений при включённых переключателях." : "The archive is empty. Entries are collected from future edits or deletions while enabled."))
 +        } else {
 +            entries.append(.clear(ru ? "Очистить архив" : "Clear archive"))
 +            entries.append(contentsOf: records.reversed().map { .record($0) })
@@ -515,13 +661,14 @@ index 00000000..f59678d6
 +        var entries: [AyuSettingsEntry] = []
 +        if let record = history.records.first(where: { $0.id == recordId }) {
 +            let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(record.capturedAt)), dateStyle: .medium, timeStyle: .medium)
-+            entries = [.info(0, "Peer ID: \(record.peerId)\nMessage ID: \(record.messageId)\n\(date)"), .info(1, record.text)]
++            entries = [.info(0, "Internal peer ID: \(record.peerId)\nMessage ID: \(record.messageId)\n\(date)"), .richText(record)]
++            if !record.reactionSummary.isEmpty { entries.append(.info(2, record.reactionSummary)) }
 +        } else {
 +            entries = [.info(0, ru ? "Запись удалена или срок хранения истёк." : "This entry was cleared or has expired.")]
 +        }
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-+        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), AyuSettingsArguments(open: { _ in }, update: { _, _ in }, record: { _ in })))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), AyuSettingsArguments(open: { _ in }, update: { _, _ in }, record: { _ in }, context: context)))
 +    }
 +    return ItemListController(context: context, state: signal)
 +}
@@ -679,19 +826,38 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..899db7ae
+index 00000000..53b26ae5
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,127 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
 +/// receipts deliberately retain the upstream behavior, including expiration handling.
 +public struct AyuGhostModeSettings: Codable, Equatable {
++    public enum SilentSendMode: String, Codable { case never, inGhostMode, always }
 +    public var hideReadReceipts: Bool
 +    public var hideOnline: Bool
 +    public var hideTyping: Bool
 +    public var hideUploadProgress: Bool
++    public var silentSendMode: SilentSendMode = .never
++    public var regexFilters = AyuRegexSettings()
++
++    private enum CodingKeys: String, CodingKey {
++        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters
++    }
++
++    public init(from decoder: Decoder) throws {
++        let values = try decoder.container(keyedBy: CodingKeys.self)
++        self.hideReadReceipts = try values.decodeIfPresent(Bool.self, forKey: .hideReadReceipts) ?? false
++        self.hideOnline = try values.decodeIfPresent(Bool.self, forKey: .hideOnline) ?? false
++        self.hideTyping = try values.decodeIfPresent(Bool.self, forKey: .hideTyping) ?? false
++        self.hideUploadProgress = try values.decodeIfPresent(Bool.self, forKey: .hideUploadProgress) ?? false
++        self.silentSendMode = (try? values.decode(SilentSendMode.self, forKey: .silentSendMode)) ?? .never
++        self.regexFilters = (try? values.decode(AyuRegexSettings.self, forKey: .regexFilters)) ?? AyuRegexSettings()
++        do { try self.regexFilters.validate() }
++        catch { self.regexFilters = AyuRegexSettings() }
++    }
 +
 +    public init(hideReadReceipts: Bool = false, hideOnline: Bool = false, hideTyping: Bool = false, hideUploadProgress: Bool = false) {
 +        self.hideReadReceipts = hideReadReceipts
@@ -702,6 +868,18 @@ index 00000000..899db7ae
 +
 +    public var allEnabled: Bool {
 +        return self.hideReadReceipts && self.hideOnline && self.hideTyping && self.hideUploadProgress
++    }
++
++    public var isActive: Bool {
++        return self.hideReadReceipts || self.hideOnline || self.hideTyping || self.hideUploadProgress
++    }
++
++    public var shouldSendSilently: Bool {
++        switch self.silentSendMode {
++        case .never: return false
++        case .inGhostMode: return self.isActive
++        case .always: return true
++        }
 +    }
 +
 +    public mutating func setAllEnabled(_ enabled: Bool) {
@@ -749,6 +927,7 @@ index 00000000..899db7ae
 +        var updated = self.value
 +        transform(&updated)
 +        guard updated != self.value else { return }
++        try updated.regexFilters.validate()
 +        let data = try JSONEncoder().encode(updated)
 +        #if os(iOS)
 +        try data.write(to: self.fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
@@ -780,15 +959,39 @@ index 00000000..899db7ae
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
 new file mode 100644
-index 00000000..171c8c0b
+index 00000000..14574d5f
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,122 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
 +
 +private let ayuHistoryKey = applicationSpecificPreferencesKey(19901)
++
++public extension AyuMessageHistoryRecord {
++    var formattingEntities: [MessageTextEntity] {
++        guard let formatting else { return [] }
++        return (try? JSONDecoder().decode([MessageTextEntity].self, from: formatting)) ?? []
++    }
++
++    var reactionSummary: String {
++        guard let reactions, let values = try? JSONDecoder().decode([MessageReaction].self, from: reactions) else { return "" }
++        return values.map { reaction in
++            let label: String
++            switch reaction.value {
++            case let .builtin(value): label = value
++            case let .custom(id): label = "emoji:\(id)"
++            case .stars: label = "⭐"
++            }
++            return "\(label) × \(reaction.count)"
++        }.joined(separator: "  ")
++    }
++}
++
++private func ayuHistoryEntities(_ attributes: [MessageAttribute]) -> [MessageTextEntity] {
++    return (attributes.first(where: { $0 is TextEntitiesMessageAttribute }) as? TextEntitiesMessageAttribute)?.entities ?? []
++}
 +
 +private func ayuHistoryPeerAllowsArchiving(transaction: Transaction, peerId: PeerId) -> Bool {
 +    guard [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
@@ -835,12 +1038,20 @@ index 00000000..171c8c0b
 +    state.prune(now: now)
 +    let peerAllows = ayuHistoryPeerAllowsArchiving(transaction: transaction, peerId: message.id.peerId)
 +    let updateAllows = updated.map { !$0.flags.contains(.CopyProtected) && !ayuHistoryHasExpiringAttribute($0.attributes) && $0.media.allSatisfy { $0 is TelegramMediaWebpage } } ?? true
++    let entities = ayuHistoryEntities(message.attributes)
++    let contentChanged = updated.map { $0.text != message.text || (state.saveFormatting && ayuHistoryEntities($0.attributes) != entities) } ?? true
++    let isBot = (transaction.getPeer(message.id.peerId) as? TelegramUser)?.botInfo != nil || (message.author as? TelegramUser)?.botInfo != nil
++    let shouldCapture = kind == .edited ? state.saveEdits : state.saveDeleted
 +    if !peerAllows {
 +        state.remove(peerId: message.id.peerId.toInt64())
 +    } else if message.id.namespace != Namespaces.Message.Cloud || message.isCopyProtected() || ayuHistoryHasExpiringAttribute(message.attributes) || !updateAllows {
 +        state.remove(peerId: message.id.peerId.toInt64(), messageId: message.id.id)
-+    } else if message.media.allSatisfy({ $0 is TelegramMediaWebpage }), updated == nil || updated?.text != message.text {
-+        state.append(peerId: message.id.peerId.toInt64(), messageId: message.id.id, messageTimestamp: message.timestamp, kind: kind, text: message.text, now: now)
++    } else if shouldCapture, state.saveForBots || !isBot, message.media.allSatisfy({ $0 is TelegramMediaWebpage }), contentChanged {
++        let encoder = JSONEncoder()
++        encoder.outputFormatting = .sortedKeys
++        let formatting = state.saveFormatting ? (try? encoder.encode(entities)) : nil
++        let reactions = state.saveReactions ? (try? encoder.encode(message.reactionsAttribute?.reactions ?? [])) : nil
++        state.append(peerId: message.id.peerId.toInt64(), messageId: message.id.id, messageTimestamp: message.timestamp, kind: kind, text: message.text, now: now, formatting: formatting, reactions: reactions)
 +    }
 +    if state != original {
 +        transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in PreferencesEntry(state) })
@@ -858,12 +1069,15 @@ index 00000000..171c8c0b
 +        |> distinctUntilChanged
 +    }
 +
-+    func updateAyuMessageHistory(saveEdits: Bool? = nil, saveDeleted: Bool? = nil, clear: Bool = false) -> Signal<Void, NoError> {
++    func updateAyuMessageHistory(saveEdits: Bool? = nil, saveDeleted: Bool? = nil, saveFormatting: Bool? = nil, saveReactions: Bool? = nil, saveForBots: Bool? = nil, clear: Bool = false) -> Signal<Void, NoError> {
 +        return self.account.postbox.transaction { transaction -> Void in
 +            transaction.updatePreferencesEntry(key: ayuHistoryKey, { entry in
 +                var state = entry?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
 +                if let saveEdits { state.saveEdits = saveEdits }
 +                if let saveDeleted { state.saveDeleted = saveDeleted }
++                if let saveFormatting { state.saveFormatting = saveFormatting }
++                if let saveReactions { state.saveReactions = saveReactions }
++                if let saveForBots { state.saveForBots = saveForBots }
 +                if clear { state.clear() }
 +                state.prune(now: Int64(Date().timeIntervalSince1970))
 +                return PreferencesEntry(state)
@@ -873,10 +1087,10 @@ index 00000000..171c8c0b
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
 new file mode 100644
-index 00000000..df2f7c25
+index 00000000..c8a87cd8
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,84 @@
 +import Foundation
 +
 +public struct AyuMessageHistoryRecord: Codable, Equatable {
@@ -888,12 +1102,17 @@ index 00000000..df2f7c25
 +    public let capturedAt: Int64
 +    public let kind: Kind
 +    public let text: String
++    public let formatting: Data?
++    public let reactions: Data?
 +}
 +
 +/// A bounded text-only ledger. It is stored inside the account's Postbox transaction.
 +public struct AyuMessageHistoryState: Codable, Equatable {
 +    public var saveEdits = false
 +    public var saveDeleted = false
++    public var saveFormatting = true
++    public var saveReactions = true
++    public var saveForBots = true
 +    public private(set) var records: [AyuMessageHistoryRecord] = []
 +    private var nextId: Int32 = 1
 +    public static let maximumRecords = 100
@@ -901,6 +1120,26 @@ index 00000000..df2f7c25
 +    public static let maximumTextLength = 8192
 +
 +    public init() {}
++
++    private enum CodingKeys: String, CodingKey {
++        case saveEdits, saveDeleted, saveFormatting, saveReactions, saveForBots, records, nextId
++    }
++
++    public init(from decoder: Decoder) throws {
++        let values = try decoder.container(keyedBy: CodingKeys.self)
++        self.saveEdits = try values.decodeIfPresent(Bool.self, forKey: .saveEdits) ?? false
++        self.saveDeleted = try values.decodeIfPresent(Bool.self, forKey: .saveDeleted) ?? false
++        self.saveFormatting = try values.decodeIfPresent(Bool.self, forKey: .saveFormatting) ?? true
++        self.saveReactions = try values.decodeIfPresent(Bool.self, forKey: .saveReactions) ?? true
++        self.saveForBots = try values.decodeIfPresent(Bool.self, forKey: .saveForBots) ?? true
++        self.records = try values.decodeIfPresent([AyuMessageHistoryRecord].self, forKey: .records) ?? []
++        self.nextId = try values.decodeIfPresent(Int32.self, forKey: .nextId) ?? 1
++        if self.nextId <= 0 || self.records.contains(where: { $0.id >= self.nextId }) {
++            let maximum = self.records.map { $0.id }.max() ?? 0
++            if maximum == Int32.max { self.records.removeAll(); self.nextId = 1 }
++            else { self.nextId = maximum + 1 }
++        }
++    }
 +
 +    public mutating func clear() { self.records.removeAll() }
 +
@@ -917,21 +1156,92 @@ index 00000000..df2f7c25
 +        }
 +    }
 +
-+    public mutating func append(peerId: Int64, messageId: Int32, messageTimestamp: Int32, kind: AyuMessageHistoryRecord.Kind, text: String, now: Int64) {
++    public mutating func append(peerId: Int64, messageId: Int32, messageTimestamp: Int32, kind: AyuMessageHistoryRecord.Kind, text: String, now: Int64, formatting: Data? = nil, reactions: Data? = nil) {
 +        self.prune(now: now)
 +        guard (kind == .edited ? self.saveEdits : self.saveDeleted), !text.isEmpty else { return }
 +        // Reject oversized content rather than silently truncating an archived version.
 +        guard text.utf8.count <= Self.maximumTextLength else { return }
-+        if let last = self.records.last(where: { $0.peerId == peerId && $0.messageId == messageId && $0.kind == kind }), last.text == text {
++        let formatting = self.saveFormatting && (formatting?.count ?? 0) <= 16_384 ? formatting : nil
++        let reactions = self.saveReactions && (reactions?.count ?? 0) <= 16_384 ? reactions : nil
++        if let last = self.records.last(where: { $0.peerId == peerId && $0.messageId == messageId && $0.kind == kind }), last.text == text && last.formatting == formatting && last.reactions == reactions {
 +            return
 +        }
 +        if self.nextId == Int32.max {
 +            self.records.removeAll()
 +            self.nextId = 1
 +        }
-+        self.records.append(AyuMessageHistoryRecord(id: self.nextId, peerId: peerId, messageId: messageId, messageTimestamp: messageTimestamp, capturedAt: now, kind: kind, text: text))
++        self.records.append(AyuMessageHistoryRecord(id: self.nextId, peerId: peerId, messageId: messageId, messageTimestamp: messageTimestamp, capturedAt: now, kind: kind, text: text, formatting: formatting, reactions: reactions))
 +        self.nextId += 1
 +        self.prune(now: now)
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift
+new file mode 100644
+index 00000000..b186c962
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift
+@@ -0,0 +1,63 @@
++import Foundation
++
++public struct AyuRegexSettings: Codable, Equatable {
++    public var enabled = false
++    public var includeChats = false
++    public var caseInsensitive = true
++    public var patterns: [String] = []
++    public init() {}
++
++    public func validate() throws {
++        guard self.patterns.count <= 32 else {
++            throw NSError(domain: "AyuRegex", code: 1, userInfo: [NSLocalizedDescriptionKey: "Use at most 32 patterns."])
++        }
++        for (index, pattern) in self.patterns.enumerated() {
++            guard !pattern.isEmpty, pattern.utf8.count <= 512 else {
++                throw NSError(domain: "AyuRegex", code: 2, userInfo: [NSLocalizedDescriptionKey: "Pattern \(index + 1) must contain 1–512 UTF-8 bytes."])
++            }
++            do {
++                let _ = try NSRegularExpression(pattern: pattern, options: .anchorsMatchLines)
++            } catch {
++                throw NSError(domain: "AyuRegex", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid pattern \(index + 1): \(error.localizedDescription)"])
++            }
++        }
++    }
++}
++
++/// Immutable compiled expressions are shared; matching never stores message text.
++public final class AyuRegexMatcher {
++    public static let shared = AyuRegexMatcher()
++    private let lock = NSLock()
++    private var cachedSettings: AyuRegexSettings?
++    private var cachedExpressions: [NSRegularExpression] = []
++    private init() {}
++
++    public func matches(_ text: String, settings: AyuRegexSettings, deadline: TimeInterval) -> Bool {
++        guard settings.enabled, !settings.patterns.isEmpty, !text.isEmpty,
++              text.utf8.count <= 16_384, Date.timeIntervalSinceReferenceDate < deadline else { return false }
++        self.lock.lock()
++        if self.cachedSettings != settings {
++            var options: NSRegularExpression.Options = [.anchorsMatchLines]
++            if settings.caseInsensitive { options.insert(.caseInsensitive) }
++            self.cachedExpressions = settings.patterns.compactMap { try? NSRegularExpression(pattern: $0, options: options) }
++            self.cachedSettings = settings
++        }
++        let expressions = self.cachedExpressions
++        self.lock.unlock()
++        let range = NSRange(text.startIndex ..< text.endIndex, in: text)
++        for expression in expressions {
++            guard Date.timeIntervalSinceReferenceDate < deadline else { return false }
++            var matched = false
++            expression.enumerateMatches(in: text, options: [.reportProgress], range: range) { result, _, stop in
++                if Date.timeIntervalSinceReferenceDate >= deadline {
++                    stop.pointee = true
++                } else if result != nil {
++                    matched = true
++                    stop.pointee = true
++                }
++            }
++            if matched { return true }
++        }
++        return false
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/Network/Network.swift b/submodules/TelegramCore/Sources/Network/Network.swift
@@ -1056,10 +1366,18 @@ index e8e08874..5e9ee37c 100644
              if peerId == accountPeerId {
                  return .complete()
 diff --git a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
-index a5cf2d90..9eaef572 100644
+index a5cf2d90..4b805aaa 100644
 --- a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
 +++ b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
-@@ -1510,6 +1510,7 @@ public final class PendingMessageManager {
+@@ -1226,6 +1226,7 @@ public final class PendingMessageManager {
+                 var suggestedPost: Api.SuggestedPost?
+                 
+                 var flags: Int32 = 0
++                if network.ayuGhostMode.current.shouldSendSilently { flags |= Int32(1 << 5) }
+                 
+                 for attribute in messages[0].0.attributes {
+                     if let replyAttribute = attribute as? ReplyMessageAttribute {
+@@ -1510,6 +1511,7 @@ public final class PendingMessageManager {
                  return sendMessageRequest
                  |> deliverOn(queue)
                  |> mapToSignal { result -> Signal<Void, MTRpcError> in
@@ -1067,7 +1385,15 @@ index a5cf2d90..9eaef572 100644
                      if let strongSelf = self {
                          return strongSelf.applySentGroupMessages(postbox: postbox, stateManager: stateManager, messages: messages.map { $0.0 }, result: result)
                          |> mapError { _ -> MTRpcError in
-@@ -2132,6 +2133,7 @@ public final class PendingMessageManager {
+@@ -1728,6 +1730,7 @@ public final class PendingMessageManager {
+                 var suggestedPost: Api.SuggestedPost?
+                 
+                 var flags: Int32 = 0
++                if network.ayuGhostMode.current.shouldSendSilently { flags |= Int32(1 << 5) }
+                 
+                 var topMsgId: Int32?
+                 var monoforumPeerId: Api.InputPeer?
+@@ -2132,6 +2135,7 @@ public final class PendingMessageManager {
                              |> mapError { _ -> MTRpcError in
                              }
                          case let .result(result):
@@ -1203,10 +1529,10 @@ index a4873696..ca936b38 100644
          interaction.openSettings(.savedMessages)
      }))
 diff --git a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
-index face5ae7..17fa4773 100644
+index face5ae7..9d9bb710 100644
 --- a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 +++ b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
-@@ -45,7 +45,18 @@ extension ChatControllerImpl {
+@@ -45,7 +45,22 @@ extension ChatControllerImpl {
              self.secondaryRightNavigationButton = nil
          }
  
@@ -1215,6 +1541,10 @@ index face5ae7..17fa4773 100644
 +        if case .standard(.default) = self.mode, presentationInterfaceState.interfaceState.selectionState == nil {
 +            let settings = self.context.account.network.ayuGhostMode.current
 +            let enabled = settings.hideReadReceipts || settings.hideOnline || settings.hideTyping || settings.hideUploadProgress
++            if self.ayuGhostButtonEnabled != enabled {
++                self.ayuGhostBarButton = UIBarButtonItem(image: enabled ? ayuGhostNavigationImage : ayuGhostNavigationOffImage, style: .plain, target: self, action: #selector(self.ayuGhostButtonPressed))
++                self.ayuGhostButtonEnabled = enabled
++            }
 +            self.ayuGhostBarButton.image = enabled ? ayuGhostNavigationImage : ayuGhostNavigationOffImage
 +            self.ayuGhostBarButton.target = self
 +            self.ayuGhostBarButton.action = #selector(self.ayuGhostButtonPressed)
@@ -1226,7 +1556,7 @@ index face5ae7..17fa4773 100644
          var rightBarButtonsUpdated = false
          let currentRightBarButtons = self.navigationItem.rightBarButtonItems ?? []
          if rightBarButtons.count != currentRightBarButtons.count {
-@@ -64,6 +75,41 @@ extension ChatControllerImpl {
+@@ -64,6 +79,41 @@ extension ChatControllerImpl {
      }
  }
  
@@ -1269,19 +1599,20 @@ index face5ae7..17fa4773 100644
      selfController: ChatControllerImpl,
      transition: ContainedViewLayoutTransition,
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..9a773882 100644
+index 5fe58bbf..fa45ce60 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
-@@ -310,6 +310,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -310,6 +310,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      var leftNavigationButton: ChatNavigationButton?
      var rightNavigationButton: ChatNavigationButton?
      var secondaryRightNavigationButton: ChatNavigationButton?
-+    let ayuGhostBarButton = UIBarButtonItem()
++    var ayuGhostBarButton = UIBarButtonItem()
++    var ayuGhostButtonEnabled: Bool?
 +    let ayuGhostSettingsDisposable = MetaDisposable()
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
-@@ -768,6 +770,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -768,6 +771,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
          self.ready.set(.never())
@@ -1294,7 +1625,7 @@ index 5fe58bbf..9a773882 100644
          
          self.chatBackgroundNode.contentStatsUpdated = { [weak self] in
              guard let self else {
-@@ -7082,6 +7090,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7082,6 +7091,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
  
      deinit {
@@ -1302,7 +1633,7 @@ index 5fe58bbf..9a773882 100644
          let _ = ChatControllerCount.modify { value in
              return value - 1
          }
-@@ -8639,6 +8648,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8639,6 +8649,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              self.navigationButtonAction(button.action)
          }
      }
@@ -1313,6 +1644,62 @@ index 5fe58bbf..9a773882 100644
      
      @objc func moreButtonPressed() {
          self.moreBarButton.play()
+diff --git a/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift b/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
+index b32f929d..ac85ca89 100644
+--- a/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
++++ b/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
+@@ -140,9 +140,36 @@ func chatHistoryEntriesForView(
+         }
+     }
+     
++    let ayuRegex = context.account.network.ayuGhostMode.current.regexFilters
++    var ayuFilteredMessageIds = Set<MessageId>()
++    var ayuFilteredGroups = Set<Int64>()
++    var ayuCanFilter = ayuRegex.enabled && subject == nil && selectedMessages == nil
++    if let peerId = location.peerId {
++        ayuCanFilter = ayuCanFilter && peerId.namespace != Namespaces.Peer.SecretChat
++        if !ayuRegex.includeChats {
++            ayuCanFilter = ayuCanFilter && peerId.namespace == Namespaces.Peer.CloudChannel
++        }
++    } else {
++        ayuCanFilter = false
++    }
++    if ayuCanFilter {
++        let deadline = Date.timeIntervalSinceReferenceDate + 0.03
++        for entry in view.entries {
++            let message = entry.message
++            guard message.id.namespace == Namespaces.Message.Cloud, message.adAttribute == nil,
++                  !message.media.contains(where: { $0 is TelegramMediaAction }) else { continue }
++            if AyuRegexMatcher.shared.matches(message.text, settings: ayuRegex, deadline: deadline) {
++                ayuFilteredMessageIds.insert(message.id)
++                if let groupingKey = message.groupingKey { ayuFilteredGroups.insert(groupingKey) }
++            }
++        }
++    }
+     var count = 0
+     loop: for entry in view.entries {
+         var message = entry.message.withAppliedEphemeralReplacementMessage()
++        if message.adAttribute == nil && (ayuFilteredMessageIds.contains(message.id) || message.groupingKey.map({ ayuFilteredGroups.contains($0) }) == true) {
++            continue
++        }
+         var isRead = entry.isRead
+         
+         var pinToTop = false
+diff --git a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
+index 0fb1ee10..55cf0f23 100644
+--- a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
++++ b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
+@@ -2056,7 +2056,9 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+         let messageViewQueue = Queue.mainQueue()
+         let historyViewTransitionDisposable = (combineLatest(queue: messageViewQueue,
+             historyViewUpdate |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_historyViewUpdate"),
+-            self.chatPresentationDataPromise.get() |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_chatPresentationData"),
++            combineLatest(self.chatPresentationDataPromise.get(), context.account.network.ayuGhostMode.signal)
++            |> map { presentationData, _ in presentationData }
++            |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_chatPresentationData"),
+             selectedMessages |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_selectedMessages"),
+             updatingMedia |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_updatingMedia"),
+             automaticDownloadNetworkType |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_automaticDownloadNetworkType"),
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 index 1ade8c01..0590db86 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
@@ -1337,10 +1724,10 @@ index 1ade8c01..0590db86 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..aa38b563
+index 00000000..1a04efed
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,136 @@
 +import Foundation
 +
 +// Standalone tests compile the actual Foundation settings/store source, not a copy.
@@ -1438,3 +1825,42 @@ index 00000000..aa38b563
 +history.prune(now: now)
 +check(history.records.isEmpty, "Reject future-dated entries after a clock correction")
 +print("PASS: \(checks) total AyuGram store/history model checks; network/Postbox/UI integration not covered")
++
++let oldGhost = try JSONDecoder().decode(AyuGhostModeSettings.self, from: Data("{\"hideReadReceipts\":true,\"hideOnline\":true,\"hideTyping\":false,\"hideUploadProgress\":false}".utf8))
++check(oldGhost.hideReadReceipts && oldGhost.hideOnline && !oldGhost.regexFilters.enabled && oldGhost.silentSendMode == .never, "New settings must migrate existing Ghost Mode files without resetting privacy")
++var silent = AyuGhostModeSettings()
++silent.silentSendMode = .inGhostMode
++check(!silent.shouldSendSilently, "Conditional silent sending stays off without Ghost Mode")
++silent.hideTyping = true
++check(silent.shouldSendSilently, "Conditional silent sending follows actual Ghost Mode policy")
++silent.silentSendMode = .never
++check(!silent.shouldSendSilently, "Never mode must preserve explicit upstream send choices")
++silent.setAllEnabled(false)
++silent.silentSendMode = .always
++check(silent.shouldSendSilently, "Always mode works independently of Ghost Mode")
++var regex = AyuRegexSettings()
++regex.enabled = true
++regex.patterns = ["^sale"]
++try regex.validate()
++check(AyuRegexMatcher.shared.matches("News\nSALE today", settings: regex, deadline: Date.timeIntervalSinceReferenceDate + 1), "Multiline and case-insensitive regex matching")
++regex.caseInsensitive = false
++check(!AyuRegexMatcher.shared.matches("SALE today", settings: regex, deadline: Date.timeIntervalSinceReferenceDate + 1), "Case-sensitive settings must invalidate the compiled cache")
++regex.enabled = false
++check(!AyuRegexMatcher.shared.matches("sale", settings: regex, deadline: Date.timeIntervalSinceReferenceDate + 1), "Disabled filters must show original content")
++regex.enabled = true
++check(!AyuRegexMatcher.shared.matches("sale", settings: regex, deadline: Date.timeIntervalSinceReferenceDate - 1), "Expired matching budget must not hide content")
++regex.patterns = ["("]
++do { try regex.validate(); fatalError("Invalid regex accepted") } catch { check(true, "Reject malformed regex") }
++let beforeInvalid = concurrentStore.current
++do { try concurrentStore.update { $0.regexFilters = regex }; fatalError("Invalid regex persisted") } catch { check(concurrentStore.current == beforeInvalid, "Invalid rules must not overwrite working privacy settings") }
++let migratedHistory = try JSONDecoder().decode(AyuMessageHistoryState.self, from: Data("{\"saveEdits\":true,\"saveDeleted\":true,\"records\":[],\"nextId\":1}".utf8))
++check(migratedHistory.saveEdits && migratedHistory.saveFormatting && migratedHistory.saveReactions, "History metadata migration preserves capture preferences")
++var metadataHistory = AyuMessageHistoryState()
++metadataHistory.saveEdits = true
++metadataHistory.append(peerId: 1, messageId: 1, messageTimestamp: 1, kind: .edited, text: "text", now: now, formatting: Data([1]), reactions: Data([2]))
++check(metadataHistory.records.first?.formatting == Data([1]) && metadataHistory.records.first?.reactions == Data([2]), "Archive optional metadata with the captured version")
++metadataHistory.saveFormatting = false
++metadataHistory.saveReactions = false
++metadataHistory.append(peerId: 1, messageId: 2, messageTimestamp: 1, kind: .edited, text: "text", now: now, formatting: Data([1]), reactions: Data([2]))
++check(metadataHistory.records.last?.formatting == nil && metadataHistory.records.last?.reactions == nil, "Metadata opt-outs must affect actual stored payloads")
++print("PASS: \(checks) total AyuGram model checks; full type checking and device behavior are separate")

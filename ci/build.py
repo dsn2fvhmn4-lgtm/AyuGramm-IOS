@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import zipfile
+from build_logging import run_logged_build
 
 parser = argparse.ArgumentParser()
 parser.add_argument("source", type=Path)
@@ -85,7 +86,9 @@ if args.phase == "port":
     command.append("--disableProvisioningProfiles")
 command.append("--continueOnError")
 try:
-    subprocess.run(command, cwd=source, check=True)
+    # Persist useful diagnostics without writing API values into the artifact log.
+    secrets = (api_hash, api_hash.upper(), api_id) if has_credentials else ()
+    run_logged_build(command, source, artifacts / "build.log", secrets)
 finally:
     config_path.unlink(missing_ok=True)
 

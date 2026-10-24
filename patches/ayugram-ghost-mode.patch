@@ -341,10 +341,10 @@ index 00000000..ba3acdfe
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..b9b81668
+index 00000000..f59678d6
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,180 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -432,7 +432,7 @@ index 00000000..b9b81668
 +    return controller
 +}
 +
-+private func ayuMessageHistoryController(context: AccountContext) -> ViewController {
++private func ayuMessageHistoryController(context: AccountContext, messageId: EngineMessage.Id? = nil) -> ViewController {
 +    var push: ((ViewController) -> Void)?
 +    var present: ((ViewController) -> Void)?
 +    let arguments = AyuSettingsArguments(open: { id in
@@ -459,11 +459,15 @@ index 00000000..b9b81668
 +            .toggle(1, ru ? "Сохранять удалённый текст" : "Save deleted text", history.saveDeleted),
 +            .info(2, ru ? "Только уже загруженный текст обычных облачных сообщений. До 100 записей за 7 дней, до 8 КБ каждая. Фото и файлы не копируются. Защищённые, секретные и исчезающие сообщения исключены; неизвестный срок хранения чата также исключает сохранение. Архив находится в базе этого аккаунта на устройстве." : "Only text already received in ordinary cloud messages. Up to 100 entries for 7 days, up to 8 KB each. Photos and files are not copied. Protected, secret and disappearing messages are excluded, including chats whose lifetime is unknown. The archive stays in this account's local database.")
 +        ]
-+        if history.records.isEmpty {
++        let records = history.records.filter { record in
++            guard let messageId else { return true }
++            return record.peerId == messageId.peerId.toInt64() && record.messageId == messageId.id
++        }
++        if records.isEmpty {
 +            entries.append(.info(3, ru ? "Архив пока пуст. Записи появятся после новых правок или удалений при включённых переключателях." : "The archive is empty. Entries are collected from future edits or deletions while enabled."))
 +        } else {
 +            entries.append(.clear(ru ? "Очистить архив" : "Clear archive"))
-+            entries.append(contentsOf: history.records.reversed().map { .record($0) })
++            entries.append(contentsOf: records.reversed().map { .record($0) })
 +        }
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "История сообщений" : "Message History"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
@@ -472,6 +476,34 @@ index 00000000..b9b81668
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
 +    present = { [weak controller] in controller?.present($0, in: .window(.root)) }
++    return controller
++}
++
++/// Metadata available to this client; this screen never re-renders message text/media.
++public func ayuMessageDetailsController(context: AccountContext, message: EngineMessage) -> ViewController {
++    var push: ((ViewController) -> Void)?
++    let arguments = AyuSettingsArguments(open: { _ in
++        push?(ayuMessageHistoryController(context: context, messageId: message.id))
++    }, update: { _, _ in }, record: { _ in })
++    let signal = context.sharedContext.presentationData
++    |> deliverOnMainQueue
++    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(message.timestamp)), dateStyle: .medium, timeStyle: .medium)
++        var metadata = "Peer ID: \(message.id.peerId.id._internalGetInt64Value())\nPeer namespace: \(message.id.peerId.namespace)\nMessage ID: \(message.id.id)\nMessage namespace: \(message.id.namespace)\n\(date)"
++        if let author = message.author {
++            metadata += "\nAuthor ID: \(author.id.id._internalGetInt64Value())"
++        }
++        if let threadId = message.threadId {
++            metadata += "\nThread ID: \(threadId)"
++        }
++        let entries: [AyuSettingsEntry] = [.info(0, metadata), .link(1, ru ? "Локальная история этого сообщения" : "Local history for this message")]
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Данные сообщения" : "Message Details"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    push = { [weak controller] in controller?.push($0) }
 +    return controller
 +}
 +
@@ -1281,6 +1313,28 @@ index 5fe58bbf..9a773882 100644
      
      @objc func moreButtonPressed() {
          self.moreBarButton.play()
+diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+index 1ade8c01..0590db86 100644
+--- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
++++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+@@ -2479,6 +2479,17 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             }
+         }
+         
++        if message.id.namespace == Namespaces.Message.Cloud {
++            actions.append(.separator)
++            let ru = chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru")
++            actions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Данные сообщения" : "AyuGram · Message Details", icon: { theme in
++                return UIImage(systemName: "info.circle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++            }, action: { controller, _ in
++                controller?.dismiss(completion: {
++                    (interfaceInteraction.chatController() as? ChatControllerImpl)?.push(ayuMessageDetailsController(context: context, message: EngineMessage(message)))
++                })
++            })))
++        }
+         return ContextController.Items(content: .list(actions), tip: nil)
+     }
+ }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
 index 00000000..aa38b563

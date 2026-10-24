@@ -373,10 +373,10 @@ index 00000000..e56a4624
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
 new file mode 100644
-index 00000000..5118283a
+index 00000000..f54ed7b7
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,124 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -440,9 +440,17 @@ index 00000000..5118283a
 +                    default: break
 +                    }
 +                } else {
-+                    let mode: AyuGhostModeSettings.SilentSendMode = id == 0 ? .always : .inGhostMode
-+                    if value { settings.silentSendMode = mode }
-+                    else if settings.silentSendMode == mode { settings.silentSendMode = .never }
++                    switch id {
++                    case 0, 1:
++                        let mode: AyuGhostModeSettings.SilentSendMode = id == 0 ? .always : .inGhostMode
++                        if value { settings.silentSendMode = mode }
++                        else if settings.silentSendMode == mode { settings.silentSendMode = .never }
++                    case 2: settings.mediaSend.confirmStickers = value
++                    case 3: settings.mediaSend.confirmGifs = value
++                    case 4: settings.mediaSend.previewVoice = value
++                    case 5: settings.mediaSend.previewRound = value
++                    default: break
++                    }
 +                }
 +            }
 +        } catch { presentError?(error.localizedDescription) }
@@ -474,7 +482,11 @@ index 00000000..5118283a
 +            entries = [
 +                .toggle(0, ru ? "Всегда отправлять без звука" : "Always send without sound", settings.silentSendMode == .always),
 +                .toggle(1, ru ? "Без звука в Ghost Mode" : "Send silently in Ghost Mode", settings.silentSendMode == .inGhostMode),
-+                .info(2, ru ? "Режимы взаимоисключающие. Если оба выключены, используется обычный способ отправки. Явная отправка без звука в меню Telegram сохраняется при любом режиме. Настройка применяется к новым облачным сообщениям, медиа, альбомам и пересылкам." : "Choose either mode, or turn both off for ordinary sending. Telegram's explicit Send Without Sound option remains effective in every mode. Applies to new cloud messages, media, albums and forwards.")
++                .toggle(2, ru ? "Подтверждать стикеры" : "Confirm sticker sends", settings.mediaSend.confirmStickers),
++                .toggle(3, ru ? "Подтверждать GIF" : "Confirm GIF sends", settings.mediaSend.confirmGifs),
++                .toggle(4, ru ? "Предпросмотр голосовых" : "Preview voice recordings", settings.mediaSend.previewVoice),
++                .toggle(5, ru ? "Предпросмотр кружков" : "Preview video notes", settings.mediaSend.previewRound),
++                .info(6, ru ? "Режимы отправки без звука взаимоисключающие; явная отправка без звука из меню сохраняется. Подтверждения стикеров и GIF включаются отдельно. Предпросмотр останавливает обычную запись перед отправкой: можно прослушать или посмотреть её и нажать «Отправить». Для однократных сообщений дополнительный предпросмотр не добавляется. Все четыре параметра по умолчанию выключены." : "Silent-send modes are mutually exclusive; explicit Send Without Sound remains available. Sticker/GIF confirmations are independent. Recording preview stops an ordinary recording before sending, letting you review it and press Send. View-once sends retain their native flow without an added preview. All four media options default off.")
 +            ]
 +        }
 +        let data = ItemListPresentationData(presentationData)
@@ -1211,10 +1223,10 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..b900a55a
+index 00000000..59757ca3
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,137 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
@@ -1228,9 +1240,10 @@ index 00000000..b900a55a
 +    public var silentSendMode: SilentSendMode = .never
 +    public var regexFilters = AyuRegexSettings()
 +    public var appearance = AyuAppearanceSettings()
++    public var mediaSend = AyuMediaSendSettings()
 +
 +    private enum CodingKeys: String, CodingKey {
-+        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance
++        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -1244,6 +1257,7 @@ index 00000000..b900a55a
 +        do { try self.regexFilters.validate() }
 +        catch { self.regexFilters = AyuRegexSettings() }
 +        self.appearance = (try? values.decode(AyuAppearanceSettings.self, forKey: .appearance)) ?? AyuAppearanceSettings()
++        self.mediaSend = (try? values.decode(AyuMediaSendSettings.self, forKey: .mediaSend)) ?? AyuMediaSendSettings()
 +    }
 +
 +    public init(hideReadReceipts: Bool = false, hideOnline: Bool = false, hideTyping: Bool = false, hideUploadProgress: Bool = false) {
@@ -1348,6 +1362,63 @@ index 00000000..b900a55a
 +        self.lock.lock()
 +        defer { self.lock.unlock() }
 +        self.observers.removeValue(forKey: id)
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift
+new file mode 100644
+index 00000000..30a24300
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift
+@@ -0,0 +1,51 @@
++import Foundation
++
++public struct AyuMediaSendSettings: Codable, Equatable {
++    public enum Kind: Equatable { case sticker, gif }
++    public var confirmStickers = false
++    public var confirmGifs = false
++    public var previewVoice = false
++    public var previewRound = false
++
++    public init() {}
++
++    private enum CodingKeys: String, CodingKey {
++        case confirmStickers, confirmGifs, previewVoice, previewRound
++    }
++
++    public init(from decoder: Decoder) throws {
++        let values = try decoder.container(keyedBy: CodingKeys.self)
++        self.confirmStickers = try values.decodeIfPresent(Bool.self, forKey: .confirmStickers) ?? false
++        self.confirmGifs = try values.decodeIfPresent(Bool.self, forKey: .confirmGifs) ?? false
++        self.previewVoice = try values.decodeIfPresent(Bool.self, forKey: .previewVoice) ?? false
++        self.previewRound = try values.decodeIfPresent(Bool.self, forKey: .previewRound) ?? false
++    }
++
++    public func needsConfirmation(for kind: Kind) -> Bool {
++        switch kind {
++        case .sticker: return self.confirmStickers
++        case .gif: return self.confirmGifs
++        }
++    }
++
++    public func requiresRecordingPreview(isVideo: Bool, viewOnce: Bool) -> Bool {
++        // A normal draft does not carry the view-once intent. Keep that explicit
++        // native send path intact instead of converting it to an ordinary draft.
++        return !viewOnce && (isVideo ? self.previewRound : self.previewVoice)
++    }
++}
++
++/// One dialog can authorize at most one send. Cancel invalidates later callbacks.
++public final class AyuMediaSendDecision {
++    private let lock = NSLock()
++    private var resolved = false
++    public init() {}
++
++    public func resolve(approved: Bool) -> Bool {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        guard !self.resolved else { return false }
++        self.resolved = true
++        return approved
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
@@ -2188,6 +2259,69 @@ index a4873696..ca936b38 100644
      items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 1, text: presentationData.strings.Settings_SavedMessages, icon: PresentationResourcesSettings.savedMessages, action: {
          interaction.openSettings(.savedMessages)
      }))
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift
+new file mode 100644
+index 00000000..2c07baa7
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift
+@@ -0,0 +1,40 @@
++import Foundation
++import Display
++import TelegramCore
++import AccountContext
++import TelegramPresentationData
++import AlertUI
++import PresentationDataUtils
++
++extension ChatControllerImpl {
++    /// True means the original synchronous send must stop. Confirmation re-enters
++    /// the same handler once, so native restrictions and paid/scheduled sends recheck.
++    func ayuConfirmMediaSendIfNeeded(kind: AyuMediaSendSettings.Kind, send: @escaping () -> Void) -> Bool {
++        if self.ayuApprovedMediaSend == kind || !self.context.account.network.ayuGhostMode.current.mediaSend.needsConfirmation(for: kind) {
++            return false
++        }
++        if self.ayuMediaConfirmationController != nil { return true }
++        let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let text: String
++        switch kind {
++        case .sticker: text = ru ? "Отправить этот стикер?" : "Send this sticker?"
++        case .gif: text = ru ? "Отправить эту GIF-анимацию?" : "Send this GIF?"
++        }
++        let decision = AyuMediaSendDecision()
++        let controller = textAlertController(context: self.context, title: "AyuGram", text: text, actions: [
++            TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {
++                let _ = decision.resolve(approved: false)
++            }),
++            TextAlertAction(type: .defaultAction, title: ru ? "Отправить" : "Send", action: { [weak self] in
++                guard decision.resolve(approved: true), let self else { return }
++                let previous = self.ayuApprovedMediaSend
++                self.ayuApprovedMediaSend = kind
++                defer { self.ayuApprovedMediaSend = previous }
++                send()
++            })
++        ])
++        self.ayuMediaConfirmationController = controller
++        self.present(controller, in: .window(.root))
++        return true
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
+index 89e8d45b..af77447e 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
+@@ -262,6 +262,12 @@ extension ChatControllerImpl {
+             updatedAction = .preview
+             sendImmediately = true
+         }
++
++        if case let .send(viewOnce) = action, self.context.account.network.ayuGhostMode.current.mediaSend.requiresRecordingPreview(isVideo: self.audioRecorderValue == nil && self.videoRecorderValue != nil, viewOnce: viewOnce) {
++            updatedAction = .preview
++            // Paid-chat auto-send must not bypass the requested recording preview.
++            sendImmediately = false
++        }
+         
+         if let audioRecorderValue = self.audioRecorderValue {
+             switch action {
 diff --git a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 index face5ae7..f32f529c 100644
 --- a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
@@ -2272,20 +2406,22 @@ index face5ae7..f32f529c 100644
      selfController: ChatControllerImpl,
      transition: ContainedViewLayoutTransition,
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..0ed43e8b 100644
+index 5fe58bbf..06716862 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
-@@ -310,6 +310,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -310,6 +310,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      var leftNavigationButton: ChatNavigationButton?
      var rightNavigationButton: ChatNavigationButton?
      var secondaryRightNavigationButton: ChatNavigationButton?
 +    var ayuGhostBarButton = UIBarButtonItem()
 +    var ayuGhostButtonEnabled: Bool?
 +    let ayuGhostSettingsDisposable = MetaDisposable()
++    weak var ayuMediaConfirmationController: ViewController?
++    var ayuApprovedMediaSend: AyuMediaSendSettings.Kind?
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
-@@ -768,6 +771,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -768,6 +773,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
          self.ready.set(.never())
@@ -2293,7 +2429,40 @@ index 5fe58bbf..0ed43e8b 100644
          
          self.chatBackgroundNode.contentStatsUpdated = { [weak self] in
              guard let self else {
-@@ -6450,6 +6454,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2408,6 +2414,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+                 }
+             }
+             
++            if strongSelf.ayuConfirmMediaSendIfNeeded(kind: .sticker, send: { [weak self] in
++                let _ = self?.controllerInteraction?.sendSticker(fileReference, silentPosting, schedule, query, clearInput, sourceView, sourceRect, sourceLayer, bubbleUpEmojiOrStickersets)
++            }) { return false }
++
+             var attributes: [MessageAttribute] = []
+             if let query = query {
+                 attributes.append(EmojiSearchQueryMessageAttribute(query: query))
+@@ -2681,6 +2691,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+                     }
+                 }
+                 
++                if strongSelf.ayuConfirmMediaSendIfNeeded(kind: .gif, send: { [weak self] in
++                    let _ = self?.controllerInteraction?.sendGif(fileReference, sourceView, sourceRect, silentPosting, schedule)
++                }) { return false }
++
+                 strongSelf.presentPaidMessageAlertIfNeeded(completion: { [weak self] postpone in
+                     guard let strongSelf = self else {
+                         return
+@@ -2737,6 +2751,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+                 }
+             }
+             
++            if strongSelf.ayuConfirmMediaSendIfNeeded(kind: .gif, send: { [weak self] in
++                let _ = self?.controllerInteraction?.sendBotContextResultAsGif(collection, result, sourceView, sourceRect, silentPosting, resetTextInputState)
++            }) { return false }
++
+             strongSelf.enqueueChatContextResult(collection, result, hideVia: true, closeMediaInput: true, silentPosting: silentPosting, resetTextInputState: resetTextInputState)
+             
+             return true
+@@ -6450,6 +6468,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              }
          }
          self.moreBarButton.addTarget(self, action: #selector(self.moreButtonPressed), forControlEvents: .touchUpInside)
@@ -2306,7 +2475,7 @@ index 5fe58bbf..0ed43e8b 100644
          
          self.navigationItem.titleView = self.chatTitleView
          self.chatTitleView?.tapAction = { [weak self] in
-@@ -7082,6 +7092,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7082,6 +7106,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
  
      deinit {
@@ -2314,7 +2483,7 @@ index 5fe58bbf..0ed43e8b 100644
          let _ = ChatControllerCount.modify { value in
              return value - 1
          }
-@@ -8639,6 +8650,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8639,6 +8664,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              self.navigationButtonAction(button.action)
          }
      }
@@ -2445,10 +2614,10 @@ index 1ade8c01..ea8fa077 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..547b7039
+index 00000000..a875172e
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,278 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -2682,6 +2851,31 @@ index 00000000..547b7039
 +try appearanceStore.update { $0.appearance = AyuAppearanceSettings() }
 +check(appearanceStore.current.appearance == AyuAppearanceSettings() && appearanceStore.current.allEnabled && appearanceStore.current.silentSendMode == .always, "Appearance reset preserves unrelated settings")
 +print("PASS: \(checks) total checks, including appearance migration/validation/persistence; native rendering remains separate")
++
++var mediaSend = AyuMediaSendSettings()
++check(!mediaSend.needsConfirmation(for: .sticker) && !mediaSend.needsConfirmation(for: .gif), "Media confirmation defaults preserve native sending")
++check(!mediaSend.requiresRecordingPreview(isVideo: false, viewOnce: false) && !mediaSend.requiresRecordingPreview(isVideo: true, viewOnce: false), "Recording preview is opt-in")
++mediaSend.confirmStickers = true
++check(mediaSend.needsConfirmation(for: .sticker) && !mediaSend.needsConfirmation(for: .gif), "Sticker and GIF confirmation policies are independent")
++mediaSend.previewVoice = true
++check(mediaSend.requiresRecordingPreview(isVideo: false, viewOnce: false) && !mediaSend.requiresRecordingPreview(isVideo: true, viewOnce: false), "Voice preview does not change video-note sending")
++mediaSend.previewRound = true
++check(mediaSend.requiresRecordingPreview(isVideo: true, viewOnce: false), "Video-note preview applies independently")
++check(!mediaSend.requiresRecordingPreview(isVideo: false, viewOnce: true) && !mediaSend.requiresRecordingPreview(isVideo: true, viewOnce: true), "View-once intent must not be lost by converting into an ordinary draft")
++let mediaSendDecoded = try JSONDecoder().decode(AyuMediaSendSettings.self, from: JSONEncoder().encode(mediaSend))
++check(mediaSendDecoded == mediaSend, "Media-send choices survive serialization")
++let partialMediaSend = try JSONDecoder().decode(AyuMediaSendSettings.self, from: Data("{\"confirmGifs\":true}".utf8))
++check(partialMediaSend.confirmGifs && !partialMediaSend.confirmStickers && !partialMediaSend.previewVoice && !partialMediaSend.previewRound, "Missing media-send fields migrate to native defaults")
++check(oldGhost.mediaSend == AyuMediaSendSettings(), "Legacy Ghost Mode files preserve native media-send defaults")
++try appearanceStore.update { $0.mediaSend = mediaSend }
++let mediaSendPersisted = AyuGhostModeStore(accountPath: appearancePath.path).current
++check(mediaSendPersisted.mediaSend == mediaSend && mediaSendPersisted.allEnabled && mediaSendPersisted.silentSendMode == .always, "Per-account media preferences preserve ghost and silent-send policies")
++let acceptedDecision = AyuMediaSendDecision()
++check(acceptedDecision.resolve(approved: true), "First explicit approval permits one send")
++check(!acceptedDecision.resolve(approved: true), "Repeated approval must not enqueue duplicate media")
++let cancelledDecision = AyuMediaSendDecision()
++check(!cancelledDecision.resolve(approved: false) && !cancelledDecision.resolve(approved: true), "Cancel invalidates delayed approval callbacks")
++print("PASS: \(checks) total checks, including media-send policy/migration and one-shot decisions; native dialogs/recorders remain unverified")
 +
 +#if AYU_POSTBOX_TESTS
 +func postboxRoundTrip(_ state: AyuMessageHistoryState) -> AyuMessageHistoryState? {

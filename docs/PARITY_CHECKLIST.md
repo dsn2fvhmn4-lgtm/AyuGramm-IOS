@@ -37,6 +37,8 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview. All subsequent
 | custom deleted/edited marks | Per-account Chat Appearance labels in source; eligible deleted text retained inline with local tombstones |
 | showMessageSeconds (Desktop) | Native timestamp formatter with seconds, including full/imported dates, in source |
 | reset chat appearance | Resets only visual settings and preserves Ghost Mode, history and sending policy, in source |
+| stickerConfirmation / gifConfirmation (Desktop) | Opt-in per-account dialogs in sticker, saved GIF and inline GIF chat send handlers; one-shot approval in source |
+| voiceConfirmation / roundConfirmation (Desktop) | iOS adaptation: opt-in native preview before ordinary recording sends; view-once keeps its native flow, in source |
 | source sync URL/token settings | Pending; no token has been stored or transmitted |
 
 Additional Desktop-only scope (not implemented by these flags): translation providers, message screenshots, shadow bans, UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.

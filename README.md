@@ -16,6 +16,10 @@ The development sources add a local edit/deletion ledger, formatting and reactio
 
 Open **Settings → AyuGram → Chat Appearance**. Per-account controls show/hide the header ghost button, display timestamp seconds, and customize deleted/edited labels. Empty labels use the current app language. Save labels applies text; switches apply immediately. Reset affects appearance only. Deleted-text capture remains a separate opt-in under Message History. These changes require native/device verification and are absent from the initial published preview.
 
+## Media sending (development source)
+
+Open **Settings → AyuGram → Sending Options**. Independent per-account switches confirm sticker/GIF sends and require native preview for ordinary voice/video-note recordings. All four default off. View-once recordings retain their native flow. See [scope and device checks](docs/MEDIA_SENDING.md). Native/device verification is pending.
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

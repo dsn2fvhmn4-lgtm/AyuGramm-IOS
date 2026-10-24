@@ -648,10 +648,10 @@ index 00000000..ba3acdfe
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..1b8936a7
+index 00000000..ddd915d6
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,366 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -751,6 +751,7 @@ index 00000000..1b8936a7
 +        case 4: push?(ayuAppearanceController(context: context))
 +        case 5: push?(ayuInterfaceSettingsController(context: context))
 +        case 6: push?(ayuInterfaceSettingsController(context: context, contextMenu: true))
++        case 7: push?(ayuMessageShotSettingsController(context: context))
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
@@ -766,13 +767,70 @@ index 00000000..1b8936a7
 +            .link(4, ru ? "Оформление чатов" : "Chat Appearance"),
 +            .link(5, ru ? "Интерфейс" : "Interface"),
 +            .link(6, ru ? "Меню сообщения" : "Message Menu"),
-+            .info(7, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
++            .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"),
++            .info(8, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
++    return controller
++}
++
++private func ayuMessageShotSettingsController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var presentError: (() -> Void)?
++    let arguments = AyuSettingsArguments(open: { id in
++        do {
++            try store.update {
++                if id == 0 { $0.messageShot.cycleTheme() }
++                if id == 7 { $0.messageShot = AyuMessageShotSettings() }
++            }
++        } catch { presentError?() }
++    }, update: { id, value in
++        do {
++            try store.update {
++                switch id {
++                case 1: $0.messageShot.showBackground = value
++                case 2: $0.messageShot.showAuthors = value
++                case 3: $0.messageShot.showDate = value
++                case 4: $0.messageShot.showHeader = value
++                case 5: $0.messageShot.showMediaPreviews = value
++                default: break
++                }
++            }
++        } catch { presentError?() }
++    }, record: { _ in })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let value = settings.messageShot
++        let theme: String
++        switch value.theme {
++        case .automatic: theme = ru ? "Как в приложении" : "Follow app"
++        case .light: theme = ru ? "Светлая" : "Light"
++        case .dark: theme = ru ? "Тёмная" : "Dark"
++        }
++        let entries: [AyuSettingsEntry] = [
++            .link(0, (ru ? "Тема: " : "Theme: ") + theme),
++            .toggle(1, ru ? "Фон картинки" : "Image background", value.showBackground),
++            .toggle(2, ru ? "Имена авторов" : "Author names", value.showAuthors),
++            .toggle(3, ru ? "Дата и время" : "Date and time", value.showDate),
++            .toggle(4, ru ? "Заголовок AyuGram" : "AyuGram header", value.showHeader),
++            .toggle(5, ru ? "Превью медиа" : "Media previews", value.showMediaPreviews),
++            .info(6, ru ? "Нажатие на тему переключает: как в приложении → светлая → тёмная. Без фона область вокруг карточек прозрачная; приложение-получатель может заменить прозрачность. Без превью остаются подписи вложений. Настройки применяются к новой картинке. Скрытие имени не удаляет имена из текста сообщения." : "Tap Theme to cycle: follow app → light → dark. With background off, the area around cards is transparent; the receiving app may flatten it. Disabling previews retains attachment labels. Options apply to the next generated image. Hiding author names does not remove names from message text."),
++            .link(7, ru ? "Сбросить оформление MessageShot" : "Reset MessageShot appearance")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        return (ItemListControllerState(presentationData: data, title: .text("MessageShot"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "MessageShot", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить оформление MessageShot." : "MessageShot appearance could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
 +    return controller
 +}
 +
@@ -1326,10 +1384,10 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..a6bb6d35
+index 00000000..19c4c467
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,142 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
@@ -1345,9 +1403,11 @@ index 00000000..a6bb6d35
 +    public var appearance = AyuAppearanceSettings()
 +    public var mediaSend = AyuMediaSendSettings()
 +    public var interface = AyuInterfaceSettings()
++    public var messageShot = AyuMessageShotSettings()
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend, interface
++        case messageShot
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -1363,6 +1423,7 @@ index 00000000..a6bb6d35
 +        self.appearance = (try? values.decode(AyuAppearanceSettings.self, forKey: .appearance)) ?? AyuAppearanceSettings()
 +        self.mediaSend = (try? values.decode(AyuMediaSendSettings.self, forKey: .mediaSend)) ?? AyuMediaSendSettings()
 +        self.interface = (try? values.decode(AyuInterfaceSettings.self, forKey: .interface)) ?? AyuInterfaceSettings()
++        self.messageShot = (try? values.decode(AyuMessageShotSettings.self, forKey: .messageShot)) ?? AyuMessageShotSettings()
 +    }
 +
 +    public init(hideReadReceipts: Bool = false, hideOnline: Bool = false, hideTyping: Bool = false, hideUploadProgress: Bool = false) {
@@ -2063,6 +2124,51 @@ index 00000000..01703f52
 +        return result as String
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageShotSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageShotSettings.swift
+new file mode 100644
+index 00000000..35137a2f
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageShotSettings.swift
+@@ -0,0 +1,39 @@
++import Foundation
++
++public struct AyuMessageShotSettings: Codable, Equatable {
++    public enum Theme: String, Codable { case automatic, light, dark }
++    public var theme: Theme = .automatic
++    public var showBackground = true
++    public var showAuthors = true
++    public var showDate = true
++    public var showHeader = true
++    public var showMediaPreviews = true
++    public init() {}
++
++    private enum CodingKeys: String, CodingKey {
++        case theme, showBackground, showAuthors, showDate, showHeader, showMediaPreviews
++    }
++    public init(from decoder: Decoder) throws {
++        let values = try decoder.container(keyedBy: CodingKeys.self)
++        self.theme = (try? values.decode(Theme.self, forKey: .theme)) ?? .automatic
++        self.showBackground = try values.decodeIfPresent(Bool.self, forKey: .showBackground) ?? true
++        self.showAuthors = try values.decodeIfPresent(Bool.self, forKey: .showAuthors) ?? true
++        self.showDate = try values.decodeIfPresent(Bool.self, forKey: .showDate) ?? true
++        self.showHeader = try values.decodeIfPresent(Bool.self, forKey: .showHeader) ?? true
++        self.showMediaPreviews = try values.decodeIfPresent(Bool.self, forKey: .showMediaPreviews) ?? true
++    }
++    public func isDark(fallback: Bool) -> Bool {
++        switch self.theme {
++        case .automatic: return fallback
++        case .light: return false
++        case .dark: return true
++        }
++    }
++    public mutating func cycleTheme() {
++        switch self.theme {
++        case .automatic: self.theme = .light
++        case .light: self.theme = .dark
++        case .dark: self.theme = .automatic
++        }
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift
 new file mode 100644
 index 00000000..93e17f4b
@@ -2588,10 +2694,10 @@ index a4873696..ca936b38 100644
      }))
 diff --git a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
 new file mode 100644
-index 00000000..ee4cab5b
+index 00000000..4c04b905
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,122 @@
 +import Foundation
 +import UIKit
 +import ImageIO
@@ -2650,18 +2756,18 @@ index 00000000..ee4cab5b
 +    let outgoing: Bool
 +}
 +
-+func ayuRenderMessageShot(cards: [AyuMessageShotCard], dark: Bool, width: CGFloat, maximumHeight: CGFloat) -> UIImage? {
++func ayuRenderMessageShot(cards: [AyuMessageShotCard], dark: Bool, width: CGFloat, maximumHeight: CGFloat, showBackground: Bool = true, showAuthors: Bool = true, showDate: Bool = true, showHeader: Bool = true) -> UIImage? {
 +    guard !cards.isEmpty, width.isFinite, maximumHeight.isFinite, width > 112.0, maximumHeight >= 200.0 else { return nil }
 +    let cardWidth = width - 112.0
 +    let innerWidth = cardWidth - 40.0
 +    var layouts: [(CGRect, CGRect, CGRect?)] = []
-+    var y: CGFloat = 90.0
++    var y: CGFloat = showHeader ? 90.0 : 24.0
 +    for card in cards {
 +        let measured = card.text.boundingRect(with: CGSize(width: innerWidth, height: maximumHeight), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
 +        guard measured.height.isFinite else { return nil }
 +        let textHeight = max(ceil(measured.height), 32.0)
 +        let x: CGFloat = card.outgoing ? 88.0 : 24.0
-+        let textFrame = CGRect(x: x + 20.0, y: y + 62.0, width: innerWidth, height: textHeight)
++        let textFrame = CGRect(x: x + 20.0, y: y + (showAuthors ? 62.0 : 20.0), width: innerWidth, height: textHeight)
 +        var photoFrame: CGRect?
 +        var bottom = textFrame.maxY
 +        if let photo = card.photo, photo.size.width > 0.0, photo.size.height > 0.0 {
@@ -2670,29 +2776,39 @@ index 00000000..ee4cab5b
 +            photoFrame = frame
 +            bottom = frame.maxY
 +        }
-+        let frame = CGRect(x: x, y: y, width: cardWidth, height: bottom - y + 54.0)
++        let frame = CGRect(x: x, y: y, width: cardWidth, height: bottom - y + (showDate ? 54.0 : 20.0))
 +        layouts.append((frame, textFrame, photoFrame))
 +        y = frame.maxY + 20.0
 +        if y + 44.0 > maximumHeight { return nil }
 +    }
 +    let format = UIGraphicsImageRendererFormat()
 +    format.scale = 1.0
-+    format.opaque = true
++    format.opaque = showBackground
 +    let background = dark ? UIColor(red: 0.09, green: 0.08, blue: 0.13, alpha: 1.0) : UIColor(red: 0.94, green: 0.93, blue: 0.98, alpha: 1.0)
 +    let secondary = dark ? UIColor(white: 0.70, alpha: 1.0) : UIColor(white: 0.40, alpha: 1.0)
-+    return UIGraphicsImageRenderer(size: CGSize(width: width, height: ceil(y + 44.0)), format: format).image { _ in
-+        background.setFill()
-+        UIBezierPath(rect: CGRect(x: 0.0, y: 0.0, width: width, height: ceil(y + 44.0))).fill()
-+        ("AyuGram · MessageShot" as NSString).draw(at: CGPoint(x: 28.0, y: 28.0), withAttributes: [.font: UIFont.systemFont(ofSize: 30.0, weight: .semibold), .foregroundColor: secondary])
++    return UIGraphicsImageRenderer(size: CGSize(width: width, height: ceil(y + 44.0)), format: format).image { rendererContext in
++        if showBackground {
++            background.setFill()
++            UIBezierPath(rect: CGRect(x: 0.0, y: 0.0, width: width, height: ceil(y + 44.0))).fill()
++        } else {
++            rendererContext.cgContext.clear(CGRect(x: 0.0, y: 0.0, width: width, height: ceil(y + 44.0)))
++        }
++        if showHeader {
++            ("AyuGram · MessageShot" as NSString).draw(at: CGPoint(x: 28.0, y: 28.0), withAttributes: [.font: UIFont.systemFont(ofSize: 30.0, weight: .semibold), .foregroundColor: secondary])
++        }
 +        for (index, card) in cards.enumerated() {
 +            let (frame, textFrame, photoFrame) = layouts[index]
 +            let fill = dark ? UIColor(white: card.outgoing ? 0.23 : 0.16, alpha: 1.0) : (card.outgoing ? UIColor(red: 0.88, green: 0.84, blue: 0.98, alpha: 1.0) : .white)
 +            fill.setFill()
 +            UIBezierPath(roundedRect: frame, cornerRadius: 24.0).fill()
-+            (card.author as NSString).draw(in: CGRect(x: frame.minX + 20.0, y: frame.minY + 16.0, width: innerWidth, height: 36.0), withAttributes: [.font: UIFont.systemFont(ofSize: 27.0, weight: .semibold), .foregroundColor: dark ? UIColor(red: 0.78, green: 0.69, blue: 1.0, alpha: 1.0) : UIColor(red: 0.36, green: 0.22, blue: 0.63, alpha: 1.0)])
++            if showAuthors {
++                (card.author as NSString).draw(in: CGRect(x: frame.minX + 20.0, y: frame.minY + 16.0, width: innerWidth, height: 36.0), withAttributes: [.font: UIFont.systemFont(ofSize: 27.0, weight: .semibold), .foregroundColor: dark ? UIColor(red: 0.78, green: 0.69, blue: 1.0, alpha: 1.0) : UIColor(red: 0.36, green: 0.22, blue: 0.63, alpha: 1.0)])
++            }
 +            card.text.draw(with: textFrame, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
 +            if let photoFrame, let photo = card.photo { photo.draw(in: photoFrame) }
-+            (card.date as NSString).draw(in: CGRect(x: frame.minX + 20.0, y: frame.maxY - 36.0, width: innerWidth, height: 30.0), withAttributes: [.font: UIFont.systemFont(ofSize: 21.0), .foregroundColor: secondary])
++            if showDate {
++                (card.date as NSString).draw(in: CGRect(x: frame.minX + 20.0, y: frame.maxY - 36.0, width: innerWidth, height: 30.0), withAttributes: [.font: UIFont.systemFont(ofSize: 21.0), .foregroundColor: secondary])
++            }
 +        }
 +    }
 +}
@@ -2835,10 +2951,10 @@ index 89e8d45b..af77447e 100644
              switch action {
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift
 new file mode 100644
-index 00000000..a355ab8b
+index 00000000..5703373c
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,133 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -2907,6 +3023,7 @@ index 00000000..a355ab8b
 +    func ayuShowMessageShot(ids: [EngineMessage.Id]) {
 +        guard !self.ayuMessageShotInProgress, self.context.account.network.ayuGhostMode.current.interface.showMessageShot else { return }
 +        guard !self.presentationInterfaceState.copyProtectionEnabled else { self.ayuMessageShotError(); return }
++        let shot = self.context.account.network.ayuGhostMode.current.messageShot
 +        self.ayuMessageShotInProgress = true
 +        let progress = OverlayStatusController(theme: self.presentationData.theme, type: .loading(cancelled: nil))
 +        self.present(progress, in: .window(.root))
@@ -2916,7 +3033,10 @@ index 00000000..a355ab8b
 +        |> deliverOnMainQueue).startStandalone(next: { [weak self] messages in
 +            guard let self else { progress.dismiss(); return }
 +            guard let messages else { self.ayuMessageShotInProgress = false; progress.dismiss(); self.ayuMessageShotError(); return }
-+            let _ = (combineLatest(messages.map { ayuMessageShotThumbnail(context: context, message: $0) })
++            let _ = (combineLatest(messages.map { message -> Signal<UIImage?, NoError> in
++                if shot.showMediaPreviews { return ayuMessageShotThumbnail(context: context, message: message) }
++                return .single(nil)
++            })
 +            |> take(1)
 +            |> deliverOnMainQueue).startStandalone(next: { [weak self] photos in
 +                progress.dismiss()
@@ -2924,7 +3044,7 @@ index 00000000..a355ab8b
 +                self.ayuMessageShotInProgress = false
 +                let data = self.presentationData
 +                let ru = data.strings.baseLanguageCode.hasPrefix("ru")
-+                let dark = data.theme.overallDarkAppearance
++                let dark = shot.isDark(fallback: data.theme.overallDarkAppearance)
 +                let color: UIColor = dark ? .white : UIColor(white: 0.12, alpha: 1.0)
 +                var cards: [AyuMessageShotCard] = []
 +                for (index, message) in messages.enumerated() {
@@ -2941,7 +3061,7 @@ index 00000000..a355ab8b
 +                    let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(message.timestamp)), dateStyle: .short, timeStyle: .short)
 +                    cards.append(AyuMessageShotCard(author: String(author.prefix(80)), date: date, text: text, photo: photos[index], outgoing: !message.flags.contains(.Incoming)))
 +                }
-+                guard let image = ayuRenderMessageShot(cards: cards, dark: dark, width: CGFloat(AyuMessageShotPolicy.imageWidth), maximumHeight: CGFloat(AyuMessageShotPolicy.maximumImageHeight)) else { self.ayuMessageShotError(); return }
++                guard let image = ayuRenderMessageShot(cards: cards, dark: dark, width: CGFloat(AyuMessageShotPolicy.imageWidth), maximumHeight: CGFloat(AyuMessageShotPolicy.maximumImageHeight), showBackground: shot.showBackground, showAuthors: shot.showAuthors, showDate: shot.showDate, showHeader: shot.showHeader) else { self.ayuMessageShotError(); return }
 +                let preview = AyuMessageShotPreview(image: image)
 +                preview.share = { [weak exportContext = context] controller in
 +                    guard let context = exportContext else { return }
@@ -3335,10 +3455,10 @@ index 1ade8c01..b5b4db22 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..5cb4bbf0
+index 00000000..36d4a0b9
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,375 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -3664,6 +3784,36 @@ index 00000000..5cb4bbf0
 +do { let _ = try AyuRegexSettings.literalPattern(for: String(repeating: "*", count: 300)); fatalError("Escaped byte limit exceeded") } catch { check(true, "Escaping expansion obeys the 512-byte rule limit") }
 +do { let _ = try AyuRegexSettings.literalPattern(for: " \n\t"); fatalError("Whitespace-only rule accepted") } catch { check(true, "Blank literal rules are rejected") }
 +print("PASS: \(checks) total checks, including safe literal-filter drafts and capacity/Unicode boundaries; native menu/editor checks remain pending")
++
++var shotAppearance = AyuMessageShotSettings()
++check(shotAppearance.showBackground && shotAppearance.showAuthors && shotAppearance.showDate && shotAppearance.showHeader && shotAppearance.showMediaPreviews, "MessageShot appearance defaults preserve existing images")
++check(shotAppearance.isDark(fallback: true) && !shotAppearance.isDark(fallback: false), "Automatic MessageShot theme follows the app")
++shotAppearance.cycleTheme()
++check(shotAppearance.theme == .light && !shotAppearance.isDark(fallback: true), "Light MessageShot theme overrides a dark app")
++shotAppearance.cycleTheme()
++check(shotAppearance.theme == .dark && shotAppearance.isDark(fallback: false), "Dark MessageShot theme overrides a light app")
++shotAppearance.cycleTheme()
++check(shotAppearance.theme == .automatic, "MessageShot theme cycles back to automatic")
++shotAppearance.theme = .dark
++shotAppearance.showBackground = false
++shotAppearance.showAuthors = false
++shotAppearance.showDate = false
++shotAppearance.showHeader = false
++shotAppearance.showMediaPreviews = false
++let shotAppearanceRoundTrip = try JSONDecoder().decode(AyuMessageShotSettings.self, from: JSONEncoder().encode(shotAppearance))
++check(shotAppearanceRoundTrip == shotAppearance, "MessageShot appearance preserves explicit false values and theme")
++let partialShotAppearance = try JSONDecoder().decode(AyuMessageShotSettings.self, from: Data("{\"showDate\":false}".utf8))
++check(!partialShotAppearance.showDate && partialShotAppearance.showHeader && partialShotAppearance.showAuthors && partialShotAppearance.showMediaPreviews, "Partial MessageShot settings migrate independently")
++let futureShotTheme = try JSONDecoder().decode(AyuMessageShotSettings.self, from: Data("{\"theme\":\"future\",\"showHeader\":false}".utf8))
++check(futureShotTheme.theme == .automatic && !futureShotTheme.showHeader, "Unknown MessageShot themes retain other appearance choices")
++check(oldGhost.messageShot == AyuMessageShotSettings(), "Legacy Ghost Mode files acquire MessageShot appearance defaults")
++try appearanceStore.update { $0.messageShot = shotAppearance }
++let storedShotAppearance = AyuGhostModeStore(accountPath: appearancePath.path).current
++check(storedShotAppearance.messageShot == shotAppearance && storedShotAppearance.interface == interfaceSettings && storedShotAppearance.mediaSend == mediaSend, "MessageShot appearance persists without changing interface or media controls")
++try appearanceStore.update { $0.messageShot = AyuMessageShotSettings() }
++let resetShotAppearance = AyuGhostModeStore(accountPath: appearancePath.path).current
++check(resetShotAppearance.messageShot == AyuMessageShotSettings() && resetShotAppearance.interface == storedShotAppearance.interface && resetShotAppearance.regexFilters == storedShotAppearance.regexFilters && resetShotAppearance.mediaSend == storedShotAppearance.mediaSend && resetShotAppearance.allEnabled, "MessageShot reset preserves Ghost Mode, regex, interface and sending settings")
++print("PASS: \(checks) total checks, including per-account MessageShot appearance, migration, theme selection and isolated reset; native rendering remains pending")
 +
 +#if AYU_POSTBOX_TESTS
 +func postboxRoundTrip(_ state: AyuMessageHistoryState) -> AyuMessageHistoryState? {

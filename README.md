@@ -32,6 +32,10 @@ The next source revision adds **Settings → AyuGram → Message Menu**: reactio
 
 The latest development sources also add **AyuGram · Add Filter** to eligible message menus, literal-text rule drafts, saved/editor rule counts and confirmed **Clear all rules**. The default channels-only scope now distinguishes broadcast channels from supergroups. See [filter management and verification](docs/FILTER_MANAGEMENT.md). These changes are not in build 8 and still await native/device checks.
 
+## MessageShot appearance (development source after build 8)
+
+The new **Settings → AyuGram → MessageShot Appearance** page controls theme (app/light/dark), outer-background transparency, author/date/header visibility and cached-media previews, with a reset limited to this feature. Changes affect newly generated images. See [appearance scope and verification](docs/MESSAGE_SHOT_AND_INTERFACE.md). This block is not in build 8 and still awaits native compilation/device rendering checks.
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

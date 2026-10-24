@@ -51,6 +51,7 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | edited information in menu (iOS) | Edited-header visibility independent of inline labels/history, in source after build 8 |
 | showAddFilterInContextMenu (Desktop) | Literal message-text rule draft, explicit save, visibility control, duplicate/capacity checks in source after build 8 |
 | regex rule management (iOS) | Saved/draft counts, confirmed account-local clearing and broadcast-only default scope correction in source after build 8 |
+| MessageShot appearance (Desktop-inspired/iOS) | Per-account app/light/dark theme, outer-background transparency, author/date/header/media-preview switches and isolated reset in source after build 8; native render verification pending |
 
 Additional Desktop-only scope (not implemented by these flags): translation providers, shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.
 

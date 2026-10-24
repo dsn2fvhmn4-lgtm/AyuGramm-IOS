@@ -4,6 +4,8 @@ Path: **Settings → AyuGram → Message Menu** (Russian: «Меню сообщ�
 
 Five independent per-account switches:
 
+The following source revision adds a sixth **Add Filter from Message** switch; see [filter management](FILTER_MANAGEMENT.md). This does not change the five controls below.
+
 - **Reaction picker:** show/hide the top reaction chooser in the main long-press message menu. Saved Messages tags retain their native chooser. Existing bubble reactions and their separate interaction paths are unchanged.
 - **Read and reaction summary:** show/hide the combined native read/reaction summary row. This affects presentation, not receipt transmission or the fetching of menu data. Ghost Mode still owns receipt policy.
 - **Edit information in menu:** show/hide the native edited-time header. Inline edited labels, captured edit history and message text are unchanged.

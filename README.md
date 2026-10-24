@@ -28,6 +28,10 @@ Open **Settings → AyuGram → Sending Options**. Independent per-account switc
 
 The next source revision adds **Settings → AyuGram → Message Menu**: reaction-picker, read/reaction-summary, edit-information and Message Details visibility, plus **Messages from Author** using native group search. These per-account controls apply on the next menu opening and are not included in published build 8. See [scope and pending device checks](docs/MESSAGE_MENU.md).
 
+## Filter management (development source after build 8)
+
+The latest development sources also add **AyuGram · Add Filter** to eligible message menus, literal-text rule drafts, saved/editor rule counts and confirmed **Clear all rules**. The default channels-only scope now distinguishes broadcast channels from supergroups. See [filter management and verification](docs/FILTER_MANAGEMENT.md). These changes are not in build 8 and still await native/device checks.
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

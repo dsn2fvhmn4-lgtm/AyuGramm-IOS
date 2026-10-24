@@ -25,7 +25,7 @@ Codemagic uses the same release configuration on the free Mac M2 tier. Import th
 - A ghost button next to the chat header controls: outlined ghost when any Ghost Mode option is active, crossed ghost when all are off. Tapping opens the settings. The indicator reflects local policy, not server-confirmed invisibility.
 - After a successful cloud-message send, reassert offline status when Hide Online is enabled. A brief server-visible activity window remains possible; failures do not alter send results.
 
-These next-build changes require native compilation and simulator/device verification, including light/dark themes, narrow screens, selection mode and returning from settings. They are not present in the already uploaded IPA. Full AyuGram feature parity remains unfinished; see `docs/FEATURE_MATRIX.md`.
+These next-build changes require native compilation and simulator/device verification, including light/dark themes, narrow screens, selection mode and returning from settings. They are not present in the already uploaded IPA. Full AyuGram feature parity remains unfinished; see `FEATURE_MATRIX.md`.
 
 Configure your own `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` as repository secrets. The workflow does not use third-party API credentials. Artifacts built without those secrets are compilation-only and cannot log in.
 

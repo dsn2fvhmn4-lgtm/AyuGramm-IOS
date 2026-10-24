@@ -4,6 +4,8 @@ This feature is not included in the published v0.1.0 IPA or the separate brandin
 
 Entry point: Settings → AyuGram → Message History. Capture of edits and deletions has separate opt-ins, both off by default. The existing Privacy and Security → AyuGram · Ghost Mode path remains available.
 
+Message context menus also provide AyuGram → Message Details, showing IDs, timestamp, author and thread when available, followed by a link to archive entries filtered to that message. This metadata screen does not copy or re-render message content. Clearing from the filtered screen still asks to clear the entire account archive explicitly.
+
 The previous text is captured immediately before an EditMessage replay replaces it. Text is captured before DeleteMessages and DeleteMessagesWithGlobalIds remove a cached message. The bounded ledger is a PreferencesEntry in the same account's Postbox transaction; rollback also rolls back archive changes. Main chat deletion, read receipts and media removal retain upstream behavior.
 
 Limits: 100 total entries, 8 KB UTF-8 per entry, seven-day retention. Expired records are removed on update replay or opening the archive, rather than by a guaranteed background timer. Oversized texts are skipped without truncation. Repeated identical replay events are deduplicated. This is a text-only archive, not recovery of uncached messages or copies of media attachments; text containing ordinary webpage previews is eligible.

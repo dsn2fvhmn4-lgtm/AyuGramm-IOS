@@ -20,6 +20,10 @@ Open **Settings → AyuGram → Chat Appearance**. Per-account controls show/hid
 
 Open **Settings → AyuGram → Sending Options**. Independent per-account switches confirm sticker/GIF sends and require native preview for ordinary voice/video-note recordings. All four default off. View-once recordings retain their native flow. See [scope and device checks](docs/MEDIA_SENDING.md). Native/device verification is pending.
 
+## Interface and MessageShot (development source)
+
+**Settings → AyuGram → Interface** controls copyable IDs in profiles, ordinary bubble quick-share buttons, the Chats tab unread badge and MessageShot visibility. MessageShot appears in a message context menu or the Share choices after selecting messages. It creates a bounded card image with authors, formatted text, dates and cached image previews; other media has a label. Preview/zoom and the native share/save sheet are available before export. Protected/expiring content is excluded and spoilers remain masked. See [scope and verification](docs/MESSAGE_SHOT_AND_INTERFACE.md). Native/device verification is pending.
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

@@ -39,8 +39,12 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview. All subsequent
 | reset chat appearance | Resets only visual settings and preserves Ghost Mode, history and sending policy, in source |
 | stickerConfirmation / gifConfirmation (Desktop) | Opt-in per-account dialogs in sticker, saved GIF and inline GIF chat send handlers; one-shot approval in source |
 | voiceConfirmation / roundConfirmation (Desktop) | iOS adaptation: opt-in native preview before ordinary recording sends; view-once keeps its native flow, in source |
+| PeerIdDisplay (Desktop) | Optional copyable user/group/channel IDs in native profiles, with live refresh, in source |
+| hideFastShare (Desktop) | Ordinary bubble quick-share hiding; comments and sponsored actions preserved, in source |
+| hideNotificationBadge (Desktop) | Partial iOS adaptation: Chats tab unread badge visibility only; read state and system app-icon badge unchanged, in source |
+| showMessageShot (Desktop) | Local selected-message card image, cached image previews, spoiler masking and native image share preview, in source |
 | source sync URL/token settings | Pending; no token has been stored or transmitted |
 
-Additional Desktop-only scope (not implemented by these flags): translation providers, message screenshots, shadow bans, UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.
+Additional Desktop-only scope (not implemented by these flags): translation providers, shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.
 
 Release gates: clean pinned-patch application, UI import/API-contract checks, parse all changed Swift sources, compile/run real Foundation models, full Telegram target type check/link/package, then device and recorded simulator checks. The 32-check result applies only to the earlier history revision; newly added regex/migration/metadata/media-archive tests have not yet run on a Mac.

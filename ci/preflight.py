@@ -42,6 +42,17 @@ def main():
         for path, (code, output) in zip(sorted(paths), executor.map(parse, sorted(paths))):
             if code:
                 errors.append(f'{path}:\n{output}')
+    # This source deliberately uses only UIKit/ImageIO, so the actual renderer and
+    # preview can be type-checked against the pinned Xcode SDK before Telegram builds.
+    canvas = source / 'submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift'
+    if canvas.exists():
+        sdk = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], text=True).strip()
+        result = subprocess.run(['xcrun', 'swiftc', '-typecheck', '-swift-version', '5', '-warnings-as-errors',
+                                 '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator', str(canvas)], capture_output=True, text=True)
+        if result.returncode:
+            errors.append(f'MessageShot UIKit/ImageIO SDK type check:\n{result.stdout}{result.stderr}')
+        else:
+            print('PASS: actual MessageShot canvas/preview source type-checked against the iOS Simulator SDK')
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'PASS: {len(paths)} changed Swift sources parsed; UI import and Telegram API contracts checked. Full type checking still occurs during the native build.')

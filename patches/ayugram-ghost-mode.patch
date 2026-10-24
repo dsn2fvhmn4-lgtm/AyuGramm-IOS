@@ -220,6 +220,22 @@ index 4c3a6419..8d103a44 100644
      buildParser.add_argument(
          '--buildNumber',
          required=True,
+diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
+index 5bdff8a6..bd215887 100644
+--- a/submodules/ChatListUI/Sources/ChatListController.swift
++++ b/submodules/ChatListUI/Sources/ChatListController.swift
+@@ -452,9 +452,9 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+             }
+         }
+         
+-        self.badgeDisposable = (combineLatest(renderedTotalUnreadCount(accountManager: context.sharedContext.accountManager, engine: context.engine), self.presentationDataValue.get()) |> deliverOnMainQueue).startStrict(next: { [weak self] count, presentationData in
++        self.badgeDisposable = (combineLatest(renderedTotalUnreadCount(accountManager: context.sharedContext.accountManager, engine: context.engine), self.presentationDataValue.get(), context.account.network.ayuGhostMode.signal |> map { $0.interface.hideChatsBadge } |> distinctUntilChanged) |> deliverOnMainQueue).startStrict(next: { [weak self] count, presentationData, hideBadge in
+             if let strongSelf = self {
+-                if count.0 == 0 {
++                if hideBadge || count.0 == 0 {
+                     strongSelf.tabBarItem.badgeValue = ""
+                 } else {
+                     strongSelf.tabBarItem.badgeValue = compactNumericCountString(Int(count.0), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator)
 diff --git a/submodules/SettingsUI/Sources/AyuAppearanceController.swift b/submodules/SettingsUI/Sources/AyuAppearanceController.swift
 new file mode 100644
 index 00000000..e56a4624
@@ -609,10 +625,10 @@ index 00000000..ba3acdfe
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..148de6b4
+index 00000000..2f94a0e7
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,285 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -710,6 +726,7 @@ index 00000000..148de6b4
 +        case 2: push?(ayuChatOptionsController(context: context, regex: false))
 +        case 3: push?(ayuChatOptionsController(context: context, regex: true))
 +        case 4: push?(ayuAppearanceController(context: context))
++        case 5: push?(ayuInterfaceSettingsController(context: context))
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
@@ -723,13 +740,53 @@ index 00000000..148de6b4
 +            .link(2, ru ? "Отправка сообщений" : "Sending Options"),
 +            .link(3, ru ? "Regex-фильтры" : "Regex Filters"),
 +            .link(4, ru ? "Оформление чатов" : "Chat Appearance"),
-+            .info(5, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
++            .link(5, ru ? "Интерфейс" : "Interface"),
++            .info(6, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
++    return controller
++}
++
++private func ayuInterfaceSettingsController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var presentError: (() -> Void)?
++    let arguments = AyuSettingsArguments(open: { _ in }, update: { id, value in
++        do {
++            try store.update {
++                switch id {
++                case 0: $0.interface.showPeerIds = value
++                case 1: $0.interface.hideFastShare = value
++                case 2: $0.interface.hideChatsBadge = value
++                case 3: $0.interface.showMessageShot = value
++                default: break
++                }
++            }
++        } catch { presentError?() }
++    }, record: { _ in })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let value = settings.interface
++        let entries: [AyuSettingsEntry] = [
++            .toggle(0, ru ? "ID в профилях" : "Show IDs in profiles", value.showPeerIds),
++            .toggle(1, ru ? "Скрыть быструю пересылку" : "Hide bubble quick-share buttons", value.hideFastShare),
++            .toggle(2, ru ? "Скрыть счётчик вкладки «Чаты»" : "Hide Chats tab unread badge", value.hideChatsBadge),
++            .toggle(3, "MessageShot", value.showMessageShot),
++            .info(4, ru ? "Нажатие на ID копирует его. Счётчик меняется только на вкладке «Чаты»; состояние прочтения сохраняется. Быстрая пересылка скрывается возле обычных пузырьков, а комментарии и рекламные действия остаются доступны. MessageShot находится в меню сообщения и в действиях «Поделиться» для выбранных сообщений." : "Tap a profile ID to copy it. The badge setting affects the Chats tab and preserves read state. Quick-share hiding applies to ordinary bubbles; comment and sponsored-message actions remain available. MessageShot appears in the message menu and selected-message Share choices.")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        return (ItemListControllerState(presentationData: data, title: .text(ru ? "Интерфейс" : "Interface"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки интерфейса." : "Interface settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
 +    return controller
 +}
 +
@@ -1223,10 +1280,10 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..59757ca3
+index 00000000..a6bb6d35
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,139 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
@@ -1241,9 +1298,10 @@ index 00000000..59757ca3
 +    public var regexFilters = AyuRegexSettings()
 +    public var appearance = AyuAppearanceSettings()
 +    public var mediaSend = AyuMediaSendSettings()
++    public var interface = AyuInterfaceSettings()
 +
 +    private enum CodingKeys: String, CodingKey {
-+        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend
++        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend, interface
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -1258,6 +1316,7 @@ index 00000000..59757ca3
 +        catch { self.regexFilters = AyuRegexSettings() }
 +        self.appearance = (try? values.decode(AyuAppearanceSettings.self, forKey: .appearance)) ?? AyuAppearanceSettings()
 +        self.mediaSend = (try? values.decode(AyuMediaSendSettings.self, forKey: .mediaSend)) ?? AyuMediaSendSettings()
++        self.interface = (try? values.decode(AyuInterfaceSettings.self, forKey: .interface)) ?? AyuInterfaceSettings()
 +    }
 +
 +    public init(hideReadReceipts: Bool = false, hideOnline: Bool = false, hideTyping: Bool = false, hideUploadProgress: Bool = false) {
@@ -1362,6 +1421,45 @@ index 00000000..59757ca3
 +        self.lock.lock()
 +        defer { self.lock.unlock() }
 +        self.observers.removeValue(forKey: id)
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+new file mode 100644
+index 00000000..3c291443
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -0,0 +1,33 @@
++import Foundation
++
++public struct AyuInterfaceSettings: Codable, Equatable {
++    public var showPeerIds = false
++    public var hideFastShare = false
++    public var hideChatsBadge = false
++    public var showMessageShot = true
++    public init() {}
++
++    private enum CodingKeys: String, CodingKey {
++        case showPeerIds, hideFastShare, hideChatsBadge, showMessageShot
++    }
++    public init(from decoder: Decoder) throws {
++        let values = try decoder.container(keyedBy: CodingKeys.self)
++        self.showPeerIds = try values.decodeIfPresent(Bool.self, forKey: .showPeerIds) ?? false
++        self.hideFastShare = try values.decodeIfPresent(Bool.self, forKey: .hideFastShare) ?? false
++        self.hideChatsBadge = try values.decodeIfPresent(Bool.self, forKey: .hideChatsBadge) ?? false
++        self.showMessageShot = try values.decodeIfPresent(Bool.self, forKey: .showMessageShot) ?? true
++    }
++}
++
++public enum AyuPeerIdFormat {
++    public enum Kind { case user, group, channel, other }
++    public static func text(id: Int64, kind: Kind) -> String {
++        let raw = String(id)
++        let magnitude = raw.hasPrefix("-") ? String(raw.dropFirst()) : raw
++        switch kind {
++        case .user, .other: return raw
++        case .group: return "-\(magnitude)"
++        case .channel: return "-100\(magnitude)"
++        }
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift
@@ -1824,6 +1922,87 @@ index 00000000..46e371d9
 +        self.prune(now: now)
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageShot.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageShot.swift
+new file mode 100644
+index 00000000..b23ce61d
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageShot.swift
+@@ -0,0 +1,35 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++public extension EngineMessage {
++    var ayuCanMessageShot: Bool {
++        guard self.id.namespace == Namespaces.Message.Cloud, [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(self.id.peerId.namespace), self.adAttribute == nil,
++              !self._asMessage().isCopyProtected(), !self._asMessage().containsSecretMedia else { return false }
++        return !self.attributes.contains {
++            $0 is AutoremoveTimeoutMessageAttribute || $0 is AutoclearTimeoutMessageAttribute || $0 is EphemeralMessageAttribute || $0 is EphemeralReplacementMessageAttribute || $0 is EphemeralOutgoingMessageAttribute || $0 is RestrictedContentMessageAttribute
++        } && !self.media.contains { $0 is TelegramMediaAction || $0 is TelegramMediaExpiredContent }
++    }
++}
++
++public extension TelegramEngine.Messages {
++    /// Local reads only. Refuse the entire selection if one item is missing or cannot
++    /// be exported; never silently omit selected content from a screenshot.
++    func ayuMessageShotMessages(ids: [EngineMessage.Id]) -> Signal<[EngineMessage]?, NoError> {
++        return self.account.postbox.transaction { transaction -> [EngineMessage]? in
++            let ids = Set(ids)
++            guard !ids.isEmpty, ids.count <= AyuMessageShotPolicy.maximumMessages else { return nil }
++            var messages: [EngineMessage] = []
++            for id in ids {
++                guard let message = transaction.getMessage(id), let peer = transaction.getPeer(id.peerId), !peer.isCopyProtectionEnabled else { return nil }
++                if let data = transaction.getPeerCachedData(peerId: id.peerId) as? CachedUserData,
++                   data.flags.contains(.copyProtectionEnabled) || data.flags.contains(.myCopyProtectionEnabled) { return nil }
++                let item = EngineMessage(message)
++                guard item.ayuCanMessageShot else { return nil }
++                messages.append(item)
++            }
++            guard Set(messages.map { $0.id.peerId }).count == 1, AyuMessageShotPolicy.accepts(texts: messages.map { $0.text }) else { return nil }
++            return messages.sorted { $0.index < $1.index }
++        }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageShotPolicy.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageShotPolicy.swift
+new file mode 100644
+index 00000000..01703f52
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageShotPolicy.swift
+@@ -0,0 +1,34 @@
++import Foundation
++
++public enum AyuMessageShotPolicy {
++    public static let maximumMessages = 20
++    public static let maximumTextBytes = 8192
++    public static let maximumTotalTextBytes = 32768
++    public static let imageWidth = 900
++    public static let maximumImageHeight = 8000
++
++    public static func accepts(texts: [String]) -> Bool {
++        guard !texts.isEmpty, texts.count <= maximumMessages else { return false }
++        var total = 0
++        for text in texts {
++            let size = text.utf8.count
++            guard size <= maximumTextBytes else { return false }
++            total += size
++            if total > maximumTotalTextBytes { return false }
++        }
++        return true
++    }
++
++    /// Entity offsets are UTF-16, like Telegram's text entities. Keep the length
++    /// unchanged so formatting ranges remain valid after masking spoilers.
++    public static func maskingSpoilers(_ text: String, ranges: [Range<Int>]) -> String {
++        let result = NSMutableString(string: text)
++        for range in ranges {
++            guard range.lowerBound >= 0, range.upperBound <= result.length, !range.isEmpty else {
++                return String(repeating: "•", count: result.length)
++            }
++            result.replaceCharacters(in: NSRange(location: range.lowerBound, length: range.count), with: String(repeating: "•", count: range.count))
++        }
++        return result as String
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift
 new file mode 100644
 index 00000000..b186c962
@@ -2162,6 +2341,21 @@ index 5c0a9101..92d7de3d 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+index d7da5d10..ede42b8b 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+@@ -2023,6 +2023,10 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+             allowFullWidth = true
+         }
+ 
++        if item.context.account.network.ayuGhostMode.current.interface.hideFastShare, !isAd, !hasCommentButton(item: item) {
++            needsShareButton = false
++        }
++
+         var tmpWidth: CGFloat
+         if allowFullWidth {
+             tmpWidth = baseWidth
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
 index 215b975f..3865027b 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
@@ -2220,8 +2414,44 @@ index ad79b915..502cca0b 100644
 +    }
      return dateText
  }
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+index 34f23770..c50a60b1 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+@@ -16,6 +16,7 @@ import WebUI
+ import AvatarNode
+ import PeerNameColorItem
+ import BoostLevelIconComponent
++import UndoUI
+ 
+ private let enabledPublicBioEntities: EnabledEntityTypes = [.allUrl, .mention, .hashtag]
+ private let enabledPrivateBioEntities: EnabledEntityTypes = [.internalUrl, .mention, .hashtag]
+@@ -900,6 +901,23 @@ func infoItems(
+         }
+     }
+     
++    if context.account.network.ayuGhostMode.current.interface.showPeerIds, let peer = data.peer {
++        let kind: AyuPeerIdFormat.Kind
++        switch peer.id.namespace {
++        case Namespaces.Peer.CloudUser: kind = .user
++        case Namespaces.Peer.CloudGroup: kind = .group
++        case Namespaces.Peer.CloudChannel: kind = .channel
++        default: kind = .other
++        }
++        let value = AyuPeerIdFormat.text(id: peer.id.id._internalGetInt64Value(), kind: kind)
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let copy: () -> Void = {
++            UIPasteboard.general.string = value
++            interaction.getController()?.present(UndoOverlayController(presentationData: presentationData, content: .copy(text: ru ? "ID скопирован" : "ID copied"), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .current)
++        }
++        items[.peerInfo]!.append(PeerInfoScreenLabeledValueItem(id: "ayu-peer-id", label: "Telegram ID", rightLabel: ru ? "Копировать" : "Copy", text: value, textColor: .accent, action: { _, _ in copy() }, longTapAction: { _ in copy() }, requestLayout: { interaction.requestLayout($0) }))
++    }
++
+     var result: [(AnyHashable, [PeerInfoScreenItem])] = []
+     for section in InfoSection.allCases {
+         if let sectionItems = items[section], !sectionItems.isEmpty {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-index 8c4a24b7..c569bac9 100644
+index 8c4a24b7..ecc341a9 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 @@ -161,6 +161,7 @@ enum PeerInfoContextSubject {
@@ -2232,6 +2462,16 @@ index 8c4a24b7..c569bac9 100644
      case avatar
      case edit
      case proxy
+@@ -2535,7 +2536,8 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+ 
+         self.dataDisposable = combineLatest(
+             queue: Queue.mainQueue(),
+-            screenData,
++            combineLatest(screenData, context.account.network.ayuGhostMode.signal |> map { $0.interface.showPeerIds } |> distinctUntilChanged)
++            |> map { data, _ in data },
+             self.forceIsContactPromise.get(),
+             reactionSourceMessage
+         ).startStrict(next: { [weak self] data, forceIsContact, reactionSourceMessage in
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
 index f1c1917b..c2e73081 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
@@ -2259,6 +2499,124 @@ index a4873696..ca936b38 100644
      items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 1, text: presentationData.strings.Settings_SavedMessages, icon: PresentationResourcesSettings.savedMessages, action: {
          interaction.openSettings(.savedMessages)
      }))
+diff --git a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
+new file mode 100644
+index 00000000..ee4cab5b
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
+@@ -0,0 +1,112 @@
++import Foundation
++import UIKit
++import ImageIO
++
++final class AyuMessageShotPreview: UIViewController, UIScrollViewDelegate {
++    private let image: UIImage
++    private let scroll = UIScrollView()
++    private let imageView = UIImageView()
++    private var lastWidth: CGFloat = 0.0
++    var share: ((UIViewController) -> Void)?
++
++    init(image: UIImage) {
++        self.image = image
++        super.init(nibName: nil, bundle: nil)
++        self.title = "MessageShot"
++    }
++
++    required init?(coder: NSCoder) { return nil }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.view.backgroundColor = .systemBackground
++        self.scroll.delegate = self
++        self.scroll.minimumZoomScale = 1.0
++        self.scroll.maximumZoomScale = 3.0
++        self.imageView.image = self.image
++        self.imageView.contentMode = .scaleAspectFit
++        self.scroll.addSubview(self.imageView)
++        self.view.addSubview(self.scroll)
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.closePressed))
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .action, target: self, action: #selector(self.sharePressed))
++    }
++
++    override func viewDidLayoutSubviews() {
++        super.viewDidLayoutSubviews()
++        self.scroll.frame = self.view.bounds.inset(by: self.view.safeAreaInsets)
++        let width = self.scroll.bounds.width
++        if width > 0.0, width != self.lastWidth {
++            self.lastWidth = width
++            self.scroll.zoomScale = 1.0
++            self.imageView.frame = CGRect(x: 0.0, y: 0.0, width: width, height: width * self.image.size.height / self.image.size.width)
++            self.scroll.contentSize = self.imageView.bounds.size
++        }
++    }
++
++    func viewForZooming(in scrollView: UIScrollView) -> UIView? { return self.imageView }
++    @objc private func closePressed() { self.dismiss(animated: true) }
++    @objc private func sharePressed() { self.share?(self) }
++}
++
++struct AyuMessageShotCard {
++    let author: String
++    let date: String
++    let text: NSAttributedString
++    let photo: UIImage?
++    let outgoing: Bool
++}
++
++func ayuRenderMessageShot(cards: [AyuMessageShotCard], dark: Bool, width: CGFloat, maximumHeight: CGFloat) -> UIImage? {
++    guard !cards.isEmpty, width.isFinite, maximumHeight.isFinite, width > 112.0, maximumHeight >= 200.0 else { return nil }
++    let cardWidth = width - 112.0
++    let innerWidth = cardWidth - 40.0
++    var layouts: [(CGRect, CGRect, CGRect?)] = []
++    var y: CGFloat = 90.0
++    for card in cards {
++        let measured = card.text.boundingRect(with: CGSize(width: innerWidth, height: maximumHeight), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
++        guard measured.height.isFinite else { return nil }
++        let textHeight = max(ceil(measured.height), 32.0)
++        let x: CGFloat = card.outgoing ? 88.0 : 24.0
++        let textFrame = CGRect(x: x + 20.0, y: y + 62.0, width: innerWidth, height: textHeight)
++        var photoFrame: CGRect?
++        var bottom = textFrame.maxY
++        if let photo = card.photo, photo.size.width > 0.0, photo.size.height > 0.0 {
++            let scale = min(innerWidth / photo.size.width, 360.0 / photo.size.height)
++            let frame = CGRect(x: x + 20.0, y: bottom + 14.0, width: photo.size.width * scale, height: photo.size.height * scale)
++            photoFrame = frame
++            bottom = frame.maxY
++        }
++        let frame = CGRect(x: x, y: y, width: cardWidth, height: bottom - y + 54.0)
++        layouts.append((frame, textFrame, photoFrame))
++        y = frame.maxY + 20.0
++        if y + 44.0 > maximumHeight { return nil }
++    }
++    let format = UIGraphicsImageRendererFormat()
++    format.scale = 1.0
++    format.opaque = true
++    let background = dark ? UIColor(red: 0.09, green: 0.08, blue: 0.13, alpha: 1.0) : UIColor(red: 0.94, green: 0.93, blue: 0.98, alpha: 1.0)
++    let secondary = dark ? UIColor(white: 0.70, alpha: 1.0) : UIColor(white: 0.40, alpha: 1.0)
++    return UIGraphicsImageRenderer(size: CGSize(width: width, height: ceil(y + 44.0)), format: format).image { _ in
++        background.setFill()
++        UIBezierPath(rect: CGRect(x: 0.0, y: 0.0, width: width, height: ceil(y + 44.0))).fill()
++        ("AyuGram · MessageShot" as NSString).draw(at: CGPoint(x: 28.0, y: 28.0), withAttributes: [.font: UIFont.systemFont(ofSize: 30.0, weight: .semibold), .foregroundColor: secondary])
++        for (index, card) in cards.enumerated() {
++            let (frame, textFrame, photoFrame) = layouts[index]
++            let fill = dark ? UIColor(white: card.outgoing ? 0.23 : 0.16, alpha: 1.0) : (card.outgoing ? UIColor(red: 0.88, green: 0.84, blue: 0.98, alpha: 1.0) : .white)
++            fill.setFill()
++            UIBezierPath(roundedRect: frame, cornerRadius: 24.0).fill()
++            (card.author as NSString).draw(in: CGRect(x: frame.minX + 20.0, y: frame.minY + 16.0, width: innerWidth, height: 36.0), withAttributes: [.font: UIFont.systemFont(ofSize: 27.0, weight: .semibold), .foregroundColor: dark ? UIColor(red: 0.78, green: 0.69, blue: 1.0, alpha: 1.0) : UIColor(red: 0.36, green: 0.22, blue: 0.63, alpha: 1.0)])
++            card.text.draw(with: textFrame, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
++            if let photoFrame, let photo = card.photo { photo.draw(in: photoFrame) }
++            (card.date as NSString).draw(in: CGRect(x: frame.minX + 20.0, y: frame.maxY - 36.0, width: innerWidth, height: 30.0), withAttributes: [.font: UIFont.systemFont(ofSize: 21.0), .foregroundColor: secondary])
++        }
++    }
++}
++
++func ayuMessageShotThumbnailImage(path: String) -> UIImage? {
++    return autoreleasepool {
++        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
++              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 512, kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return nil }
++        return UIImage(cgImage: image)
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift
 new file mode 100644
 index 00000000..2c07baa7
@@ -2305,6 +2663,30 @@ index 00000000..2c07baa7
 +        return true
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+index f5823d12..c9bbe41c 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+@@ -2020,7 +2020,9 @@ extension ChatControllerImpl {
+             }
+             self.presentSuggestPostOptions()
+         }, shareSelectedMessages: { [weak self] in
+-            if let strongSelf = self, let selectedIds = strongSelf.presentationInterfaceState.interfaceState.selectionState?.selectedIds, !selectedIds.isEmpty {
++            guard let self, let selectedIds = self.presentationInterfaceState.interfaceState.selectionState?.selectedIds, !selectedIds.isEmpty else { return }
++            self.ayuPresentMessageShotChoice(ids: Array(selectedIds), shareNormally: { [weak self] in
++                guard let strongSelf = self else { return }
+                 strongSelf.commitPurposefulAction()
+                 let _ = (strongSelf.context.engine.data.get(EngineDataMap(
+                     selectedIds.map(TelegramEngine.EngineData.Item.Messages.Message.init)
+@@ -2039,7 +2041,7 @@ extension ChatControllerImpl {
+                         strongSelf.present(shareController, in: .window(.root))
+                     }
+                 })
+-            }
++            })
+         }, updateTextInputStateAndMode: { [weak self] f in
+             if let strongSelf = self {
+                 // Every transform handed here is the USER's edit through the chat — autocomplete, the
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
 index 89e8d45b..af77447e 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
@@ -2322,6 +2704,141 @@ index 89e8d45b..af77447e 100644
          
          if let audioRecorderValue = self.audioRecorderValue {
              switch action {
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift
+new file mode 100644
+index 00000000..e5f67ec0
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift
+@@ -0,0 +1,129 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import TelegramPresentationData
++import PresentationDataUtils
++import AlertUI
++import TextFormat
++import OverlayStatusController
++
++private func ayuMessageShotThumbnail(context: AccountContext, message: EngineMessage) -> Signal<UIImage?, NoError> {
++    guard !message.attributes.contains(where: { $0 is MediaSpoilerMessageAttribute }) else { return .single(nil) }
++    let resource: EngineMediaResource?
++    if let image = message.media.first(where: { $0 is TelegramMediaImage }) as? TelegramMediaImage,
++       let representation = largestImageRepresentation(image.representations) {
++        resource = EngineMediaResource(representation.resource)
++    } else if let file = message.media.first(where: { $0 is TelegramMediaFile }) as? TelegramMediaFile,
++              let representation = largestImageRepresentation(file.previewRepresentations) {
++        resource = EngineMediaResource(representation.resource)
++    } else { resource = nil }
++    guard let resource else { return .single(nil) }
++    // This observes the local cache and never starts a resource fetch.
++    return context.engine.resources.data(resource: resource, waitUntilFetchStatus: false)
++    |> take(1)
++    |> map { data -> UIImage? in
++        guard data.isComplete, data.availableSize > 0, data.availableSize <= 25_000_000 else { return nil }
++        return ayuMessageShotThumbnailImage(path: data.path)
++    }
++    |> timeout(2.0, queue: Queue.mainQueue(), alternate: .single(nil))
++}
++
++private func ayuMessageShotMediaLabel(_ message: EngineMessage, russian: Bool) -> String {
++    if message.attributes.contains(where: { $0 is MediaSpoilerMessageAttribute }) { return russian ? "Медиа со спойлером" : "Spoiler media" }
++    if message.media.contains(where: { $0 is TelegramMediaImage }) { return russian ? "Фото" : "Photo" }
++    if let file = message.media.first(where: { $0 is TelegramMediaFile }) as? TelegramMediaFile {
++        if file.isVoice { return russian ? "Голосовое сообщение" : "Voice message" }
++        if file.isInstantVideo { return russian ? "Видеосообщение" : "Video note" }
++        if file.isSticker { return russian ? "Стикер" : "Sticker" }
++        if file.isAnimated { return "GIF" }
++        if file.isVideo { return russian ? "Видео" : "Video" }
++        return String((file.fileName ?? (russian ? "Файл" : "File")).prefix(120))
++    }
++    if message.media.contains(where: { !($0 is TelegramMediaWebpage) }) { return russian ? "Вложение" : "Attachment" }
++    return ""
++}
++
++
++extension ChatControllerImpl {
++    func ayuPresentMessageShotChoice(ids: [EngineMessage.Id], shareNormally: @escaping () -> Void) {
++        guard self.context.account.network.ayuGhostMode.current.interface.showMessageShot else { shareNormally(); return }
++        let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Как поделиться выбранными сообщениями?" : "How would you like to share the selected messages?", actions: [
++            TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
++            TextAlertAction(type: .defaultAction, title: ru ? "Сообщения" : "Messages", action: shareNormally),
++            TextAlertAction(type: .defaultAction, title: "MessageShot", action: { [weak self] in self?.ayuShowMessageShot(ids: ids) })
++        ], actionLayout: .vertical), in: .window(.root))
++    }
++
++    private func ayuMessageShotError() {
++        let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        self.present(textAlertController(context: self.context, title: "MessageShot", text: ru ? "Выбери до 20 доступных обычных сообщений из одного чата. Защищённые и исчезающие сообщения исключены. Если картинка слишком длинная, выбери меньше сообщений." : "Choose up to 20 available ordinary messages from one chat. Protected and disappearing messages are excluded. Select fewer messages if the image is too tall.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++
++    func ayuShowMessageShot(ids: [EngineMessage.Id]) {
++        guard !self.ayuMessageShotInProgress, self.context.account.network.ayuGhostMode.current.interface.showMessageShot else { return }
++        guard !self.presentationInterfaceState.copyProtectionEnabled else { self.ayuMessageShotError(); return }
++        self.ayuMessageShotInProgress = true
++        let progress = OverlayStatusController(theme: self.presentationData.theme, type: .loading(cancelled: nil))
++        self.present(progress, in: .window(.root))
++        let context = self.context
++        let _ = (context.engine.messages.ayuMessageShotMessages(ids: ids)
++        |> timeout(3.0, queue: Queue.mainQueue(), alternate: .single(nil))
++        |> deliverOnMainQueue).startStandalone(next: { [weak self] messages in
++            guard let self else { progress.dismiss(); return }
++            guard let messages else { self.ayuMessageShotInProgress = false; progress.dismiss(); self.ayuMessageShotError(); return }
++            let _ = (combineLatest(messages.map { ayuMessageShotThumbnail(context: context, message: $0) })
++            |> take(1)
++            |> deliverOnMainQueue).startStandalone(next: { [weak self] photos in
++                progress.dismiss()
++                guard let self else { return }
++                self.ayuMessageShotInProgress = false
++                let data = self.presentationData
++                let ru = data.strings.baseLanguageCode.hasPrefix("ru")
++                let dark = data.theme.overallDarkAppearance
++                let color: UIColor = dark ? .white : UIColor(white: 0.12, alpha: 1.0)
++                var cards: [AyuMessageShotCard] = []
++                for (index, message) in messages.enumerated() {
++                    let entities = (message.attributes.first(where: { $0 is TextEntitiesMessageAttribute }) as? TextEntitiesMessageAttribute)?.entities ?? []
++                    let spoilers = entities.compactMap { entity -> Range<Int>? in if case .Spoiler = entity.type { return entity.range }; return nil }
++                    let safeText = AyuMessageShotPolicy.maskingSpoilers(message.text, ranges: spoilers)
++                    let safeLength = (safeText as NSString).length
++                    let safeEntities = entities.filter { entity in entity.range.lowerBound >= 0 && entity.range.upperBound <= safeLength && !spoilers.contains(where: { $0.overlaps(entity.range) }) }
++                    let text = NSMutableAttributedString(attributedString: stringWithAppliedEntities(safeText, entities: safeEntities, baseColor: color, linkColor: color, baseFont: Font.regular(30.0), linkFont: Font.regular(30.0), boldFont: Font.semibold(30.0), italicFont: Font.italic(30.0), boldItalicFont: Font.semiboldItalic(30.0), fixedFont: Font.monospace(28.0), blockQuoteFont: Font.regular(30.0), message: nil))
++                    let media = ayuMessageShotMediaLabel(message, russian: ru)
++                    if !media.isEmpty { text.append(NSAttributedString(string: (text.length == 0 ? "" : "\n") + "[\(media)]", attributes: [.font: Font.italic(25.0), .foregroundColor: color])) }
++                    if text.length == 0 { text.append(NSAttributedString(string: ru ? "Сообщение" : "Message", attributes: [.font: Font.regular(30.0), .foregroundColor: color])) }
++                    let author = message.author?.displayTitle(strings: data.strings, displayOrder: data.nameDisplayOrder) ?? (ru ? "Автор" : "Author")
++                    let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(message.timestamp)), dateStyle: .short, timeStyle: .short)
++                    cards.append(AyuMessageShotCard(author: String(author.prefix(80)), date: date, text: text, photo: photos[index], outgoing: !message.flags.contains(.Incoming)))
++                }
++                guard let image = ayuRenderMessageShot(cards: cards, dark: dark, width: CGFloat(AyuMessageShotPolicy.imageWidth), maximumHeight: CGFloat(AyuMessageShotPolicy.maximumImageHeight)) else { self.ayuMessageShotError(); return }
++                let preview = AyuMessageShotPreview(image: image)
++                preview.share = { [weak context] controller in
++                    guard let context else { return }
++                    controller.navigationItem.rightBarButtonItem?.isEnabled = false
++                    let _ = (context.engine.messages.ayuMessageShotMessages(ids: ids)
++                    |> timeout(3.0, queue: Queue.mainQueue(), alternate: .single(nil))
++                    |> deliverOnMainQueue).startStandalone(next: { [weak controller] current in
++                        guard let controller else { return }
++                        controller.navigationItem.rightBarButtonItem?.isEnabled = true
++                        guard current != nil else {
++                            let alert = UIAlertController(title: "MessageShot", message: ru ? "Сообщения больше недоступны для экспорта." : "These messages are no longer available for export.", preferredStyle: .alert)
++                            alert.addAction(UIAlertAction(title: data.strings.Common_OK, style: .default, handler: nil))
++                            controller.present(alert, animated: true)
++                            return
++                        }
++                        let activity = UIActivityViewController(activityItems: [image], applicationActivities: nil)
++                        activity.popoverPresentationController?.sourceView = controller.view
++                        activity.popoverPresentationController?.sourceRect = CGRect(x: controller.view.bounds.midX, y: controller.view.bounds.midY, width: 1.0, height: 1.0)
++                        controller.present(activity, animated: true)
++                    })
++                }
++                context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: preview))
++            })
++        })
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 index face5ae7..f32f529c 100644
 --- a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
@@ -2406,10 +2923,10 @@ index face5ae7..f32f529c 100644
      selfController: ChatControllerImpl,
      transition: ContainedViewLayoutTransition,
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..06716862 100644
+index 5fe58bbf..92a08bf6 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
-@@ -310,6 +310,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -310,6 +310,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      var leftNavigationButton: ChatNavigationButton?
      var rightNavigationButton: ChatNavigationButton?
      var secondaryRightNavigationButton: ChatNavigationButton?
@@ -2418,10 +2935,11 @@ index 5fe58bbf..06716862 100644
 +    let ayuGhostSettingsDisposable = MetaDisposable()
 +    weak var ayuMediaConfirmationController: ViewController?
 +    var ayuApprovedMediaSend: AyuMediaSendSettings.Kind?
++    var ayuMessageShotInProgress = false
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
-@@ -768,6 +773,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -768,6 +774,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
          self.ready.set(.never())
@@ -2429,7 +2947,7 @@ index 5fe58bbf..06716862 100644
          
          self.chatBackgroundNode.contentStatsUpdated = { [weak self] in
              guard let self else {
-@@ -2408,6 +2414,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2408,6 +2415,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -2440,7 +2958,7 @@ index 5fe58bbf..06716862 100644
              var attributes: [MessageAttribute] = []
              if let query = query {
                  attributes.append(EmojiSearchQueryMessageAttribute(query: query))
-@@ -2681,6 +2691,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2681,6 +2692,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                      }
                  }
                  
@@ -2451,7 +2969,7 @@ index 5fe58bbf..06716862 100644
                  strongSelf.presentPaidMessageAlertIfNeeded(completion: { [weak self] postpone in
                      guard let strongSelf = self else {
                          return
-@@ -2737,6 +2751,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2737,6 +2752,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -2462,7 +2980,7 @@ index 5fe58bbf..06716862 100644
              strongSelf.enqueueChatContextResult(collection, result, hideVia: true, closeMediaInput: true, silentPosting: silentPosting, resetTextInputState: resetTextInputState)
              
              return true
-@@ -6450,6 +6468,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -6450,6 +6469,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              }
          }
          self.moreBarButton.addTarget(self, action: #selector(self.moreButtonPressed), forControlEvents: .touchUpInside)
@@ -2475,7 +2993,7 @@ index 5fe58bbf..06716862 100644
          
          self.navigationItem.titleView = self.chatTitleView
          self.chatTitleView?.tapAction = { [weak self] in
-@@ -7082,6 +7106,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7082,6 +7107,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
  
      deinit {
@@ -2483,7 +3001,7 @@ index 5fe58bbf..06716862 100644
          let _ = ChatControllerCount.modify { value in
              return value - 1
          }
-@@ -8639,6 +8664,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8639,6 +8665,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              self.navigationButtonAction(button.action)
          }
      }
@@ -2564,7 +3082,7 @@ index 0fb1ee10..31255099 100644
              updatingMedia |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_updatingMedia"),
              automaticDownloadNetworkType |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_automaticDownloadNetworkType"),
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..ea8fa077 100644
+index 1ade8c01..da41e59c 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -2594,13 +3112,22 @@ index 1ade8c01..ea8fa077 100644
      var loadStickerSaveStatusSignal: Signal<Bool?, NoError> = .single(nil)
      if let loadStickerSaveStatus = loadStickerSaveStatus {
          loadStickerSaveStatusSignal = context.engine.stickers.isStickerSaved(id: loadStickerSaveStatus)
-@@ -2479,6 +2485,17 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2479,6 +2485,26 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
 +        if message.id.namespace == Namespaces.Message.Cloud {
 +            actions.append(.separator)
 +            let ru = chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru")
++            if context.account.network.ayuGhostMode.current.interface.showMessageShot, !chatPresentationInterfaceState.copyProtectionEnabled, messages.allSatisfy({ EngineMessage($0).ayuCanMessageShot }) {
++                actions.append(.action(ContextMenuActionItem(text: "AyuGram · MessageShot", icon: { theme in
++                    return UIImage(systemName: "photo.on.rectangle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                }, action: { controller, _ in
++                    controller?.dismiss(completion: {
++                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuShowMessageShot(ids: messages.map { $0.id })
++                    })
++                })))
++            }
 +            actions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Данные сообщения" : "AyuGram · Message Details", icon: { theme in
 +                return UIImage(systemName: "info.circle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
 +            }, action: { controller, _ in
@@ -2614,10 +3141,10 @@ index 1ade8c01..ea8fa077 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..a875172e
+index 00000000..dfe2bba8
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,310 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -2876,6 +3403,38 @@ index 00000000..a875172e
 +let cancelledDecision = AyuMediaSendDecision()
 +check(!cancelledDecision.resolve(approved: false) && !cancelledDecision.resolve(approved: true), "Cancel invalidates delayed approval callbacks")
 +print("PASS: \(checks) total checks, including media-send policy/migration and one-shot decisions; native dialogs/recorders remain unverified")
++
++var interfaceSettings = AyuInterfaceSettings()
++check(!interfaceSettings.showPeerIds && !interfaceSettings.hideFastShare && !interfaceSettings.hideChatsBadge && interfaceSettings.showMessageShot, "Interface defaults preserve native controls and expose MessageShot")
++interfaceSettings.showPeerIds = true
++interfaceSettings.hideFastShare = true
++interfaceSettings.hideChatsBadge = true
++let interfaceRoundTrip = try JSONDecoder().decode(AyuInterfaceSettings.self, from: JSONEncoder().encode(interfaceSettings))
++check(interfaceRoundTrip == interfaceSettings, "Interface settings survive serialization")
++let partialInterface = try JSONDecoder().decode(AyuInterfaceSettings.self, from: Data("{\"hideChatsBadge\":true}".utf8))
++check(partialInterface.hideChatsBadge && !partialInterface.showPeerIds && partialInterface.showMessageShot, "Partial interface settings migrate independently")
++check(oldGhost.interface == AyuInterfaceSettings(), "Legacy files acquire interface defaults")
++try appearanceStore.update { $0.interface = interfaceSettings; $0.appearance.showMessageSeconds = true }
++try appearanceStore.update { $0.appearance = AyuAppearanceSettings() }
++let savedInterface = AyuGhostModeStore(accountPath: appearancePath.path).current
++check(savedInterface.interface == interfaceSettings && savedInterface.allEnabled && savedInterface.mediaSend == mediaSend, "Appearance reset and interface persistence preserve other feature blocks")
++check(AyuPeerIdFormat.text(id: 42, kind: .user) == "42", "User IDs use their raw identifier")
++check(AyuPeerIdFormat.text(id: 42, kind: .group) == "-42", "Legacy group IDs use Bot API format")
++check(AyuPeerIdFormat.text(id: 42, kind: .channel) == "-10042", "Channel and supergroup IDs use the -100 prefix")
++check(AyuPeerIdFormat.text(id: -42, kind: .group) == "-42", "Already negative identifiers do not acquire a second minus")
++check(AyuPeerIdFormat.text(id: Int64.min, kind: .channel).hasPrefix("-100"), "Formatting extreme identifiers must not overflow")
++check(!AyuMessageShotPolicy.accepts(texts: []), "MessageShot rejects an empty selection")
++check(AyuMessageShotPolicy.accepts(texts: Array(repeating: "hello", count: 20)), "MessageShot accepts its maximum bounded selection")
++check(!AyuMessageShotPolicy.accepts(texts: Array(repeating: "hello", count: 21)), "MessageShot rejects too many selected messages")
++check(!AyuMessageShotPolicy.accepts(texts: [String(repeating: "я", count: 4097)]), "MessageShot text limits apply to UTF-8 bytes")
++check(!AyuMessageShotPolicy.accepts(texts: Array(repeating: String(repeating: "a", count: 8192), count: 5)), "MessageShot bounds total text before image allocation")
++let spoilerSource = "A😀secretZ"
++let spoilerMasked = AyuMessageShotPolicy.maskingSpoilers(spoilerSource, ranges: [3 ..< 9])
++check(spoilerMasked == "A😀••••••Z" && (spoilerMasked as NSString).length == (spoilerSource as NSString).length, "Spoiler masking preserves UTF-16 entity offsets after emoji")
++check(AyuMessageShotPolicy.maskingSpoilers("abcdef", ranges: [1 ..< 4, 3 ..< 5]) == "a••••f", "Overlapping spoiler ranges stay masked")
++check(AyuMessageShotPolicy.maskingSpoilers("secret", ranges: [-1 ..< 2]) == "••••••", "Malformed spoiler ranges mask the whole text instead of revealing it")
++check(AyuMessageShotPolicy.maskingSpoilers("visible", ranges: []) == "visible", "Ordinary text remains unchanged")
++print("PASS: \(checks) total checks, including interface persistence, peer IDs and bounded spoiler-safe MessageShot policy; native image generation remains unverified")
 +
 +#if AYU_POSTBOX_TESTS
 +func postboxRoundTrip(_ state: AyuMessageHistoryState) -> AyuMessageHistoryState? {

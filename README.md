@@ -7,6 +7,7 @@ An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. The
 This repository contains a reproducible native source patch against Telegram-iOS commit `fb0e62ba8a147f0821da6aa63c09da7d79a10111`. `ci/prepare.py` checks the exact commit before applying it. The complete upstream client supplies authentication, chats, media and calls; these still require regression testing for this port.
 
 If you would like to support the repository authors, you can send a contribution to our TRC20 wallets or mono
+
 murk-sus: only TRC20: TCPD7jzSMtQ4zkoSxSbUZi6RFoVdKqv78w
 
 dsn2fvhmn4-lgtm (only mono): mono: 4874070019870151

@@ -8,7 +8,7 @@ Message context menus also provide AyuGram → Message Details, showing IDs, tim
 
 The previous text is captured immediately before an EditMessage replay replaces it. Text is captured before DeleteMessages and DeleteMessagesWithGlobalIds remove a cached message. The bounded ledger is a PreferencesEntry in the same account's Postbox transaction; rollback also rolls back archive changes. Main chat deletion, read receipts and media removal retain upstream behavior.
 
-Limits: 100 total entries, 8 KB UTF-8 per entry, seven-day retention. Expired records are removed on update replay or opening the archive, rather than by a guaranteed background timer. Oversized texts are skipped without truncation. Repeated identical replay events are deduplicated. This is a text-only archive, not recovery of uncached messages or copies of media attachments; text containing ordinary webpage previews is eligible.
+Limits: 100 total entries, 8 KB UTF-8 per entry, seven-day retention. Expired records are removed on update replay or opening the archive, rather than by a guaranteed background timer. Oversized texts are skipped without truncation. Repeated identical replay events are deduplicated. This is a bounded archive, not recovery of uncached messages; text containing ordinary webpage previews is eligible.
 
 Media copying is also opt-in and restricted to already-cached photos and files (up to 25 MB per file, 250 MB quota per account), excluded from iCloud backup and protected with iOS file protection until first unlock. Attachments are copied before message deletion and cleaned up when records expire or the archive is cleared. Network downloads are never triggered for archiving.
 
@@ -25,3 +25,10 @@ Verification required before release:
 - Native UI: list and detail screens in Russian/English, light/dark modes, large fonts, VoiceOver, records disappearing while details are open. Record and inspect simulator frames per upstream AGENTS.md.
 
 Foundation model tests cover opt-ins, Codable round trip, duplicate events, record identifiers, account/state value isolation, capacity eviction, expiry, targeted purge, Unicode byte limit and clear. They do not establish Postbox or device integration correctness.
+
+Device-crash fixes in the current source (native/device verification pending):
+- History records encode/decode their event kind as a keyed primitive String. The pinned AdaptedPostboxEncoder and decoder trap in singleValueContainer, which synthesized raw-value enum Codable uses. JSON-only tests missed this path.
+- Eligible deleted text now remains in the chat with a registered local AyuDeletedMessageAttribute and a Deleted label beside the time. Secret/expiring/protected content remains excluded. Inline tombstones strip original media and keyboards; captured media stays in the separate bounded archive.
+- Repeated deletion replay does not recapture tombstones. Clear, record eviction, expiry and loss of chat eligibility remove retained text. Channel thread counts are decremented once; deleting a tombstone locally does not decrement them again.
+- Reply, pin and edit actions are suppressed for retained deleted text in the context menu.
+- Before the full app build, ci/test_models.py compiles the exact pinned Postbox Coding.swift, its encoder/decoder helpers and MurMurHash32, then round-trips settings, edited/deleted records and attachment metadata. No database or replica codec is used. This host check still needs execution on the owner's next manual Codemagic run.

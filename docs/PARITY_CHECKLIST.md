@@ -55,6 +55,7 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | showRepeatMessageInContextMenu (Desktop) | Partial iOS adaptation: confirmed text/caption append to draft, preserving native input structure, in source after build 8; attachments/immediate resend not implemented |
 | message text tools (iOS) | Native phrase search and chat/message ID copying, with separate visibility switches in source after build 8 |
 | showHideMessageInContextMenu (Desktop) | Reversible local cloud-message/album hiding, per-account bounded references, temporary bypass and restore-one/all manager in source after build 8; no database/server deletion |
+| showPrivateChatReactions / showGroupReactions / showChannelReactions (Desktop) | Independent native chat reaction rendering controls with isolated reset in source after build 8; original message data and Saved Messages tags preserved; native/device verification pending |
 
 Additional Desktop-only scope (not implemented by these flags): translation providers, shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.
 

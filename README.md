@@ -44,6 +44,10 @@ Message menus now offer **Repeat Text** (confirmed append to a draft, no automat
 
 **AyuGram · Hide Locally** hides an ordinary cloud message/album from the account's main chat history without deleting it. **Settings → AyuGram → Hidden Messages** offers a temporary bypass, individual restoration and confirmed restore-all, with a 200-item limit. The list stores references only. Search, selection and tagged/media views bypass both manual hiding and regex filtering. See [scope and pending device checks](docs/HIDDEN_MESSAGES.md). This block is not in build 8 and awaits native/device verification.
 
+## Reaction display (development source after build 8)
+
+**Settings → AyuGram → Chat Reactions** independently shows/hides reaction rendering in private chats, groups and channels. Saved Messages tags and unknown peer types retain native behavior. This does not remove server reactions or disable the menu picker. See [rendering scope and pending native checks](docs/REACTION_DISPLAY.md). The block is not included in build 8.
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

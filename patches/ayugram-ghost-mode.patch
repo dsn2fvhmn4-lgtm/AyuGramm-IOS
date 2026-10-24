@@ -220,6 +220,42 @@ index 4c3a6419..8d103a44 100644
      buildParser.add_argument(
          '--buildNumber',
          required=True,
+diff --git a/submodules/AccountContext/Sources/AyuReactionDisplay.swift b/submodules/AccountContext/Sources/AyuReactionDisplay.swift
+new file mode 100644
+index 00000000..5ccfee08
+--- /dev/null
++++ b/submodules/AccountContext/Sources/AyuReactionDisplay.swift
+@@ -0,0 +1,30 @@
++import Foundation
++import TelegramCore
++
++public extension AccountContext {
++    func ayuShouldDisplayReactions(message: EngineRawMessage) -> Bool {
++        if message.id.peerId == self.account.peerId || message.areReactionsTags(accountPeerId: self.account.peerId) || message.adAttribute != nil { return true }
++        guard message.id.namespace == Namespaces.Message.Cloud, let peer = message.peers[message.id.peerId] else { return true }
++        let scope: AyuReactionDisplaySettings.Scope
++        if peer is TelegramUser { scope = .privateChat }
++        else if peer is TelegramGroup { scope = .group }
++        else if let channel = peer as? TelegramChannel {
++            switch channel.info {
++            case .group: scope = .group
++            case .broadcast: scope = .channel
++            }
++        } else { scope = .other }
++        return self.account.network.ayuGhostMode.current.reactionDisplay.allows(scope)
++    }
++
++    /// Presentation values only: never strip attributes from the source message.
++    func ayuVisibleMessageReactions(message: EngineRawMessage) -> ReactionsMessageAttribute? {
++        guard self.ayuShouldDisplayReactions(message: message) else { return nil }
++        return mergedMessageReactions(attributes: message.attributes, isTags: message.areReactionsTags(accountPeerId: self.account.peerId))
++    }
++
++    func ayuVisibleMessageReactionsAndPeers(accountPeer: EnginePeer?, message: EngineRawMessage) -> (reactions: [MessageReaction], peers: [(MessageReaction.Reaction, EnginePeer)]) {
++        guard self.ayuShouldDisplayReactions(message: message) else { return ([], []) }
++        return mergedMessageReactionsAndPeers(accountPeerId: self.account.peerId, accountPeer: accountPeer, message: message)
++    }
++}
 diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
 index 5bdff8a6..bd215887 100644
 --- a/submodules/ChatListUI/Sources/ChatListController.swift
@@ -752,10 +788,10 @@ index 00000000..77b19608
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..cc13cf9d
+index 00000000..1e30156a
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,420 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -857,6 +893,7 @@ index 00000000..cc13cf9d
 +        case 6: push?(ayuInterfaceSettingsController(context: context, contextMenu: true))
 +        case 7: push?(ayuMessageShotSettingsController(context: context))
 +        case 8: push?(ayuHiddenMessagesController(context: context))
++        case 9: push?(ayuReactionSettingsController(context: context))
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
@@ -874,13 +911,56 @@ index 00000000..cc13cf9d
 +            .link(6, ru ? "Меню сообщения" : "Message Menu"),
 +            .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"),
 +            .link(8, ru ? "Скрытые сообщения" : "Hidden Messages"),
-+            .info(9, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
++            .link(9, ru ? "Реакции в чатах" : "Chat Reactions"),
++            .info(10, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
++    return controller
++}
++
++private func ayuReactionSettingsController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var presentError: (() -> Void)?
++    let arguments = AyuSettingsArguments(open: { id in
++        guard id == 4 else { return }
++        do { try store.update { $0.reactionDisplay = AyuReactionDisplaySettings() } }
++        catch { presentError?() }
++    }, update: { id, value in
++        do {
++            try store.update {
++                switch id {
++                case 0: $0.reactionDisplay.privateChats = value
++                case 1: $0.reactionDisplay.groups = value
++                case 2: $0.reactionDisplay.channels = value
++                default: break
++                }
++            }
++        } catch { presentError?() }
++    }, record: { _ in })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let value = settings.reactionDisplay
++        let entries: [AyuSettingsEntry] = [
++            .toggle(0, ru ? "Реакции в личных чатах" : "Private-chat reactions", value.privateChats),
++            .toggle(1, ru ? "Реакции в группах" : "Group reactions", value.groups),
++            .toggle(2, ru ? "Реакции в каналах" : "Channel reactions", value.channels),
++            .info(3, ru ? "Настройки скрывают отображение реакций под сообщениями этого аккаунта. Реакции на сервере не удаляются. Выбор реакций и сводка в меню настраиваются отдельно в «Меню сообщения». Теги Избранного, реклама и неизвестные типы чатов сохраняют обычное поведение." : "These options hide reaction rendering beneath this account's messages. Reactions are not removed from the server. Configure the reaction picker and summary separately under Message Menu. Saved Messages tags, ads and unknown chat types retain native behavior."),
++            .link(4, ru ? "Сбросить показ реакций" : "Reset reaction display")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        return (ItemListControllerState(presentationData: data, title: .text(ru ? "Реакции в чатах" : "Chat Reactions"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить показ реакций." : "Reaction display settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
 +    return controller
 +}
 +
@@ -1498,10 +1578,10 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..c54863e1
+index 00000000..b62f73eb
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,148 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
@@ -1519,11 +1599,13 @@ index 00000000..c54863e1
 +    public var interface = AyuInterfaceSettings()
 +    public var messageShot = AyuMessageShotSettings()
 +    public var hiddenMessages = AyuHiddenMessagesSettings()
++    public var reactionDisplay = AyuReactionDisplaySettings()
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend, interface
 +        case messageShot
 +        case hiddenMessages
++        case reactionDisplay
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -1541,6 +1623,7 @@ index 00000000..c54863e1
 +        self.interface = (try? values.decode(AyuInterfaceSettings.self, forKey: .interface)) ?? AyuInterfaceSettings()
 +        self.messageShot = (try? values.decode(AyuMessageShotSettings.self, forKey: .messageShot)) ?? AyuMessageShotSettings()
 +        self.hiddenMessages = (try? values.decode(AyuHiddenMessagesSettings.self, forKey: .hiddenMessages)) ?? AyuHiddenMessagesSettings()
++        self.reactionDisplay = (try? values.decode(AyuReactionDisplaySettings.self, forKey: .reactionDisplay)) ?? AyuReactionDisplaySettings()
 +    }
 +
 +    public init(hideReadReceipts: Bool = false, hideOnline: Bool = false, hideTyping: Bool = false, hideUploadProgress: Bool = false) {
@@ -2402,6 +2485,37 @@ index 00000000..35137a2f
 +        }
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuReactionDisplaySettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuReactionDisplaySettings.swift
+new file mode 100644
+index 00000000..a1a49e38
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuReactionDisplaySettings.swift
+@@ -0,0 +1,25 @@
++import Foundation
++
++public struct AyuReactionDisplaySettings: Codable, Equatable {
++    public enum Scope { case privateChat, group, channel, other }
++    public var privateChats = true
++    public var groups = true
++    public var channels = true
++    public init() {}
++    private enum CodingKeys: String, CodingKey { case privateChats, groups, channels }
++    public init(from decoder: Decoder) throws {
++        let values = try decoder.container(keyedBy: CodingKeys.self)
++        self.privateChats = try values.decodeIfPresent(Bool.self, forKey: .privateChats) ?? true
++        self.groups = try values.decodeIfPresent(Bool.self, forKey: .groups) ?? true
++        self.channels = try values.decodeIfPresent(Bool.self, forKey: .channels) ?? true
++    }
++    public func allows(_ scope: Scope, isTag: Bool = false) -> Bool {
++        if isTag { return true }
++        switch scope {
++        case .privateChat: return self.privateChats
++        case .group: return self.groups
++        case .channel: return self.channels
++        case .other: return true
++        }
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift
 new file mode 100644
 index 00000000..93e17f4b
@@ -2787,10 +2901,54 @@ index 5c0a9101..92d7de3d 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
+index 63df27a6..0dfe90b7 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
+@@ -1113,7 +1113,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
+             var dateReplies = 0
+             var starsCount: Int64?
+             var tonAmount: Int64?
+-            var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++            var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+             if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                 dateReactionsAndPeers = ([], [])
+             }
+@@ -1408,7 +1408,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
+             if shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions) {
+                 reactions = ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+             } else {
+-                reactions = mergedMessageReactions(attributes: item.message.attributes, isTags: item.message.areReactionsTags(accountPeerId: item.context.account.peerId)) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
++                reactions = item.context.ayuVisibleMessageReactions(message: item.message) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+             }
+             var reactionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode))?
+             if !reactions.reactions.isEmpty {
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift
+index e25e0195..faea175b 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift
+@@ -702,7 +702,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
+                 var viewCount: Int?
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: context.account.peerId, accountPeer: associatedData.accountPeer, message: message)
++                var dateReactionsAndPeers = context.ayuVisibleMessageReactionsAndPeers(accountPeer: associatedData.accountPeer, message: message)
+                 if message.isRestricted(platform: "ios", contentSettings: context.currentContentSettings.with { $0 }) || presentationData.isPreview {
+                     dateReactionsAndPeers = ([], [])
+                 }
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
-index d7da5d10..ede42b8b 100644
+index d7da5d10..0f8226d8 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+@@ -484,7 +484,7 @@ private func contentNodeMessagesAndClassesForItem(_ item: ChatMessageItem) -> ([
+         }
+     }
+     
+-    if !reactionsAreInline && !hideAllAdditionalInfo, let reactionsAttribute = mergedMessageReactions(attributes: firstMessage.attributes, isTags: firstMessage.areReactionsTags(accountPeerId: item.context.account.peerId)), !reactionsAttribute.reactions.isEmpty {
++    if !reactionsAreInline && !hideAllAdditionalInfo, let reactionsAttribute = item.context.ayuVisibleMessageReactions(message: firstMessage), !reactionsAttribute.reactions.isEmpty {
+         if result.last?.1 == ChatMessageTextBubbleContentNode.self {
+         } else {
+             if result.last?.1 == ChatMessagePollBubbleContentNode.self ||
 @@ -2023,6 +2023,10 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
              allowFullWidth = true
          }
@@ -2802,6 +2960,37 @@ index d7da5d10..ede42b8b 100644
          var tmpWidth: CGFloat
          if allowFullWidth {
              tmpWidth = baseWidth
+@@ -2403,7 +2407,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+         
+         let bubbleReactions: ReactionsMessageAttribute
+         if needReactions || forceReactionsOutside {
+-            bubbleReactions = mergedMessageReactions(attributes: item.message.attributes, isTags: item.message.areReactionsTags(accountPeerId: item.context.account.peerId)) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
++            bubbleReactions = item.context.ayuVisibleMessageReactions(message: item.message) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+         } else {
+             bubbleReactions = ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+         }
+@@ -2649,7 +2653,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+                 var viewCount: Int?
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: message)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: message)
+                 if message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift
+index 17517556..4079116c 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift
+@@ -242,7 +242,7 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
+                 var viewCount: Int?
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
 index 215b975f..3865027b 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
@@ -2860,6 +3049,260 @@ index ad79b915..502cca0b 100644
 +    }
      return dateText
  }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageFactCheckBubbleContentNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageFactCheckBubbleContentNode/BUILD
+index f17ff264..204ff184 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageFactCheckBubbleContentNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageFactCheckBubbleContentNode/BUILD
+@@ -10,6 +10,7 @@ swift_library(
+         "-warnings-as-errors",
+     ],
+     deps = [
++        "//submodules/AccountContext",
+         "//submodules/Display",
+         "//submodules/LottieSettings:LottieSettings",
+         "//submodules/AsyncDisplayKit",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageFactCheckBubbleContentNode/Sources/ChatMessageFactCheckBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageFactCheckBubbleContentNode/Sources/ChatMessageFactCheckBubbleContentNode.swift
+index 33d8d3ab..2c49fb62 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageFactCheckBubbleContentNode/Sources/ChatMessageFactCheckBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageFactCheckBubbleContentNode/Sources/ChatMessageFactCheckBubbleContentNode.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import AccountContext
+ import LottieSettings
+ import UIKit
+ import Display
+@@ -297,7 +298,7 @@ public class ChatMessageFactCheckBubbleContentNode: ChatMessageBubbleContentNode
+                 var rawEntities: [MessageTextEntity] = []
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageGiveawayBubbleContentNode/Sources/ChatMessageGiveawayBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageGiveawayBubbleContentNode/Sources/ChatMessageGiveawayBubbleContentNode.swift
+index a8c72e87..7d803134 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageGiveawayBubbleContentNode/Sources/ChatMessageGiveawayBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageGiveawayBubbleContentNode/Sources/ChatMessageGiveawayBubbleContentNode.swift
+@@ -515,7 +515,7 @@ public class ChatMessageGiveawayBubbleContentNode: ChatMessageBubbleContentNode,
+                 }
+                 var viewCount: Int?
+                 var dateReplies = 0
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageInstantVideoItemNode/Sources/ChatMessageInstantVideoItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageInstantVideoItemNode/Sources/ChatMessageInstantVideoItemNode.swift
+index 0d9792e7..a0727e86 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageInstantVideoItemNode/Sources/ChatMessageInstantVideoItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageInstantVideoItemNode/Sources/ChatMessageInstantVideoItemNode.swift
+@@ -601,7 +601,7 @@ public class ChatMessageInstantVideoItemNode: ChatMessageItemView, ASGestureReco
+             if shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions) {
+                 reactions = ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+             } else {
+-                reactions = mergedMessageReactions(attributes: item.message.attributes, isTags: item.message.areReactionsTags(accountPeerId: item.context.account.peerId)) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
++                reactions = item.context.ayuVisibleMessageReactions(message: item.message) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+             }
+             
+             var reactionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode))?
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
+index 21291a56..04da957b 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
+@@ -903,7 +903,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
+                     var viewCount: Int?
+                     var dateReplies = 0
+                     var starsCount: Int64?
+-                    var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: arguments.context.account.peerId, accountPeer: arguments.associatedData.accountPeer, message: arguments.topMessage)
++                    var dateReactionsAndPeers = arguments.context.ayuVisibleMessageReactionsAndPeers(accountPeer: arguments.associatedData.accountPeer, message: arguments.topMessage)
+                     if arguments.topMessage.isRestricted(platform: "ios", contentSettings: arguments.context.currentContentSettings.with { $0 }) || arguments.presentationData.isPreview {
+                         dateReactionsAndPeers = ([], [])
+                     }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveInstantVideoNode/Sources/ChatMessageInteractiveInstantVideoNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveInstantVideoNode/Sources/ChatMessageInteractiveInstantVideoNode.swift
+index 627ad4db..eabdd2bb 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveInstantVideoNode/Sources/ChatMessageInteractiveInstantVideoNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveInstantVideoNode/Sources/ChatMessageInteractiveInstantVideoNode.swift
+@@ -516,7 +516,7 @@ public class ChatMessageInteractiveInstantVideoNode: ASDisplayNode {
+             var viewCount: Int? = nil
+             var dateReplies = 0
+             var starsCount: Int64?
+-            var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++            var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+             if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                 dateReactionsAndPeers = ([], [])
+             }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/BUILD
+index 60173b7e..41e1ea1d 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/BUILD
+@@ -10,6 +10,7 @@ swift_library(
+         "-warnings-as-errors",
+     ],
+     deps = [
++        "//submodules/AccountContext",
+         "//submodules/AsyncDisplayKit",
+         "//submodules/LottieSettings:LottieSettings",
+         "//submodules/Display",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/Sources/ChatMessageMapBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/Sources/ChatMessageMapBubbleContentNode.swift
+index 1852a37c..d6a9a071 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/Sources/ChatMessageMapBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/Sources/ChatMessageMapBubbleContentNode.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import AccountContext
+ import LottieSettings
+ import UIKit
+ import AsyncDisplayKit
+@@ -195,7 +196,7 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
+                 var viewCount: Int?
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageMediaBubbleContentNode/Sources/ChatMessageMediaBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageMediaBubbleContentNode/Sources/ChatMessageMediaBubbleContentNode.swift
+index d1c7c648..4aba5c17 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageMediaBubbleContentNode/Sources/ChatMessageMediaBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageMediaBubbleContentNode/Sources/ChatMessageMediaBubbleContentNode.swift
+@@ -351,7 +351,7 @@ public class ChatMessageMediaBubbleContentNode: ChatMessageBubbleContentNode {
+             var viewCount: Int?
+             var dateReplies = 0
+             var starsCount: Int64?
+-            var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++            var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+             if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                 dateReactionsAndPeers = ([], [])
+             }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessagePollBubbleContentNode/Sources/ChatMessagePollBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessagePollBubbleContentNode/Sources/ChatMessagePollBubbleContentNode.swift
+index d2e7f48f..1977a291 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessagePollBubbleContentNode/Sources/ChatMessagePollBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessagePollBubbleContentNode/Sources/ChatMessagePollBubbleContentNode.swift
+@@ -2693,7 +2693,7 @@ public class ChatMessagePollBubbleContentNode: ChatMessageBubbleContentNode {
+                 var viewCount: Int?
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageReactionsFooterContentNode/Sources/ChatMessageReactionsFooterContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageReactionsFooterContentNode/Sources/ChatMessageReactionsFooterContentNode.swift
+index d38dec9d..80efeebc 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageReactionsFooterContentNode/Sources/ChatMessageReactionsFooterContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageReactionsFooterContentNode/Sources/ChatMessageReactionsFooterContentNode.swift
+@@ -606,7 +606,7 @@ public final class ChatMessageReactionsFooterContentNode: ChatMessageBubbleConte
+             }
+             
+             return (contentProperties, nil, CGFloat.greatestFiniteMagnitude, { [weak self] constrainedSize, position in
+-                let reactionsAttribute = mergedMessageReactions(attributes: item.message.attributes, isTags: item.message.areReactionsTags(accountPeerId: item.context.account.peerId)) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
++                let reactionsAttribute = item.context.ayuVisibleMessageReactions(message: item.message) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+                 let buttonsUpdate = buttonsNode.prepareUpdate(
+                     context: item.context,
+                     presentationData: item.presentationData,
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageRestrictedBubbleContentNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageRestrictedBubbleContentNode/BUILD
+index ca4f3916..c33a709e 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageRestrictedBubbleContentNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageRestrictedBubbleContentNode/BUILD
+@@ -10,6 +10,7 @@ swift_library(
+         "-warnings-as-errors",
+     ],
+     deps = [
++        "//submodules/AccountContext",
+         "//submodules/Display",
+         "//submodules/LottieSettings:LottieSettings",
+         "//submodules/AsyncDisplayKit",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageRestrictedBubbleContentNode/Sources/ChatMessageRestrictedBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageRestrictedBubbleContentNode/Sources/ChatMessageRestrictedBubbleContentNode.swift
+index 66599a4c..2437e339 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageRestrictedBubbleContentNode/Sources/ChatMessageRestrictedBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageRestrictedBubbleContentNode/Sources/ChatMessageRestrictedBubbleContentNode.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import AccountContext
+ import LottieSettings
+ import UIKit
+ import Display
+@@ -57,7 +58,7 @@ public class ChatMessageRestrictedBubbleContentNode: ChatMessageBubbleContentNod
+                 var rawText = ""
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageRichDataBubbleContentNode/Sources/ChatMessageRichDataBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageRichDataBubbleContentNode/Sources/ChatMessageRichDataBubbleContentNode.swift
+index 3431d128..f18c545b 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageRichDataBubbleContentNode/Sources/ChatMessageRichDataBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageRichDataBubbleContentNode/Sources/ChatMessageRichDataBubbleContentNode.swift
+@@ -659,7 +659,7 @@ public class ChatMessageRichDataBubbleContentNode: ChatMessageBubbleContentNode
+                 let showMoreExpanded = (showMoreExpandedState?.messageId == item.message.id) ? (showMoreExpandedState?.value ?? false) : false
+                 let page = (showMoreExpanded ? attribute.fullInstantPage : nil) ?? attribute.instantPage
+                 if let lastBlock = page.blocks.last, richDataBlockEndsWithVisualMedia(lastBlock) {
+-                    let reactions = mergedMessageReactions(attributes: item.message.attributes, isTags: item.message.areReactionsTags(accountPeerId: item.context.account.peerId))
++                    let reactions = item.context.ayuVisibleMessageReactions(message: item.message)
+                     let hasReactions = !(reactions?.reactions.isEmpty ?? true)
+                     let inline = shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions)
+                     wantsReactionsOutside = hasReactions && !inline
+@@ -1030,7 +1030,7 @@ public class ChatMessageRichDataBubbleContentNode: ChatMessageBubbleContentNode
+                 var viewCount: Int?
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.topMessage)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.topMessage)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
+index 64699c7b..0abe32cb 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
+@@ -594,7 +594,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
+             var viewCount: Int? = nil
+             var dateReplies = 0
+             var starsCount: Int64?
+-            var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++            var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+             if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                 dateReactionsAndPeers = ([], [])
+             }
+@@ -887,7 +887,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
+             if shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions) {
+                 reactions = ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+             } else {
+-                reactions = mergedMessageReactions(attributes: item.message.attributes, isTags: item.message.areReactionsTags(accountPeerId: item.context.account.peerId)) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
++                reactions = item.context.ayuVisibleMessageReactions(message: item.message) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
+             }
+             
+             var reactionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode))?
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
+index 56ba2739..08e2c3f2 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
+@@ -284,7 +284,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                 var viewCount: Int?
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.topMessage)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.topMessage)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTodoBubbleContentNode/Sources/ChatMessageTodoBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTodoBubbleContentNode/Sources/ChatMessageTodoBubbleContentNode.swift
+index 1875e7fe..e60152fc 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageTodoBubbleContentNode/Sources/ChatMessageTodoBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageTodoBubbleContentNode/Sources/ChatMessageTodoBubbleContentNode.swift
+@@ -1114,7 +1114,7 @@ public class ChatMessageTodoBubbleContentNode: ChatMessageBubbleContentNode {
+                 var viewCount: Int?
+                 var dateReplies = 0
+                 var starsCount: Int64?
+-                var dateReactionsAndPeers = mergedMessageReactionsAndPeers(accountPeerId: item.context.account.peerId, accountPeer: item.associatedData.accountPeer, message: item.message)
++                var dateReactionsAndPeers = item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: item.associatedData.accountPeer, message: item.message)
+                 if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
+                     dateReactionsAndPeers = ([], [])
+                 }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 index 34f23770..c50a60b1 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
@@ -3925,10 +4368,10 @@ index 1ade8c01..74820fcc 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..d674e608
+index 00000000..78f8b503
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,455 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -4339,6 +4782,31 @@ index 00000000..d674e608
 +let hideActionRoundTrip = try JSONDecoder().decode(AyuInterfaceSettings.self, from: JSONEncoder().encode(hideActionSettings))
 +check(!hideActionRoundTrip.showHideMessage, "Hide-action visibility preserves an explicit false value")
 +print("PASS: \(checks) total checks, including bounded local hiding, album/peer isolation, persistence and restoration; native history/search checks remain pending")
++
++var reactionDisplay = AyuReactionDisplaySettings()
++check(reactionDisplay.allows(.privateChat) && reactionDisplay.allows(.group) && reactionDisplay.allows(.channel), "Reaction display defaults preserve all known chat types")
++for mask in 0 ..< 8 {
++    reactionDisplay.privateChats = (mask & 1) != 0
++    reactionDisplay.groups = (mask & 2) != 0
++    reactionDisplay.channels = (mask & 4) != 0
++    check(reactionDisplay.allows(.privateChat) == reactionDisplay.privateChats && reactionDisplay.allows(.group) == reactionDisplay.groups && reactionDisplay.allows(.channel) == reactionDisplay.channels, "Reaction scopes remain independent for every combination")
++    check(reactionDisplay.allows(.other) && reactionDisplay.allows(.privateChat, isTag: true), "Unknown peer types and Saved Messages tags retain native reactions")
++}
++reactionDisplay.privateChats = false
++reactionDisplay.groups = false
++reactionDisplay.channels = false
++let reactionRoundTrip = try JSONDecoder().decode(AyuReactionDisplaySettings.self, from: JSONEncoder().encode(reactionDisplay))
++check(reactionRoundTrip == reactionDisplay, "Disabled reaction scopes survive serialization")
++let partialReactions = try JSONDecoder().decode(AyuReactionDisplaySettings.self, from: Data("{\"groups\":false}".utf8))
++check(partialReactions.privateChats && !partialReactions.groups && partialReactions.channels, "Missing reaction fields migrate independently")
++check(oldGhost.reactionDisplay == AyuReactionDisplaySettings(), "Old account settings preserve native reaction display")
++try appearanceStore.update { $0.reactionDisplay = reactionDisplay }
++let storedReactionDisplay = AyuGhostModeStore(accountPath: appearancePath.path).current
++check(storedReactionDisplay.reactionDisplay == reactionDisplay && storedReactionDisplay.hiddenMessages == persistedHidden.hiddenMessages && storedReactionDisplay.allEnabled, "Reaction visibility persists without changing local hiding or Ghost Mode")
++try appearanceStore.update { $0.reactionDisplay = AyuReactionDisplaySettings() }
++let resetReactionDisplay = AyuGhostModeStore(accountPath: appearancePath.path).current
++check(resetReactionDisplay.reactionDisplay == AyuReactionDisplaySettings() && resetReactionDisplay.interface == storedReactionDisplay.interface && resetReactionDisplay.hiddenMessages == storedReactionDisplay.hiddenMessages && resetReactionDisplay.messageShot == storedReactionDisplay.messageShot, "Reaction reset preserves the other feature blocks")
++print("PASS: \(checks) total checks, including reaction-scope combinations, migration, persistence and isolated reset; native chip layout remains pending")
 +
 +#if AYU_POSTBOX_TESTS
 +func postboxRoundTrip(_ state: AyuMessageHistoryState) -> AyuMessageHistoryState? {

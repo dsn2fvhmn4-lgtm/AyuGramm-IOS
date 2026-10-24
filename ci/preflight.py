@@ -12,7 +12,22 @@ def contract_errors(source):
         errors.append('textAlertController(context:) requires PresentationDataUtils')
     if 'stringWithAppliedEntities(' in source and 'import TextFormat' not in source:
         errors.append('stringWithAppliedEntities requires TextFormat')
+    if re.search(r'\.ayuVisibleMessageReactions(?:AndPeers)?\s*\(', source) and 'import AccountContext' not in source:
+        errors.append('AyuGram reaction display helpers require AccountContext')
     return errors
+
+
+def reaction_dependency_errors(source_file):
+    text = source_file.read_text(encoding='utf-8')
+    if not re.search(r'\.ayuVisibleMessageReactions(?:AndPeers)?\s*\(', text):
+        return []
+    for parent in source_file.parents:
+        build = parent / 'BUILD'
+        if build.is_file():
+            if '//submodules/AccountContext' not in build.read_text(encoding='utf-8'):
+                return ['AyuGram reaction display helpers require a direct AccountContext Bazel dependency']
+            return []
+    return ['No BUILD file found for AyuGram reaction display helpers']
 
 
 def main():
@@ -27,6 +42,8 @@ def main():
     errors = []
     for path in sorted(paths):
         for error in contract_errors((source / path).read_text(encoding='utf-8')):
+            errors.append(f'{path}: {error}')
+        for error in reaction_dependency_errors(source / path):
             errors.append(f'{path}: {error}')
     scheme = (source / 'submodules/TelegramApi/swift_scheme.tl').read_text(encoding='utf-8')
     for method in ('sendMessage', 'sendMedia', 'sendMultiMedia', 'forwardMessages'):

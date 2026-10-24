@@ -1,6 +1,6 @@
 """Run the actual AyuGram models through the pinned Postbox codec before the app build.
 
-Only the standalone codec and MurMurHash32 are compiled. No database, SDK stubs,
+Only the standalone codec, its native support files and MurMurHash32 are compiled. No database, SDK stubs,
 copied encoder implementations or TelegramCore module build is involved.
 """
 import argparse
@@ -24,7 +24,10 @@ def run(source: Path):
                         '-I', str(murmur / 'PublicHeaders'), '-c',
                         str(murmur / 'Sources/MurMurHash32.m'), '-o', str(output / 'murmur.o')], check=True)
         postbox = source / 'submodules/Postbox/Sources'
-        codec = [postbox / 'Coding.swift', *sorted((postbox / 'Utils/Encoder').glob('*.swift')),
+        # Coding.swift uses the comparator in ValueBoxKey and the shared logger.
+        # Compile their actual upstream implementations in the same module.
+        codec = [postbox / 'Coding.swift', postbox / 'ValueBoxKey.swift', postbox / 'PostboxLogging.swift',
+                 *sorted((postbox / 'Utils/Encoder').glob('*.swift')),
                  *sorted((postbox / 'Utils/Decoder').glob('*.swift'))]
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-emit-library', '-emit-module',
                         '-module-name', 'Postbox', '-I', str(output),

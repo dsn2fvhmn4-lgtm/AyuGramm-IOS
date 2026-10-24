@@ -10,6 +10,22 @@ workflows:
       vars:
         PYTHONUNBUFFERED: "1"
     scripts:
+      - name: Prepare tools for Bazel restricted PATH
+        script: |
+          set -euo pipefail
+          if ! command -v ccache >/dev/null 2>&1; then
+            brew install ccache
+          fi
+          ccache_bin="$(command -v ccache)"
+          sudo mkdir -p /usr/local/bin
+          if ! env PATH=/bin:/usr/bin:/usr/local/bin ccache --version >/dev/null 2>&1; then
+            sudo ln -s "$ccache_bin" /usr/local/bin/ccache
+          fi
+          if ! env PATH=/bin:/usr/bin:/usr/local/bin sysctl -n hw.ncpu >/dev/null 2>&1; then
+            sudo ln -s /usr/sbin/sysctl /usr/local/bin/sysctl
+          fi
+          env -i PATH=/bin:/usr/bin:/usr/local/bin ccache --version
+          env -i PATH=/bin:/usr/bin:/usr/local/bin sysctl -n hw.ncpu
       - name: Install and verify Metal compiler
         script: |
           set -euo pipefail

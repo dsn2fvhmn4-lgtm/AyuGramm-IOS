@@ -44,8 +44,11 @@ workflows:
           mkdir -p "$RUNNER_TEMP"
           python3 ci/prepare.py telegram
           git -C telegram diff --check
+          python3 -m unittest discover -s ci/tests -p 'test_*.py'
+          python3 ci/preflight.py telegram
           xcrun swiftc -swift-version 5 -warnings-as-errors \
             telegram/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift \
+            telegram/submodules/TelegramCore/Sources/AyuGram/AyuRegexSettings.swift \
             telegram/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift \
             telegram/tools/ayu-tests/main.swift -o "$RUNNER_TEMP/ayu-tests"
           "$RUNNER_TEMP/ayu-tests" | tee "$RUNNER_TEMP/ayu-tests.log"
@@ -64,4 +67,5 @@ workflows:
     artifacts:
       - telegram/artifacts/port/*.ipa
       - telegram/artifacts/port/manifest.json
+      - telegram/artifacts/port/build.log
       - .ayu-temp/ayu-tests.log

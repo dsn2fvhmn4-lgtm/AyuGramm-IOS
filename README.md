@@ -36,6 +36,10 @@ The latest development sources also add **AyuGram · Add Filter** to eligible me
 
 The new **Settings → AyuGram → MessageShot Appearance** page controls theme (app/light/dark), outer-background transparency, author/date/header visibility and cached-media previews, with a reset limited to this feature. Changes affect newly generated images. See [appearance scope and verification](docs/MESSAGE_SHOT_AND_INTERFACE.md). This block is not in build 8 and still awaits native compilation/device rendering checks.
 
+## Message text tools (development source after build 8)
+
+Message menus now offer **Repeat Text** (confirmed append to a draft, no automatic send), **Find Phrase** (native in-chat search) and **Copy Message IDs**. Each has an account-specific visibility switch under Message Menu. See [scope, prior-block review and device checks](docs/TEXT_TOOLS.md). These changes still await native/device verification and are not in build 8.
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

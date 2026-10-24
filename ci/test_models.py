@@ -35,7 +35,7 @@ def run(source: Path):
                         *map(str, codec), str(output / 'murmur.o'),
                         '-o', str(output / 'libPostbox.dylib')], check=True)
         ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
-        models = [ayu / name for name in ('AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuRegexSettings.swift',
+        models = [ayu / name for name in ('AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuTextToolsPolicy.swift', 'AyuRegexSettings.swift',
                                          'AyuArchiveFileStore.swift', 'AyuMessageHistoryState.swift')]
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
                         '-D', 'AYU_POSTBOX_TESTS', '-I', str(output), '-L', str(output), '-lPostbox',

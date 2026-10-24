@@ -648,10 +648,10 @@ index 00000000..ba3acdfe
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..ddd915d6
+index 00000000..a0aa825f
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,372 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -848,6 +848,9 @@ index 00000000..ddd915d6
 +                    case 3: $0.interface.showMessageDetails = value
 +                    case 4: $0.interface.showAuthorSearch = value
 +                    case 5: $0.interface.showAddFilter = value
++                    case 6: $0.interface.showRepeatText = value
++                    case 7: $0.interface.showSearchPhrase = value
++                    case 8: $0.interface.showCopyMessageIds = value
 +                    default: break
 +                    }
 +                    return
@@ -874,7 +877,10 @@ index 00000000..ddd915d6
 +            .toggle(3, ru ? "Данные сообщения" : "Message Details", value.showMessageDetails),
 +            .toggle(4, ru ? "Поиск сообщений автора" : "Messages from Author", value.showAuthorSearch),
 +            .toggle(5, ru ? "Добавить фильтр из сообщения" : "Add Filter from Message", value.showAddFilter),
-+            .info(6, ru ? "Изменения видны при следующем открытии меню сообщения. Поиск автора доступен в группах для сообщений с известным пользователем-автором. Скрытие сводки не меняет уведомления о прочтении. Теги Избранного сохраняются; MessageShot настраивается в разделе «Интерфейс»." : "Changes apply the next time a message menu opens. Author search is available in groups for messages with a known user author. Hiding the summary does not change read receipts. Saved Messages tags remain available; configure MessageShot under Interface.")
++            .toggle(6, ru ? "Повторить текст в черновик" : "Repeat Text to Draft", value.showRepeatText),
++            .toggle(7, ru ? "Найти фразу" : "Find Phrase", value.showSearchPhrase),
++            .toggle(8, ru ? "Копировать ID сообщения" : "Copy Message IDs", value.showCopyMessageIds),
++            .info(9, ru ? "Изменения видны при следующем открытии меню сообщения. Поиск автора доступен в группах для сообщений с известным пользователем-автором. Скрытие сводки не меняет уведомления о прочтении. Теги Избранного сохраняются; MessageShot настраивается в разделе «Интерфейс»." : "Changes apply the next time a message menu opens. Author search is available in groups for messages with a known user author. Hiding the summary does not change read receipts. Saved Messages tags remain available; configure MessageShot under Interface.")
 +        ] : [
 +            .toggle(0, ru ? "ID в профилях" : "Show IDs in profiles", value.showPeerIds),
 +            .toggle(1, ru ? "Скрыть быструю пересылку" : "Hide bubble quick-share buttons", value.hideFastShare),
@@ -1532,10 +1538,10 @@ index 00000000..19c4c467
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..d35b5361
+index 00000000..99fd02d2
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,54 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -1549,12 +1555,16 @@ index 00000000..d35b5361
 +    public var showMessageDetails = true
 +    public var showAuthorSearch = true
 +    public var showAddFilter = true
++    public var showRepeatText = true
++    public var showSearchPhrase = true
++    public var showCopyMessageIds = true
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case showPeerIds, hideFastShare, hideChatsBadge, showMessageShot
 +        case showReactionPicker, showReadSummary, showEditedInfo, showMessageDetails, showAuthorSearch
 +        case showAddFilter
++        case showRepeatText, showSearchPhrase, showCopyMessageIds
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -1568,6 +1578,9 @@ index 00000000..d35b5361
 +        self.showMessageDetails = try values.decodeIfPresent(Bool.self, forKey: .showMessageDetails) ?? true
 +        self.showAuthorSearch = try values.decodeIfPresent(Bool.self, forKey: .showAuthorSearch) ?? true
 +        self.showAddFilter = try values.decodeIfPresent(Bool.self, forKey: .showAddFilter) ?? true
++        self.showRepeatText = try values.decodeIfPresent(Bool.self, forKey: .showRepeatText) ?? true
++        self.showSearchPhrase = try values.decodeIfPresent(Bool.self, forKey: .showSearchPhrase) ?? true
++        self.showCopyMessageIds = try values.decodeIfPresent(Bool.self, forKey: .showCopyMessageIds) ?? true
 +    }
 +}
 +
@@ -2265,6 +2278,26 @@ index 00000000..93e17f4b
 +        return false
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuTextToolsPolicy.swift b/submodules/TelegramCore/Sources/AyuGram/AyuTextToolsPolicy.swift
+new file mode 100644
+index 00000000..b1bfb1e8
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuTextToolsPolicy.swift
+@@ -0,0 +1,14 @@
++import Foundation
++
++public enum AyuTextToolsPolicy {
++    public static func canRepeat(_ text: String) -> Bool {
++        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
++            && text.utf8.count <= 8192 && (text as NSString).length <= 4096
++    }
++    public static func searchQuery(for text: String) -> String? {
++        guard text.utf8.count <= 8192 else { return nil }
++        let query = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
++        guard !query.isEmpty, query.count <= 128 else { return nil }
++        return query
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/Network/Network.swift b/submodules/TelegramCore/Sources/Network/Network.swift
 index 7a8db1d8..9a9c1f95 100644
 --- a/submodules/TelegramCore/Sources/Network/Network.swift
@@ -2694,7 +2727,7 @@ index a4873696..ca936b38 100644
      }))
 diff --git a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
 new file mode 100644
-index 00000000..4c04b905
+index 00000000..e912d793
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
 @@ -0,0 +1,122 @@
@@ -2757,7 +2790,7 @@ index 00000000..4c04b905
 +}
 +
 +func ayuRenderMessageShot(cards: [AyuMessageShotCard], dark: Bool, width: CGFloat, maximumHeight: CGFloat, showBackground: Bool = true, showAuthors: Bool = true, showDate: Bool = true, showHeader: Bool = true) -> UIImage? {
-+    guard !cards.isEmpty, width.isFinite, maximumHeight.isFinite, width > 112.0, maximumHeight >= 200.0 else { return nil }
++    guard !cards.isEmpty, width.isFinite, maximumHeight.isFinite, width > 152.0, maximumHeight >= 200.0 else { return nil }
 +    let cardWidth = width - 112.0
 +    let innerWidth = cardWidth - 40.0
 +    var layouts: [(CGRect, CGRect, CGRect?)] = []
@@ -2906,6 +2939,71 @@ index 00000000..2c07baa7
 +        self.ayuMediaConfirmationController = controller
 +        self.present(controller, in: .window(.root))
 +        return true
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift
+new file mode 100644
+index 00000000..f4aae11e
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift
+@@ -0,0 +1,59 @@
++import Foundation
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import TelegramPresentationData
++import PresentationDataUtils
++import AlertUI
++import TextFormat
++import ChatPresentationInterfaceState
++
++extension ChatControllerImpl {
++    private func ayuTextToolError() {
++        let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Текст больше недоступен для этого действия или превышает лимит. Для повтора заверши редактирование текущего сообщения." : "The text is no longer available for this action or exceeds its limit. Finish editing the current message before repeating text.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++
++    func ayuUseMessageText(id: EngineMessage.Id, repeatText: Bool) {
++        let settings = self.context.account.network.ayuGhostMode.current.interface
++        guard repeatText ? settings.showRepeatText : settings.showSearchPhrase else { return }
++        guard self.chatLocation.peerId == id.peerId else { return }
++        guard !self.ayuTextToolInProgress, !self.presentationInterfaceState.copyProtectionEnabled else { return }
++        self.ayuTextToolInProgress = true
++        let _ = (self.context.engine.messages.ayuMessageShotMessages(ids: [id])
++        |> timeout(3.0, queue: Queue.mainQueue(), alternate: .single(nil))
++        |> deliverOnMainQueue).startStandalone(next: { [weak self] messages in
++            guard let self else { return }
++            self.ayuTextToolInProgress = false
++            guard !self.presentationInterfaceState.copyProtectionEnabled, let message = messages?.first else { self.ayuTextToolError(); return }
++            if !repeatText {
++                guard let query = AyuTextToolsPolicy.searchQuery(for: message.text) else { self.ayuTextToolError(); return }
++                self.interfaceInteraction?.beginMessageSearch(.everything, query)
++                return
++            }
++            guard self.presentationInterfaceState.interfaceState.editMessage == nil, canSendMessagesToChat(self.presentationInterfaceState), AyuTextToolsPolicy.canRepeat(message.text) else { self.ayuTextToolError(); return }
++            let length = (message.text as NSString).length
++            let entities = ((message.attributes.first(where: { $0 is TextEntitiesMessageAttribute }) as? TextEntitiesMessageAttribute)?.entities ?? []).filter {
++                $0.range.lowerBound >= 0 && $0.range.upperBound <= length && $0.range.lowerBound < $0.range.upperBound
++            }
++            let text = chatInputStateStringWithAppliedEntities(message.text, entities: entities)
++            let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++            self.present(textAlertController(context: self.context, title: ru ? "Повторить текст" : "Repeat Text", text: ru ? "Добавить текст в конец черновика? Вложения и исходный ответ не копируются. Отправить сообщение нужно вручную." : "Append the text to your draft? Attachments and the original reply are not copied. Send the message manually after reviewing it.", actions: [
++                TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
++                TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: { [weak self] in
++                    guard let self, !self.presentationInterfaceState.copyProtectionEnabled, self.presentationInterfaceState.interfaceState.editMessage == nil, canSendMessagesToChat(self.presentationInterfaceState) else { return }
++                    let _ = self.presentVoiceMessageDiscardAlert(action: { [weak self] in
++                        guard let self, !self.presentationInterfaceState.copyProtectionEnabled, self.presentationInterfaceState.interfaceState.editMessage == nil, canSendMessagesToChat(self.presentationInterfaceState) else { return }
++                        self.interfaceInteraction?.updateTextInputStateAndMode { state, _ in
++                            let addition = NSMutableAttributedString(string: state.isEmpty ? "" : "\n")
++                            addition.append(text)
++                            return (state.replacingFlatRange(NSRange(location: state.content.length, length: 0), with: addition), .text)
++                        }
++                        self.chatDisplayNode.ensureInputViewFocused()
++                    })
++                })
++            ]), in: .window(.root))
++        })
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
@@ -3185,10 +3283,10 @@ index face5ae7..f32f529c 100644
      selfController: ChatControllerImpl,
      transition: ContainedViewLayoutTransition,
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..25948c16 100644
+index 5fe58bbf..7274855d 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
-@@ -310,6 +310,13 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -310,6 +310,14 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      var leftNavigationButton: ChatNavigationButton?
      var rightNavigationButton: ChatNavigationButton?
      var secondaryRightNavigationButton: ChatNavigationButton?
@@ -3199,10 +3297,11 @@ index 5fe58bbf..25948c16 100644
 +    var ayuApprovedMediaSend: AyuMediaSendSettings.Kind?
 +    var ayuMessageShotInProgress = false
 +    var ayuFilterDraftInProgress = false
++    var ayuTextToolInProgress = false
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
-@@ -768,6 +775,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -768,6 +776,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
          self.ready.set(.never())
@@ -3210,7 +3309,7 @@ index 5fe58bbf..25948c16 100644
          
          self.chatBackgroundNode.contentStatsUpdated = { [weak self] in
              guard let self else {
-@@ -2408,6 +2416,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2408,6 +2417,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -3221,7 +3320,7 @@ index 5fe58bbf..25948c16 100644
              var attributes: [MessageAttribute] = []
              if let query = query {
                  attributes.append(EmojiSearchQueryMessageAttribute(query: query))
-@@ -2681,6 +2693,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2681,6 +2694,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                      }
                  }
                  
@@ -3232,7 +3331,7 @@ index 5fe58bbf..25948c16 100644
                  strongSelf.presentPaidMessageAlertIfNeeded(completion: { [weak self] postpone in
                      guard let strongSelf = self else {
                          return
-@@ -2737,6 +2753,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2737,6 +2754,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -3243,7 +3342,7 @@ index 5fe58bbf..25948c16 100644
              strongSelf.enqueueChatContextResult(collection, result, hideVia: true, closeMediaInput: true, silentPosting: silentPosting, resetTextInputState: resetTextInputState)
              
              return true
-@@ -6450,6 +6470,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -6450,6 +6471,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              }
          }
          self.moreBarButton.addTarget(self, action: #selector(self.moreButtonPressed), forControlEvents: .touchUpInside)
@@ -3256,7 +3355,7 @@ index 5fe58bbf..25948c16 100644
          
          self.navigationItem.titleView = self.chatTitleView
          self.chatTitleView?.tapAction = { [weak self] in
-@@ -7082,6 +7108,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7082,6 +7109,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
  
      deinit {
@@ -3264,7 +3363,7 @@ index 5fe58bbf..25948c16 100644
          let _ = ChatControllerCount.modify { value in
              return value - 1
          }
-@@ -8639,6 +8666,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8639,6 +8667,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              self.navigationButtonAction(button.action)
          }
      }
@@ -3351,7 +3450,7 @@ index 0fb1ee10..31255099 100644
              updatingMedia |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_updatingMedia"),
              automaticDownloadNetworkType |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_automaticDownloadNetworkType"),
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..b5b4db22 100644
+index 1ade8c01..853a4703 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -3399,7 +3498,7 @@ index 1ade8c01..b5b4db22 100644
              if !actions.isEmpty {
                  actions.insert(.separator, at: 0)
              }
-@@ -2479,6 +2485,53 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2479,6 +2485,87 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
@@ -3434,6 +3533,40 @@ index 1ade8c01..b5b4db22 100644
 +                    })
 +                })))
 +            }
++            if chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
++                if ayuInterface.showRepeatText, canSendMessagesToChat(chatPresentationInterfaceState), chatPresentationInterfaceState.interfaceState.editMessage == nil, AyuTextToolsPolicy.canRepeat(message.text) {
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Повторить текст" : "AyuGram · Repeat Text", icon: { theme in
++                        return UIImage(systemName: "repeat")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuUseMessageText(id: message.id, repeatText: true)
++                        })
++                    })))
++                }
++                if ayuInterface.showSearchPhrase, AyuTextToolsPolicy.searchQuery(for: message.text) != nil {
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Найти фразу" : "AyuGram · Find Phrase", icon: { theme in
++                        return UIImage(systemName: "magnifyingglass")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuUseMessageText(id: message.id, repeatText: false)
++                        })
++                    })))
++                }
++            }
++            if ayuInterface.showCopyMessageIds, EngineMessage(message).adAttribute == nil {
++                let kind: AyuPeerIdFormat.Kind = message.id.peerId.namespace == Namespaces.Peer.CloudChannel ? .channel : (message.id.peerId.namespace == Namespaces.Peer.CloudGroup ? .group : .user)
++                let chatId = AyuPeerIdFormat.text(id: message.id.peerId.id._internalGetInt64Value(), kind: kind)
++                let identifiers = "Chat ID: \(chatId)\nMessage ID: \(message.id.id)"
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Копировать ID" : "AyuGram · Copy Message IDs", icon: { theme in
++                    return UIImage(systemName: "number")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                }, action: { controller, _ in
++                    controller?.dismiss(completion: {
++                        UIPasteboard.general.string = identifiers
++                        let data = context.sharedContext.currentPresentationData.with { $0 }
++                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.present(UndoOverlayController(presentationData: data, content: .copy(text: ru ? "ID скопированы" : "IDs copied"), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .current)
++                    })
++                })))
++            }
 +            var isGroup = message.peers[message.id.peerId] is TelegramGroup
 +            if let channel = message.peers[message.id.peerId] as? TelegramChannel, case .group = channel.info { isGroup = true }
 +            if ayuInterface.showAuthorSearch, isGroup, let author = message.author, author.id.namespace == Namespaces.Peer.CloudUser, EngineMessage(message).adAttribute == nil {
@@ -3455,10 +3588,10 @@ index 1ade8c01..b5b4db22 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..36d4a0b9
+index 00000000..ddb47a69
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,393 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -3814,6 +3947,24 @@ index 00000000..36d4a0b9
 +let resetShotAppearance = AyuGhostModeStore(accountPath: appearancePath.path).current
 +check(resetShotAppearance.messageShot == AyuMessageShotSettings() && resetShotAppearance.interface == storedShotAppearance.interface && resetShotAppearance.regexFilters == storedShotAppearance.regexFilters && resetShotAppearance.mediaSend == storedShotAppearance.mediaSend && resetShotAppearance.allEnabled, "MessageShot reset preserves Ghost Mode, regex, interface and sending settings")
 +print("PASS: \(checks) total checks, including per-account MessageShot appearance, migration, theme selection and isolated reset; native rendering remains pending")
++
++check(partialInterface.showRepeatText && partialInterface.showSearchPhrase && partialInterface.showCopyMessageIds, "Existing files migrate to visible text tools")
++var textToolsSettings = interfaceSettings
++textToolsSettings.showRepeatText = false
++textToolsSettings.showSearchPhrase = false
++textToolsSettings.showCopyMessageIds = false
++let textToolsRoundTrip = try JSONDecoder().decode(AyuInterfaceSettings.self, from: JSONEncoder().encode(textToolsSettings))
++check(textToolsRoundTrip == textToolsSettings, "Text-tool visibility retains explicit false values and other interface settings")
++check(AyuTextToolsPolicy.canRepeat(String(repeating: "a", count: 4096)), "Repeat text accepts the 4096 UTF-16 boundary")
++check(!AyuTextToolsPolicy.canRepeat(String(repeating: "a", count: 4097)), "Repeat text rejects oversized text without truncation")
++check(AyuTextToolsPolicy.canRepeat(String(repeating: "🙂", count: 2048)), "Repeat text supports Unicode at the UTF-16 and UTF-8 bounds")
++check(!AyuTextToolsPolicy.canRepeat(String(repeating: "🙂", count: 2049)), "Repeat text enforces emoji byte and UTF-16 limits")
++check(!AyuTextToolsPolicy.canRepeat(" \n\t"), "Repeat text rejects a blank phrase")
++check(AyuTextToolsPolicy.searchQuery(for: "  hello\n\tworld  ") == "hello world", "Search phrase normalizes whitespace without treating text as regex")
++check(AyuTextToolsPolicy.searchQuery(for: "a.*[x]") == "a.*[x]", "Search phrase preserves literal query punctuation")
++check(AyuTextToolsPolicy.searchQuery(for: String(repeating: "a", count: 128)) != nil && AyuTextToolsPolicy.searchQuery(for: String(repeating: "a", count: 129)) == nil, "Search bounds do not silently truncate a phrase")
++check(AyuTextToolsPolicy.searchQuery(for: " \n") == nil && AyuTextToolsPolicy.searchQuery(for: String(repeating: " ", count: 8193)) == nil, "Search rejects blank and oversized source text")
++print("PASS: \(checks) total checks, including text-tool visibility and Unicode/query limits; native draft/search integration remains pending")
 +
 +#if AYU_POSTBOX_TESTS
 +func postboxRoundTrip(_ state: AyuMessageHistoryState) -> AyuMessageHistoryState? {

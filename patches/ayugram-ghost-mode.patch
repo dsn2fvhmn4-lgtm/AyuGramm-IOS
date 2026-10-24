@@ -220,6 +220,157 @@ index 4c3a6419..8d103a44 100644
      buildParser.add_argument(
          '--buildNumber',
          required=True,
+diff --git a/submodules/SettingsUI/Sources/AyuAppearanceController.swift b/submodules/SettingsUI/Sources/AyuAppearanceController.swift
+new file mode 100644
+index 00000000..e56a4624
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuAppearanceController.swift
+@@ -0,0 +1,145 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++private struct AyuAppearanceDraft: Equatable {
++    var deleted: String
++    var edited: String
++}
++
++private struct AyuAppearanceArguments {
++    let toggle: (Int32, Bool) -> Void
++    let text: (Int32, String) -> Void
++    let save: () -> Void
++    let reset: () -> Void
++}
++
++private enum AyuAppearanceEntry: ItemListNodeEntry {
++    case header(Int32, String)
++    case toggle(Int32, String, Bool)
++    case input(Int32, String, String)
++    case action(Int32, String)
++    case info(Int32, String)
++
++    var stableId: Int32 {
++        switch self {
++        case let .header(id, _), let .toggle(id, _, _), let .input(id, _, _), let .action(id, _), let .info(id, _): return id
++        }
++    }
++
++    var section: ItemListSectionId {
++        switch self.stableId {
++        case 0 ... 2: return 0
++        case 3 ... 4: return 1
++        case 5 ... 6: return 2
++        default: return 3
++        }
++    }
++
++    static func < (lhs: AyuAppearanceEntry, rhs: AyuAppearanceEntry) -> Bool { return lhs.stableId < rhs.stableId }
++
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! AyuAppearanceArguments
++        switch self {
++        case let .header(_, text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .toggle(id, title, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
++        case let .input(id, text, placeholder):
++            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: ""), text: text, placeholder: placeholder, type: .regular(capitalization: false, autocorrection: false), returnKeyType: .done, spacing: 0.0, clearType: .always, maxLength: 24, sectionId: self.section, textUpdated: { arguments.text(id, $0) }, action: arguments.save)
++        case let .action(id, title):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: id == 7 ? arguments.save : arguments.reset)
++        case let .info(_, text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        }
++    }
++}
++
++public func ayuAppearanceController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    let initial = store.current.appearance
++    let initialDraft = AyuAppearanceDraft(deleted: initial.deletedMark, edited: initial.editedMark)
++    let draftText = Atomic(value: initialDraft)
++    let draft = ValuePromise(initialDraft, ignoreRepeated: true)
++    var presentError: ((Error) -> Void)?
++    var finishEditing: (() -> Void)?
++    let arguments = AyuAppearanceArguments(toggle: { id, value in
++        do {
++            try store.update {
++                if id == 1 { $0.appearance.showGhostButton = value }
++                if id == 2 { $0.appearance.showMessageSeconds = value }
++            }
++        } catch { presentError?(error) }
++    }, text: { id, text in
++        let updated = draftText.modify { previous in
++            var updated = previous
++            if id == 4 { updated.deleted = text }
++            if id == 6 { updated.edited = text }
++            return updated
++        }
++        draft.set(updated)
++    }, save: {
++        let text = draftText.with { $0 }
++        do {
++            try store.update {
++                $0.appearance.deletedMark = text.deleted
++                $0.appearance.editedMark = text.edited
++            }
++            let appearance = store.current.appearance
++            let saved = AyuAppearanceDraft(deleted: appearance.deletedMark, edited: appearance.editedMark)
++            let _ = draftText.swap(saved)
++            draft.set(saved)
++            finishEditing?()
++        } catch { presentError?(error) }
++    }, reset: {
++        do {
++            try store.update { $0.appearance = AyuAppearanceSettings() }
++            let cleared = AyuAppearanceDraft(deleted: "", edited: "")
++            let _ = draftText.swap(cleared)
++            draft.set(cleared)
++            finishEditing?()
++        } catch { presentError?(error) }
++    })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal, draft.get())
++    |> deliverOnMainQueue
++    |> map { presentationData, settings, text -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let appearance = settings.appearance
++        let unsaved = text.deleted != appearance.deletedMark || text.edited != appearance.editedMark
++        let entries: [AyuAppearanceEntry] = [
++            .header(0, "AYUGRAM"),
++            .toggle(1, ru ? "Призрак в заголовке чата" : "Ghost button in chat header", appearance.showGhostButton),
++            .toggle(2, ru ? "Секунды во времени сообщений" : "Seconds in message timestamps", appearance.showMessageSeconds),
++            .header(3, ru ? "МЕТКА УДАЛЁННЫХ СООБЩЕНИЙ" : "DELETED MESSAGE LABEL"),
++            .input(4, text.deleted, ru ? "Удалено" : "Deleted"),
++            .header(5, ru ? "МЕТКА ИЗМЕНЁННЫХ СООБЩЕНИЙ" : "EDITED MESSAGE LABEL"),
++            .input(6, text.edited, presentationData.strings.Conversation_MessageEditedLabel),
++            .action(7, ru ? (unsaved ? "Сохранить метки •" : "Сохранить метки") : (unsaved ? "Save labels •" : "Save labels")),
++            .action(8, ru ? "Сбросить оформление чатов" : "Reset chat appearance"),
++            .info(9, ru ? "Переключатели применяются сразу. Для текста нажми «Сохранить метки». Пустое поле возвращает стандартную подпись на языке приложения. До 24 символов и 96 байт в одной строке. Сохранение удалённых сообщений включается отдельно в «Истории сообщений». Если спрятать призрака, Ghost Mode по-прежнему доступен в настройках AyuGram." : "Switches apply immediately. Use Save labels for text changes. Empty fields restore the app language's default labels. Up to 24 characters and 96 bytes on one line. Deleted-message capture is enabled separately in Message History. Ghost Mode remains accessible from AyuGram settings when the header button is hidden.")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Оформление чатов" : "Chat Appearance"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    finishEditing = { [weak controller] in let _ = controller?.view.endEditing(true) }
++    presentError = { [weak controller] error in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        let ru = data.strings.baseLanguageCode.hasPrefix("ru")
++        let text: String
++        if (error as NSError).domain == "AyuAppearance" {
++            text = ru ? "Используй одну строку до 24 символов и 96 байт, без управляющих символов." : error.localizedDescription
++        } else {
++            text = ru ? "Ошибка сохранения настроек оформления." : "Chat appearance could not be saved."
++        }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: text, actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++    return controller
++}
 diff --git a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
 new file mode 100644
 index 00000000..5118283a
@@ -446,10 +597,10 @@ index 00000000..ba3acdfe
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..6f74eef9
+index 00000000..148de6b4
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,244 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -546,6 +697,7 @@ index 00000000..6f74eef9
 +        case 1: push?(ayuMessageHistoryController(context: context))
 +        case 2: push?(ayuChatOptionsController(context: context, regex: false))
 +        case 3: push?(ayuChatOptionsController(context: context, regex: true))
++        case 4: push?(ayuAppearanceController(context: context))
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
@@ -558,7 +710,8 @@ index 00000000..6f74eef9
 +            .link(1, ru ? "История сообщений" : "Message History"),
 +            .link(2, ru ? "Отправка сообщений" : "Sending Options"),
 +            .link(3, ru ? "Regex-фильтры" : "Regex Filters"),
-+            .info(4, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
++            .link(4, ru ? "Оформление чатов" : "Chat Appearance"),
++            .info(5, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
@@ -802,6 +955,62 @@ index bf906980..d8c5312f 100644
      declareEncodable(TelegramMediaGame.self, f: { TelegramMediaGame(decoder: $0) })
      declareEncodable(TelegramMediaInvoice.self, f: { TelegramMediaInvoice(decoder: $0) })
      declareEncodable(TelegramMediaWebFile.self, f: { TelegramMediaWebFile(decoder: $0) })
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAppearanceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAppearanceSettings.swift
+new file mode 100644
+index 00000000..e48eaf76
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuAppearanceSettings.swift
+@@ -0,0 +1,50 @@
++import Foundation
++
++public struct AyuAppearanceSettings: Codable, Equatable {
++    public var showGhostButton = true
++    public var showMessageSeconds = false
++    /// Empty strings use the current language's standard labels.
++    public var deletedMark = ""
++    public var editedMark = ""
++
++    public init() {}
++
++    private enum CodingKeys: String, CodingKey {
++        case showGhostButton, showMessageSeconds, deletedMark, editedMark
++    }
++
++    public init(from decoder: Decoder) throws {
++        let values = try decoder.container(keyedBy: CodingKeys.self)
++        self.showGhostButton = try values.decodeIfPresent(Bool.self, forKey: .showGhostButton) ?? true
++        self.showMessageSeconds = try values.decodeIfPresent(Bool.self, forKey: .showMessageSeconds) ?? false
++        self.deletedMark = try values.decodeIfPresent(String.self, forKey: .deletedMark) ?? ""
++        self.editedMark = try values.decodeIfPresent(String.self, forKey: .editedMark) ?? ""
++        self.normalize()
++        try self.validate()
++    }
++
++    public mutating func normalize() {
++        self.deletedMark = self.deletedMark.trimmingCharacters(in: .whitespacesAndNewlines)
++        self.editedMark = self.editedMark.trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++
++    public func validate() throws {
++        for mark in [self.deletedMark, self.editedMark] {
++            let containsControl = mark.unicodeScalars.contains { scalar in
++                CharacterSet.controlCharacters.contains(scalar) || CharacterSet.newlines.contains(scalar)
++                    || (0x202A ... 0x202E).contains(scalar.value) || (0x2066 ... 0x2069).contains(scalar.value)
++            }
++            guard mark.count <= 24, mark.utf8.count <= 96, !containsControl else {
++                throw NSError(domain: "AyuAppearance", code: 1, userInfo: [NSLocalizedDescriptionKey: "Use a single-line label of at most 24 characters and 96 UTF-8 bytes, without control characters."])
++            }
++        }
++    }
++
++    public func deletedLabel(fallback value: String) -> String {
++        return self.deletedMark.isEmpty ? value : self.deletedMark
++    }
++
++    public func editedLabel(fallback value: String) -> String {
++        return self.editedMark.isEmpty ? value : self.editedMark
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift b/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift
 new file mode 100644
 index 00000000..ba034fc4
@@ -1002,10 +1211,10 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..f158ec82
+index 00000000..b900a55a
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,135 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
@@ -1018,9 +1227,10 @@ index 00000000..f158ec82
 +    public var hideUploadProgress: Bool
 +    public var silentSendMode: SilentSendMode = .never
 +    public var regexFilters = AyuRegexSettings()
++    public var appearance = AyuAppearanceSettings()
 +
 +    private enum CodingKeys: String, CodingKey {
-+        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters
++        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -1033,6 +1243,7 @@ index 00000000..f158ec82
 +        self.regexFilters = (try? values.decode(AyuRegexSettings.self, forKey: .regexFilters)) ?? AyuRegexSettings()
 +        do { try self.regexFilters.validate() }
 +        catch { self.regexFilters = AyuRegexSettings() }
++        self.appearance = (try? values.decode(AyuAppearanceSettings.self, forKey: .appearance)) ?? AyuAppearanceSettings()
 +    }
 +
 +    public init(hideReadReceipts: Bool = false, hideOnline: Bool = false, hideTyping: Bool = false, hideUploadProgress: Bool = false) {
@@ -1103,6 +1314,8 @@ index 00000000..f158ec82
 +        defer { self.lock.unlock() }
 +        var updated = self.value
 +        transform(&updated)
++        updated.appearance.normalize()
++        try updated.appearance.validate()
 +        guard updated != self.value else { return }
 +        try updated.regexFilters.validate()
 +        let data = try JSONEncoder().encode(updated)
@@ -1878,16 +2091,60 @@ index 5c0a9101..92d7de3d 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
+index 215b975f..3865027b 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
+@@ -607,7 +607,8 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
+             if arguments.edited {
+                 if let useEditedTimestamp = arguments.context.getAppConfigValue("message_primary_edited_date") as? Bool, useEditedTimestamp {
+                 } else {
+-                    updatedDateText = "\(arguments.presentationData.strings.Conversation_MessageEditedLabel) \(updatedDateText)"
++                    let label = arguments.context.account.network.ayuGhostMode.current.appearance.editedLabel(fallback: arguments.presentationData.strings.Conversation_MessageEditedLabel)
++                    updatedDateText = "\(label) \(updatedDateText)"
+                 }
+             }
+             if let impressionCount = arguments.impressionCount {
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
-index ad79b915..70d67115 100644
+index ad79b915..502cca0b 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
-@@ -251,5 +251,9 @@ public func stringForMessageTimestampStatus(
+@@ -107,7 +107,8 @@ public func stringForMessageTimestampStatus(
+         timestamp = orignalDate
+     }
+     
+-    var dateText = stringForMessageTimestamp(timestamp: timestamp, dateTimeFormat: dateTimeFormat)
++    let ayuAppearance = context.account.network.ayuGhostMode.current.appearance
++    var dateText = stringForMessageTimestamp(timestamp: timestamp, dateTimeFormat: dateTimeFormat, withSeconds: ayuAppearance.showMessageSeconds)
+     if timestamp == scheduleWhenOnlineTimestamp {
+         dateText = "         "
+     }
+@@ -171,15 +172,15 @@ public func stringForMessageTimestampStatus(
+         }
+         if isFullEditedDate {
+             if dayText.isEmpty {
+-                dateText = strings.Message_EditTodayFullDateFormat(stringForMessageTimestamp(timestamp: timestamp, dateTimeFormat: dateTimeFormat)).string
++                dateText = strings.Message_EditTodayFullDateFormat(stringForMessageTimestamp(timestamp: timestamp, dateTimeFormat: dateTimeFormat, withSeconds: ayuAppearance.showMessageSeconds)).string
+             } else {
+-                dateText = strings.Message_EditFullDateFormat(dayText, stringForMessageTimestamp(timestamp: timestamp, dateTimeFormat: dateTimeFormat)).string
++                dateText = strings.Message_EditFullDateFormat(dayText, stringForMessageTimestamp(timestamp: timestamp, dateTimeFormat: dateTimeFormat, withSeconds: ayuAppearance.showMessageSeconds)).string
+             }
+         } else {
+-            dateText = strings.Message_FullDateFormat(dayText, stringForMessageTimestamp(timestamp: timestamp, dateTimeFormat: dateTimeFormat)).string
++            dateText = strings.Message_FullDateFormat(dayText, stringForMessageTimestamp(timestamp: timestamp, dateTimeFormat: dateTimeFormat, withSeconds: ayuAppearance.showMessageSeconds)).string
+         }
+     } else if let forwardInfo = message.forwardInfo, forwardInfo.flags.contains(.isImported) {
+-        dateText = strings.Message_ImportedDateFormat(dateStringForDay(strings: strings, dateTimeFormat: dateTimeFormat, timestamp: forwardInfo.date), stringForMessageTimestamp(timestamp: forwardInfo.date, dateTimeFormat: dateTimeFormat), dateText).string
++        dateText = strings.Message_ImportedDateFormat(dateStringForDay(strings: strings, dateTimeFormat: dateTimeFormat, timestamp: forwardInfo.date), stringForMessageTimestamp(timestamp: forwardInfo.date, dateTimeFormat: dateTimeFormat, withSeconds: ayuAppearance.showMessageSeconds), dateText).string
+     }
+     
+     var authorTitle: String?
+@@ -251,5 +252,9 @@ public func stringForMessageTimestampStatus(
          }
      }
      
 +    if message.ayuIsDeleted {
-+        let label = strings.baseLanguageCode.hasPrefix("ru") ? "Удалено" : "Deleted"
++        let label = ayuAppearance.deletedLabel(fallback: strings.baseLanguageCode.hasPrefix("ru") ? "Удалено" : "Deleted")
 +        dateText = "\(label) · \(dateText)"
 +    }
      return dateText
@@ -1932,7 +2189,7 @@ index a4873696..ca936b38 100644
          interaction.openSettings(.savedMessages)
      }))
 diff --git a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
-index face5ae7..efafa22b 100644
+index face5ae7..f32f529c 100644
 --- a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 +++ b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 @@ -45,7 +45,25 @@ extension ChatControllerImpl {
@@ -1941,7 +2198,7 @@ index face5ae7..efafa22b 100644
  
 -        let rightBarButtons = [self.rightNavigationButton, self.secondaryRightNavigationButton].compactMap { $0?.buttonItem }
 +        var rightBarButtons = [self.rightNavigationButton, self.secondaryRightNavigationButton].compactMap { $0?.buttonItem }
-+        if case .standard(.default) = self.mode, presentationInterfaceState.interfaceState.selectionState == nil {
++        if case .standard(.default) = self.mode, presentationInterfaceState.interfaceState.selectionState == nil, self.context.account.network.ayuGhostMode.current.appearance.showGhostButton {
 +            let settings = self.context.account.network.ayuGhostMode.current
 +            let enabled = settings.isActive
 +            if self.ayuGhostButtonEnabled != enabled {
@@ -2118,16 +2375,21 @@ index b32f929d..ac85ca89 100644
          
          var pinToTop = false
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
-index 0fb1ee10..55cf0f23 100644
+index 0fb1ee10..31255099 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
-@@ -2056,7 +2056,9 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+@@ -2056,7 +2056,14 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
          let messageViewQueue = Queue.mainQueue()
          let historyViewTransitionDisposable = (combineLatest(queue: messageViewQueue,
              historyViewUpdate |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_historyViewUpdate"),
 -            self.chatPresentationDataPromise.get() |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_chatPresentationData"),
 +            combineLatest(self.chatPresentationDataPromise.get(), context.account.network.ayuGhostMode.signal)
-+            |> map { presentationData, _ in presentationData }
++            |> deliverOnMainQueue
++            |> map { presentationData, _ -> ChatPresentationData in
++                // Entry equality uses presentation-data identity. A new immutable snapshot
++                // re-lays out already visible timestamps/labels after an AyuGram change.
++                return ChatPresentationData(theme: presentationData.theme, fontSize: presentationData.fontSize, strings: presentationData.strings, dateTimeFormat: presentationData.dateTimeFormat, nameDisplayOrder: presentationData.nameDisplayOrder, disableAnimations: presentationData.disableAnimations, largeEmoji: presentationData.largeEmoji, chatBubbleCorners: presentationData.chatBubbleCorners, animatedEmojiScale: presentationData.animatedEmojiScale, isPreview: presentationData.isPreview)
++            }
 +            |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_chatPresentationData"),
              selectedMessages |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_selectedMessages"),
              updatingMedia |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_updatingMedia"),
@@ -2183,10 +2445,10 @@ index 1ade8c01..ea8fa077 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..6f5b5f8e
+index 00000000..547b7039
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,253 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -2378,6 +2640,48 @@ index 00000000..6f5b5f8e
 +let mediaRoundTrip = try JSONDecoder().decode(AyuMessageHistoryState.self, from: JSONEncoder().encode(mediaHistory))
 +check(mediaRoundTrip == mediaHistory, "Persist attachment references and media policy together")
 +print("PASS: \(checks) total AyuGram model/file-store checks; native account/UI integration not covered")
++
++var appearance = AyuAppearanceSettings()
++check(appearance.showGhostButton && !appearance.showMessageSeconds, "Appearance defaults preserve the existing header and timestamp style")
++check(appearance.deletedLabel(fallback: "Удалено") == "Удалено" && appearance.editedLabel(fallback: "edited") == "edited", "Empty labels follow the current app language")
++appearance.deletedMark = "  gone 👻  "
++appearance.editedMark = "✎"
++appearance.normalize()
++try appearance.validate()
++check(appearance.deletedMark == "gone 👻" && appearance.editedLabel(fallback: "edited") == "✎", "Normalize and preserve custom Unicode labels")
++let decodedAppearance = try JSONDecoder().decode(AyuAppearanceSettings.self, from: JSONEncoder().encode(appearance))
++check(decodedAppearance == appearance, "Appearance settings survive serialization")
++let partialAppearance = try JSONDecoder().decode(AyuAppearanceSettings.self, from: Data("{\"showMessageSeconds\":true}".utf8))
++check(partialAppearance.showMessageSeconds && partialAppearance.showGhostButton && partialAppearance.deletedMark.isEmpty, "Partial appearance settings migrate missing fields")
++check(oldGhost.appearance == AyuAppearanceSettings(), "Legacy Ghost Mode files acquire default appearance without changing ghost flags")
++for invalid in [String(repeating: "x", count: 25), "line\nbreak", "hidden\u{202E}text", String(repeating: "👨‍👩‍👧‍👦", count: 5)] {
++    var invalidAppearance = appearance
++    invalidAppearance.deletedMark = invalid
++    do { try invalidAppearance.validate(); fatalError("Invalid appearance label accepted") }
++    catch { check(true, "Reject oversized, multiline and bidi-control labels") }
++}
++let corruptAppearanceGhost = try JSONDecoder().decode(AyuGhostModeSettings.self, from: Data("{\"hideOnline\":true,\"appearance\":{\"editedMark\":\"1234567890123456789012345\"}}".utf8))
++check(corruptAppearanceGhost.hideOnline && corruptAppearanceGhost.appearance == AyuAppearanceSettings(), "Corrupt appearance must not reset Ghost Mode policy")
++let appearancePath = root.appendingPathComponent("appearance-account")
++try FileManager.default.createDirectory(at: appearancePath, withIntermediateDirectories: true)
++let appearanceStore = AyuGhostModeStore(accountPath: appearancePath.path)
++try appearanceStore.update {
++    $0.setAllEnabled(true)
++    $0.silentSendMode = .always
++    $0.appearance = appearance
++    $0.appearance.showGhostButton = false
++    $0.appearance.showMessageSeconds = true
++}
++let persistedAppearance = AyuGhostModeStore(accountPath: appearancePath.path).current
++check(persistedAppearance.appearance == appearanceStore.current.appearance && persistedAppearance.allEnabled, "Persist appearance and ghost policy per account")
++check(!persistedAppearance.appearance.showGhostButton && persistedAppearance.isActive, "Hiding the ghost button must not disable its policy")
++let beforeRejectedAppearance = appearanceStore.current
++do { try appearanceStore.update { $0.appearance.editedMark = "bad\nlabel" }; fatalError("Invalid label persisted") }
++catch { check(true, "Invalid label persistence reports an error") }
++check(appearanceStore.current == beforeRejectedAppearance && AyuGhostModeStore(accountPath: appearancePath.path).current == beforeRejectedAppearance, "Rejected appearance changes preserve memory and disk")
++try appearanceStore.update { $0.appearance = AyuAppearanceSettings() }
++check(appearanceStore.current.appearance == AyuAppearanceSettings() && appearanceStore.current.allEnabled && appearanceStore.current.silentSendMode == .always, "Appearance reset preserves unrelated settings")
++print("PASS: \(checks) total checks, including appearance migration/validation/persistence; native rendering remains separate")
 +
 +#if AYU_POSTBOX_TESTS
 +func postboxRoundTrip(_ state: AyuMessageHistoryState) -> AyuMessageHistoryState? {

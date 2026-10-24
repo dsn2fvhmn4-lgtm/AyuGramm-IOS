@@ -26,7 +26,7 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview. All subsequent
 | regexFiltersEnabled | Local loaded-history filtering in source |
 | regexFiltersInChats | Channels by default; optional other cloud chats in source |
 | regexFiltersCaseInsensitive | Compiled matcher cache invalidation and editor control in source |
-| showGhostToggleInDrawer | iOS equivalent: Settings entry and chat-header ghost control in source |
+| showGhostToggleInDrawer | iOS equivalent: Settings entry and configurable chat-header ghost control in source |
 | showKillButtonInDrawer | Android lifecycle behavior; iOS implementation not defined |
 | keepAliveService | Android foreground-service behavior; iOS background execution is platform controlled |
 | disableAds | Unchanged; sponsored messages are excluded from local filters |
@@ -34,7 +34,9 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview. All subsequent
 | syncEnabled | Pending; no sync transport or archive upload is enabled |
 | useSecureConnection | Pending as part of sync; no insecure transport introduced |
 | WALMode | Android Room implementation detail; account storage remains upstream Postbox |
-| custom deleted/edited marks | Pending; archive is separate from the main chat list |
+| custom deleted/edited marks | Per-account Chat Appearance labels in source; eligible deleted text retained inline with local tombstones |
+| showMessageSeconds (Desktop) | Native timestamp formatter with seconds, including full/imported dates, in source |
+| reset chat appearance | Resets only visual settings and preserves Ghost Mode, history and sending policy, in source |
 | source sync URL/token settings | Pending; no token has been stored or transmitted |
 
 Additional Desktop-only scope (not implemented by these flags): translation providers, message screenshots, shadow bans, UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.

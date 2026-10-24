@@ -12,6 +12,10 @@ Ghost Mode conflicts with [Telegram API Terms section 1.4](https://core.telegram
 
 The development sources add a local edit/deletion ledger, formatting and reaction snapshots, a bot-capture preference, message metadata, silent-send modes, local regex filtering and opt-in local media archiving. These changes have not passed full native/device integration verification and are absent from the published IPA. See [history verification](docs/LOCAL_HISTORY.md) and the [complete parity checklist](docs/PARITY_CHECKLIST.md).
 
+## Chat appearance (development source)
+
+Open **Settings → AyuGram → Chat Appearance**. Per-account controls show/hide the header ghost button, display timestamp seconds, and customize deleted/edited labels. Empty labels use the current app language. Save labels applies text; switches apply immediately. Reset affects appearance only. Deleted-text capture remains a separate opt-in under Message History. These changes require native/device verification and are absent from the initial published preview.
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

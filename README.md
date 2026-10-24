@@ -10,7 +10,7 @@ Experimental Ghost Mode adds per-account persistent controls for cloud chat/disc
 
 Ghost Mode conflicts with [Telegram API Terms section 1.4](https://core.telegram.org/api/terms). Server Premium features are not unlocked. Message history and other AyuGram features are not implemented yet.
 
-The development sources add a local edit/deletion ledger, formatting and reaction snapshots, a bot-capture preference, message metadata, silent-send modes and local regex filtering. These changes have not passed full native/device integration verification and are absent from the published IPA. See [history verification](docs/LOCAL_HISTORY.md) and the [complete parity checklist](docs/PARITY_CHECKLIST.md).
+The development sources add a local edit/deletion ledger, formatting and reaction snapshots, a bot-capture preference, message metadata, silent-send modes, local regex filtering and opt-in local media archiving. These changes have not passed full native/device integration verification and are absent from the published IPA. See [history verification](docs/LOCAL_HISTORY.md) and the [complete parity checklist](docs/PARITY_CHECKLIST.md).
 
 ## Cloud builds from Windows
 

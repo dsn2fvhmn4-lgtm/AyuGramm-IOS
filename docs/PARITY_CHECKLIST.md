@@ -17,12 +17,12 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview. All subsequent
 | saveFormatting | Codable entity snapshots and native formatted detail rendering in source |
 | saveReactions | Reaction/count snapshots and detail summary in source |
 | saveForBots | Per-account capture control in source |
-| saveMedia | Pending; requires file lifetime, quota and account cleanup integration |
-| saveMediaInPrivateChats | Pending with media archive |
-| saveMediaInPublicChannels | Pending with media archive |
-| saveMediaInPrivateChannels | Pending with media archive |
-| saveMediaInPublicGroups | Pending with media archive |
-| saveMediaInPrivateGroups | Pending with media archive |
+| saveMedia | Opt-in local copy of cached photos and files up to 25 MB each, 250 MB quota per account in source |
+| saveMediaInPrivateChats | Chat-type toggle in source |
+| saveMediaInPublicChannels | Chat-type toggle in source |
+| saveMediaInPrivateChannels | Chat-type toggle in source |
+| saveMediaInPublicGroups | Chat-type toggle in source |
+| saveMediaInPrivateGroups | Chat-type toggle in source |
 | regexFiltersEnabled | Local loaded-history filtering in source |
 | regexFiltersInChats | Channels by default; optional other cloud chats in source |
 | regexFiltersCaseInsensitive | Compiled matcher cache invalidation and editor control in source |
@@ -39,4 +39,4 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview. All subsequent
 
 Additional Desktop-only scope (not implemented by these flags): translation providers, message screenshots, shadow bans, UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.
 
-Release gates: clean pinned-patch application, UI import/API-contract checks, parse all changed Swift sources, compile/run real Foundation models, full Telegram target type check/link/package, then device and recorded simulator checks. The 32-check result applies only to the earlier history revision; newly added regex/migration/metadata tests have not yet run on a Mac.
+Release gates: clean pinned-patch application, UI import/API-contract checks, parse all changed Swift sources, compile/run real Foundation models, full Telegram target type check/link/package, then device and recorded simulator checks. The 32-check result applies only to the earlier history revision; newly added regex/migration/metadata/media-archive tests have not yet run on a Mac.

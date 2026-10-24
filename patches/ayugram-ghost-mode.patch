@@ -459,10 +459,10 @@ index 00000000..ba3acdfe
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..4a36441f
+index 00000000..6f74eef9
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,242 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -479,11 +479,13 @@ index 00000000..4a36441f
 +    let update: (Int32, Bool) -> Void
 +    let record: (Int32) -> Void
 +    let context: AccountContext?
-+    init(open: @escaping (Int32) -> Void, update: @escaping (Int32, Bool) -> Void, record: @escaping (Int32) -> Void, context: AccountContext? = nil) {
++    let attachment: (String) -> Void
++    init(open: @escaping (Int32) -> Void, update: @escaping (Int32, Bool) -> Void, record: @escaping (Int32) -> Void, context: AccountContext? = nil, attachment: @escaping (String) -> Void = { _ in }) {
 +        self.open = open
 +        self.update = update
 +        self.record = record
 +        self.context = context
++        self.attachment = attachment
 +    }
 +}
 +
@@ -494,10 +496,11 @@ index 00000000..4a36441f
 +    case clear(String)
 +    case record(AyuMessageHistoryRecord)
 +    case richText(AyuMessageHistoryRecord)
++    case attachment(Int32, AyuArchivedAttachment)
 +
 +    var section: ItemListSectionId {
 +        switch self {
-+        case .record: return 1
++        case .record, .attachment: return 1
 +        default: return 0
 +        }
 +    }
@@ -505,9 +508,10 @@ index 00000000..4a36441f
 +    var stableId: Int64 {
 +        switch self {
 +        case let .link(id, _), let .toggle(id, _, _), let .info(id, _): return Int64(id)
-+        case .clear: return 10
++        case .clear: return 50
 +        case let .record(record): return 100 + Int64(record.id)
 +        case .richText: return 1
++        case let .attachment(id, _): return 10_000 + Int64(id)
 +        }
 +    }
 +
@@ -539,8 +543,10 @@ index 00000000..4a36441f
 +        case let .record(record):
 +            let isRussian = presentationData.strings.baseLanguageCode.hasPrefix("ru")
 +            let kind = record.kind == .edited ? (isRussian ? "Правка" : "Edit") : (isRussian ? "Удаление" : "Deletion")
-+            let preview = String(record.text.replacingOccurrences(of: "\n", with: " ").prefix(70))
++            let preview = record.text.isEmpty ? (record.attachments?.first?.displayName ?? (isRussian ? "Медиа" : "Media")) : String(record.text.replacingOccurrences(of: "\n", with: " ").prefix(70))
 +            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: preview, label: kind, sectionId: self.section, style: .blocks, action: { arguments.record(record.id) })
++        case let .attachment(_, attachment):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: attachment.displayName, label: ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file), sectionId: self.section, style: .blocks, action: { arguments.attachment(attachment.id) })
 +        }
 +    }
 +}
@@ -589,7 +595,7 @@ index 00000000..4a36441f
 +            })
 +        ]))
 +    }, update: { id, value in
-+        let _ = context.engine.messages.updateAyuMessageHistory(saveEdits: id == 0 ? value : nil, saveDeleted: id == 1 ? value : nil, saveFormatting: id == 2 ? value : nil, saveReactions: id == 3 ? value : nil, saveForBots: id == 4 ? value : nil).startStandalone()
++        let _ = context.engine.messages.updateAyuMessageHistory(saveEdits: id == 0 ? value : nil, saveDeleted: id == 1 ? value : nil, saveFormatting: id == 2 ? value : nil, saveReactions: id == 3 ? value : nil, saveForBots: id == 4 ? value : nil, saveMedia: id == 5 ? value : nil, mediaPrivateChats: id == 6 ? value : nil, mediaPublicChannels: id == 7 ? value : nil, mediaPrivateChannels: id == 8 ? value : nil, mediaPublicGroups: id == 9 ? value : nil, mediaPrivateGroups: id == 10 ? value : nil).startStandalone()
 +    }, record: { id in
 +        push?(ayuHistoryRecordController(context: context, recordId: id))
 +    })
@@ -603,14 +609,20 @@ index 00000000..4a36441f
 +            .toggle(2, ru ? "Сохранять форматирование" : "Save formatting", history.saveFormatting),
 +            .toggle(3, ru ? "Сохранять реакции" : "Save reactions", history.saveReactions),
 +            .toggle(4, ru ? "Сохранять сообщения ботов" : "Save bot messages", history.saveForBots),
-+            .info(5, ru ? "Только уже загруженный текст обычных облачных сообщений. До 100 записей за 7 дней, до 8 КБ каждая. Фото и файлы не копируются. Защищённые, секретные и исчезающие сообщения исключены; неизвестный срок хранения чата также исключает сохранение. Архив находится в базе этого аккаунта на устройстве." : "Only text already received in ordinary cloud messages. Up to 100 entries for 7 days, up to 8 KB each. Photos and files are not copied. Protected, secret and disappearing messages are excluded, including chats whose lifetime is unknown. The archive stays in this account's local database.")
++            .toggle(5, ru ? "Копировать загруженные медиа" : "Copy cached media", history.saveMedia),
++            .toggle(6, ru ? "Медиа личных чатов" : "Private-chat media", history.mediaPrivateChats),
++            .toggle(7, ru ? "Медиа публичных каналов" : "Public-channel media", history.mediaPublicChannels),
++            .toggle(8, ru ? "Медиа частных каналов" : "Private-channel media", history.mediaPrivateChannels),
++            .toggle(9, ru ? "Медиа публичных групп" : "Public-group media", history.mediaPublicGroups),
++            .toggle(10, ru ? "Медиа частных групп" : "Private-group media", history.mediaPrivateGroups),
++            .info(11, ru ? "Только уже загруженный текст обычных облачных сообщений. До 100 записей за 7 дней, до 8 КБ каждая. Копирование медиа включается отдельно: только уже загруженные фото и файлы до 25 МБ, до 250 МБ на аккаунт. Недоступные файлы не загружаются. Защищённые, секретные и исчезающие сообщения исключены; неизвестный срок хранения чата также исключает сохранение. Архив находится в базе этого аккаунта на устройстве." : "Only text already received in ordinary cloud messages. Up to 100 entries for 7 days, up to 8 KB each. Media copying is opt-in: cached photos/files only, up to 25 MB each and 250 MB per account. Unavailable files are not downloaded. Protected, secret and disappearing messages are excluded, including chats whose lifetime is unknown. The archive stays in this account's local database.")
 +        ]
 +        let records = history.records.filter { record in
 +            guard let messageId else { return true }
 +            return record.peerId == messageId.peerId.toInt64() && record.messageId == messageId.id
 +        }
 +        if records.isEmpty {
-+            entries.append(.info(6, ru ? "Архив пока пуст. Записи появятся после новых правок или удалений при включённых переключателях." : "The archive is empty. Entries are collected from future edits or deletions while enabled."))
++            entries.append(.info(12, ru ? "Архив пока пуст. Записи появятся после новых правок или удалений при включённых переключателях." : "The archive is empty. Entries are collected from future edits or deletions while enabled."))
 +        } else {
 +            entries.append(.clear(ru ? "Очистить архив" : "Clear archive"))
 +            entries.append(contentsOf: records.reversed().map { .record($0) })
@@ -654,6 +666,7 @@ index 00000000..4a36441f
 +}
 +
 +private func ayuHistoryRecordController(context: AccountContext, recordId: Int32) -> ViewController {
++    var openAttachment: ((String) -> Void)?
 +    let signal = combineLatest(context.sharedContext.presentationData, context.engine.messages.ayuMessageHistory())
 +    |> deliverOnMainQueue
 +    |> map { presentationData, history -> (ItemListControllerState, (ItemListNodeState, Any)) in
@@ -663,14 +676,34 @@ index 00000000..4a36441f
 +            let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(record.capturedAt)), dateStyle: .medium, timeStyle: .medium)
 +            entries = [.info(0, "Internal peer ID: \(record.peerId)\nMessage ID: \(record.messageId)\n\(date)"), .richText(record)]
 +            if !record.reactionSummary.isEmpty { entries.append(.info(2, record.reactionSummary)) }
++            for (index, attachment) in (record.attachments ?? []).enumerated() {
++                entries.append(.attachment(Int32(index), attachment))
++            }
 +        } else {
 +            entries = [.info(0, ru ? "Запись удалена или срок хранения истёк." : "This entry was cleared or has expired.")]
 +        }
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-+        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), AyuSettingsArguments(open: { _ in }, update: { _, _ in }, record: { _ in }, context: context)))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), AyuSettingsArguments(open: { _ in }, update: { _, _ in }, record: { _ in }, context: context, attachment: { openAttachment?($0) })))
 +    }
-+    return ItemListController(context: context, state: signal)
++    let controller = ItemListController(context: context, state: signal)
++    openAttachment = { [weak controller] id in
++        let _ = (context.engine.messages.ayuArchivedAttachmentUrl(id: id)
++        |> take(1)
++        |> deliverOnMainQueue).startStandalone(next: { [weak controller] url in
++            guard let controller else { return }
++            guard let url else {
++                let data = context.sharedContext.currentPresentationData.with { $0 }
++                controller.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Файл отсутствует в локальном архиве." : "This file is no longer available in the local archive.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++                return
++            }
++            let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
++            activity.popoverPresentationController?.sourceView = controller.view
++            activity.popoverPresentationController?.sourceRect = CGRect(x: controller.view.bounds.midX, y: controller.view.bounds.midY, width: 1.0, height: 1.0)
++            context.sharedContext.applicationBindings.presentNativeController(activity)
++        })
++    }
++    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift b/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift
 index 8c474034..2212f0ad 100644
@@ -758,6 +791,127 @@ index 8c474034..2212f0ad 100644
      let webBrowserData = combineLatest(
          context.sharedContext.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.contactSynchronizationSettings, ApplicationSpecificSharedDataKeys.webBrowserSettings]),
          context.engine.data.subscribe(TelegramEngine.EngineData.Item.Configuration.ApplicationSpecificPreference(key: PreferencesKeys.webBrowserSettings))
+diff --git a/submodules/TelegramCore/Sources/Account/Account.swift b/submodules/TelegramCore/Sources/Account/Account.swift
+index af6b6078..62aa9008 100644
+--- a/submodules/TelegramCore/Sources/Account/Account.swift
++++ b/submodules/TelegramCore/Sources/Account/Account.swift
+@@ -1497,6 +1497,7 @@ public class Account {
+         
+         let pendingMessageManager = self.pendingMessageManager
+         Logger.shared.log("Account", "Begin watching unsent message ids")
++        self.managedOperationsDisposable.add(ayuManageArchiveFiles(postbox: self.postbox).start())
+         self.managedOperationsDisposable.add(postbox.unsentMessageIdsView().start(next: { [weak pendingMessageManager] view in
+             pendingMessageManager?.updatePendingMessageIds(view.ids)
+         }))
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift b/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift
+new file mode 100644
+index 00000000..ba034fc4
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift
+@@ -0,0 +1,103 @@
++import Foundation
++
++public struct AyuArchivedAttachment: Codable, Equatable {
++    public let id: String
++    public let storedName: String
++    public let displayName: String
++    public let byteCount: Int64
++}
++
++/// Only stores explicit archive copies, not Telegram session or credential files.
++public final class AyuArchiveFileStore {
++    private static let registryLock = NSLock()
++    private static var registry: [String: AyuArchiveFileStore] = [:]
++    public static func shared(basePath: String) -> AyuArchiveFileStore {
++        self.registryLock.lock()
++        defer { self.registryLock.unlock() }
++        let path = URL(fileURLWithPath: basePath).deletingLastPathComponent().appendingPathComponent("ayu-history-media").standardizedFileURL.path
++        if let store = self.registry[path] { return store }
++        let store = AyuArchiveFileStore(root: URL(fileURLWithPath: path))
++        self.registry[path] = store
++        return store
++    }
++
++    private let lock = NSRecursiveLock()
++    private let root: URL
++    private let quota: Int64
++    private let perFileLimit: Int64
++    private var pending: [String: Date] = [:]
++
++    public init(root: URL, quota: Int64 = 250_000_000, perFileLimit: Int64 = 25_000_000) {
++        self.root = root.standardizedFileURL
++        self.quota = quota
++        self.perFileLimit = perFileLimit
++    }
++
++    private func files() -> [URL] {
++        return (try? FileManager.default.contentsOfDirectory(at: self.root, includingPropertiesForKeys: [.fileSizeKey], options: .skipsHiddenFiles)) ?? []
++    }
++
++    private func bytes(_ url: URL) -> Int64 {
++        return ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.int64Value ?? 0
++    }
++
++    public func copy(source: URL, displayName: String) throws -> AyuArchivedAttachment {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        let source = source.resolvingSymlinksInPath()
++        let size = self.bytes(source)
++        guard size > 0 && size <= self.perFileLimit else { throw self.error("File is missing or exceeds the per-file archive limit.") }
++        let used = self.files().reduce(Int64(0)) { $0 + self.bytes($1) }
++        guard used + size <= self.quota else { throw self.error("Local media archive quota reached.") }
++        try FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true)
++        var root = self.root
++        var resourceValues = URLResourceValues()
++        resourceValues.isExcludedFromBackup = true
++        try root.setResourceValues(resourceValues)
++        let id = UUID().uuidString
++        let ext = (displayName as NSString).pathExtension
++        let suffix = !ext.isEmpty && ext.count <= 10 && ext.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) }) ? "." + ext : ""
++        let name = id + suffix
++        let data = try Data(contentsOf: source, options: .mappedIfSafe)
++        guard data.count > 0 && Int64(data.count) <= self.perFileLimit && used + Int64(data.count) <= self.quota else { throw self.error("File size changed while archiving.") }
++        self.pending[name] = Date()
++        do {
++            #if os(iOS)
++            try data.write(to: self.root.appendingPathComponent(name), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
++            #else
++            try data.write(to: self.root.appendingPathComponent(name), options: .atomic)
++            #endif
++        } catch {
++            self.pending.removeValue(forKey: name)
++            throw error
++        }
++        return AyuArchivedAttachment(id: id, storedName: name, displayName: String(displayName.prefix(200)), byteCount: Int64(data.count))
++    }
++
++    public func url(for attachment: AyuArchivedAttachment) -> URL? {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        let name = attachment.storedName
++        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\\") else { return nil }
++        let url = self.root.appendingPathComponent(name).standardizedFileURL
++        guard url.deletingLastPathComponent().path == self.root.path, FileManager.default.fileExists(atPath: url.path) else { return nil }
++        return url
++    }
++
++    /// Preference views are emitted after commit. Pending copies protect files from an
++    /// older queued view; abandoned transaction copies are eligible for later cleanup.
++    public func prune(validNames: Set<String>, now: Date = Date()) {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        for name in Array(self.pending.keys) {
++            if validNames.contains(name) || now.timeIntervalSince(self.pending[name]!) > 300 { self.pending.removeValue(forKey: name) }
++        }
++        for file in self.files() where !validNames.contains(file.lastPathComponent) && self.pending[file.lastPathComponent] == nil {
++            try? FileManager.default.removeItem(at: file)
++        }
++    }
++
++    private func error(_ description: String) -> NSError {
++        return NSError(domain: "AyuMediaArchive", code: 1, userInfo: [NSLocalizedDescriptionKey: description])
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift
 new file mode 100644
 index 00000000..c509943f
@@ -959,10 +1113,10 @@ index 00000000..53b26ae5
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
 new file mode 100644
-index 00000000..14574d5f
+index 00000000..aa948b09
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,183 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -991,6 +1145,53 @@ index 00000000..14574d5f
 +
 +private func ayuHistoryEntities(_ attributes: [MessageAttribute]) -> [MessageTextEntity] {
 +    return (attributes.first(where: { $0 is TextEntitiesMessageAttribute }) as? TextEntitiesMessageAttribute)?.entities ?? []
++}
++
++private func ayuHistorySupportedMedia(_ media: [Media]) -> Bool {
++    return media.allSatisfy { $0 is TelegramMediaWebpage || $0 is TelegramMediaImage || $0 is TelegramMediaFile }
++}
++
++private func ayuCaptureAttachments(transaction: Transaction, mediaBox: MediaBox, message: Message, state: AyuMessageHistoryState) -> [AyuArchivedAttachment] {
++    guard state.saveMedia, mediaBox.isMainProcess, let peer = transaction.getPeer(message.id.peerId) else { return [] }
++    let enabled: Bool
++    if peer is TelegramUser { enabled = state.mediaPrivateChats }
++    else if let channel = peer as? TelegramChannel {
++        let isPublic = channel.addressName != nil
++        switch channel.info {
++        case .broadcast: enabled = isPublic ? state.mediaPublicChannels : state.mediaPrivateChannels
++        case .group: enabled = isPublic ? state.mediaPublicGroups : state.mediaPrivateGroups
++        }
++    } else { enabled = state.mediaPrivateGroups }
++    guard enabled else { return [] }
++    var resources: [(MediaResource, String)] = []
++    for media in message.media {
++        if let file = media as? TelegramMediaFile {
++            resources.append((file.resource, file.fileName ?? "attachment"))
++        } else if let image = media as? TelegramMediaImage, let representation = largestImageRepresentation(image.representations) {
++            resources.append((representation.resource, "photo.jpg"))
++        }
++    }
++    let store = AyuArchiveFileStore.shared(basePath: mediaBox.basePath)
++    var attachments: [AyuArchivedAttachment] = []
++    for (resource, name) in resources.prefix(4) {
++        guard let path = mediaBox.completedResourcePath(resource) else { continue }
++        do { attachments.append(try store.copy(source: URL(fileURLWithPath: path), displayName: name)) }
++        catch { Logger.shared.log("AyuGram", "Cached media copy skipped (file unavailable, archive quota or I/O error)") }
++    }
++    return attachments
++}
++
++func ayuManageArchiveFiles(postbox: Postbox) -> Signal<Void, NoError> {
++    guard postbox.mediaBox.isMainProcess else { return .complete() }
++    let store = AyuArchiveFileStore.shared(basePath: postbox.mediaBox.basePath)
++    return postbox.preferencesView(keys: [ayuHistoryKey])
++    |> map { view -> Set<String> in
++        let state = view.values[ayuHistoryKey]?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
++        return Set(state.records.flatMap { $0.attachments ?? [] }.map { $0.storedName })
++    }
++    |> distinctUntilChanged
++    |> deliverOn(Queue(name: "AyuGram-ArchiveFiles"))
++    |> map { names -> Void in store.prune(validNames: names) }
 +}
 +
 +private func ayuHistoryPeerAllowsArchiving(transaction: Transaction, peerId: PeerId) -> Bool {
@@ -1031,27 +1232,28 @@ index 00000000..14574d5f
 +
 +/// Called only for server edit/delete replay, before the original message is replaced/removed.
 +/// The ledger write participates in the same Postbox transaction and never blocks deletion.
-+func ayuArchiveMessage(transaction: Transaction, message: Message, kind: AyuMessageHistoryRecord.Kind, updated: StoreMessage? = nil) {
++func ayuArchiveMessage(transaction: Transaction, mediaBox: MediaBox, message: Message, kind: AyuMessageHistoryRecord.Kind, updated: StoreMessage? = nil) {
 +    let original = transaction.getPreferencesEntry(key: ayuHistoryKey)?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
 +    var state = original
 +    let now = Int64(Date().timeIntervalSince1970)
 +    state.prune(now: now)
 +    let peerAllows = ayuHistoryPeerAllowsArchiving(transaction: transaction, peerId: message.id.peerId)
-+    let updateAllows = updated.map { !$0.flags.contains(.CopyProtected) && !ayuHistoryHasExpiringAttribute($0.attributes) && $0.media.allSatisfy { $0 is TelegramMediaWebpage } } ?? true
++    let updateAllows = updated.map { !$0.flags.contains(.CopyProtected) && !ayuHistoryHasExpiringAttribute($0.attributes) && ayuHistorySupportedMedia($0.media) } ?? true
 +    let entities = ayuHistoryEntities(message.attributes)
-+    let contentChanged = updated.map { $0.text != message.text || (state.saveFormatting && ayuHistoryEntities($0.attributes) != entities) } ?? true
++    let contentChanged = updated.map { $0.text != message.text || !areMediaArraysEqual($0.media, message.media) || (state.saveFormatting && ayuHistoryEntities($0.attributes) != entities) } ?? true
 +    let isBot = (transaction.getPeer(message.id.peerId) as? TelegramUser)?.botInfo != nil || (message.author as? TelegramUser)?.botInfo != nil
 +    let shouldCapture = kind == .edited ? state.saveEdits : state.saveDeleted
 +    if !peerAllows {
 +        state.remove(peerId: message.id.peerId.toInt64())
 +    } else if message.id.namespace != Namespaces.Message.Cloud || message.isCopyProtected() || ayuHistoryHasExpiringAttribute(message.attributes) || !updateAllows {
 +        state.remove(peerId: message.id.peerId.toInt64(), messageId: message.id.id)
-+    } else if shouldCapture, state.saveForBots || !isBot, message.media.allSatisfy({ $0 is TelegramMediaWebpage }), contentChanged {
++    } else if shouldCapture, state.saveForBots || !isBot, ayuHistorySupportedMedia(message.media), contentChanged, message.text.utf8.count <= AyuMessageHistoryState.maximumTextLength {
 +        let encoder = JSONEncoder()
 +        encoder.outputFormatting = .sortedKeys
 +        let formatting = state.saveFormatting ? (try? encoder.encode(entities)) : nil
 +        let reactions = state.saveReactions ? (try? encoder.encode(message.reactionsAttribute?.reactions ?? [])) : nil
-+        state.append(peerId: message.id.peerId.toInt64(), messageId: message.id.id, messageTimestamp: message.timestamp, kind: kind, text: message.text, now: now, formatting: formatting, reactions: reactions)
++        let attachments = ayuCaptureAttachments(transaction: transaction, mediaBox: mediaBox, message: message, state: state)
++        state.append(peerId: message.id.peerId.toInt64(), messageId: message.id.id, messageTimestamp: message.timestamp, kind: kind, text: message.text, now: now, formatting: formatting, reactions: reactions, attachments: attachments)
 +    }
 +    if state != original {
 +        transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in PreferencesEntry(state) })
@@ -1059,6 +1261,13 @@ index 00000000..14574d5f
 +}
 +
 +public extension TelegramEngine.Messages {
++    func ayuArchivedAttachmentUrl(id: String) -> Signal<URL?, NoError> {
++        return self.account.postbox.transaction { transaction -> URL? in
++            let state = ayuPruneHistory(transaction: transaction)
++            guard let attachment = state.records.flatMap({ $0.attachments ?? [] }).first(where: { $0.id == id }) else { return nil }
++            return AyuArchiveFileStore.shared(basePath: self.account.postbox.mediaBox.basePath).url(for: attachment)
++        }
++    }
 +    func ayuMessageHistory() -> Signal<AyuMessageHistoryState, NoError> {
 +        return self.account.postbox.preferencesView(keys: [ayuHistoryKey])
 +        |> mapToSignal { _ in
@@ -1069,7 +1278,7 @@ index 00000000..14574d5f
 +        |> distinctUntilChanged
 +    }
 +
-+    func updateAyuMessageHistory(saveEdits: Bool? = nil, saveDeleted: Bool? = nil, saveFormatting: Bool? = nil, saveReactions: Bool? = nil, saveForBots: Bool? = nil, clear: Bool = false) -> Signal<Void, NoError> {
++    func updateAyuMessageHistory(saveEdits: Bool? = nil, saveDeleted: Bool? = nil, saveFormatting: Bool? = nil, saveReactions: Bool? = nil, saveForBots: Bool? = nil, saveMedia: Bool? = nil, mediaPrivateChats: Bool? = nil, mediaPublicChannels: Bool? = nil, mediaPrivateChannels: Bool? = nil, mediaPublicGroups: Bool? = nil, mediaPrivateGroups: Bool? = nil, clear: Bool = false) -> Signal<Void, NoError> {
 +        return self.account.postbox.transaction { transaction -> Void in
 +            transaction.updatePreferencesEntry(key: ayuHistoryKey, { entry in
 +                var state = entry?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
@@ -1078,6 +1287,12 @@ index 00000000..14574d5f
 +                if let saveFormatting { state.saveFormatting = saveFormatting }
 +                if let saveReactions { state.saveReactions = saveReactions }
 +                if let saveForBots { state.saveForBots = saveForBots }
++                if let saveMedia { state.saveMedia = saveMedia }
++                if let mediaPrivateChats { state.mediaPrivateChats = mediaPrivateChats }
++                if let mediaPublicChannels { state.mediaPublicChannels = mediaPublicChannels }
++                if let mediaPrivateChannels { state.mediaPrivateChannels = mediaPrivateChannels }
++                if let mediaPublicGroups { state.mediaPublicGroups = mediaPublicGroups }
++                if let mediaPrivateGroups { state.mediaPrivateGroups = mediaPrivateGroups }
 +                if clear { state.clear() }
 +                state.prune(now: Int64(Date().timeIntervalSince1970))
 +                return PreferencesEntry(state)
@@ -1087,10 +1302,10 @@ index 00000000..14574d5f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
 new file mode 100644
-index 00000000..c8a87cd8
+index 00000000..50565ee6
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,100 @@
 +import Foundation
 +
 +public struct AyuMessageHistoryRecord: Codable, Equatable {
@@ -1104,6 +1319,7 @@ index 00000000..c8a87cd8
 +    public let text: String
 +    public let formatting: Data?
 +    public let reactions: Data?
++    public let attachments: [AyuArchivedAttachment]?
 +}
 +
 +/// A bounded text-only ledger. It is stored inside the account's Postbox transaction.
@@ -1113,6 +1329,12 @@ index 00000000..c8a87cd8
 +    public var saveFormatting = true
 +    public var saveReactions = true
 +    public var saveForBots = true
++    public var saveMedia = false
++    public var mediaPrivateChats = true
++    public var mediaPublicChannels = false
++    public var mediaPrivateChannels = true
++    public var mediaPublicGroups = false
++    public var mediaPrivateGroups = true
 +    public private(set) var records: [AyuMessageHistoryRecord] = []
 +    private var nextId: Int32 = 1
 +    public static let maximumRecords = 100
@@ -1123,6 +1345,7 @@ index 00000000..c8a87cd8
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case saveEdits, saveDeleted, saveFormatting, saveReactions, saveForBots, records, nextId
++        case saveMedia, mediaPrivateChats, mediaPublicChannels, mediaPrivateChannels, mediaPublicGroups, mediaPrivateGroups
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -1132,6 +1355,12 @@ index 00000000..c8a87cd8
 +        self.saveFormatting = try values.decodeIfPresent(Bool.self, forKey: .saveFormatting) ?? true
 +        self.saveReactions = try values.decodeIfPresent(Bool.self, forKey: .saveReactions) ?? true
 +        self.saveForBots = try values.decodeIfPresent(Bool.self, forKey: .saveForBots) ?? true
++        self.saveMedia = try values.decodeIfPresent(Bool.self, forKey: .saveMedia) ?? false
++        self.mediaPrivateChats = try values.decodeIfPresent(Bool.self, forKey: .mediaPrivateChats) ?? true
++        self.mediaPublicChannels = try values.decodeIfPresent(Bool.self, forKey: .mediaPublicChannels) ?? false
++        self.mediaPrivateChannels = try values.decodeIfPresent(Bool.self, forKey: .mediaPrivateChannels) ?? true
++        self.mediaPublicGroups = try values.decodeIfPresent(Bool.self, forKey: .mediaPublicGroups) ?? false
++        self.mediaPrivateGroups = try values.decodeIfPresent(Bool.self, forKey: .mediaPrivateGroups) ?? true
 +        self.records = try values.decodeIfPresent([AyuMessageHistoryRecord].self, forKey: .records) ?? []
 +        self.nextId = try values.decodeIfPresent(Int32.self, forKey: .nextId) ?? 1
 +        if self.nextId <= 0 || self.records.contains(where: { $0.id >= self.nextId }) {
@@ -1156,21 +1385,23 @@ index 00000000..c8a87cd8
 +        }
 +    }
 +
-+    public mutating func append(peerId: Int64, messageId: Int32, messageTimestamp: Int32, kind: AyuMessageHistoryRecord.Kind, text: String, now: Int64, formatting: Data? = nil, reactions: Data? = nil) {
++    public mutating func append(peerId: Int64, messageId: Int32, messageTimestamp: Int32, kind: AyuMessageHistoryRecord.Kind, text: String, now: Int64, formatting: Data? = nil, reactions: Data? = nil, attachments: [AyuArchivedAttachment] = []) {
 +        self.prune(now: now)
-+        guard (kind == .edited ? self.saveEdits : self.saveDeleted), !text.isEmpty else { return }
++        let keptAttachments = self.saveMedia ? Array(attachments.prefix(4)) : []
++        guard (kind == .edited ? self.saveEdits : self.saveDeleted), !text.isEmpty || !keptAttachments.isEmpty else { return }
 +        // Reject oversized content rather than silently truncating an archived version.
 +        guard text.utf8.count <= Self.maximumTextLength else { return }
 +        let formatting = self.saveFormatting && (formatting?.count ?? 0) <= 16_384 ? formatting : nil
 +        let reactions = self.saveReactions && (reactions?.count ?? 0) <= 16_384 ? reactions : nil
-+        if let last = self.records.last(where: { $0.peerId == peerId && $0.messageId == messageId && $0.kind == kind }), last.text == text && last.formatting == formatting && last.reactions == reactions {
++        let attachments: [AyuArchivedAttachment]? = keptAttachments.isEmpty ? nil : keptAttachments
++        if let last = self.records.last(where: { $0.peerId == peerId && $0.messageId == messageId && $0.kind == kind }), last.text == text && last.formatting == formatting && last.reactions == reactions && last.attachments == attachments {
 +            return
 +        }
 +        if self.nextId == Int32.max {
 +            self.records.removeAll()
 +            self.nextId = 1
 +        }
-+        self.records.append(AyuMessageHistoryRecord(id: self.nextId, peerId: peerId, messageId: messageId, messageTimestamp: messageTimestamp, capturedAt: now, kind: kind, text: text, formatting: formatting, reactions: reactions))
++        self.records.append(AyuMessageHistoryRecord(id: self.nextId, peerId: peerId, messageId: messageId, messageTimestamp: messageTimestamp, capturedAt: now, kind: kind, text: text, formatting: formatting, reactions: reactions, attachments: attachments))
 +        self.nextId += 1
 +        self.prune(now: now)
 +    }
@@ -1265,7 +1496,7 @@ index 7a8db1d8..9a9c1f95 100644
          self.baseTcpConnectionInterfaceFactory = baseTcpConnectionInterfaceFactory
          self.isAppExtension = isAppExtension
 diff --git a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
-index 3d99e59d..59181af7 100644
+index 3d99e59d..cfbedf75 100644
 --- a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
 +++ b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
 @@ -4622,6 +4622,11 @@ func replayFinalState(
@@ -1274,7 +1505,7 @@ index 3d99e59d..59181af7 100644
              case let .DeleteMessagesWithGlobalIds(ids):
 +                for id in transaction.messageIdsForGlobalIds(ids) {
 +                    if let message = transaction.getMessage(id) {
-+                        ayuArchiveMessage(transaction: transaction, message: message, kind: .deleted)
++                        ayuArchiveMessage(transaction: transaction, mediaBox: mediaBox, message: message, kind: .deleted)
 +                    }
 +                }
                  var resourceIds: [MediaResourceId] = []
@@ -1286,7 +1517,7 @@ index 3d99e59d..59181af7 100644
              case let .DeleteMessages(ids):
 +                for id in ids {
 +                    if let message = transaction.getMessage(id) {
-+                        ayuArchiveMessage(transaction: transaction, message: message, kind: .deleted)
++                        ayuArchiveMessage(transaction: transaction, mediaBox: mediaBox, message: message, kind: .deleted)
 +                    }
 +                }
                  _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids, manualAddMessageThreadStatsDifference: { id, add, remove in
@@ -1297,7 +1528,7 @@ index 3d99e59d..59181af7 100644
                  }
              case let .EditMessage(id, message):
 +                if let previous = transaction.getMessage(id) {
-+                    ayuArchiveMessage(transaction: transaction, message: previous, kind: .edited, updated: message)
++                    ayuArchiveMessage(transaction: transaction, mediaBox: mediaBox, message: previous, kind: .edited, updated: message)
 +                }
                  var generatedEvent: (reactionAuthor: Peer, reaction: MessageReaction.Reaction, message: Message, timestamp: Int32)?
                  transaction.updateMessage(id, update: { previousMessage in
@@ -1724,10 +1955,10 @@ index 1ade8c01..0590db86 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..1a04efed
+index 00000000..e6e284df
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,168 @@
 +import Foundation
 +
 +// Standalone tests compile the actual Foundation settings/store source, not a copy.
@@ -1864,3 +2095,35 @@ index 00000000..1a04efed
 +metadataHistory.append(peerId: 1, messageId: 2, messageTimestamp: 1, kind: .edited, text: "text", now: now, formatting: Data([1]), reactions: Data([2]))
 +check(metadataHistory.records.last?.formatting == nil && metadataHistory.records.last?.reactions == nil, "Metadata opt-outs must affect actual stored payloads")
 +print("PASS: \(checks) total AyuGram model checks; full type checking and device behavior are separate")
++
++let originalFile = root.appendingPathComponent("original.txt")
++try Data("hello".utf8).write(to: originalFile)
++let archiveFiles = AyuArchiveFileStore(root: root.appendingPathComponent("archive-files"), quota: 12, perFileLimit: 8)
++let attachment = try archiveFiles.copy(source: originalFile, displayName: "hello.txt")
++check(attachment.byteCount == 5 && archiveFiles.url(for: attachment) != nil, "Archive an actual cached file")
++try FileManager.default.removeItem(at: originalFile)
++let archivedBytes = try Data(contentsOf: archiveFiles.url(for: attachment)!)
++check(archivedBytes == Data("hello".utf8), "Archive must survive deletion of the original cache file")
++archiveFiles.prune(validNames: [])
++check(archiveFiles.url(for: attachment) != nil, "An older queued preference view must not delete an uncommitted copy")
++archiveFiles.prune(validNames: [attachment.storedName])
++archiveFiles.prune(validNames: [])
++check(archiveFiles.url(for: attachment) == nil, "Clear/expiry must collect files after references are removed")
++try Data(repeating: 1, count: 9).write(to: originalFile)
++do { let _ = try archiveFiles.copy(source: originalFile, displayName: "large.bin"); fatalError("Oversized file archived") } catch { check(true, "Enforce per-file size limit") }
++try Data("hello".utf8).write(to: originalFile)
++let quotaStore = AyuArchiveFileStore(root: root.appendingPathComponent("quota-files"), quota: 8, perFileLimit: 8)
++let _ = try quotaStore.copy(source: originalFile, displayName: "one.txt")
++do { let _ = try quotaStore.copy(source: originalFile, displayName: "two.txt"); fatalError("Quota exceeded") } catch { check(true, "Enforce per-account file quota") }
++let unsafeAttachment = AyuArchivedAttachment(id: "bad", storedName: "../original.txt", displayName: "bad", byteCount: 5)
++check(quotaStore.url(for: unsafeAttachment) == nil, "Reject archive path traversal")
++var mediaHistory = AyuMessageHistoryState()
++mediaHistory.saveDeleted = true
++mediaHistory.append(peerId: 1, messageId: 1, messageTimestamp: 1, kind: .deleted, text: "", now: now, attachments: [attachment])
++check(mediaHistory.records.isEmpty, "Media capture must remain opt-in even for direct model calls")
++mediaHistory.saveMedia = true
++mediaHistory.append(peerId: 1, messageId: 1, messageTimestamp: 1, kind: .deleted, text: "", now: now, attachments: [attachment])
++check(mediaHistory.records.first?.attachments?.count == 1, "Media-only messages must be representable in the archive")
++let mediaRoundTrip = try JSONDecoder().decode(AyuMessageHistoryState.self, from: JSONEncoder().encode(mediaHistory))
++check(mediaRoundTrip == mediaHistory, "Persist attachment references and media policy together")
++print("PASS: \(checks) total AyuGram model/file-store checks; native account/UI integration not covered")

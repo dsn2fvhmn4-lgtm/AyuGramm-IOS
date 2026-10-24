@@ -646,12 +646,116 @@ index 00000000..ba3acdfe
 +    }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift b/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift
+new file mode 100644
+index 00000000..77b19608
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift
+@@ -0,0 +1,98 @@
++import Foundation
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++private struct AyuHiddenArguments {
++    let toggle: (Bool) -> Void
++    let restore: (AyuHiddenMessageReference) -> Void
++    let restoreAll: () -> Void
++}
++
++private enum AyuHiddenEntry: ItemListNodeEntry {
++    case toggle(String, Bool)
++    case info(String)
++    case restoreAll(String)
++    case message(AyuHiddenMessageReference, String, String)
++    var section: ItemListSectionId { return 0 }
++    var stableId: String {
++        switch self {
++        case .toggle: return "0-toggle"
++        case .info: return "1-info"
++        case .restoreAll: return "2-all"
++        case let .message(reference, _, _): return "3-" + reference.stableKey
++        }
++    }
++    static func < (lhs: AyuHiddenEntry, rhs: AyuHiddenEntry) -> Bool { return lhs.stableId < rhs.stableId }
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! AyuHiddenArguments
++        switch self {
++        case let .toggle(title, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: arguments.toggle)
++        case let .info(text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        case let .restoreAll(title):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: arguments.restoreAll)
++        case let .message(reference, title, label):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.restore(reference) })
++        }
++    }
++}
++
++public func ayuHiddenMessagesController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var presentError: (() -> Void)?
++    var confirmAll: (() -> Void)?
++    let arguments = AyuHiddenArguments(toggle: { value in
++        do { try store.update { $0.hiddenMessages.enabled = value } }
++        catch { presentError?() }
++    }, restore: { reference in
++        do { try store.update { $0.hiddenMessages.restore(reference) } }
++        catch { presentError?() }
++    }, restoreAll: { confirmAll?() })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let hidden = settings.hiddenMessages
++        var entries: [AyuHiddenEntry] = [
++            .toggle(ru ? "Применять локальное скрытие" : "Apply local hiding", hidden.enabled),
++            .info(ru ? "Скрыто сообщений/альбомов: \(hidden.references.count)/200. Нажми на запись, чтобы вернуть её в ленту. Выключатель временно показывает всё, сохраняя список. Это не удаление: поиск, выделение, список чатов и другие устройства сохраняют обычное поведение. Скрытые элементы могут дополнительно скрываться Regex-фильтром." : "Hidden messages/albums: \(hidden.references.count)/200. Tap an entry to restore it. Turning this off temporarily shows everything while keeping the list. This does not delete messages: search, selection, chat lists and other devices retain native behavior. Restored items can still be hidden by a regex filter.")
++        ]
++        if !hidden.references.isEmpty { entries.append(.restoreAll(ru ? "Вернуть все сообщения" : "Restore all messages")) }
++        for reference in hidden.references {
++            let kind: AyuPeerIdFormat.Kind
++            switch reference.kind {
++            case .user: kind = .user
++            case .group: kind = .group
++            case .channel: kind = .channel
++            }
++            let peer = AyuPeerIdFormat.text(id: reference.peerId, kind: kind)
++            let title = (ru ? "Чат " : "Chat ") + peer + " · #\(reference.messageId)"
++            let label = reference.groupingKey == nil ? (ru ? "Вернуть" : "Restore") : (ru ? "Вернуть альбом" : "Restore album")
++            entries.append(.message(reference, title, label))
++        }
++        let data = ItemListPresentationData(presentationData)
++        return (ItemListControllerState(presentationData: data, title: .text(ru ? "Скрытые сообщения" : "Hidden Messages"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries.sorted(), style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить список скрытых сообщений." : "The hidden-message list could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++    confirmAll = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Убрать все отметки скрытия этого аккаунта? Это не восстанавливает сообщения, удалённые на сервере." : "Remove all local hiding marks for this account? This does not recover messages deleted on the server.", actions: [
++            TextAlertAction(type: .genericAction, title: data.strings.Common_Cancel, action: {}),
++            TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {
++                do { try store.update { $0.hiddenMessages.restoreAll() } }
++                catch { presentError?() }
++            })
++        ]), in: .window(.root))
++    }
++    return controller
++}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..a0aa825f
+index 00000000..cc13cf9d
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,376 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -752,6 +856,7 @@ index 00000000..a0aa825f
 +        case 5: push?(ayuInterfaceSettingsController(context: context))
 +        case 6: push?(ayuInterfaceSettingsController(context: context, contextMenu: true))
 +        case 7: push?(ayuMessageShotSettingsController(context: context))
++        case 8: push?(ayuHiddenMessagesController(context: context))
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
@@ -768,7 +873,8 @@ index 00000000..a0aa825f
 +            .link(5, ru ? "Интерфейс" : "Interface"),
 +            .link(6, ru ? "Меню сообщения" : "Message Menu"),
 +            .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"),
-+            .info(8, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
++            .link(8, ru ? "Скрытые сообщения" : "Hidden Messages"),
++            .info(9, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
@@ -851,6 +957,7 @@ index 00000000..a0aa825f
 +                    case 6: $0.interface.showRepeatText = value
 +                    case 7: $0.interface.showSearchPhrase = value
 +                    case 8: $0.interface.showCopyMessageIds = value
++                    case 9: $0.interface.showHideMessage = value
 +                    default: break
 +                    }
 +                    return
@@ -880,7 +987,8 @@ index 00000000..a0aa825f
 +            .toggle(6, ru ? "Повторить текст в черновик" : "Repeat Text to Draft", value.showRepeatText),
 +            .toggle(7, ru ? "Найти фразу" : "Find Phrase", value.showSearchPhrase),
 +            .toggle(8, ru ? "Копировать ID сообщения" : "Copy Message IDs", value.showCopyMessageIds),
-+            .info(9, ru ? "Изменения видны при следующем открытии меню сообщения. Поиск автора доступен в группах для сообщений с известным пользователем-автором. Скрытие сводки не меняет уведомления о прочтении. Теги Избранного сохраняются; MessageShot настраивается в разделе «Интерфейс»." : "Changes apply the next time a message menu opens. Author search is available in groups for messages with a known user author. Hiding the summary does not change read receipts. Saved Messages tags remain available; configure MessageShot under Interface.")
++            .toggle(9, ru ? "Скрыть сообщение локально" : "Hide Message Locally", value.showHideMessage),
++            .info(10, ru ? "Изменения видны при следующем открытии меню сообщения. Поиск автора доступен в группах для сообщений с известным пользователем-автором. Скрытие сводки не меняет уведомления о прочтении. Теги Избранного сохраняются; MessageShot настраивается в разделе «Интерфейс»." : "Changes apply the next time a message menu opens. Author search is available in groups for messages with a known user author. Hiding the summary does not change read receipts. Saved Messages tags remain available; configure MessageShot under Interface.")
 +        ] : [
 +            .toggle(0, ru ? "ID в профилях" : "Show IDs in profiles", value.showPeerIds),
 +            .toggle(1, ru ? "Скрыть быструю пересылку" : "Hide bubble quick-share buttons", value.hideFastShare),
@@ -1390,10 +1498,10 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..19c4c467
+index 00000000..c54863e1
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,145 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
@@ -1410,10 +1518,12 @@ index 00000000..19c4c467
 +    public var mediaSend = AyuMediaSendSettings()
 +    public var interface = AyuInterfaceSettings()
 +    public var messageShot = AyuMessageShotSettings()
++    public var hiddenMessages = AyuHiddenMessagesSettings()
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend, interface
 +        case messageShot
++        case hiddenMessages
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -1430,6 +1540,7 @@ index 00000000..19c4c467
 +        self.mediaSend = (try? values.decode(AyuMediaSendSettings.self, forKey: .mediaSend)) ?? AyuMediaSendSettings()
 +        self.interface = (try? values.decode(AyuInterfaceSettings.self, forKey: .interface)) ?? AyuInterfaceSettings()
 +        self.messageShot = (try? values.decode(AyuMessageShotSettings.self, forKey: .messageShot)) ?? AyuMessageShotSettings()
++        self.hiddenMessages = (try? values.decode(AyuHiddenMessagesSettings.self, forKey: .hiddenMessages)) ?? AyuHiddenMessagesSettings()
 +    }
 +
 +    public init(hideReadReceipts: Bool = false, hideOnline: Bool = false, hideTyping: Bool = false, hideUploadProgress: Bool = false) {
@@ -1536,12 +1647,118 @@ index 00000000..19c4c467
 +        self.observers.removeValue(forKey: id)
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuHiddenMessages.swift b/submodules/TelegramCore/Sources/AyuGram/AyuHiddenMessages.swift
+new file mode 100644
+index 00000000..aecdcbd7
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuHiddenMessages.swift
+@@ -0,0 +1,35 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++public extension EngineMessage {
++    var ayuHiddenReference: AyuHiddenMessageReference? {
++        guard self.id.namespace == Namespaces.Message.Cloud, self.adAttribute == nil,
++              !self.media.contains(where: { $0 is TelegramMediaAction }) else { return nil }
++        let kind: AyuHiddenMessageReference.Kind
++        switch self.id.peerId.namespace {
++        case Namespaces.Peer.CloudUser: kind = .user
++        case Namespaces.Peer.CloudGroup: kind = .group
++        case Namespaces.Peer.CloudChannel: kind = .channel
++        default: return nil
++        }
++        let peerId = self.id.peerId.id._internalGetInt64Value()
++        guard peerId > 0, self.id.id > 0 else { return nil }
++        return AyuHiddenMessageReference(kind: kind, peerId: peerId, messageId: self.id.id, groupingKey: self._asMessage().groupingKey)
++    }
++}
++
++public extension TelegramEngine.Messages {
++    func ayuLocalHideReferences(ids: [EngineMessage.Id]) -> Signal<[AyuHiddenMessageReference]?, NoError> {
++        return self.account.postbox.transaction { transaction -> [AyuHiddenMessageReference]? in
++            let ids = Set(ids)
++            guard !ids.isEmpty, ids.count <= 20, Set(ids.map { $0.peerId }).count == 1 else { return nil }
++            var references: [AyuHiddenMessageReference] = []
++            for id in ids.sorted() {
++                guard let message = transaction.getMessage(id), let reference = EngineMessage(message).ayuHiddenReference else { return nil }
++                references.append(reference)
++            }
++            return references
++        }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuHiddenMessagesSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuHiddenMessagesSettings.swift
+new file mode 100644
+index 00000000..ae6b26ad
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuHiddenMessagesSettings.swift
+@@ -0,0 +1,59 @@
++import Foundation
++
++public struct AyuHiddenMessageReference: Codable, Equatable, Hashable {
++    public enum Kind: String, Codable, Hashable { case user, group, channel }
++    public let kind: Kind
++    public let peerId: Int64
++    public let messageId: Int32
++    public let groupingKey: Int64?
++    public init(kind: Kind, peerId: Int64, messageId: Int32, groupingKey: Int64? = nil) {
++        self.kind = kind
++        self.peerId = peerId
++        self.messageId = messageId
++        self.groupingKey = groupingKey
++    }
++    public var stableKey: String {
++        return "\(self.kind.rawValue):\(self.peerId):\(self.messageId)"
++    }
++}
++
++public struct AyuHiddenMessagesSettings: Codable, Equatable {
++    public static let maximumEntries = 200
++    public var enabled = true
++    public private(set) var references: [AyuHiddenMessageReference] = []
++    public init() {}
++    private enum CodingKeys: String, CodingKey { case enabled, references }
++    public init(from decoder: Decoder) throws {
++        let values = try decoder.container(keyedBy: CodingKeys.self)
++        let references = try values.decodeIfPresent([AyuHiddenMessageReference].self, forKey: .references) ?? []
++        guard self.add(references) else {
++            throw DecodingError.dataCorruptedError(forKey: .references, in: values, debugDescription: "Invalid or oversized hidden-message references")
++        }
++        self.enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
++    }
++    private static func sameItem(_ lhs: AyuHiddenMessageReference, _ rhs: AyuHiddenMessageReference) -> Bool {
++        guard lhs.kind == rhs.kind, lhs.peerId == rhs.peerId else { return false }
++        if lhs.messageId == rhs.messageId { return true }
++        if let group = lhs.groupingKey, group == rhs.groupingKey { return true }
++        return false
++    }
++    /// Atomic batch: an invalid item or capacity failure leaves the original value intact.
++    @discardableResult public mutating func add(_ references: [AyuHiddenMessageReference]) -> Bool {
++        guard references.count <= Self.maximumEntries else { return false }
++        var updated = self.references
++        for reference in references {
++            guard reference.peerId > 0, reference.messageId > 0 else { return false }
++            if !updated.contains(where: { Self.sameItem($0, reference) }) { updated.append(reference) }
++            guard updated.count <= Self.maximumEntries else { return false }
++        }
++        self.references = updated
++        return true
++    }
++    public func contains(_ reference: AyuHiddenMessageReference) -> Bool {
++        return self.enabled && self.references.contains(where: { Self.sameItem($0, reference) })
++    }
++    public mutating func restore(_ reference: AyuHiddenMessageReference) {
++        self.references.removeAll(where: { Self.sameItem($0, reference) })
++    }
++    public mutating func restoreAll() { self.references.removeAll() }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..99fd02d2
+index 00000000..1d618f7c
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,57 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -1558,6 +1775,7 @@ index 00000000..99fd02d2
 +    public var showRepeatText = true
 +    public var showSearchPhrase = true
 +    public var showCopyMessageIds = true
++    public var showHideMessage = true
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
@@ -1565,6 +1783,7 @@ index 00000000..99fd02d2
 +        case showReactionPicker, showReadSummary, showEditedInfo, showMessageDetails, showAuthorSearch
 +        case showAddFilter
 +        case showRepeatText, showSearchPhrase, showCopyMessageIds
++        case showHideMessage
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -1581,6 +1800,7 @@ index 00000000..99fd02d2
 +        self.showRepeatText = try values.decodeIfPresent(Bool.self, forKey: .showRepeatText) ?? true
 +        self.showSearchPhrase = try values.decodeIfPresent(Bool.self, forKey: .showSearchPhrase) ?? true
 +        self.showCopyMessageIds = try values.decodeIfPresent(Bool.self, forKey: .showCopyMessageIds) ?? true
++        self.showHideMessage = try values.decodeIfPresent(Bool.self, forKey: .showHideMessage) ?? true
 +    }
 +}
 +
@@ -2895,6 +3115,56 @@ index 00000000..24b5f454
 +        })
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift
+new file mode 100644
+index 00000000..b03bede5
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift
+@@ -0,0 +1,44 @@
++import Foundation
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import TelegramPresentationData
++import PresentationDataUtils
++import AlertUI
++
++extension ChatControllerImpl {
++    func ayuHideMessages(ids: [EngineMessage.Id]) {
++        guard !self.ayuHideMessageInProgress, self.context.account.network.ayuGhostMode.current.interface.showHideMessage else { return }
++        self.ayuHideMessageInProgress = true
++        let _ = (self.context.engine.messages.ayuLocalHideReferences(ids: ids)
++        |> timeout(3.0, queue: Queue.mainQueue(), alternate: .single(nil))
++        |> deliverOnMainQueue).startStandalone(next: { [weak self] references in
++            guard let self else { return }
++            self.ayuHideMessageInProgress = false
++            let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++            guard let references else {
++                self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Сообщение больше недоступно для локального скрытия." : "This message is no longer available for local hiding.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                return
++            }
++            self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Скрыть сообщение или альбом только в ленте этого аккаунта? Локальное скрытие будет включено. Вернуть можно в «Настройки → AyuGram → Скрытые сообщения»." : "Hide this message or album from this account's chat history? Local hiding will be enabled. Restore it under Settings → AyuGram → Hidden Messages.", actions: [
++                TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
++                TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: { [weak self] in
++                    guard let self else { return }
++                    do {
++                        var accepted = false
++                        try self.context.account.network.ayuGhostMode.update {
++                            accepted = $0.hiddenMessages.add(references)
++                            if accepted { $0.hiddenMessages.enabled = true }
++                        }
++                        if !accepted {
++                            self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Лимит — 200 сообщений или альбомов. Верни часть скрытых записей и повтори." : "The limit is 200 messages or albums. Restore some entries and try again.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                        }
++                    } catch {
++                        self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Не удалось сохранить скрытие. Изменение не применено." : "Hiding could not be saved. The change was not applied.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                    }
++                })
++            ]), in: .window(.root))
++        })
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift
 new file mode 100644
 index 00000000..2c07baa7
@@ -3200,7 +3470,7 @@ index 5bf77c1b..fb452084 100644
                      actions.selectedReactionItems = selectedReactions.reactions
                      if message.areReactionsTags(accountPeerId: self.context.account.peerId) {
 diff --git a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
-index face5ae7..f32f529c 100644
+index face5ae7..0b16f7a3 100644
 --- a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 +++ b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 @@ -45,7 +45,25 @@ extension ChatControllerImpl {
@@ -3282,11 +3552,19 @@ index face5ae7..f32f529c 100644
  func updateChatPresentationInterfaceStateImpl(
      selfController: ChatControllerImpl,
      transition: ContainedViewLayoutTransition,
+@@ -492,6 +555,7 @@ func updateChatPresentationInterfaceStateImpl(
+     }
+     
+     selfController.presentationInterfaceState = updatedChatPresentationInterfaceState
++    selfController.chatDisplayNode.historyNode.updateAyuSearchActive(updatedChatPresentationInterfaceState.search != nil)
+     
+     selfController.updateSlowmodeStatus()
+     
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..7274855d 100644
+index 5fe58bbf..7faf9cfb 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
-@@ -310,6 +310,14 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -310,6 +310,15 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      var leftNavigationButton: ChatNavigationButton?
      var rightNavigationButton: ChatNavigationButton?
      var secondaryRightNavigationButton: ChatNavigationButton?
@@ -3298,10 +3576,11 @@ index 5fe58bbf..7274855d 100644
 +    var ayuMessageShotInProgress = false
 +    var ayuFilterDraftInProgress = false
 +    var ayuTextToolInProgress = false
++    var ayuHideMessageInProgress = false
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
-@@ -768,6 +776,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -768,6 +777,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
          self.ready.set(.never())
@@ -3309,7 +3588,7 @@ index 5fe58bbf..7274855d 100644
          
          self.chatBackgroundNode.contentStatsUpdated = { [weak self] in
              guard let self else {
-@@ -2408,6 +2417,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2408,6 +2418,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -3320,7 +3599,7 @@ index 5fe58bbf..7274855d 100644
              var attributes: [MessageAttribute] = []
              if let query = query {
                  attributes.append(EmojiSearchQueryMessageAttribute(query: query))
-@@ -2681,6 +2694,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2681,6 +2695,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                      }
                  }
                  
@@ -3331,7 +3610,7 @@ index 5fe58bbf..7274855d 100644
                  strongSelf.presentPaidMessageAlertIfNeeded(completion: { [weak self] postpone in
                      guard let strongSelf = self else {
                          return
-@@ -2737,6 +2754,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2737,6 +2755,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -3342,7 +3621,7 @@ index 5fe58bbf..7274855d 100644
              strongSelf.enqueueChatContextResult(collection, result, hideVia: true, closeMediaInput: true, silentPosting: silentPosting, resetTextInputState: resetTextInputState)
              
              return true
-@@ -6450,6 +6471,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -6450,6 +6472,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              }
          }
          self.moreBarButton.addTarget(self, action: #selector(self.moreButtonPressed), forControlEvents: .touchUpInside)
@@ -3355,7 +3634,7 @@ index 5fe58bbf..7274855d 100644
          
          self.navigationItem.titleView = self.chatTitleView
          self.chatTitleView?.tapAction = { [weak self] in
-@@ -7082,6 +7109,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7082,6 +7110,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
  
      deinit {
@@ -3363,7 +3642,7 @@ index 5fe58bbf..7274855d 100644
          let _ = ChatControllerCount.modify { value in
              return value - 1
          }
-@@ -8639,6 +8667,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8639,6 +8668,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              self.navigationButtonAction(button.action)
          }
      }
@@ -3383,17 +3662,39 @@ index 5fe58bbf..7274855d 100644
      @objc func moreButtonPressed() {
          self.moreBarButton.play()
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift b/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
-index b32f929d..80d07963 100644
+index b32f929d..70c867fa 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
 +++ b/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
-@@ -140,9 +140,42 @@ func chatHistoryEntriesForView(
+@@ -60,7 +60,8 @@ func chatHistoryEntriesForView(
+     adMessage: Message?,
+     dynamicAdMessages: [Message],
+     isMusicPlaylist: Bool,
+-    pinToTopStableId: EngineMessage.StableId?
++    pinToTopStableId: EngineMessage.StableId?,
++    allowAyuFilters: Bool = true
+ ) -> ([ChatHistoryEntry], ChatHistoryEntriesForViewState) {
+     var currentState = currentState
+     
+@@ -140,9 +141,57 @@ func chatHistoryEntriesForView(
          }
      }
      
-+    let ayuRegex = context.account.network.ayuGhostMode.current.regexFilters
++    let ayuSettings = context.account.network.ayuGhostMode.current
++    let ayuRegex = ayuSettings.regexFilters
++    var ayuHiddenMessageIds = Set<MessageId>()
++    var ayuHiddenGroups = Set<Int64>()
++    if allowAyuFilters, subject == nil, selectedMessages == nil, location.peerId != nil, ayuSettings.hiddenMessages.enabled, !ayuSettings.hiddenMessages.references.isEmpty {
++        for entry in view.entries {
++            let message = entry.message
++            if let reference = EngineMessage(message).ayuHiddenReference, ayuSettings.hiddenMessages.contains(reference) {
++                ayuHiddenMessageIds.insert(message.id)
++                if let group = message.groupingKey { ayuHiddenGroups.insert(group) }
++            }
++        }
++    }
 +    var ayuFilteredMessageIds = Set<MessageId>()
 +    var ayuFilteredGroups = Set<Int64>()
-+    var ayuCanFilter = ayuRegex.enabled && subject == nil && selectedMessages == nil
++    var ayuCanFilter = allowAyuFilters && ayuRegex.enabled && subject == nil && selectedMessages == nil
 +    if let peerId = location.peerId {
 +        ayuCanFilter = ayuCanFilter && peerId.namespace != Namespaces.Peer.SecretChat
 +        if !ayuRegex.includeChats {
@@ -3423,6 +3724,9 @@ index b32f929d..80d07963 100644
      var count = 0
      loop: for entry in view.entries {
          var message = entry.message.withAppliedEphemeralReplacementMessage()
++        if message.adAttribute == nil && (ayuHiddenMessageIds.contains(message.id) || message.groupingKey.map({ ayuHiddenGroups.contains($0) }) == true) {
++            continue
++        }
 +        if message.adAttribute == nil && (ayuFilteredMessageIds.contains(message.id) || message.groupingKey.map({ ayuFilteredGroups.contains($0) }) == true) {
 +            continue
 +        }
@@ -3430,17 +3734,31 @@ index b32f929d..80d07963 100644
          
          var pinToTop = false
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
-index 0fb1ee10..31255099 100644
+index 0fb1ee10..eb1aa155 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
-@@ -2056,7 +2056,14 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+@@ -683,6 +683,13 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+     
+     private var currentPresentationData: ChatPresentationData
+     private var chatPresentationDataPromise: Promise<ChatPresentationData>
++    private var ayuSearchIsActive = false
++    private let ayuSearchActive = ValuePromise<Bool>(false, ignoreRepeated: true)
++
++    func updateAyuSearchActive(_ value: Bool) {
++        self.ayuSearchIsActive = value
++        self.ayuSearchActive.set(value)
++    }
+     private var presentationDataDisposable: Disposable?
+     
+     private let historyAppearsClearedPromise = ValuePromise<Bool>(false)
+@@ -2056,7 +2063,14 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
          let messageViewQueue = Queue.mainQueue()
          let historyViewTransitionDisposable = (combineLatest(queue: messageViewQueue,
              historyViewUpdate |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_historyViewUpdate"),
 -            self.chatPresentationDataPromise.get() |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_chatPresentationData"),
-+            combineLatest(self.chatPresentationDataPromise.get(), context.account.network.ayuGhostMode.signal)
++            combineLatest(self.chatPresentationDataPromise.get(), context.account.network.ayuGhostMode.signal, self.ayuSearchActive.get())
 +            |> deliverOnMainQueue
-+            |> map { presentationData, _ -> ChatPresentationData in
++            |> map { presentationData, _, _ -> ChatPresentationData in
 +                // Entry equality uses presentation-data identity. A new immutable snapshot
 +                // re-lays out already visible timestamps/labels after an AyuGram change.
 +                return ChatPresentationData(theme: presentationData.theme, fontSize: presentationData.fontSize, strings: presentationData.strings, dateTimeFormat: presentationData.dateTimeFormat, nameDisplayOrder: presentationData.nameDisplayOrder, disableAnimations: presentationData.disableAnimations, largeEmoji: presentationData.largeEmoji, chatBubbleCorners: presentationData.chatBubbleCorners, animatedEmojiScale: presentationData.animatedEmojiScale, isPreview: presentationData.isPreview)
@@ -3449,8 +3767,18 @@ index 0fb1ee10..31255099 100644
              selectedMessages |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_selectedMessages"),
              updatingMedia |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_updatingMedia"),
              automaticDownloadNetworkType |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_automaticDownloadNetworkType"),
+@@ -2396,7 +2410,8 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+                     adMessage: allAdMessages.fixed,
+                     dynamicAdMessages: allAdMessages.opportunistic,
+                     isMusicPlaylist: isMusicPlaylist,
+-                    pinToTopStableId: pinToTopStableId
++                    pinToTopStableId: pinToTopStableId,
++                    allowAyuFilters: mode == .bubbles && tag == nil && self?.ayuSearchIsActive != true
+                 )
+                 let lastHeaderId = filteredEntries.last.flatMap { listMessageDateHeaderId(timestamp: $0.index.timestamp) } ?? 0
+                 let processedView = ChatHistoryView(originalView: view, filteredEntries: filteredEntries, associatedData: associatedData, lastHeaderId: lastHeaderId, id: id, locationInput: update.2, ignoreMessagesInTimestampRange: update.3, ignoreMessageIds: update.4)
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..853a4703 100644
+index 1ade8c01..74820fcc 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -3498,7 +3826,7 @@ index 1ade8c01..853a4703 100644
              if !actions.isEmpty {
                  actions.insert(.separator, at: 0)
              }
-@@ -2479,6 +2485,87 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2479,6 +2485,96 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
@@ -3506,6 +3834,15 @@ index 1ade8c01..853a4703 100644
 +            let ru = chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru")
 +            let ayuInterface = context.account.network.ayuGhostMode.current.interface
 +            var ayuActions: [ContextMenuItem] = []
++            if ayuInterface.showHideMessage, chatPresentationInterfaceState.subject == nil, chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, messages.allSatisfy({ EngineMessage($0).ayuHiddenReference != nil }) {
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Скрыть локально" : "AyuGram · Hide Locally", icon: { theme in
++                    return UIImage(systemName: "eye.slash")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                }, action: { controller, _ in
++                    controller?.dismiss(completion: {
++                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuHideMessages(ids: messages.map { $0.id })
++                    })
++                })))
++            }
 +            if ayuInterface.showMessageShot, !chatPresentationInterfaceState.copyProtectionEnabled, messages.allSatisfy({ EngineMessage($0).ayuCanMessageShot }) {
 +                ayuActions.append(.action(ContextMenuActionItem(text: "AyuGram · MessageShot", icon: { theme in
 +                    return UIImage(systemName: "photo.on.rectangle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
@@ -3588,10 +3925,10 @@ index 1ade8c01..853a4703 100644
  }
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..ddb47a69
+index 00000000..d674e608
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,430 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -3965,6 +4302,43 @@ index 00000000..ddb47a69
 +check(AyuTextToolsPolicy.searchQuery(for: String(repeating: "a", count: 128)) != nil && AyuTextToolsPolicy.searchQuery(for: String(repeating: "a", count: 129)) == nil, "Search bounds do not silently truncate a phrase")
 +check(AyuTextToolsPolicy.searchQuery(for: " \n") == nil && AyuTextToolsPolicy.searchQuery(for: String(repeating: " ", count: 8193)) == nil, "Search rejects blank and oversized source text")
 +print("PASS: \(checks) total checks, including text-tool visibility and Unicode/query limits; native draft/search integration remains pending")
++
++var hiddenMessages = AyuHiddenMessagesSettings()
++let hiddenOne = AyuHiddenMessageReference(kind: .user, peerId: 42, messageId: 10)
++check(hiddenMessages.enabled && hiddenMessages.references.isEmpty, "Local hiding defaults to an empty list")
++check(hiddenMessages.add([hiddenOne]) && hiddenMessages.contains(hiddenOne), "A hidden-message reference matches its exact peer/message")
++check(!hiddenMessages.contains(AyuHiddenMessageReference(kind: .group, peerId: 42, messageId: 10)), "Peer namespaces with equal raw IDs remain distinct")
++check(hiddenMessages.add([hiddenOne]) && hiddenMessages.references.count == 1, "Repeated hiding does not create duplicates")
++let hiddenAlbum = AyuHiddenMessageReference(kind: .channel, peerId: 100, messageId: 11, groupingKey: 555)
++let hiddenAlbumPart = AyuHiddenMessageReference(kind: .channel, peerId: 100, messageId: 12, groupingKey: 555)
++check(hiddenMessages.add([hiddenAlbum, hiddenAlbumPart]) && hiddenMessages.references.count == 2 && hiddenMessages.contains(hiddenAlbumPart), "Albums occupy one slot and match later components")
++check(!hiddenMessages.contains(AyuHiddenMessageReference(kind: .channel, peerId: 101, messageId: 12, groupingKey: 555)), "Album IDs are scoped to their peer")
++hiddenMessages.enabled = false
++check(!hiddenMessages.contains(hiddenOne) && hiddenMessages.references.count == 2, "Temporary bypass preserves hidden references")
++let hiddenRoundTrip = try JSONDecoder().decode(AyuHiddenMessagesSettings.self, from: JSONEncoder().encode(hiddenMessages))
++check(hiddenRoundTrip == hiddenMessages, "Hidden references and temporary bypass survive JSON persistence")
++hiddenMessages.enabled = true
++hiddenMessages.restore(hiddenAlbumPart)
++check(!hiddenMessages.contains(hiddenAlbum) && hiddenMessages.contains(hiddenOne), "Restoring an album component restores the entire album only")
++let beforeInvalidHide = hiddenMessages
++check(!hiddenMessages.add([AyuHiddenMessageReference(kind: .user, peerId: 42, messageId: -1)]) && hiddenMessages == beforeInvalidHide, "Invalid message IDs cannot mutate hiding state")
++var fullHidden = AyuHiddenMessagesSettings()
++check(fullHidden.add((1 ... 200).map { AyuHiddenMessageReference(kind: .user, peerId: 42, messageId: Int32($0)) }), "The bounded hiding list accepts 200 entries")
++let fullBefore = fullHidden
++check(!fullHidden.add([AyuHiddenMessageReference(kind: .user, peerId: 43, messageId: 1), AyuHiddenMessageReference(kind: .user, peerId: 44, messageId: 1)]) && fullHidden == fullBefore, "Capacity failure never partially hides a batch")
++check(fullHidden.add([hiddenOne]) && fullHidden == fullBefore, "Duplicate at capacity remains a no-op")
++hiddenMessages.restoreAll()
++check(hiddenMessages.references.isEmpty && hiddenMessages.enabled, "Restore all removes marks without changing the bypass switch")
++check(oldGhost.hiddenMessages == AyuHiddenMessagesSettings(), "Old account settings acquire empty hiding state")
++try appearanceStore.update { $0.hiddenMessages = hiddenRoundTrip }
++let persistedHidden = AyuGhostModeStore(accountPath: appearancePath.path).current
++check(persistedHidden.hiddenMessages == hiddenRoundTrip && persistedHidden.interface == resetShotAppearance.interface && persistedHidden.messageShot == resetShotAppearance.messageShot && persistedHidden.allEnabled, "Hiding persists per account without changing other feature blocks")
++check(partialInterface.showHideMessage, "Older interface settings expose the hide action by default")
++var hideActionSettings = interfaceSettings
++hideActionSettings.showHideMessage = false
++let hideActionRoundTrip = try JSONDecoder().decode(AyuInterfaceSettings.self, from: JSONEncoder().encode(hideActionSettings))
++check(!hideActionRoundTrip.showHideMessage, "Hide-action visibility preserves an explicit false value")
++print("PASS: \(checks) total checks, including bounded local hiding, album/peer isolation, persistence and restoration; native history/search checks remain pending")
 +
 +#if AYU_POSTBOX_TESTS
 +func postboxRoundTrip(_ state: AyuMessageHistoryState) -> AyuMessageHistoryState? {

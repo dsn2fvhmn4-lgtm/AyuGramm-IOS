@@ -8,6 +8,8 @@ The following source revision adds a sixth **Add Filter from Message** switch; s
 
 Later sources also add **Repeat Text to Draft**, **Find Phrase** and **Copy Message IDs**, described in [message text tools](TEXT_TOOLS.md).
 
+The next block adds **Hide Message Locally**, described in [local hiding and restoration](HIDDEN_MESSAGES.md). Turning off this menu action does not remove existing hiding marks.
+
 - **Reaction picker:** show/hide the top reaction chooser in the main long-press message menu. Saved Messages tags retain their native chooser. Existing bubble reactions and their separate interaction paths are unchanged.
 - **Read and reaction summary:** show/hide the combined native read/reaction summary row. This affects presentation, not receipt transmission or the fetching of menu data. Ghost Mode still owns receipt policy.
 - **Edit information in menu:** show/hide the native edited-time header. Inline edited labels, captured edit history and message text are unchanged.

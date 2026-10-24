@@ -40,6 +40,10 @@ The new **Settings → AyuGram → MessageShot Appearance** page controls theme 
 
 Message menus now offer **Repeat Text** (confirmed append to a draft, no automatic send), **Find Phrase** (native in-chat search) and **Copy Message IDs**. Each has an account-specific visibility switch under Message Menu. See [scope, prior-block review and device checks](docs/TEXT_TOOLS.md). These changes still await native/device verification and are not in build 8.
 
+## Hidden messages (development source after build 8)
+
+**AyuGram · Hide Locally** hides an ordinary cloud message/album from the account's main chat history without deleting it. **Settings → AyuGram → Hidden Messages** offers a temporary bypass, individual restoration and confirmed restore-all, with a 200-item limit. The list stores references only. Search, selection and tagged/media views bypass both manual hiding and regex filtering. See [scope and pending device checks](docs/HIDDEN_MESSAGES.md). This block is not in build 8 and awaits native/device verification.
+
 ## Cloud builds from Windows
 
 Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.

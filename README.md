@@ -10,6 +10,8 @@ Experimental Ghost Mode adds per-account persistent controls for cloud chat/disc
 
 Ghost Mode conflicts with [Telegram API Terms section 1.4](https://core.telegram.org/api/terms). Server Premium features are not unlocked. Message history and other AyuGram features are not implemented yet.
 
+On `feature/local-message-history`, a text-only edit/deletion ledger and native archive screens are being implemented. This development feature has not passed native/device integration verification and is absent from published IPAs. See [local history scope and verification](docs/LOCAL_HISTORY.md).
+
 ## Cloud builds from Windows
 
 GitHub Actions checks the real settings-store source, parses changed Swift files and builds the native application on the `xcode-27` runner with Xcode 27.1. New builds default to `release_arm64` and build the port directly. An upstream baseline is optional through manual dispatch. See **Actions → Native iOS port** for actual results.

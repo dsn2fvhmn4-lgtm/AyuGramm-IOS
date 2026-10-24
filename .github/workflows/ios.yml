@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      native_build:
+        description: Run the full native build after source checks
+        type: boolean
+        default: true
       configuration:
         description: Native build configuration (both outputs require separate install verification)
         type: choice
@@ -46,6 +50,7 @@ jobs:
         run: |
           xcrun swiftc -swift-version 5 -warnings-as-errors \
             telegram/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift \
+            telegram/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift \
             telegram/tools/ayu-tests/main.swift -o "$RUNNER_TEMP/ayu-tests"
           "$RUNNER_TEMP/ayu-tests" | tee "$RUNNER_TEMP/ayu-tests.log"
       - name: Parse every changed Swift source
@@ -64,6 +69,7 @@ jobs:
           if-no-files-found: ignore
 
   native-build:
+    if: github.event_name == 'push' || inputs.native_build
     needs: checks
     runs-on: xcode-27
     timeout-minutes: 180

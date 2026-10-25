@@ -22453,43 +22453,17 @@ index 5bdff8a6..bd215887 100644
                      strongSelf.tabBarItem.badgeValue = compactNumericCountString(Int(count.0), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator)
 diff --git a/submodules/Display/Source/AyuPluginAvatar.swift b/submodules/Display/Source/AyuPluginAvatar.swift
 new file mode 100644
-index 00000000..184d678f
+index 00000000..ba26cdfd
 --- /dev/null
 +++ b/submodules/Display/Source/AyuPluginAvatar.swift
-@@ -0,0 +1,35 @@
-+import Foundation
+@@ -0,0 +1,9 @@
 +import UIKit
-+import ImageIO
 +
-+/// SDK-only renderer shared by settings and chat UI. Inputs come from validated metadata.
-+public func ayuPluginAvatar(symbol: String? = nil, emoji: String? = nil, pngData: Data? = nil) -> UIImage {
++public func ayuPluginAvatar() -> UIImage {
 +    return UIGraphicsImageRenderer(size: CGSize(width: 44, height: 44)).image { renderer in
-+        let bounds = CGRect(x: 0, y: 0, width: 44, height: 44)
 +        UIColor(red: 0.24, green: 0.60, blue: 0.80, alpha: 1).setFill()
-+        renderer.cgContext.fillEllipse(in: bounds)
-+        if let pngData, pngData.count <= 65536,
-+           let source = CGImageSourceCreateWithData(pngData as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-+           let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-+                kCGImageSourceCreateThumbnailFromImageAlways: true,
-+                kCGImageSourceCreateThumbnailWithTransform: true,
-+                kCGImageSourceThumbnailMaxPixelSize: 128,
-+                kCGImageSourceShouldCacheImmediately: true
-+           ] as CFDictionary) {
-+            renderer.cgContext.saveGState()
-+            renderer.cgContext.addEllipse(in: bounds); renderer.cgContext.clip()
-+            let size = CGSize(width: CGFloat(image.width), height: CGFloat(image.height))
-+            let scale = max(44 / size.width, 44 / size.height)
-+            let frame = CGRect(x: (44 - size.width * scale) / 2, y: (44 - size.height * scale) / 2, width: size.width * scale, height: size.height * scale)
-+            UIImage(cgImage: image).draw(in: frame)
-+            renderer.cgContext.restoreGState()
-+        } else if let emoji, emoji.count == 1, emoji.utf8.count <= 64 {
-+            let string = NSAttributedString(string: emoji, attributes: [.font: UIFont.systemFont(ofSize: 27)])
-+            let size = string.size()
-+            string.draw(at: CGPoint(x: (44 - size.width) / 2, y: (44 - size.height) / 2))
-+        } else {
-+            let image = UIImage(systemName: symbol ?? "puzzlepiece.fill") ?? UIImage(systemName: "puzzlepiece.fill")
-+            image?.withTintColor(.white, renderingMode: .alwaysOriginal).draw(in: CGRect(x: 10, y: 10, width: 24, height: 24))
-+        }
++        renderer.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: 44, height: 44))
++        UIImage(systemName: "puzzlepiece.fill")?.withTintColor(.white, renderingMode: .alwaysOriginal).draw(in: CGRect(x: 10, y: 10, width: 24, height: 24))
 +    }
 +}
 diff --git a/submodules/PasscodeCore/Sources/Passcode.swift b/submodules/PasscodeCore/Sources/Passcode.swift
@@ -23123,10 +23097,10 @@ index 00000000..77b19608
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..1b16dd80
+index 00000000..9ad2cf23
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,201 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -23137,6 +23111,8 @@ index 00000000..1b16dd80
 +    private let store: AyuGhostModeStore
 +    private let russian: Bool
 +    private var reading = false
++    private var activatingID: String?
++    private var activationGeneration = 0
 +    private var exportDirectory: URL?
 +    init(store: AyuGhostModeStore, russian: Bool) {
 +        self.store = store; self.russian = russian
@@ -23151,7 +23127,22 @@ index 00000000..1b16dd80
 +        self.tableView.rowHeight = UITableView.automaticDimension
 +        self.tableView.estimatedRowHeight = 88
 +    }
-+    @objc private func done() { self.dismiss(animated: true) }
++    override func viewWillAppear(_ animated: Bool) {
++        super.viewWillAppear(animated)
++        self.tableView.reloadData()
++    }
++    @objc private func done() {
++        self.activationGeneration += 1
++        self.activatingID = nil
++        self.dismiss(animated: true)
++    }
++    override func viewWillDisappear(_ animated: Bool) {
++        super.viewWillDisappear(animated)
++        if self.isBeingDismissed || self.navigationController?.isBeingDismissed == true {
++            self.activationGeneration += 1
++            self.activatingID = nil
++        }
++    }
 +    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
 +    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
 +        return section == 0 ? 1 : self.store.current.plugins.installed.count
@@ -23176,11 +23167,15 @@ index 00000000..1b16dd80
 +            cell.detailTextLabel?.text = self.russian ? "Файлы → просмотр возможностей → установка" : "Files → review capabilities → install"
 +        } else {
 +            let item = self.store.current.plugins.installed[indexPath.row]
-+            let icon = item.manifest.icon
-+            cell.imageView?.image = ayuPluginAvatar(symbol: icon?.kind == .symbol ? icon?.value : nil, emoji: icon?.kind == .emoji ? icon?.value : nil, pngData: icon?.pngData)
 +            cell.textLabel?.text = item.manifest.name
 +            cell.detailTextLabel?.text = "\(item.manifest.version) · \(item.manifest.author)\n" + (item.enabled ? (self.russian ? "Включён" : "Enabled") : (self.russian ? "Выключен" : "Disabled"))
 +            cell.accessoryType = item.enabled ? .checkmark : .disclosureIndicator
++            if self.activatingID == item.manifest.id {
++                cell.detailTextLabel?.text = self.russian ? "Проверка совместимости и подготовка…" : "Checking compatibility and preparing…"
++                let progress = UIActivityIndicatorView(style: .medium)
++                progress.startAnimating()
++                cell.accessoryView = progress
++            }
 +        }
 +        return cell
 +    }
@@ -23199,6 +23194,7 @@ index 00000000..1b16dd80
 +    }
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
++        guard self.activatingID == nil else { return }
 +        if indexPath.section == 0 {
 +            guard !self.reading else { return }
 +            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
@@ -23211,8 +23207,14 @@ index 00000000..1b16dd80
 +        let alert = UIAlertController(title: plugin.manifest.name, message: self.details(plugin.manifest), preferredStyle: .alert)
 +        alert.addAction(UIAlertAction(title: plugin.enabled ? (self.russian ? "Выключить" : "Disable") : (self.russian ? "Включить" : "Enable"), style: .default, handler: { [weak self] _ in
 +            guard let self else { return }
-+            do { try self.store.update { $0.plugins.setEnabled(id: plugin.manifest.id, enabled: !plugin.enabled) }; self.tableView.reloadData() }
-+            catch { self.error(error) }
++            if plugin.enabled {
++                do { try self.store.update { $0.plugins.setEnabled(id: plugin.manifest.id, enabled: false) }; self.tableView.reloadData() }
++                catch { self.error(error) }
++            } else {
++                let begin: () -> Void = { [weak self] in self?.activate(plugin.manifest) }
++                if let presented = self.presentedViewController { presented.dismiss(animated: true, completion: begin) }
++                else { begin() }
++            }
 +        }))
 +        alert.addAction(UIAlertAction(title: self.russian ? "Экспортировать .plugin" : "Export .plugin", style: .default, handler: { [weak self] _ in self?.export(plugin.manifest) }))
 +        alert.addAction(UIAlertAction(title: self.russian ? "Удалить" : "Remove", style: .destructive, handler: { [weak self] _ in
@@ -23222,6 +23224,25 @@ index 00000000..1b16dd80
 +        }))
 +        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
 +        self.present(alert, animated: true)
++    }
++    private func activate(_ manifest: AyuPluginManifest) {
++        guard self.activatingID == nil else { return }
++        self.activationGeneration += 1
++        let generation = self.activationGeneration
++        self.activatingID = manifest.id
++        self.tableView.reloadData()
++        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++            let result = Result { try AyuPluginActivation.prepare(manifest) }
++            DispatchQueue.main.async { [weak self] in
++                guard let self, self.activationGeneration == generation, self.activatingID == manifest.id else { return }
++                self.activatingID = nil
++                do {
++                    let prepared = try result.get()
++                    try self.store.update { try $0.plugins.activate(prepared, expected: manifest) }
++                } catch { self.error(error) }
++                self.tableView.reloadData()
++            }
++        }
 +    }
 +    private func export(_ manifest: AyuPluginManifest) {
 +        do {
@@ -24997,42 +25018,14 @@ index 00000000..35137a2f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..ef8577e1
+index 00000000..eb7df5f6
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,169 @@
 +import Foundation
 +import CryptoKit
 +
 +public enum AyuPluginError: Error { case invalidFile, unsupportedAndroidPlugin, invalidManifest, capacity, invalidInput }
-+
-+public struct AyuPluginIcon: Codable, Equatable {
-+    public enum Kind: String, Codable { case symbol, emoji, png }
-+    public var kind: Kind
-+    public var value: String
-+    public init(kind: Kind, value: String) { self.kind = kind; self.value = value }
-+    public static let symbols = ["puzzlepiece.fill", "magnifyingglass", "textformat", "line.3.horizontal.decrease", "star.fill", "bolt.fill"]
-+    public var pngData: Data? {
-+        guard self.kind == .png, self.value.utf8.count <= 87384, let data = Data(base64Encoded: self.value),
-+              data.count <= 65536, data.count >= 33 else { return nil }
-+        let bytes = [UInt8](data.prefix(24))
-+        guard Array(bytes[0..<8]) == [137, 80, 78, 71, 13, 10, 26, 10],
-+              Array(bytes[8..<16]) == [0, 0, 0, 13, 73, 72, 68, 82] else { return nil }
-+        let width = bytes[16..<20].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
-+        let height = bytes[20..<24].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
-+        guard width > 0, height > 0, width <= 256, height <= 256 else { return nil }
-+        return data
-+    }
-+    public func validate() throws {
-+        switch self.kind {
-+        case .symbol: guard Self.symbols.contains(self.value) else { throw AyuPluginError.invalidManifest }
-+        case .emoji:
-+            guard self.value.count == 1, self.value.utf8.count <= 64,
-+                  self.value.unicodeScalars.contains(where: { $0.value > 127 && $0.properties.isEmoji }) else { throw AyuPluginError.invalidManifest }
-+        case .png: guard self.pngData != nil else { throw AyuPluginError.invalidManifest }
-+        }
-+    }
-+}
 +
 +/// Versioned, declarative plugin ABI. No Android or Python code is executed.
 +public struct AyuPluginAction: Codable, Equatable {
@@ -25082,14 +25075,11 @@ index 00000000..ef8577e1
 +    public var convertedFrom: String?
 +    public var sourceSHA256: String?
 +    public var limitations: [String]
-+    public var icon: AyuPluginIcon?
-+    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = [], icon: AyuPluginIcon? = nil) {
++    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = []) {
 +        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
 +        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations
-+        self.icon = icon
 +    }
 +    public func validate() throws {
-+        try self.icon?.validate()
 +        let validID: (String) -> Bool = { text in
 +            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
 +        }
@@ -25133,9 +25123,43 @@ index 00000000..ef8577e1
 +    public mutating func setEnabled(id: String, enabled: Bool) {
 +        if let index = self.installed.firstIndex(where: { $0.manifest.id == id }) { self.installed[index].enabled = enabled }
 +    }
++    public mutating func activate(_ prepared: AyuPluginManifest, expected: AyuPluginManifest) throws {
++        try prepared.validate()
++        guard prepared == expected, let index = self.installed.firstIndex(where: { $0.manifest.id == expected.id }),
++              self.installed[index].manifest == expected, !self.installed[index].enabled else { throw AyuPluginError.invalidManifest }
++        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true)
++    }
 +    public mutating func remove(id: String) { self.installed.removeAll { $0.manifest.id == id } }
 +    public func action(pluginID: String, actionID: String) -> AyuPluginAction? {
 +        return self.installed.first(where: { $0.enabled && $0.manifest.id == pluginID })?.manifest.actions.first(where: { $0.id == actionID })
++    }
++}
++
++public enum AyuPluginActivation {
++    /// Prepare typed actions and exercise local handlers. No plugin code or network requests run.
++    public static func prepare(_ manifest: AyuPluginManifest) throws -> AyuPluginManifest {
++        try manifest.validate()
++        let prepared = try AyuPluginImporter.parse(AyuPluginImporter.export(manifest), filename: manifest.id + ".plugin")
++        guard prepared == manifest else { throw AyuPluginError.invalidManifest }
++        for action in prepared.actions {
++            switch action.kind {
++            case .search:
++                guard try action.queries("AyuGram") == ["AyuGram"] else { throw AyuPluginError.invalidInput }
++            case .searchTerms:
++                guard try action.queries("AyuGram|Telegram|AyuGram") == ["AyuGram", "Telegram"] else { throw AyuPluginError.invalidInput }
++            case .replaceText:
++                let find = action.find ?? ""
++                let marker = find.contains("A") ? "B" : "A"
++                _ = try action.transformed(find + "\n" + marker)
++            }
++        }
++        if manifest.convertedFrom != nil {
++            guard let hash = manifest.sourceSHA256 else { throw AyuPluginError.unsupportedAndroidPlugin }
++            let converted = try AyuPluginImporter.reviewedAdapter(sourceSHA256: hash)
++            guard converted == manifest else { throw AyuPluginError.unsupportedAndroidPlugin }
++            return converted
++        }
++        return prepared
 +    }
 +}
 +
@@ -25149,6 +25173,9 @@ index 00000000..ef8577e1
 +        }
 +        // Conversion is a reviewed native adapter, never a metadata-based execution shortcut.
 +        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
++        return try self.reviewedAdapter(sourceSHA256: hash)
++    }
++    static func reviewedAdapter(sourceSHA256 hash: String) throws -> AyuPluginManifest {
 +        guard hash == "802dd326787e3640f55f20ac5462539c03202184e540578a4531c693c2c3458a" else { throw AyuPluginError.unsupportedAndroidPlugin }
 +        return AyuPluginManifest(id: "search_plus", name: "Search+ for iOS", author: "@SearchPlusss (original)", version: "2.6.1-ios.1", summary: "Native search actions adapted from Search+. Multi-term search uses up to six phrases separated by | in the current chat.", actions: [
 +            AyuPluginAction(id: "search", title: "Search+", kind: .searchTerms)
@@ -25156,7 +25183,7 @@ index 00000000..ef8577e1
 +            "Search is limited to the current chat and up to 40 results per phrase; no automatic pagination.",
 +            "Android hooks, global search injection, user lookup by ID/phone and custom date/type/author filters are not converted.",
 +            "The original Python code is not executed. This installs the listed native adapter actions only."
-+        ], icon: AyuPluginIcon(kind: .symbol, value: "magnifyingglass"))
++        ])
 +    }
 +    public static func export(_ manifest: AyuPluginManifest) throws -> Data {
 +        try manifest.validate()
@@ -26648,10 +26675,10 @@ index 00000000..2c07baa7
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
 new file mode 100644
-index 00000000..748228b5
+index 00000000..5cf9ade0
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,151 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -26702,8 +26729,7 @@ index 00000000..748228b5
 +        cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
 +        if indexPath.section == 0 {
 +            let command = self.commands[indexPath.row]
-+            let icon = self.context.account.network.ayuGhostMode.current.plugins.installed.first(where: { $0.manifest.id == command.0 })?.manifest.icon
-+            cell.imageView?.image = ayuPluginAvatar(symbol: icon?.kind == .symbol ? icon?.value : nil, emoji: icon?.kind == .emoji ? icon?.value : nil, pngData: icon?.pngData)
++            cell.imageView?.image = ayuPluginAvatar()
 +            cell.textLabel?.text = command.1.title
 +            cell.detailTextLabel?.text = command.2
 +        } else {
@@ -27540,10 +27566,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..55e298db
+index 00000000..1bb0df1f
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,547 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -28064,31 +28090,33 @@ index 00000000..55e298db
 +check(AyuGhostModeStore(accountPath: second.path).current.plugins.installed.isEmpty, "Plugins remain isolated per account")
 +print("PASS: \(checks) total model checks including plugin import/registry/runtime policies; native UI/device checks remain separate")
 +
-+let duckIcon = AyuPluginIcon(kind: .emoji, value: "🦆")
-+try duckIcon.validate()
-+try AyuPluginIcon(kind: .emoji, value: "👨‍💻").validate()
-+try AyuPluginIcon(kind: .symbol, value: "magnifyingglass").validate()
-+check(pluginThrows { try AyuPluginIcon(kind: .emoji, value: "abc").validate() }, "Text is not an emoji avatar")
-+check(pluginThrows { try AyuPluginIcon(kind: .emoji, value: "🦆🦆").validate() }, "Emoji avatar must be one grapheme")
-+check(pluginThrows { try AyuPluginIcon(kind: .symbol, value: "unsupported.symbol").validate() }, "Unknown icon symbols rejected")
-+check(pluginThrows { try AyuPluginIcon(kind: .png, value: "https://example.com/icon.png").validate() }, "Remote images are not loaded as avatar data")
-+let tinyPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lZkAAAAASUVORK5CYII=")!
-+let pngIcon = AyuPluginIcon(kind: .png, value: tinyPNG.base64EncodedString())
-+try pngIcon.validate()
-+check(pngIcon.pngData == tinyPNG, "Embedded PNG bytes are preserved")
-+var hugeDimensionsPNG = tinyPNG
-+hugeDimensionsPNG.replaceSubrange(16..<20, with: [0, 0, 1, 1])
-+check(pluginThrows { try AyuPluginIcon(kind: .png, value: hugeDimensionsPNG.base64EncodedString()).validate() }, "Image dimensions checked before decoding")
-+check(pluginThrows { try AyuPluginIcon(kind: .png, value: Data(repeating: 0, count: 65537).base64EncodedString()).validate() }, "Avatar byte limit checked")
-+var avatarPlugin = plugin
-+avatarPlugin.icon = duckIcon
-+let avatarExport = try AyuPluginImporter.export(avatarPlugin)
-+let avatarImport = try AyuPluginImporter.parse(avatarExport, filename: "avatar.plugin")
-+check(avatarImport.icon == duckIcon, "Avatar survives .plugin export/import")
-+try store.update { try $0.plugins.install(avatarPlugin) }
-+check(AyuGhostModeStore(accountPath: first.path).current.plugins.installed.first(where: { $0.manifest.id == avatarPlugin.id })?.manifest.icon == duckIcon, "Avatar persists across account restart")
-+check(importedPlugin.icon == nil, "Existing plugins without icons keep compatibility")
-+print("PASS: \(checks) total model checks including plugin avatars; UIKit rendering needs native verification")
++let preparedPlugin = try AyuPluginActivation.prepare(plugin)
++var activationRegistry = AyuPluginRegistry()
++try activationRegistry.install(plugin)
++check(!activationRegistry.installed[0].enabled, "Preparation must not enable a plugin before commit")
++try activationRegistry.activate(preparedPlugin, expected: plugin)
++check(activationRegistry.installed[0].enabled, "Successful activation commits enabled state")
++check(pluginThrows { try activationRegistry.activate(preparedPlugin, expected: plugin) }, "Repeated activation must not overwrite a new state")
++try activationRegistry.install(plugin)
++var changedPlugin = plugin
++changedPlugin.version = "2"
++try activationRegistry.install(changedPlugin)
++check(pluginThrows { try activationRegistry.activate(preparedPlugin, expected: plugin) }, "Stale activation must not enable a replaced plugin")
++check(!activationRegistry.installed[0].enabled && activationRegistry.installed[0].manifest == changedPlugin, "Replacement survives stale completion")
++activationRegistry.remove(id: plugin.id)
++check(pluginThrows { try activationRegistry.activate(preparedPlugin, expected: plugin) }, "Activation must not resurrect a removed plugin")
++check(pluginThrows { _ = try AyuPluginActivation.prepare(invalidPlugin) }, "Bad compatibility checks fail before activation")
++let reviewedSearch = try AyuPluginImporter.reviewedAdapter(sourceSHA256: "802dd326787e3640f55f20ac5462539c03202184e540578a4531c693c2c3458a")
++let preparedSearch = try AyuPluginActivation.prepare(reviewedSearch)
++check(preparedSearch == reviewedSearch, "Search+ conversion runs after local compatibility checks")
++var unsupportedConversion = plugin
++unsupportedConversion.convertedFrom = "unknown"
++unsupportedConversion.sourceSHA256 = "unknown"
++check(pluginThrows { _ = try AyuPluginActivation.prepare(unsupportedConversion) }, "Unknown converters must fail instead of pretending success")
++let replacementPlugin = AyuPluginManifest(id: "replace_check", name: "Replace", author: "Tests", version: "1", summary: "", actions: [replaceAction])
++let preparedReplacement = try AyuPluginActivation.prepare(replacementPlugin)
++check(preparedReplacement == replacementPlugin, "Supported literal replacement passes local handler check")
++print("PASS: \(checks) total model checks including transactional activation and reviewed conversion")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

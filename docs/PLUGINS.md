@@ -20,34 +20,22 @@ documents without thumbnails use a puzzle icon in the chat's native file control
 download progress/cancel controls retain their normal states. This affects this
 client's rendering, not how other Telegram clients show the file.
 
-Installed plugins can now supply an individual avatar, displayed in the manager
-and action list. Missing avatars use the puzzle fallback. Search+ uses a magnifying
-glass matching its search function.
-No sticker-pack download or remote avatar request is performed.
+All plugins use the same white puzzle piece on a blue circle, including Search+.
+Individual icon metadata from older files is ignored. API version 1 is built into
+this app; no separate SDK installation is needed. Authors can use
+[plugin.schema.json](../plugins/plugin.schema.json) and the ready-to-import examples
+in [plugins](../plugins).
 
-## Authoring tools and avatars
+## Activation
 
-No separate runtime SDK needs to be installed. API version 1 is built into the
-app; authors create a declarative `.plugin` file. The editor schema is
-[plugin.schema.json](../plugins/plugin.schema.json), with ready-to-import examples
-in [plugins](../plugins). It describes supported operations, not Android/Python APIs.
-ExteraGram's Python/Java SDK is a separate system and is not required by this ABI.
-
-An optional `icon` field accepts:
-
-```json
-"icon": { "kind": "symbol", "value": "magnifyingglass" }
-```
-
-Use `kind: "symbol"` with `puzzlepiece.fill`, `magnifyingglass`, `textformat`,
-`line.3.horizontal.decrease`, `star.fill` or `bolt.fill`. Or use `kind: "png"`
-with the base64-encoded PNG bytes in `value`: at most 64 KiB and 256x256 pixels.
-Images are bounded and downsampled before drawing inside a 44-point circular
-avatar. Invalid PNG headers or oversized images are rejected at import; PNGs
-that pass header validation but fail decoding display the puzzle fallback.
-Emoji must be one grapheme and at most 64 UTF-8 bytes. Older files with no icon
-remain compatible. Schema checks aid authoring; the native importer additionally
-enforces byte limits, emoji validity, unique IDs and image dimensions.
+Enabling a plugin starts background compatibility checks and prepares its typed
+native action manifest. A progress indicator remains visible while that work runs.
+Only a successful result is committed as enabled. Invalid input, a changed/removed
+plugin or a persistence failure leaves it disabled. Closing the manager cancels
+activation before its result is committed. This checks the local format and action
+handlers, not end-to-end Telegram requests or Android method-hook compatibility.
+The reviewed Search+ conversion is built into the app; the desktop converter is
+optional. Unsupported Android plugins still require a dedicated adapter.
 
 ## Search+ conversion
 

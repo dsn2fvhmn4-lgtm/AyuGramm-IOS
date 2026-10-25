@@ -1,5 +1,7 @@
 # AyuGramm-IOS
 
+<img src="assets/branding/AyuGram-logo.png" width="128" alt="AyuGram for iOS logo">
+
 An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. The latest [v0.2.0 Feature Preview, build 8](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/tag/v0.2.0-preview) is available. See the [release description](docs/releases/v0.2.0.md) for features, installation and verification limits. The earlier v0.1.0 release contains Ghost Mode only.
 
 ## Current implementation
@@ -62,7 +64,7 @@ Codemagic uses the same release configuration on the free Mac M2 tier. Import th
 
 ### Branding and Ghost Mode controls (build 8 preview)
 
-- AyuGram branding using the original AyuGram Desktop SVG (see upstream attribution below).
+- AyuGram branding. The latest source uses the owner-provided Apple/airplane artwork with the external black surround removed; the app artwork is full-bleed and the standalone logo has transparency. See [branding assets](assets/branding/README.md). Published build 8 retains the earlier artwork.
 - A direct **AyuGram · Ghost Mode** entry near the top of Settings, retaining the existing Privacy and Security entry.
 - A ghost button next to the chat header controls: solid ghost when any Ghost Mode option is active, crossed outline when all are off. Tapping toggles Ghost Mode; detailed switches remain in AyuGram settings. The indicator reflects local policy, not server-confirmed invisibility.
 - After a successful cloud-message send, reassert offline status when Hide Online is enabled. A brief server-visible activity window remains possible; failures do not alter send results.

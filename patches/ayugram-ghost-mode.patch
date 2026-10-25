@@ -71250,10 +71250,10 @@ index 00000000..b1bfb1e8
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuTranslation.swift b/submodules/TelegramCore/Sources/AyuGram/AyuTranslation.swift
 new file mode 100644
-index 00000000..d5255315
+index 00000000..ba238819
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuTranslation.swift
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,99 @@
 +import Foundation
 +import Security
 +import CryptoKit
@@ -71275,7 +71275,8 @@ index 00000000..d5255315
 +        return key
 +    }
 +    public static func write(accountId: Int64, settings: AyuAdvancedSettings, key: String) throws {
-+        guard key.utf8.count <= 1024, !key.contains("\n"), !key.contains("\r") else { throw AyuTranslationError.configuration }
++        // Scalars, not Characters: "\r\n" is one Character, so contains("\r") misses it.
++        guard key.utf8.count <= 1024, !key.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else { throw AyuTranslationError.configuration }
 +        let query = try self.query(accountId: accountId, settings: settings)
 +        if key.isEmpty {
 +            let status = SecItemDelete(query as CFDictionary)
@@ -71354,10 +71355,10 @@ index 00000000..d5255315
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuTranslationRequest.swift b/submodules/TelegramCore/Sources/AyuGram/AyuTranslationRequest.swift
 new file mode 100644
-index 00000000..0efb3ac6
+index 00000000..558feb53
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuTranslationRequest.swift
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,44 @@
 +import Foundation
 +
 +public enum AyuTranslationError: Error { case configuration, credentialStorage, network, provider(Int), empty, tooLarge }
@@ -71377,7 +71378,8 @@ index 00000000..0efb3ac6
 +        try settings.validate()
 +        guard !text.isEmpty, text.utf8.count <= 16384 else { throw AyuTranslationError.tooLarge }
 +        let key = key ?? ""
-+        guard key.utf8.count <= 1024, !key.contains("\r"), !key.contains("\n") else { throw AyuTranslationError.configuration }
++        // Scalars, not Characters: "\r\n" is one Character, so contains("\r") misses it.
++        guard key.utf8.count <= 1024, !key.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else { throw AyuTranslationError.configuration }
 +        var request = URLRequest(url: try self.endpoint(settings), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
 +        request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 +        var body: [String: Any]

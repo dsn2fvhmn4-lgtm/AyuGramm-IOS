@@ -84,6 +84,9 @@ command = [sys.executable, "build-system/Make/Make.py", "--cacheDir=" + str(temp
            "--configuration=" + args.configuration, "--outputBuildArtifactsPath=" + str(artifacts)]
 if args.phase == "port":
     command.append("--disableProvisioningProfiles")
+    # --skipDsym exists only in the patched Make.py. dSYMs are not needed for unsigned test IPAs.
+    if os.environ.get("AYU_SKIP_DSYM", "").strip() == "1":
+        command.append("--skipDsym")
 command.append("--continueOnError")
 try:
     # Persist useful diagnostics without writing API values into the artifact log.

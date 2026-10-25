@@ -1,6 +1,8 @@
 Manual Codemagic builds
 
-The owner controls when to compile. GitHub Actions is disabled; source pushes do not start builds. The workflow defaults to release_arm64 on Mac M2 with Xcode 27.1.
+The owner controls when to compile. GitHub Actions is disabled; source pushes do not start builds. Two Codemagic workflows run on Mac M2 with Xcode 27.1: `ayugram-ios-unsigned` (release_arm64) and `ayugram-ios-fast` (debug_arm64: no Swift optimization, no whole-module optimization, no Rust LTO and no release export-list scans, so it compiles much faster; the binary is larger and slower and is meant for compile checks and test installs).
+
+Speed measures: the source checks run on the main Telegram checkout before the native submodules are fetched, so source errors fail before the multi-gigabyte download; submodules are fetched shallowly (with a full-history fallback); `AYU_SKIP_DSYM=1` passes the patched `Make.py --skipDsym`, skipping dSYM generation, which unsigned test IPAs do not need. None of these change the compiled app code. Actual time savings have not been measured yet.
 
 Before the full Telegram target, the workflow installs/probes Metal, checks ccache/sysctl in Bazel's restricted PATH, validates Telegram API variables, applies the patch to the exact pinned source revision, checks patch whitespace, executes CI helper tests, parses all changed Swift sources and checks known UI-import/API contracts. It then compiles and runs the actual Foundation settings/history/regex/archive model sources with warnings treated as errors. The same fast host test also builds the pinned Postbox serialization implementation and round-trips the actual history schema, covering the raw-enum crash that JSONEncoder did not detect.
 

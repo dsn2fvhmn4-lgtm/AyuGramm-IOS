@@ -10,8 +10,8 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | sendOnlinePackets | Explicit online suppression in preview |
 | sendOfflinePacketAfterOnline | Offline reassertion after accepted cloud sends in source; brief implicit online visibility remains possible |
 | sendUploadProgress | Upload-activity suppression in preview |
-| useScheduledMessages | Pending; requires scheduling/delivery semantics audit |
-| markReadAfterSend | Pending; needs a deliberate receipt override with correct pts/local-state handling |
+| useScheduledMessages | Opt-in Ghost Mode+ scheduling of plain cloud text (10 s–1 h delay) while Ghost Mode is active, in source; media, topics and secret chats unchanged |
+| markReadAfterSend | Opt-in explicit read receipt after a server-accepted ordinary cloud send, applied with pts/local read state, in source; mutually exclusive with scheduling |
 | saveDeletedMessages | Transactional text archive in source |
 | saveMessagesHistory | Previous text and formatting-only edit capture in source |
 | saveFormatting | Codable entity snapshots and native formatted detail rendering in source |
@@ -30,7 +30,7 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | showKillButtonInDrawer | Android lifecycle behavior; iOS implementation not defined |
 | keepAliveService | Android foreground-service behavior; iOS background execution is platform controlled |
 | disableAds | Unchanged; sponsored messages are excluded from local filters |
-| localPremium | No server entitlement changes; cosmetic mapping remains to be designed |
+| localPremium | No server entitlement changes; local-only emoji status in own profile/settings in source |
 | syncEnabled | Pending; no sync transport or archive upload is enabled |
 | useSecureConnection | Pending as part of sync; no insecure transport introduced |
 | WALMode | Android Room implementation detail; account storage remains upstream Postbox |
@@ -52,11 +52,11 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | showAddFilterInContextMenu (Desktop) | Literal message-text rule draft, explicit save, visibility control, duplicate/capacity checks in source after build 8 |
 | regex rule management (iOS) | Saved/draft counts, confirmed account-local clearing and broadcast-only default scope correction in source after build 8 |
 | MessageShot appearance (Desktop-inspired/iOS) | Per-account app/light/dark theme, outer-background transparency, author/date/header/media-preview switches and isolated reset in source after build 8; native render verification pending |
-| showRepeatMessageInContextMenu (Desktop) | Partial iOS adaptation: confirmed text/caption append to draft, preserving native input structure, in source after build 8; attachments/immediate resend not implemented |
+| showRepeatMessageInContextMenu (Desktop) | Text/caption append to draft, or confirmed sender-hidden copy with attachments (forward without author) in source; protected/expiring content excluded |
 | message text tools (iOS) | Native phrase search and chat/message ID copying, with separate visibility switches in source after build 8 |
 | showHideMessageInContextMenu (Desktop) | Reversible local cloud-message/album hiding, per-account bounded references, temporary bypass and restore-one/all manager in source after build 8; no database/server deletion |
 | showPrivateChatReactions / showGroupReactions / showChannelReactions (Desktop) | Independent native chat reaction rendering controls with isolated reset in source after build 8; original message data and Saved Messages tags preserved; native/device verification pending |
 
-Additional Desktop-only scope (not implemented by these flags): translation providers, shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata and conditional/always silent-send modes already have source implementations.
+Additional Desktop-only scope (not implemented by these flags): shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata, conditional/always silent-send modes, translation providers (Telegram/LibreTranslate/DeepL), chat export (HTML+JSON, forward to Saved Messages) and the media archive manager already have source implementations.
 
 Release gates: clean pinned-patch application, UI import/API-contract checks, parse all changed Swift sources, compile/run real Foundation models, full Telegram target type check/link/package, then device and recorded simulator checks. The 32-check result applies only to the earlier history revision; newly added regex/migration/metadata/media-archive tests have not yet run on a Mac.

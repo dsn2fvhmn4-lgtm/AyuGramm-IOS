@@ -1,53 +1,84 @@
+# Manual builds only. Both workflows run the cheap source checks before the large
+# native dependency download, so most source errors fail within a few minutes.
+definitions:
+  environment: &environment
+    xcode: "27.1"
+    groups:
+      - telegram_credentials
+    vars:
+      PYTHONUNBUFFERED: "1"
+      AYU_SKIP_DSYM: "1"
+  cache: &cache
+    cache_paths:
+      - $CM_BUILD_DIR/.ayu-temp/ayu-bazel-cache
+  scripts:
+    - &prepare_macos
+      name: Verify macOS build dependencies
+      script: bash ci/prepare_macos.sh
+    - &validate_credentials
+      name: Validate Telegram login credentials
+      script: |
+        python3 - <<'PY'
+        import os, re
+        api_id = os.environ.get('TELEGRAM_API_ID', '').strip()
+        api_hash = os.environ.get('TELEGRAM_API_HASH', '').strip()
+        if not api_id.isdigit() or int(api_id) <= 0 or not re.fullmatch(r'[0-9a-fA-F]{32}', api_hash):
+            raise SystemExit('Set Secure TELEGRAM_API_ID and TELEGRAM_API_HASH in the telegram_credentials variable group before building.')
+        print('Telegram API credentials are configured; values are hidden.')
+        PY
+    - &fetch_source
+      name: Fetch pinned Telegram source
+      script: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import json, subprocess
+        pin = json.load(open('upstream.json'))
+        subprocess.run(['git', 'init', 'telegram'], check=True)
+        subprocess.run(['git', '-C', 'telegram', 'remote', 'add', 'origin', pin['repository']], check=True)
+        subprocess.run(['git', '-C', 'telegram', 'fetch', '--depth=1', 'origin', pin['commit']], check=True)
+        subprocess.run(['git', '-C', 'telegram', 'checkout', '--detach', 'FETCH_HEAD'], check=True)
+        PY
+    - &checks
+      name: Apply port and run source checks
+      script: |
+        set -euo pipefail
+        export RUNNER_TEMP="$CM_BUILD_DIR/.ayu-temp"
+        mkdir -p "$RUNNER_TEMP"
+        python3 ci/prepare.py telegram
+        git -C telegram diff --check
+        python3 -m unittest discover -s ci/tests -p 'test_*.py'
+        python3 ci/preflight.py telegram
+        python3 ci/test_models.py telegram | tee "$RUNNER_TEMP/ayu-tests.log"
+    - &fetch_dependencies
+      name: Fetch pinned native dependencies
+      script: |
+        set -euo pipefail
+        # Shallow first (much less to download); fall back to full history if a host refuses SHA fetches.
+        git -C telegram submodule update --init --recursive --jobs=8 --depth=1 \
+          || git -C telegram submodule update --init --recursive --jobs=8
+    - &trim_cache
+      name: Bound reusable cache to free plan quota
+      script: python3 ci/trim_cache.py
+  artifacts: &artifacts
+    - telegram/artifacts/port/*.ipa
+    - telegram/artifacts/port/manifest.json
+    - telegram/artifacts/port/build.log
+    - .ayu-temp/ayu-tests.log
+
 workflows:
   ayugram-ios-unsigned:
     name: AyuGram iOS Release (unsigned)
     instance_type: mac_mini_m2
     max_build_duration: 120
-    environment:
-      xcode: "27.1"
-      groups:
-        - telegram_credentials
-      vars:
-        PYTHONUNBUFFERED: "1"
-    cache:
-      cache_paths:
-        - $CM_BUILD_DIR/.ayu-temp/ayu-bazel-cache
+    environment: *environment
+    cache: *cache
     scripts:
-      - name: Verify macOS build dependencies
-        script: bash ci/prepare_macos.sh
-      - name: Validate Telegram login credentials
-        script: |
-          python3 - <<'PY'
-          import os, re
-          api_id = os.environ.get('TELEGRAM_API_ID', '').strip()
-          api_hash = os.environ.get('TELEGRAM_API_HASH', '').strip()
-          if not api_id.isdigit() or int(api_id) <= 0 or not re.fullmatch(r'[0-9a-fA-F]{32}', api_hash):
-              raise SystemExit('Set Secure TELEGRAM_API_ID and TELEGRAM_API_HASH in the telegram_credentials variable group before building.')
-          print('Telegram API credentials are configured; values are hidden.')
-          PY
-      - name: Fetch pinned Telegram source and dependencies
-        script: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json, subprocess
-          pin = json.load(open('upstream.json'))
-          subprocess.run(['git', 'init', 'telegram'], check=True)
-          subprocess.run(['git', '-C', 'telegram', 'remote', 'add', 'origin', pin['repository']], check=True)
-          subprocess.run(['git', '-C', 'telegram', 'fetch', '--depth=1', 'origin', pin['commit']], check=True)
-          subprocess.run(['git', '-C', 'telegram', 'checkout', '--detach', 'FETCH_HEAD'], check=True)
-          subprocess.run(['git', '-C', 'telegram', 'submodule', 'update', '--init', '--recursive', '--jobs=4'], check=True)
-          PY
-      - name: Apply port and run settings tests
-        script: |
-          set -euo pipefail
-          export RUNNER_TEMP="$CM_BUILD_DIR/.ayu-temp"
-          mkdir -p "$RUNNER_TEMP"
-          python3 ci/prepare.py telegram
-          git -C telegram diff --check
-          python3 -m unittest discover -s ci/tests -p 'test_*.py'
-          python3 ci/preflight.py telegram
-          python3 ci/test_models.py telegram | tee "$RUNNER_TEMP/ayu-tests.log"
-      - name: Build port directly without baseline
+      - *prepare_macos
+      - *validate_credentials
+      - *fetch_source
+      - *checks
+      - *fetch_dependencies
+      - name: Build optimized port
         script: |
           set -euo pipefail
           export RUNNER_TEMP="$CM_BUILD_DIR/.ayu-temp"
@@ -57,10 +88,28 @@ workflows:
           sw_vers
           df -h
           python3 -u ci/build.py telegram --phase port --configuration release_arm64
-      - name: Bound reusable cache to free plan quota
-        script: python3 ci/trim_cache.py
-    artifacts:
-      - telegram/artifacts/port/*.ipa
-      - telegram/artifacts/port/manifest.json
-      - telegram/artifacts/port/build.log
-      - .ayu-temp/ayu-tests.log
+      - *trim_cache
+    artifacts: *artifacts
+
+  ayugram-ios-fast:
+    name: AyuGram iOS Fast Debug (unsigned)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment: *environment
+    cache: *cache
+    scripts:
+      - *prepare_macos
+      - *validate_credentials
+      - *fetch_source
+      - *checks
+      - *fetch_dependencies
+      - name: Build unoptimized port
+        script: |
+          set -euo pipefail
+          export RUNNER_TEMP="$CM_BUILD_DIR/.ayu-temp"
+          export GITHUB_RUN_NUMBER="${BUILD_NUMBER:-1}"
+          mkdir -p "$RUNNER_TEMP"
+          xcodebuild -version
+          python3 -u ci/build.py telegram --phase port --configuration debug_arm64
+      - *trim_cache
+    artifacts: *artifacts

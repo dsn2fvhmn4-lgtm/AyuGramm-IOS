@@ -87,7 +87,7 @@ def main():
         if manager.exists():
             ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
             models = [ayu / name for name in (
-                'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
+                'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
                 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotSettings.swift',
                 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuRegexSettings.swift')]
             with tempfile.TemporaryDirectory(prefix='ayu-plugin-sdk-') as directory:

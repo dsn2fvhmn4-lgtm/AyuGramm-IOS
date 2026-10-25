@@ -64,9 +64,13 @@ Message menus now offer **Repeat Text** (confirmed append to a draft, no automat
 
 **Settings → AyuGram → Chat Reactions** independently shows/hides reaction rendering in private chats, groups and channels. Saved Messages tags and unknown peer types retain native behavior. This does not remove server reactions or disable the menu picker. See [rendering scope and pending native checks](docs/REACTION_DISPLAY.md). The block is not included in build 8.
 
+## Ghost Mode+, translation, export and archive (development source after Chat Colors)
+
+Opt-in scheduled sending and read-after-send, Telegram/LibreTranslate/DeepL translation, HTML+JSON chat export or forwarding to Saved Messages, a media archive manager, a local-only emoji status and **AyuGram · Repeat** with a sender-hidden copy for attachments. See [scope and limits](docs/ADVANCED_FEATURES.md). These blocks are not in any published IPA and await native/device verification.
+
 ## Cloud builds from Windows
 
-Builds are run manually by the owner in **Codemagic**, using `release_arm64` and the pinned Xcode 27.1. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.
+Builds are run manually by the owner in **Codemagic** with the pinned Xcode 27.1. `ayugram-ios-unsigned` builds `release_arm64` (optimized, published IPAs); `ayugram-ios-fast` builds `debug_arm64` for quick compile checks and test installs (unoptimized, no dSYM, larger and slower at runtime). Both run the cheap source checks before downloading the large native dependencies, so most source errors fail within minutes. GitHub Actions is disabled and has no push trigger. No build is started automatically by a source push.
 
 Codemagic uses the same release configuration on the free Mac M2 tier. Import the `telegram_credentials` variable group with Secure `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. Its reusable Bazel disk cache is capped at 2.5 GB to fit the personal-plan quota; the first successful release build populates it. Cache reuse and speed gains still require measurement.
 

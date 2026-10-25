@@ -66079,19 +66079,22 @@ index b1143f63..93021774 100644
 \ No newline at end of file
 +}
 diff --git a/build-system/Make/Make.py b/build-system/Make/Make.py
-index 4c3a6419..8d103a44 100644
+index 4c3a6419..6f55c1e9 100644
 --- a/build-system/Make/Make.py
 +++ b/build-system/Make/Make.py
-@@ -631,6 +631,8 @@ def build(bazel, arguments):
+@@ -631,6 +631,11 @@ def build(bazel, arguments):
      )
  
      bazel_command_line.set_configuration(arguments.configuration)
 +    if arguments.disableProvisioningProfiles:
 +        bazel_command_line.set_disable_provisioning_profiles()
++    if arguments.skipDsym:
++        # Faster CI iterations: dsymutil over the whole app is skipped, the binary is unchanged.
++        bazel_command_line.configuration_args = [argument for argument in bazel_command_line.configuration_args if argument not in ('--apple_generate_dsym', '--output_groups=+dsyms')]
      if arguments.embedWatchApp:
          if arguments.configuration in ('debug_arm64', 'release_arm64'):
              if arguments.watchApiId is None or arguments.watchApiHash is None:
-@@ -1017,6 +1019,12 @@ if __name__ == '__main__':
+@@ -1017,6 +1022,18 @@ if __name__ == '__main__':
      )
  
      buildParser = subparsers.add_parser('build', help='Build the app')
@@ -66100,6 +66103,12 @@ index 4c3a6419..8d103a44 100644
 +        action='store_true',
 +        default=False,
 +        help='Build without provisioning profiles (simulator or unsigned device artifact; not installable as-is).'
++    )
++    buildParser.add_argument(
++        '--skipDsym',
++        action='store_true',
++        default=False,
++        help='Do not generate dSYM debug symbols (faster builds; crash symbolication is unavailable).'
 +    )
      buildParser.add_argument(
          '--buildNumber',
@@ -66116,6 +66125,188 @@ index 509d3bd2..aa199597 100644
          "//submodules/TelegramAudio:TelegramAudio",
          "//submodules/AsyncDisplayKit:AsyncDisplayKit",
          "//submodules/TemporaryCachedPeerDataManager:TemporaryCachedPeerDataManager",
+diff --git a/submodules/AccountContext/Sources/AyuAdvancedControllers.swift b/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
+new file mode 100644
+index 00000000..63389737
+--- /dev/null
++++ b/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
+@@ -0,0 +1,176 @@
++import UIKit
++import Display
++import TelegramCore
++import SwiftSignalKit
++
++public enum AyuAdvancedPage { case sending, translation, cosmetics }
++private func ayuPresentNative(_ controller: UIViewController, context: AccountContext) {
++    let navigation = UINavigationController(rootViewController: controller)
++    navigation.overrideUserInterfaceStyle = context.sharedContext.currentPresentationData.with { $0 }.theme.overallDarkAppearance ? .dark : .light
++    context.sharedContext.applicationBindings.presentNativeController(navigation)
++}
++public func ayuPresentAdvancedSettings(context: AccountContext, page: AyuAdvancedPage) { ayuPresentNative(AyuAdvancedSettingsController(context: context, page: page), context: context) }
++public func ayuPresentTranslation(context: AccountContext, text: String) { ayuPresentNative(AyuTranslationController(context: context, text: text), context: context) }
++public func ayuPresentChatExport(context: AccountContext, peerId: EnginePeer.Id) { ayuPresentNative(AyuChatExportController(context: context, peerId: peerId), context: context) }
++public func ayuPresentMediaArchive(context: AccountContext) { ayuPresentNative(AyuMediaArchiveController(context: context), context: context) }
++
++private final class AyuAdvancedSettingsController: UITableViewController {
++    private let context: AccountContext
++    private let page: AyuAdvancedPage
++    private var settings: AyuAdvancedSettings { return self.context.account.network.ayuGhostMode.current.advanced }
++    private var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
++    init(context: AccountContext, page: AyuAdvancedPage) { self.context = context; self.page = page; super.init(style: .insetGrouped) }
++    required init?(coder: NSCoder) { return nil }
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        switch self.page { case .sending: self.title = "Ghost Mode+"; case .translation: self.title = self.ru ? "Переводчики" : "Translation providers"; case .cosmetics: self.title = self.ru ? "Локальный эмодзи-статус" : "Local emoji status" }
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++    }
++    override func viewWillAppear(_ animated: Bool) { super.viewWillAppear(animated); self.tableView.reloadData() }
++    @objc private func done() { self.dismiss(animated: true) }
++    private func update(_ transform: (inout AyuAdvancedSettings) -> Void) {
++        do { try self.context.account.network.ayuGhostMode.update { transform(&$0.advanced) } }
++        catch { self.error() }
++        self.tableView.reloadData()
++    }
++    private func error() {
++        let alert = UIAlertController(title: "AyuGram", message: self.ru ? "Настройки не сохранены. Проверь адрес HTTPS, код языка и доступ к Keychain." : "Settings were not saved. Check the HTTPS URL, language code and Keychain access.", preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
++    }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { switch self.page { case .sending, .cosmetics: return 4; case .translation: return 6 } }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
++        var toggleValue: Bool?
++        switch self.page {
++        case .sending:
++            cell.textLabel?.text = self.ru ? ["Отправлять через отложенные", "Прочитать после успешной отправки", "Задержка отправки", "Область действия"][indexPath.row] : ["Send through scheduling", "Mark read after accepted send", "Scheduling delay", "Scope"][indexPath.row]
++            switch indexPath.row {
++            case 0: toggleValue = self.settings.scheduleOutgoing
++            case 1: toggleValue = self.settings.markReadAfterSend
++            case 2: cell.detailTextLabel?.text = "\(self.settings.scheduleDelay) s"
++            default: cell.detailTextLabel?.text = self.ru ? "Отложенная отправка: обычный облачный текст без медиа и тем, пока включён призрак. Прочитать после отправки: только принятые сервером обычные облачные сообщения, без тем и секретных чатов; отправляет квитанцию даже при скрытии прочтений. Режимы исключают друг друга." : "Scheduling: plain cloud text without media/topics while Ghost Mode is active. Read after send: accepted ordinary cloud sends without topics/secret chats; explicitly sends a receipt even when read receipts are hidden. Modes are mutually exclusive."
++            }
++        case .cosmetics:
++            cell.textLabel?.text = self.ru ? ["Локальный статус в своём профиле", "Повторять анимацию", "Убрать выбранное эмодзи", "Выбор статуса"][indexPath.row] : ["Local status in own profile", "Loop animation", "Clear selected emoji", "Choose a status"][indexPath.row]
++            if indexPath.row == 0 { toggleValue = self.settings.localEmojiStatusEnabled }
++            else if indexPath.row == 1 { toggleValue = self.settings.animateLocalEmoji }
++            else if indexPath.row == 3 { cell.detailTextLabel?.text = self.ru ? "Включи опцию, открой свой профиль/настройки и нажми на значок рядом с именем. Выбранное эмодзи и анимация видны только в этом клиенте; серверный статус и подписка не меняются. Без повтора анимация проигрывается один раз." : "Enable, open your own profile/settings and tap the icon beside your name. The chosen emoji and animation are local to this client; server status and subscription remain unchanged. Disabling loop plays it once." }
++        case .translation:
++            cell.textLabel?.text = self.ru ? ["Провайдер AyuGram", "Язык перевода", "HTTPS-адрес LibreTranslate", "Добавить/заменить API-ключ", "Удалить API-ключ", "Использование"][indexPath.row] : ["AyuGram provider", "Target language", "LibreTranslate HTTPS URL", "Add/replace API key", "Remove API key", "Usage"][indexPath.row]
++            switch indexPath.row {
++            case 0: cell.detailTextLabel?.text = self.providerNames[self.settings.translationProvider] ?? "Telegram"
++            case 1: cell.detailTextLabel?.text = self.settings.translationTarget
++            case 2: cell.detailTextLabel?.text = self.settings.libreTranslateURL.isEmpty ? "—" : self.settings.libreTranslateURL
++            case 3, 4: cell.detailTextLabel?.text = self.ru ? "Keychain · отдельный ключ для аккаунта и сервера" : "Keychain · scoped to account and endpoint"
++            default: cell.detailTextLabel?.text = self.ru ? "Меню сообщения → AyuGram · Перевести. Telegram работает без отдельного ключа. LibreTranslate требует свой адрес, DeepL — свой API-ключ. Внешний перевод выполняется только после нажатия «Перевести». Встроенный перевод Telegram остаётся отдельным." : "Message menu → AyuGram · Translate. Telegram needs no separate key. LibreTranslate needs your endpoint, DeepL your API key. External requests run only after tapping Translate. Built-in Telegram translation remains separate."
++            }
++        }
++        if let value = toggleValue {
++            let toggle = UISwitch(); toggle.isOn = value; toggle.tag = indexPath.row
++            toggle.accessibilityLabel = cell.textLabel?.text
++            toggle.addTarget(self, action: #selector(self.toggle(_:)), for: .valueChanged); cell.accessoryView = toggle; cell.selectionStyle = .none
++        }
++        return cell
++    }
++    @objc private func toggle(_ toggle: UISwitch) {
++        self.update { value in
++            switch self.page {
++            case .sending: if toggle.tag == 0 { value.setScheduling(toggle.isOn) } else { value.setReadAfterSend(toggle.isOn) }
++            case .cosmetics: if toggle.tag == 0 { value.localEmojiStatusEnabled = toggle.isOn } else { value.animateLocalEmoji = toggle.isOn }
++            case .translation: break
++            }
++        }
++    }
++    private var providerNames: [AyuAdvancedSettings.TranslationProvider: String] { return [.telegram: "Telegram", .libreTranslate: "LibreTranslate", .deepLFree: "DeepL API Free", .deepLPro: "DeepL API Pro"] }
++    private func field(title: String, value: String, secure: Bool = false, save: @escaping (String) -> Void) {
++        let alert = UIAlertController(title: title, message: nil, preferredStyle: .alert)
++        alert.addTextField { field in field.text = secure ? nil : value; field.isSecureTextEntry = secure; field.autocorrectionType = .no; field.autocapitalizationType = .none }
++        alert.addAction(UIAlertAction(title: self.ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++            guard let value = alert?.textFields?.first?.text else { return }
++            alert?.dismiss(animated: true, completion: { save(value.trimmingCharacters(in: .whitespacesAndNewlines)) })
++        }))
++        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        switch self.page {
++        case .sending:
++            guard indexPath.row == 2 else { return }
++            let alert = UIAlertController(title: self.title, message: nil, preferredStyle: .actionSheet)
++            for delay in [Int32(10), 30, 60, 300, 3600] { alert.addAction(UIAlertAction(title: "\(delay) s", style: .default, handler: { [weak self] _ in self?.update { $0.scheduleDelay = delay } })) }
++            alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); alert.popoverPresentationController?.sourceView = tableView; alert.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath); self.present(alert, animated: true)
++        case .cosmetics: if indexPath.row == 2 { self.update { $0.localEmojiFileId = nil } }
++        case .translation:
++            switch indexPath.row {
++            case 0:
++                let alert = UIAlertController(title: self.ru ? "Провайдер" : "Provider", message: nil, preferredStyle: .actionSheet)
++                for provider in AyuAdvancedSettings.TranslationProvider.allCases { alert.addAction(UIAlertAction(title: self.providerNames[provider], style: .default, handler: { [weak self] _ in self?.update { $0.translationProvider = provider } })) }
++                alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); alert.popoverPresentationController?.sourceView = tableView; alert.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath); self.present(alert, animated: true)
++            case 1: self.field(title: self.ru ? "Код языка: ru, en, uk…" : "Language code: ru, en, uk…", value: self.settings.translationTarget) { [weak self] value in self?.update { $0.translationTarget = value } }
++            case 2: self.field(title: "LibreTranslate HTTPS URL", value: self.settings.libreTranslateURL) { [weak self] value in self?.update { $0.libreTranslateURL = value } }
++            case 3:
++                let settings = self.settings
++                guard settings.translationProvider != .telegram else { return }
++                self.field(title: "API key", value: "", secure: true) { [weak self] key in
++                    guard let self else { return }
++                    do { guard !key.isEmpty else { throw AyuTranslationError.configuration }; try AyuTranslationKeys.write(accountId: self.context.account.id.int64, settings: settings, key: key) } catch { self.error() }
++                }
++            case 4:
++                guard self.settings.translationProvider != .telegram else { return }
++                do { try AyuTranslationKeys.write(accountId: self.context.account.id.int64, settings: self.settings, key: "") } catch { self.error() }
++            default: break
++            }
++        }
++    }
++}
++
++private final class AyuTranslationController: UITableViewController {
++    private let context: AccountContext
++    private let text: String
++    private let request = MetaDisposable()
++    private var generation = 0
++    private var running = false
++    private var result = ""
++    private var status = ""
++    private var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
++    init(context: AccountContext, text: String) { self.context = context; self.text = text; super.init(style: .insetGrouped); self.title = "AyuGram · Translate" }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.request.dispose() }
++    override func viewDidLoad() {
++        super.viewDidLoad(); self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .stop, target: self, action: #selector(self.stop))
++    }
++    @objc private func done() { self.request.dispose(); self.dismiss(animated: true) }
++    @objc private func stop() { self.generation += 1; self.request.set(nil); self.running = false; self.status = self.ru ? "Отменено" : "Cancelled"; self.tableView.reloadData() }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 3 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 1 ? 2 : 1 }
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        return self.ru ? ["Текст для отправки провайдеру", "Действия", "Результат"][section] : ["Text to send to provider", "Actions", "Result"][section]
++    }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        let settings = self.context.account.network.ayuGhostMode.current.advanced
++        return section == 1 ? settings.translationProvider.rawValue + " → " + settings.translationTarget + "\n" + self.status : nil
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .default, reuseIdentifier: nil); cell.textLabel?.numberOfLines = 0
++        if indexPath.section == 0 { cell.textLabel?.text = self.text }
++        else if indexPath.section == 2 { cell.textLabel?.text = self.result.isEmpty ? "—" : self.result }
++        else { cell.textLabel?.text = indexPath.row == 0 ? (self.ru ? "Перевести" : "Translate") : (self.ru ? "Скопировать результат" : "Copy result"); cell.textLabel?.textColor = .systemBlue }
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true); guard indexPath.section == 1 else { return }
++        if indexPath.row == 1 { if !self.result.isEmpty { UIPasteboard.general.string = self.result }; return }
++        guard !self.running else { return }; self.running = true; self.generation += 1; let generation = self.generation
++        self.result = ""; self.status = self.ru ? "Перевод…" : "Translating…"; self.tableView.reloadData()
++        self.request.set((self.context.engine.messages.ayuTranslate(text: self.text)
++        |> timeout(45, queue: Queue.mainQueue(), alternate: .fail(.network))
++        |> deliverOnMainQueue).start(next: { [weak self] result in
++            guard let self, self.generation == generation else { return }; self.result = result; self.status = ""; self.running = false; self.tableView.reloadData()
++        }, error: { [weak self] error in
++            guard let self, self.generation == generation else { return }; self.running = false
++            self.status = (self.ru ? "Перевод не выполнен: " : "Translation failed: ") + String(describing: error); self.tableView.reloadData()
++        }))
++    }
++}
 diff --git a/submodules/AccountContext/Sources/AyuChatColors.swift b/submodules/AccountContext/Sources/AyuChatColors.swift
 new file mode 100644
 index 00000000..c063b4cf
@@ -66137,6 +66328,202 @@ index 00000000..c063b4cf
 +    let navigation = UINavigationController(rootViewController: picker)
 +    navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
 +    context.sharedContext.applicationBindings.presentNativeController(navigation)
++}
+diff --git a/submodules/AccountContext/Sources/AyuExportControllers.swift b/submodules/AccountContext/Sources/AyuExportControllers.swift
+new file mode 100644
+index 00000000..4e1bda8c
+--- /dev/null
++++ b/submodules/AccountContext/Sources/AyuExportControllers.swift
+@@ -0,0 +1,190 @@
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++
++final class AyuChatExportController: UITableViewController, UIDocumentPickerDelegate {
++    private let context: AccountContext
++    private let peerId: EnginePeer.Id
++    private var options = AyuChatExportOptions()
++    private let request = MetaDisposable()
++    private var running = false
++    private var generation = 0
++    private var status = ""
++    private var directory: URL?
++    private var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
++    init(context: AccountContext, peerId: EnginePeer.Id) { self.context = context; self.peerId = peerId; super.init(style: .insetGrouped); self.title = "AyuGram · Export" }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.request.dispose(); if let directory = self.directory { try? FileManager.default.removeItem(at: directory) } }
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .stop, target: self, action: #selector(self.stop))
++    }
++    @objc private func done() { self.request.dispose(); self.dismiss(animated: true) }
++    @objc private func stop() { guard self.running else { return }; self.generation += 1; self.request.set(nil); self.running = false; self.status = self.ru ? "Отменено. Уже пересланные сообщения остаются в Избранном." : "Cancelled. Already forwarded messages remain in Saved Messages."; self.tableView.reloadData() }
++    @objc private func mediaChanged(_ toggle: UISwitch) { self.options.includeCachedMedia = toggle.isOn }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return 8 }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        return (self.ru ? "Вся доступная серверная история выбранного чата за период UTC. Папка: messages.html, result.json и media/. Медиа — из кэша, до 250 МБ на файл и 1 ГБ суммарно. Неполный экспорт отмечается. Пересылка в Избранное выполняется отдельно, от старых сообщений к новым. Не закрывай клиент до завершения. Повторная пересылка может создать дубликаты.\n\n" : "Available server history for this peer within the UTC date range. Folder: messages.html, result.json and media/. Media is cached-only, up to 250 MB per file and 1 GB total. Partial exports are marked. Saved Messages forwarding is separate, oldest first. Keep the app open. Repeating forwarding may create duplicates.\n\n") + self.status
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil); cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
++        let labels = self.ru ? ["С даты (UTC)", "По дату (UTC)", "Приложить доступные медиа", "Максимум сообщений", "Экспорт HTML + JSON", "Переслать чат в Избранное", "Сохранить готовую папку", "Состояние"] : ["From date (UTC)", "Until date (UTC)", "Include cached media", "Maximum messages", "Export HTML + JSON", "Forward chat to Saved Messages", "Save prepared folder", "Status"]
++        cell.textLabel?.text = labels[indexPath.row]
++        switch indexPath.row {
++        case 0: cell.detailTextLabel?.text = self.options.fromTimestamp == 0 ? "—" : self.dateString(self.options.fromTimestamp)
++        case 1: cell.detailTextLabel?.text = self.options.untilTimestamp == Int32.max ? "—" : self.dateString(self.options.untilTimestamp)
++        case 2:
++            let toggle = UISwitch(); toggle.isOn = self.options.includeCachedMedia; toggle.isEnabled = !self.running
++            toggle.addTarget(self, action: #selector(self.mediaChanged(_:)), for: .valueChanged); toggle.accessibilityLabel = cell.textLabel?.text; cell.accessoryView = toggle
++        case 3: cell.detailTextLabel?.text = String(self.options.maximumMessages)
++        case 7: cell.detailTextLabel?.text = self.status
++        default: cell.textLabel?.textColor = .systemBlue
++        }
++        cell.isUserInteractionEnabled = !self.running
++        return cell
++    }
++    private func formatter() -> DateFormatter { let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(secondsFromGMT: 0); f.dateFormat = "yyyy-MM-dd"; f.isLenient = false; return f }
++    private func dateString(_ value: Int32) -> String { return self.formatter().string(from: Date(timeIntervalSince1970: Double(value))) }
++    private func edit(row: Int) {
++        let alert = UIAlertController(title: row == 3 ? (self.ru ? "Лимит 1–1000000" : "Limit 1–1000000") : "UTC · yyyy-MM-dd", message: self.ru ? "Пустая дата снимает ограничение." : "An empty date removes the bound.", preferredStyle: .alert)
++        alert.addTextField { field in field.autocorrectionType = .no; field.keyboardType = row == 3 ? .numberPad : .asciiCapable; if row == 3 { field.text = String(self.options.maximumMessages) } }
++        alert.addAction(UIAlertAction(title: self.ru ? "Сохранить" : "Save", style: .default, handler: { [weak self, weak alert] _ in
++            guard let self, let raw = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
++            var options = self.options
++            if row == 3 { options.maximumMessages = Int(raw) ?? 0 }
++            else if raw.isEmpty { if row == 0 { options.fromTimestamp = 0 } else { options.untilTimestamp = Int32.max } }
++            else if let date = self.formatter().date(from: raw), self.formatter().string(from: date) == raw {
++                let value = Int64(date.timeIntervalSince1970) + (row == 1 ? 86399 : 0)
++                if value < 0 || value > Int64(Int32.max) { return }
++                if row == 0 { options.fromTimestamp = Int32(value) } else { options.untilTimestamp = Int32(value) }
++            } else { self.status = self.ru ? "Неверная дата" : "Invalid date"; self.tableView.reloadData(); return }
++            do { try options.validate(); self.options = options; self.status = "" } catch { self.status = self.ru ? "Неверный диапазон/лимит" : "Invalid range/limit" }
++            self.tableView.reloadData()
++        }))
++        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true); guard !self.running else { return }
++        switch indexPath.row {
++        case 0, 1, 3: self.edit(row: indexPath.row)
++        case 4: self.start(forward: false)
++        case 5:
++            let alert = UIAlertController(title: self.ru ? "Переслать чат в Избранное?" : "Forward chat to Saved Messages?", message: (self.ru ? "Будут пересланы доступные сообщения за выбранный период, максимум " : "Forward available messages in the selected range, up to ") + String(self.options.maximumMessages) + (self.ru ? ". Уже отправленное не отменяется при остановке. Повтор создаёт дубликаты." : ". Stopping does not undo accepted forwards. Repeating may create duplicates."), preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: self.ru ? "Переслать" : "Forward", style: .default, handler: { [weak self] _ in self?.start(forward: true) }))
++            alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++        case 6: self.saveFolder()
++        default: break
++        }
++    }
++    private func start(forward: Bool) {
++        if let directory = self.directory { try? FileManager.default.removeItem(at: directory); self.directory = nil }
++        var options = self.options; options.forwardToSaved = forward
++        self.generation += 1; let generation = self.generation; self.running = true; self.status = self.ru ? "Подготовка…" : "Preparing…"; self.tableView.reloadData()
++        self.request.set((ayuExportChat(account: self.context.account, peerId: self.peerId, options: options) |> deliverOnMainQueue).start(next: { [weak self] event in
++            guard let self, self.generation == generation else { return }
++            switch event {
++            case let .progress(messages, bytes): self.status = (self.ru ? "Подготовлено: " : "Prepared: ") + String(messages) + " · " + ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
++            case let .forwarding(messages, total): self.status = (self.ru ? "Передано серверу: " : "Submitted: ") + "\(messages)/\(total)"
++            case let .completed(url): self.directory = url; self.running = false; self.status = self.ru ? "Папка готова. Нажми «Сохранить готовую папку»." : "Folder ready. Tap Save prepared folder."
++            case let .savedToSelf(messages, partial): self.running = false; self.status = (self.ru ? "Запросы приняты для сообщений: " : "Requests accepted for messages: ") + String(messages) + (partial ? (self.ru ? ". Достигнут лимит." : ". Limit reached.") : "")
++            }
++            self.tableView.reloadData()
++        }, error: { [weak self] error in
++            guard let self, self.generation == generation else { return }; self.running = false
++            self.status = (self.ru ? "Операция не завершена: " : "Operation failed: ") + String(describing: error) + (forward ? (self.ru ? ". Уже пересланное остаётся в Избранном." : ". Already forwarded messages remain in Saved Messages.") : "")
++            self.tableView.reloadData()
++        }))
++    }
++    private func saveFolder() {
++        guard let directory = self.directory else { return }
++        let picker = UIDocumentPickerViewController(forExporting: [directory], asCopy: true); picker.delegate = self; self.present(picker, animated: true)
++    }
++    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { self.status = self.ru ? "Экспорт передан выбранному хранилищу." : "Export handed to the selected storage provider."; self.tableView.reloadData() }
++}
++
++final class AyuMediaArchiveController: UITableViewController, UIDocumentPickerDelegate {
++    private let context: AccountContext
++    private let observation = MetaDisposable()
++    private let operation = MetaDisposable()
++    private var state = AyuMessageHistoryState()
++    private var files: [AyuArchivedAttachment] = []
++    private var status = ""
++    private var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
++    init(context: AccountContext) { self.context = context; super.init(style: .insetGrouped); self.title = "AyuGram · Media Archive" }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.observation.dispose(); self.operation.dispose() }
++    override func viewDidLoad() {
++        super.viewDidLoad(); self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        self.observation.set((self.context.engine.messages.ayuMessageHistory() |> deliverOnMainQueue).startStrict(next: { [weak self] state in
++            guard let self else { return }; self.state = state
++            var seen = Set<String>(); self.files = state.records.flatMap { $0.attachments ?? [] }.filter { seen.insert($0.id).inserted }; self.tableView.reloadData()
++        }))
++    }
++    @objc private func done() { self.dismiss(animated: true) }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? 4 : max(1, self.files.count) }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        return section == 0 ? (self.ru ? "Отдельные архивные копии фото, файлов, видео и голосовых, доступных в кэше при сохранении истории. Срок 7 дней и 100 записей истории сохраняется. Уменьшение квоты не удаляет старое. Удаление медиа не удаляет текстовую историю.\n" : "Separate cached photo/file/video/voice copies captured with local history. Seven-day/100-record retention remains. Lowering quota does not delete old files. Removing media preserves text history.\n") + self.status : nil
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil); cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
++        if indexPath.section == 0 {
++            cell.textLabel?.text = self.ru ? ["Использование", "Лимиты архива", "Экспортировать все файлы", "Удалить все архивные медиа"][indexPath.row] : ["Usage", "Archive limits", "Export all files", "Remove all archived media"][indexPath.row]
++            if indexPath.row == 0 { cell.detailTextLabel?.text = "\(self.files.count) · " + ByteCountFormatter.string(fromByteCount: self.files.reduce(Int64(0)) { $0 + $1.byteCount }, countStyle: .file) }
++            if indexPath.row == 1 { cell.detailTextLabel?.text = "\(self.state.mediaFileLimitMB) MB/file · \(self.state.mediaQuotaMB) MB total" }
++            if indexPath.row == 3 { cell.textLabel?.textColor = .systemRed }
++        } else if self.files.isEmpty { cell.textLabel?.text = self.ru ? "Архив пуст" : "Archive empty" }
++        else { let file = self.files[indexPath.row]; cell.textLabel?.text = file.displayName; cell.detailTextLabel?.text = ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file); cell.accessoryType = .disclosureIndicator }
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        if indexPath.section == 0 {
++            if indexPath.row == 1 { self.limits() }
++            else if indexPath.row == 2 { self.export(ids: Set(self.files.map { $0.id })) }
++            else if indexPath.row == 3 { self.remove(ids: Set(self.files.map { $0.id })) }
++            return
++        }
++        guard self.files.indices.contains(indexPath.row) else { return }
++        let file = self.files[indexPath.row]
++        let alert = UIAlertController(title: file.displayName, message: nil, preferredStyle: .actionSheet)
++        alert.addAction(UIAlertAction(title: self.ru ? "Экспортировать" : "Export", style: .default, handler: { [weak self] _ in self?.export(ids: Set([file.id])) }))
++        alert.addAction(UIAlertAction(title: self.ru ? "Удалить копию" : "Remove copy", style: .destructive, handler: { [weak self] _ in self?.remove(ids: Set([file.id])) }))
++        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); alert.popoverPresentationController?.sourceView = tableView; alert.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath); self.present(alert, animated: true)
++    }
++    private func limits() {
++        let alert = UIAlertController(title: self.ru ? "Лимиты, МБ" : "Limits, MB", message: "File: 1…250 · total: 25…2000", preferredStyle: .alert)
++        alert.addTextField { $0.keyboardType = .numberPad; $0.text = String(self.state.mediaFileLimitMB) }
++        alert.addTextField { $0.keyboardType = .numberPad; $0.text = String(self.state.mediaQuotaMB) }
++        alert.addAction(UIAlertAction(title: self.ru ? "Сохранить" : "Save", style: .default, handler: { [weak self, weak alert] _ in
++            guard let self, let first = alert?.textFields?[0].text, let second = alert?.textFields?[1].text, let a = Int32(first), let b = Int32(second) else { return }
++            self.operation.set((self.context.engine.messages.ayuSetMediaArchiveLimits(fileMB: a, quotaMB: b) |> deliverOnMainQueue).startStrict(next: { [weak self] accepted in self?.status = accepted ? "" : "Invalid limits"; self?.tableView.reloadData() }))
++        }))
++        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++    }
++    private func remove(ids: Set<String>) {
++        guard !ids.isEmpty else { return }
++        if let presented = self.presentedViewController {
++            presented.dismiss(animated: true, completion: { [weak self] in self?.remove(ids: ids) }); return
++        }
++        let alert = UIAlertController(title: self.ru ? "Удалить архивные копии?" : "Remove archive copies?", message: "\(ids.count)", preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: self.ru ? "Удалить" : "Remove", style: .destructive, handler: { [weak self] _ in
++            guard let self else { return }; self.operation.set(self.context.engine.messages.ayuRemoveArchivedMedia(ids: ids).startStrict())
++        }))
++        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++    }
++    private func export(ids: Set<String>) {
++        guard !ids.isEmpty else { return }
++        self.operation.set((self.context.engine.messages.ayuArchivedMediaFiles() |> deliverOnMainQueue).startStrict(next: { [weak self] files in
++            guard let self else { return }
++            let selected = files.filter { ids.contains($0.0.id) }
++            let urls = selected.compactMap { $0.1 }
++            self.status = self.ru ? "Доступно файлов: \(urls.count)/\(ids.count)" : "Available files: \(urls.count)/\(ids.count)"
++            self.tableView.reloadData(); guard !urls.isEmpty else { return }
++            let picker = UIDocumentPickerViewController(forExporting: urls, asCopy: true); picker.delegate = self
++            if let presented = self.presentedViewController { presented.dismiss(animated: true, completion: { [weak self] in self?.present(picker, animated: true) }) } else { self.present(picker, animated: true) }
++        }))
++    }
 +}
 diff --git a/submodules/AccountContext/Sources/AyuReactionDisplay.swift b/submodules/AccountContext/Sources/AyuReactionDisplay.swift
 new file mode 100644
@@ -66175,13 +66562,19 @@ index 00000000..5ccfee08
 +    }
 +}
 diff --git a/submodules/ChatListUI/Sources/ChatContextMenus.swift b/submodules/ChatListUI/Sources/ChatContextMenus.swift
-index f753a8ea..f9c1b489 100644
+index f753a8ea..9367fba0 100644
 --- a/submodules/ChatListUI/Sources/ChatContextMenus.swift
 +++ b/submodules/ChatListUI/Sources/ChatContextMenus.swift
-@@ -136,6 +136,14 @@ func chatContextMenuItems(context: AccountContext, peerId: EnginePeer.Id, promoI
+@@ -136,6 +136,20 @@ func chatContextMenuItems(context: AccountContext, peerId: EnginePeer.Id, promoI
                      }
  
                      var items: [ContextMenuItem] = []
++                    if peerId.namespace != Namespaces.Peer.SecretChat {
++                        items.append(.action(ContextMenuActionItem(text: strings.baseLanguageCode.hasPrefix("ru") ? "Экспорт чата / Избранное" : "Export chat / Saved Messages", icon: { theme in generateTintedImage(image: UIImage(systemName: "square.and.arrow.up"), color: theme.contextMenu.primaryColor) }, action: { _, complete in
++                            complete(.default)
++                            ayuPresentChatExport(context: context, peerId: peerId)
++                        })))
++                    }
 +                    if context.account.network.ayuGhostMode.current.plugins.chatColorsProviderID != nil {
 +                        items.append(.action(ContextMenuActionItem(text: strings.baseLanguageCode.hasPrefix("ru") ? "Цвет чата" : "Chat color", icon: { theme in
 +                            generateTintedImage(image: UIImage(systemName: "paintpalette"), color: theme.contextMenu.primaryColor)
@@ -67728,10 +68121,10 @@ index 00000000..74829371
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..dadda637
+index 00000000..1a4387ba
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,489 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -67889,6 +68282,10 @@ index 00000000..dadda637
 +        case 8: push?(ayuHiddenMessagesController(context: context))
 +        case 9: push?(ayuReactionSettingsController(context: context))
 +        case 20: ayuPresentAppIcons(context: context)
++        case 50: ayuPresentAdvancedSettings(context: context, page: .sending)
++        case 51: ayuPresentAdvancedSettings(context: context, page: .translation)
++        case 52: ayuPresentAdvancedSettings(context: context, page: .cosmetics)
++        case 53: ayuPresentMediaArchive(context: context)
 +        case 31: openChannel?()
 +        case 32: context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
 +        case 11: ayuPresentPlugins(context: context)
@@ -67904,13 +68301,13 @@ index 00000000..dadda637
 +        switch category {
 +        case 0:
 +            title = "AyuGram"
-+            entries = [.link(0, "Ghost Mode"), .link(1, ru ? "История сообщений" : "Message History")]
++            entries = [.link(0, "Ghost Mode"), .link(50, "Ghost Mode+"), .link(1, ru ? "История сообщений" : "Message History"), .link(53, ru ? "Медиаархив" : "Media Archive")]
 +        case 2:
 +            title = ru ? "Основные" : "General"
-+            entries = [.link(2, ru ? "Отправка сообщений" : "Sending Options"), .link(5, ru ? "Интерфейс" : "Interface"), .link(6, ru ? "Меню сообщения" : "Message Menu")]
++            entries = [.link(51, ru ? "Переводчики" : "Translation providers"), .link(2, ru ? "Отправка сообщений" : "Sending Options"), .link(5, ru ? "Интерфейс" : "Interface"), .link(6, ru ? "Меню сообщения" : "Message Menu")]
 +        case 3:
 +            title = ru ? "Оформление" : "Appearance"
-+            entries = [.link(4, ru ? "Оформление чатов" : "Chat Appearance"), .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"), .link(20, ru ? "Иконка приложения" : "App Icon")]
++            entries = [.link(52, ru ? "Локальный эмодзи-статус" : "Local emoji status"), .link(4, ru ? "Оформление чатов" : "Chat Appearance"), .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"), .link(20, ru ? "Иконка приложения" : "App Icon")]
 +        case 4:
 +            title = ru ? "Чаты" : "Chats"
 +            entries = [.link(8, ru ? "Скрытые сообщения" : "Hidden Messages"), .link(9, ru ? "Реакции в чатах" : "Chat Reactions")]
@@ -68327,6 +68724,97 @@ index bf906980..d8c5312f 100644
      declareEncodable(TelegramMediaGame.self, f: { TelegramMediaGame(decoder: $0) })
      declareEncodable(TelegramMediaInvoice.self, f: { TelegramMediaInvoice(decoder: $0) })
      declareEncodable(TelegramMediaWebFile.self, f: { TelegramMediaWebFile(decoder: $0) })
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAdvancedSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAdvancedSettings.swift
+new file mode 100644
+index 00000000..1c54ba0b
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuAdvancedSettings.swift
+@@ -0,0 +1,44 @@
++import Foundation
++
++public struct AyuAdvancedSettings: Codable, Equatable {
++    public enum TranslationProvider: String, Codable, CaseIterable { case telegram, libreTranslate, deepLFree, deepLPro }
++    public var scheduleOutgoing = false
++    public var markReadAfterSend = false
++    public var scheduleDelay: Int32 = 30
++    public var translationProvider: TranslationProvider = .telegram
++    public var translationTarget = "ru"
++    public var libreTranslateURL = ""
++    public var localEmojiStatusEnabled = false
++    public var localEmojiFileId: Int64?
++    public var animateLocalEmoji = true
++    public init() {}
++    private enum CodingKeys: String, CodingKey { case scheduleOutgoing, markReadAfterSend, scheduleDelay, translationProvider, translationTarget, libreTranslateURL, localEmojiStatusEnabled, localEmojiFileId, animateLocalEmoji }
++    public init(from decoder: Decoder) throws {
++        let c = try decoder.container(keyedBy: CodingKeys.self)
++        self.scheduleOutgoing = try c.decodeIfPresent(Bool.self, forKey: .scheduleOutgoing) ?? false
++        self.markReadAfterSend = try c.decodeIfPresent(Bool.self, forKey: .markReadAfterSend) ?? false
++        self.scheduleDelay = try c.decodeIfPresent(Int32.self, forKey: .scheduleDelay) ?? 30
++        self.translationProvider = try c.decodeIfPresent(TranslationProvider.self, forKey: .translationProvider) ?? .telegram
++        self.translationTarget = try c.decodeIfPresent(String.self, forKey: .translationTarget) ?? "ru"
++        self.libreTranslateURL = try c.decodeIfPresent(String.self, forKey: .libreTranslateURL) ?? ""
++        self.localEmojiStatusEnabled = try c.decodeIfPresent(Bool.self, forKey: .localEmojiStatusEnabled) ?? false
++        self.localEmojiFileId = try c.decodeIfPresent(Int64.self, forKey: .localEmojiFileId)
++        self.animateLocalEmoji = try c.decodeIfPresent(Bool.self, forKey: .animateLocalEmoji) ?? true
++        try self.validate()
++    }
++    public mutating func setScheduling(_ value: Bool) { self.scheduleOutgoing = value; if value { self.markReadAfterSend = false } }
++    public mutating func setReadAfterSend(_ value: Bool) { self.markReadAfterSend = value; if value { self.scheduleOutgoing = false } }
++    public func validate() throws {
++        guard !(self.scheduleOutgoing && self.markReadAfterSend), (10...3600).contains(self.scheduleDelay),
++              (2...16).contains(self.translationTarget.utf8.count), self.translationTarget.unicodeScalars.allSatisfy({ (65...90).contains($0.value) || (97...122).contains($0.value) || $0 == "-" }),
++              self.libreTranslateURL.utf8.count <= 2048, self.localEmojiFileId.map({ $0 > 0 }) ?? true else { throw AyuPluginError.invalidInput }
++        if !self.libreTranslateURL.isEmpty {
++            guard let url = URL(string: self.libreTranslateURL), url.scheme == "https", let host = url.host, !host.isEmpty, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { throw AyuPluginError.invalidInput }
++        }
++    }
++    public var localStatusFileId: Int64? { return self.localEmojiStatusEnabled ? self.localEmojiFileId : nil }
++    public func scheduledTimestamp(now: Int32) -> Int32? {
++        guard self.scheduleOutgoing, (10...3600).contains(self.scheduleDelay), now >= 0, now <= Int32.max - self.scheduleDelay else { return nil }
++        return now + self.scheduleDelay
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift
+new file mode 100644
+index 00000000..a58e7364
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift
+@@ -0,0 +1,35 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++internal import TelegramApi
++
++/// Explicit opt-in receipt after accepted ordinary cloud sends. Never changes failed/queued sends.
++func ayuMarkReadAfterSending(postbox: Postbox, network: Network, stateManager: AccountStateManager, messages: [Message]) {
++    guard network.ayuGhostMode.current.advanced.markReadAfterSend, let first = messages.first,
++          first.id.peerId.namespace != Namespaces.Peer.SecretChat,
++          messages.allSatisfy({ $0.id.peerId == first.id.peerId && $0.threadId == nil && !$0.attributes.contains(where: { $0 is OutgoingScheduleInfoMessageAttribute }) }) else { return }
++    let peerId = first.id.peerId
++    let _ = (postbox.transaction { transaction -> (Peer, MessageIndex)? in
++        guard let peer = transaction.getPeer(peerId), !peer.isForumOrMonoForum, peerKeepsReadState(peer),
++              let index = transaction.getTopPeerMessageIndex(peerId: peerId, namespace: Namespaces.Message.Cloud) else { return nil }
++        return (peer, index)
++    } |> mapToSignal { value -> Signal<Void, NoError> in
++        guard let (peer, index) = value, network.ayuGhostMode.current.advanced.markReadAfterSend, let input = apiInputPeer(peer) else { return .complete() }
++        let receipt: Signal<Bool, NoError>
++        if let channel = apiInputChannel(peer) {
++            receipt = network.request(Api.functions.channels.readHistory(channel: channel, maxId: index.id.id), automaticFloodWait: false)
++            |> map { _ in true } |> `catch` { _ in .single(false) }
++        } else {
++            receipt = network.request(Api.functions.messages.readHistory(peer: input, maxId: index.id.id), automaticFloodWait: false)
++            |> map { result -> Bool in
++                switch result { case let .affectedMessages(data): stateManager.addUpdateGroups([.updatePts(pts: data.pts, ptsCount: data.ptsCount)]) }
++                return true
++            } |> `catch` { _ in .single(false) }
++        }
++        return receipt |> mapToSignal { accepted -> Signal<Void, NoError> in
++            guard accepted else { return .complete() }
++            network.ayuReassertOfflineAfterSending()
++            return _internal_applyMaxReadIndexInteractively(postbox: postbox, stateManager: stateManager, index: index)
++        }
++    }).startStandalone()
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAndroidPluginConverter.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAndroidPluginConverter.swift
 new file mode 100644
 index 00000000..bc3c1aae
@@ -68564,10 +69052,10 @@ index 00000000..e48eaf76
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift b/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift
 new file mode 100644
-index 00000000..ba034fc4
+index 00000000..d7c19550
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,118 @@
 +import Foundation
 +
 +public struct AyuArchivedAttachment: Codable, Equatable {
@@ -68593,14 +69081,20 @@ index 00000000..ba034fc4
 +
 +    private let lock = NSRecursiveLock()
 +    private let root: URL
-+    private let quota: Int64
-+    private let perFileLimit: Int64
++    private var quota: Int64
++    private var perFileLimit: Int64
 +    private var pending: [String: Date] = [:]
 +
 +    public init(root: URL, quota: Int64 = 250_000_000, perFileLimit: Int64 = 25_000_000) {
 +        self.root = root.standardizedFileURL
 +        self.quota = quota
 +        self.perFileLimit = perFileLimit
++    }
++
++    public func configure(quota: Int64, perFileLimit: Int64) throws {
++        guard quota >= 25_000_000, quota <= 2_000_000_000, perFileLimit > 0, perFileLimit <= 250_000_000, perFileLimit <= quota else { throw self.error("Invalid archive limits") }
++        self.lock.lock(); defer { self.lock.unlock() }
++        self.quota = quota; self.perFileLimit = perFileLimit
 +    }
 +
 +    private func files() -> [URL] {
@@ -68628,20 +69122,24 @@ index 00000000..ba034fc4
 +        let ext = (displayName as NSString).pathExtension
 +        let suffix = !ext.isEmpty && ext.count <= 10 && ext.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) }) ? "." + ext : ""
 +        let name = id + suffix
-+        let data = try Data(contentsOf: source, options: .mappedIfSafe)
-+        guard data.count > 0 && Int64(data.count) <= self.perFileLimit && used + Int64(data.count) <= self.quota else { throw self.error("File size changed while archiving.") }
++        let stage = self.root.appendingPathComponent("." + name + ".tmp")
++        let destination = self.root.appendingPathComponent(name)
++        guard (try FileManager.default.attributesOfItem(atPath: source.path)[.type]) as? FileAttributeType == .typeRegular else { throw self.error("Only regular media files can be archived.") }
 +        self.pending[name] = Date()
 +        do {
++            try FileManager.default.copyItem(at: source, to: stage)
++            let actual = self.bytes(stage)
++            guard actual > 0, actual <= self.perFileLimit, used + actual <= self.quota else { throw self.error("File size changed while archiving.") }
 +            #if os(iOS)
-+            try data.write(to: self.root.appendingPathComponent(name), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-+            #else
-+            try data.write(to: self.root.appendingPathComponent(name), options: .atomic)
++            try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: stage.path)
 +            #endif
++            try FileManager.default.moveItem(at: stage, to: destination)
++            return AyuArchivedAttachment(id: id, storedName: name, displayName: String(displayName.prefix(200)), byteCount: actual)
 +        } catch {
++            try? FileManager.default.removeItem(at: stage)
 +            self.pending.removeValue(forKey: name)
 +            throw error
 +        }
-+        return AyuArchivedAttachment(id: id, storedName: name, displayName: String(displayName.prefix(200)), byteCount: Int64(data.count))
 +    }
 +
 +    public func url(for attachment: AyuArchivedAttachment) -> URL? {
@@ -68659,6 +69157,11 @@ index 00000000..ba034fc4
 +    public func prune(validNames: Set<String>, now: Date = Date()) {
 +        self.lock.lock()
 +        defer { self.lock.unlock() }
++        let staged = (try? FileManager.default.contentsOfDirectory(at: self.root, includingPropertiesForKeys: [.contentModificationDateKey], options: [])) ?? []
++        for file in staged where file.lastPathComponent.hasPrefix(".") && file.lastPathComponent.hasSuffix(".tmp") {
++            let name = String(file.lastPathComponent.dropFirst()).split(separator: ".").first.map(String.init) ?? ""
++            if UUID(uuidString: name) != nil, let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, now.timeIntervalSince(modified) > 300 { try? FileManager.default.removeItem(at: file) }
++        }
 +        for name in Array(self.pending.keys) {
 +            if validNames.contains(name) || now.timeIntervalSince(self.pending[name]!) > 300 { self.pending.removeValue(forKey: name) }
 +        }
@@ -68761,6 +69264,309 @@ index 00000000..d8600e52
 +        return (rgb, Double(alpha) / 255.0)
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuChatExport.swift b/submodules/TelegramCore/Sources/AyuGram/AyuChatExport.swift
+new file mode 100644
+index 00000000..c6e14f7d
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuChatExport.swift
+@@ -0,0 +1,168 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++internal import TelegramApi
++
++public enum AyuChatExportEvent { case progress(messages: Int, mediaBytes: Int64); case completed(URL); case forwarding(messages: Int, total: Int); case savedToSelf(messages: Int, partial: Bool) }
++public enum AyuChatExportError: Error { case unsupported, network, storage, cancelled }
++
++public func ayuExportChat(account: Account, peerId: PeerId, options: AyuChatExportOptions) -> Signal<AyuChatExportEvent, AyuChatExportError> {
++    return Signal { subscriber in
++        let job = AyuChatExportJob(account: account, peerId: peerId, options: options, subscriber: subscriber)
++        job.start()
++        return ActionDisposable { job.cancel() }
++    }
++}
++private final class AyuChatExportJob {
++    private let account: Account
++    private let peerId: PeerId
++    private let options: AyuChatExportOptions
++    private let subscriber: Subscriber<AyuChatExportEvent, AyuChatExportError>
++    private let queue = Queue(name: "AyuGram.ChatExport")
++    private let request = MetaDisposable()
++    private let lock = NSLock()
++    private var cancelled = false
++    private var finished = false
++    private var writer: AyuChatExportWriter?
++    private var peer: Peer?
++    private var inputPeer: Api.InputPeer?
++    private var forwardPage = -1
++    private var forwarded = 0
++    private var forwarding = false
++    private var partial = false
++    private var offset: Int32 = 0
++    private var title = "Chat"
++    init(account: Account, peerId: PeerId, options: AyuChatExportOptions, subscriber: Subscriber<AyuChatExportEvent, AyuChatExportError>) {
++        self.account = account; self.peerId = peerId; self.options = options; self.subscriber = subscriber
++    }
++    private var isCancelled: Bool { self.lock.lock(); defer { self.lock.unlock() }; return self.cancelled }
++    func cancel() {
++        self.lock.lock(); self.cancelled = true; self.lock.unlock()
++        self.request.dispose()
++        self.queue.async { if !self.finished { self.writer?.discard() } }
++    }
++    func start() {
++        self.queue.async {
++            guard !self.isCancelled else { return }
++            do { self.writer = try AyuChatExportWriter(parent: FileManager.default.temporaryDirectory, options: self.options) }
++            catch { self.fail(.storage); return }
++            self.request.set((self.account.postbox.transaction { transaction -> Peer? in transaction.getPeer(self.peerId) }
++            |> deliverOn(self.queue)).start(next: { [weak self] peer in
++                guard let self, !self.isCancelled else { return }
++                guard let peer, [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peer.id.namespace), !peer.isCopyProtectionEnabled, let input = apiInputPeer(peer) else { self.fail(.unsupported); return }
++                if self.options.forwardToSaved && self.peerId == self.account.peerId { self.fail(.unsupported); return }
++                self.peer = peer; self.inputPeer = input; self.title = Self.peerTitle(peer)
++                self.queue.async { self.nextPage() }
++            }))
++        }
++    }
++    private static func peerTitle(_ peer: Peer?) -> String {
++        if let user = peer as? TelegramUser { return user.nameOrPhone }
++        if let group = peer as? TelegramGroup { return group.title }
++        if let channel = peer as? TelegramChannel { return channel.title }
++        return "Chat"
++    }
++    private static func rawId(_ message: Api.Message) -> Int32 {
++        switch message { case let .message(value): return value.id; case let .messageService(value): return value.id; case let .messageEmpty(value): return value.id }
++    }
++    private func nextPage() {
++        guard !self.isCancelled, let input = self.inputPeer, let peer = self.peer else { return }
++        self.request.set((self.account.network.request(Api.functions.messages.getHistory(peer: input, offsetId: self.offset, offsetDate: 0, addOffset: 0, limit: 100, maxId: 0, minId: 0, hash: 0), automaticFloodWait: false)
++        |> deliverOn(self.queue)).start(next: { [weak self] result in
++            guard let self, !self.isCancelled else { return }
++            let messages: [Api.Message], users: [Api.User], chats: [Api.Chat]
++            switch result {
++            case let .messages(data): messages = data.messages; users = data.users; chats = data.chats
++            case let .messagesSlice(data): messages = data.messages; users = data.users; chats = data.chats
++            case let .channelMessages(data): messages = data.messages; users = data.users; chats = data.chats
++            case .messagesNotModified: self.fail(.network); return
++            }
++            if messages.isEmpty { self.complete(truncated: false); return }
++            let next = messages.map(Self.rawId).filter { $0 > 0 }.min() ?? 0
++            guard next > 0, self.offset == 0 || next < self.offset else { self.fail(.network); return }
++            let oldOffset = self.offset
++            self.offset = next
++            self.request.set((self.account.postbox.transaction { transaction -> [(StoreMessage, String)]? in
++                let peers = AccumulatedPeers(transaction: transaction, chats: chats, users: users)
++                if (peers.peers[self.peerId] ?? transaction.getPeer(self.peerId))?.isCopyProtectionEnabled != false { return nil }
++                return messages.compactMap { api -> (StoreMessage, String)? in
++                    guard let message = StoreMessage(apiMessage: api, accountPeerId: self.account.peerId, peerIsForum: peer.isForumOrMonoForum), case let .Id(id) = message.id, id.peerId == self.peerId, oldOffset == 0 || id.id < oldOffset else { return nil }
++                    return (message, Self.peerTitle(message.authorId.flatMap { authorId -> Peer? in peers.peers[authorId] ?? peers.users[authorId].map { TelegramUser(user: $0) } ?? transaction.getPeer(authorId) }))
++                }
++            } |> deliverOn(self.queue)).start(next: { [weak self] values in
++                guard let self, !self.isCancelled, let writer = self.writer else { return }
++                guard let values else { self.fail(.unsupported); return }
++                do {
++                    var rows: [AyuChatExportMessage] = []
++                    for (message, author) in values {
++                        if self.isCancelled { return }
++                        guard case let .Id(id) = message.id, message.timestamp >= self.options.fromTimestamp, message.timestamp <= self.options.untilTimestamp else { continue }
++                        if writer.count + rows.count >= self.options.maximumMessages { break }
++                        let excluded = message.flags.contains(.CopyProtected) || message.attributes.contains(where: { $0 is AutoremoveTimeoutMessageAttribute || $0 is AutoclearTimeoutMessageAttribute || $0 is EphemeralMessageAttribute || $0 is EphemeralReplacementMessageAttribute || $0 is EphemeralOutgoingMessageAttribute })
++                        if self.options.forwardToSaved && (excluded || message.media.contains(where: { $0 is TelegramMediaAction })) { continue }
++                        var path: String?, name: String?, photo = false, mediaStatus: String?
++                        if !excluded, !self.options.forwardToSaved, let media = message.media.first(where: { $0 is TelegramMediaFile || $0 is TelegramMediaImage }) {
++                            let resource: MediaResource?
++                            if let file = media as? TelegramMediaFile { resource = file.resource; name = file.fileName ?? "attachment" }
++                            else if let image = media as? TelegramMediaImage { resource = largestImageRepresentation(image.representations)?.resource; name = "photo.jpg"; photo = true }
++                            else { resource = nil }
++                            let source = resource.flatMap { self.account.postbox.mediaBox.completedResourcePath($0) }.map { URL(fileURLWithPath: $0) }
++                            path = try writer.copyMedia(source: source, name: name ?? "attachment")
++                            if path == nil { mediaStatus = self.options.includeCachedMedia ? "Media not cached or exceeds export budget" : "Media excluded by export settings" }
++                        } else if excluded { mediaStatus = "Protected or expiring content omitted" }
++                        else if !message.media.isEmpty { mediaStatus = "Additional media type; no local file exported" }
++                        let entityData = excluded ? nil : message.attributes.compactMap { $0 as? TextEntitiesMessageAttribute }.first.flatMap { try? JSONEncoder().encode($0.entities) }
++                        let reply = message.attributes.compactMap { $0 as? ReplyMessageAttribute }.first?.messageId.id
++                        let authorId = message.authorId.map { ($0.namespace == Namespaces.Peer.CloudUser ? "user" : "channel") + String($0.id._internalGetInt64Value()) }
++                        rows.append(AyuChatExportMessage(id: id.id, timestamp: message.timestamp, author: author, authorId: authorId, text: (excluded || self.options.forwardToSaved) ? "" : message.text, peerId: String(id.peerId.toInt64()), replyId: reply, photo: photo ? path : nil, file: photo ? nil : path, fileName: name, mediaStatus: mediaStatus, entities: entityData, service: message.media.contains(where: { $0 is TelegramMediaAction })))
++                    }
++                    try writer.appendPage(rows)
++                    self.subscriber.putNext(.progress(messages: writer.count, mediaBytes: writer.mediaBytes))
++                    if writer.count >= self.options.maximumMessages { self.complete(truncated: true) }
++                    else if !values.isEmpty && values.allSatisfy({ $0.0.timestamp < self.options.fromTimestamp }) { self.complete(truncated: false) }
++                    else { self.queue.after(0.2, { [weak self] in self?.nextPage() }) }
++                } catch { self.fail(.storage) }
++            }))
++        }, error: { [weak self] _ in self?.fail(.network) }))
++    }
++    private func complete(truncated: Bool) {
++        guard !self.isCancelled, let writer = self.writer else { return }
++        if self.options.forwardToSaved {
++            self.partial = truncated; self.forwarding = true; self.forwardPage = writer.pageCount - 1
++            self.queue.async { self.forwardNextPage() }; return
++        }
++        do {
++            let type: String
++            if let channel = self.peer as? TelegramChannel {
++                let prefix = channel.addressName == nil ? "private_" : "public_"
++                if case .group = channel.info { type = prefix + "supergroup" } else { type = prefix + "channel" }
++            } else if let user = self.peer as? TelegramUser { type = user.botInfo == nil ? "personal_chat" : "bot_chat" }
++            else { type = "private_group" }
++            let url = try writer.finish(title: self.title, peerId: self.peerId.id._internalGetInt64Value(), type: type, truncated: truncated, cancelled: { self.isCancelled })
++            guard !self.isCancelled else { writer.discard(); return }
++            self.finished = true; self.subscriber.putNext(.completed(url)); self.subscriber.putCompletion()
++        } catch { self.fail(self.isCancelled ? .cancelled : .storage) }
++    }
++    private func forwardNextPage() {
++        guard !self.isCancelled, let writer = self.writer, let input = self.inputPeer else { return }
++        if self.forwardPage < 0 {
++            writer.discard(); self.finished = true
++            self.subscriber.putNext(.savedToSelf(messages: self.forwarded, partial: self.partial)); self.subscriber.putCompletion(); return
++        }
++        let ids: [Int32]
++        do { ids = try writer.messageIds(page: self.forwardPage) } catch { self.fail(.storage); return }
++        self.forwardPage -= 1
++        if ids.isEmpty { self.queue.async { self.forwardNextPage() }; return }
++        let flags: Int32 = self.account.network.ayuGhostMode.current.shouldSendSilently ? (1 << 5) : 0
++        self.request.set((self.account.network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: input, id: ids, randomId: ids.map { _ in Int64.random(in: Int64.min...Int64.max) }, toPeer: .inputPeerSelf, topMsgId: nil, replyTo: nil, scheduleDate: nil, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil, effect: nil, videoTimestamp: nil, allowPaidStars: nil, suggestedPost: nil), automaticFloodWait: false)
++        |> deliverOn(self.queue)).start(next: { [weak self] updates in
++            guard let self else { return }
++            self.account.stateManager.addUpdates(updates)
++            self.account.network.ayuReassertOfflineAfterSending()
++            self.forwarded += ids.count
++            self.subscriber.putNext(.forwarding(messages: self.forwarded, total: writer.count))
++            self.queue.after(0.5, { [weak self] in self?.forwardNextPage() })
++        }, error: { [weak self] _ in self?.fail(.network) }))
++    }
++    private func fail(_ error: AyuChatExportError) { self.writer?.discard(); if !self.isCancelled { self.subscriber.putError(error) } }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuChatExportModels.swift b/submodules/TelegramCore/Sources/AyuGram/AyuChatExportModels.swift
+new file mode 100644
+index 00000000..a75d2a37
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuChatExportModels.swift
+@@ -0,0 +1,123 @@
++import Foundation
++
++public struct AyuChatExportOptions: Codable, Equatable {
++    public var fromTimestamp: Int32 = 0
++    public var untilTimestamp: Int32 = Int32.max
++    public var forwardToSaved = false
++    public var includeCachedMedia = true
++    public var maximumMessages = 100000
++    public var mediaBudget: Int64 = 1_000_000_000
++    public init() {}
++    public func validate() throws {
++        guard self.fromTimestamp >= 0, self.untilTimestamp >= self.fromTimestamp, (1...1000000).contains(self.maximumMessages), (0...2_000_000_000).contains(self.mediaBudget) else { throw AyuPluginError.invalidInput }
++    }
++}
++public struct AyuChatExportTextEntity: Codable, Equatable { public let type: String; public let text: String }
++public struct AyuChatExportMessage: Codable, Equatable {
++    public let id: Int32
++    public let type: String
++    public let date: String
++    public let date_unixtime: String
++    public let from: String?
++    public let from_id: String?
++    public let text: String
++    public let text_entities: [AyuChatExportTextEntity]
++    public let source_peer_id: String
++    public let reply_to_message_id: Int32?
++    public let photo: String?
++    public let file: String?
++    public let file_name: String?
++    public let media_status: String?
++    public let entities: Data?
++    public init(id: Int32, timestamp: Int32, author: String?, authorId: String?, text: String, peerId: String, replyId: Int32? = nil, photo: String? = nil, file: String? = nil, fileName: String? = nil, mediaStatus: String? = nil, entities: Data? = nil, service: Bool = false) {
++        self.id = id; self.type = service ? "service" : "message"
++        self.date = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: Double(timestamp)))
++        self.date_unixtime = String(timestamp); self.from = author; self.from_id = authorId; self.text = text; self.text_entities = [AyuChatExportTextEntity(type: "plain", text: text)]
++        self.source_peer_id = peerId; self.reply_to_message_id = replyId; self.photo = photo; self.file = file; self.file_name = fileName; self.media_status = mediaStatus; self.entities = entities
++    }
++}
++/// Disk-backed pages: memory usage does not grow with the whole conversation.
++public final class AyuChatExportWriter {
++    public let root: URL
++    private var pages = 0
++    public private(set) var count = 0
++    public private(set) var mediaBytes: Int64 = 0
++    public private(set) var missingMedia = 0
++    private let options: AyuChatExportOptions
++    public init(parent: URL, options: AyuChatExportOptions) throws {
++        try options.validate(); self.options = options
++        self.root = parent.appendingPathComponent("AyuGram-Chat-" + UUID().uuidString, isDirectory: true)
++        try FileManager.default.createDirectory(at: self.root.appendingPathComponent("pages"), withIntermediateDirectories: true)
++        try FileManager.default.createDirectory(at: self.root.appendingPathComponent("media"), withIntermediateDirectories: true)
++        var root = self.root; var values = URLResourceValues(); values.isExcludedFromBackup = true; try root.setResourceValues(values)
++        #if os(iOS)
++        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: self.root.path)
++        #endif
++    }
++    public static func html(_ text: String) -> String {
++        return text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "'", with: "&#39;")
++    }
++    public func copyMedia(source: URL?, name: String) throws -> String? {
++        guard self.options.includeCachedMedia else { return nil }
++        guard let source else { self.missingMedia += 1; return nil }
++        let attributes = try FileManager.default.attributesOfItem(atPath: source.path)
++        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
++        guard attributes[.type] as? FileAttributeType == .typeRegular, size > 0, size <= 250_000_000, self.mediaBytes + size <= self.options.mediaBudget else { self.missingMedia += 1; return nil }
++        let ext = (name as NSString).pathExtension.lowercased()
++        let suffix = !ext.isEmpty && ext.count <= 10 && ext.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) }) ? "." + ext : ""
++        let path = "media/" + UUID().uuidString + suffix
++        try FileManager.default.copyItem(at: source, to: self.root.appendingPathComponent(path))
++        self.mediaBytes += size
++        return path
++    }
++    public func appendPage(_ messages: [AyuChatExportMessage]) throws {
++        guard self.count + messages.count <= self.options.maximumMessages else { throw AyuPluginError.capacity }
++        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
++        var page = Data()
++        for message in messages.sorted(by: { left, right in
++            let a = Int64(left.date_unixtime) ?? 0, b = Int64(right.date_unixtime) ?? 0
++            return a == b ? left.id < right.id : a < b
++        }) {
++            page.append(try encoder.encode(message)); page.append(10)
++        }
++        try page.write(to: self.root.appendingPathComponent("pages/\(self.pages).jsonl"), options: .atomic)
++        self.pages += 1; self.count += messages.count
++    }
++    public var pageCount: Int { return self.pages }
++    public func messageIds(page: Int) throws -> [Int32] {
++        guard (0..<self.pages).contains(page) else { throw AyuPluginError.invalidInput }
++        return try Data(contentsOf: self.root.appendingPathComponent("pages/\(page).jsonl")).split(separator: 10).map { try JSONDecoder().decode(AyuChatExportMessage.self, from: Data($0)).id }
++    }
++    public func finish(title: String, peerId: Int64, type: String, truncated: Bool, cancelled: () -> Bool = { false }) throws -> URL {
++        let jsonURL = self.root.appendingPathComponent("result.json"), htmlURL = self.root.appendingPathComponent("messages.html")
++        try Data().write(to: jsonURL); try Data().write(to: htmlURL)
++        let json = try FileHandle(forWritingTo: jsonURL), html = try FileHandle(forWritingTo: htmlURL)
++        defer { try? json.close(); try? html.close() }
++        let header: [String: Any] = ["name": title, "type": type, "id": peerId, "exported_by": "AyuGramm-IOS", "partial": truncated, "missing_media": self.missingMedia]
++        var data = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys]); data.removeLast(); data.append(contentsOf: ",\"messages\":[".utf8); try json.write(contentsOf: data)
++        let title = Self.html(title)
++        try html.write(contentsOf: Data(("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'\"><title>" + title + "</title><style>body{font:16px system-ui;max-width:900px;margin:auto;padding:20px;background:#101923;color:#e6edf3}article{padding:16px;border-bottom:1px solid #345;white-space:pre-wrap;overflow-wrap:anywhere}small{color:#9ab}a{color:#7cf}img{max-width:100%;max-height:400px}</style></head><body><h1>" + title + "</h1>").utf8))
++        var first = true
++        for index in (0..<self.pages).reversed() {
++            if cancelled() { throw NSError(domain: "AyuChatExport", code: -999) }
++            let lines = try Data(contentsOf: self.root.appendingPathComponent("pages/\(index).jsonl")).split(separator: 10)
++            for line in lines {
++                if !first { try json.write(contentsOf: Data(",".utf8)) }; first = false
++                try json.write(contentsOf: Data(line))
++                let message = try JSONDecoder().decode(AyuChatExportMessage.self, from: Data(line))
++                var block = "<article><b>" + Self.html(message.from ?? "") + "</b> <small>" + Self.html(message.date) + " · #\(message.id)</small><div>" + Self.html(message.text) + "</div>"
++                if let path = message.photo ?? message.file, path.hasPrefix("media/"), !path.contains(".."), !path.contains("\\") {
++                    if message.photo != nil { block += "<img loading=\"lazy\" src=\"" + Self.html(path) + "\" alt=\"photo\">" }
++                    block += "<a download href=\"" + Self.html(path) + "\">" + Self.html(message.file_name ?? "Attachment") + "</a>"
++                } else if let status = message.media_status { block += "<small>" + Self.html(status) + "</small>" }
++                try html.write(contentsOf: Data((block + "</article>").utf8))
++            }
++        }
++        try json.write(contentsOf: Data("]}".utf8)); try html.write(contentsOf: Data("</body></html>".utf8))
++        try FileManager.default.removeItem(at: self.root.appendingPathComponent("pages"))
++        let note = "HTML: messages.html; JSON: result.json; media: media/.\nMessages: \(self.count). Partial: \(truncated). Missing media: \(self.missingMedia).\nCached media only. Service events and formatting use additional JSON metadata; this is not a Telegram Desktop import package.\n"
++        try note.write(to: self.root.appendingPathComponent("README.txt"), atomically: true, encoding: .utf8)
++        return self.root
++    }
++    public func discard() { try? FileManager.default.removeItem(at: self.root) }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift b/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift
 new file mode 100644
 index 00000000..130e741d
@@ -68852,10 +69658,10 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..bc98c6bd
+index 00000000..0099243c
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,161 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
@@ -68875,13 +69681,14 @@ index 00000000..bc98c6bd
 +    public var hiddenMessages = AyuHiddenMessagesSettings()
 +    public var reactionDisplay = AyuReactionDisplaySettings()
 +    public var plugins = AyuPluginRegistry()
++    public var advanced = AyuAdvancedSettings()
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend, interface
 +        case messageShot
 +        case hiddenMessages
 +        case reactionDisplay
-+        case plugins
++        case plugins, advanced
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -68899,6 +69706,7 @@ index 00000000..bc98c6bd
 +        self.interface = (try? values.decode(AyuInterfaceSettings.self, forKey: .interface)) ?? AyuInterfaceSettings()
 +        self.messageShot = (try? values.decode(AyuMessageShotSettings.self, forKey: .messageShot)) ?? AyuMessageShotSettings()
 +        self.hiddenMessages = (try? values.decode(AyuHiddenMessagesSettings.self, forKey: .hiddenMessages)) ?? AyuHiddenMessagesSettings()
++        self.advanced = (try? values.decode(AyuAdvancedSettings.self, forKey: .advanced)) ?? AyuAdvancedSettings()
 +        self.reactionDisplay = (try? values.decode(AyuReactionDisplaySettings.self, forKey: .reactionDisplay)) ?? AyuReactionDisplaySettings()
 +        do {
 +            self.plugins = try values.decodeIfPresent(AyuPluginRegistry.self, forKey: .plugins) ?? AyuPluginRegistry()
@@ -68982,6 +69790,7 @@ index 00000000..bc98c6bd
 +        guard updated != self.value else { return }
 +        try updated.regexFilters.validate()
 +        try updated.plugins.validate()
++        try updated.advanced.validate()
 +        let data = try JSONEncoder().encode(updated)
 +        #if os(iOS)
 +        try data.write(to: self.fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
@@ -69242,15 +70051,30 @@ index 00000000..30a24300
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
 new file mode 100644
-index 00000000..3fe3c82a
+index 00000000..b31c4441
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,290 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
 +
 +private let ayuHistoryKey = applicationSpecificPreferencesKey(19901)
++
++private func ayuDecodeHistoryState(entry: PreferencesEntry?) -> AyuMessageHistoryState {
++    guard let entry = entry else { return AyuMessageHistoryState() }
++    if let state = try? JSONDecoder().decode(AyuMessageHistoryState.self, from: entry.data) {
++        return state
++    }
++    return entry.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
++}
++
++private func ayuEncodeHistoryState(_ state: AyuMessageHistoryState) -> PreferencesEntry {
++    if let data = try? JSONEncoder().encode(state) {
++        return PreferencesEntry(data: data)
++    }
++    return PreferencesEntry(state) ?? PreferencesEntry(data: Data())
++}
 +
 +public extension EngineMessage {
 +    var ayuIsDeleted: Bool {
@@ -69307,6 +70131,7 @@ index 00000000..3fe3c82a
 +        }
 +    }
 +    let store = AyuArchiveFileStore.shared(basePath: mediaBox.basePath)
++    try? store.configure(quota: Int64(state.mediaQuotaMB) * 1_000_000, perFileLimit: Int64(state.mediaFileLimitMB) * 1_000_000)
 +    var attachments: [AyuArchivedAttachment] = []
 +    for (resource, name) in resources.prefix(4) {
 +        guard let path = mediaBox.completedResourcePath(resource) else { continue }
@@ -69321,7 +70146,7 @@ index 00000000..3fe3c82a
 +    let store = AyuArchiveFileStore.shared(basePath: postbox.mediaBox.basePath)
 +    return postbox.preferencesView(keys: [ayuHistoryKey])
 +    |> map { view -> Set<String> in
-+        let state = view.values[ayuHistoryKey]?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
++        let state = ayuDecodeHistoryState(entry: view.values[ayuHistoryKey])
 +        return Set(state.records.flatMap { $0.attachments ?? [] }.map { $0.storedName })
 +    }
 +    |> distinctUntilChanged
@@ -69366,7 +70191,7 @@ index 00000000..3fe3c82a
 +
 +@discardableResult
 +func ayuPruneHistory(transaction: Transaction) -> AyuMessageHistoryState {
-+    let original = transaction.getPreferencesEntry(key: ayuHistoryKey)?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
++    let original = ayuDecodeHistoryState(entry: transaction.getPreferencesEntry(key: ayuHistoryKey))
 +    var state = original
 +    state.prune(now: Int64(Date().timeIntervalSince1970))
 +    for peerId in Set(state.records.map { $0.peerId }) where !ayuHistoryPeerAllowsArchiving(transaction: transaction, peerId: PeerId(peerId)) {
@@ -69374,7 +70199,7 @@ index 00000000..3fe3c82a
 +    }
 +    if state != original {
 +        ayuRemoveExpiredTombstones(transaction: transaction, previous: original, updated: state)
-+        transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in PreferencesEntry(state) })
++        transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in ayuEncodeHistoryState(state) })
 +    }
 +    return state
 +}
@@ -69382,7 +70207,7 @@ index 00000000..3fe3c82a
 +/// Called only for server edit/delete replay, before the original message is replaced/removed.
 +/// The ledger write participates in the same Postbox transaction and never blocks deletion.
 +func ayuArchiveMessage(transaction: Transaction, mediaBox: MediaBox, message: Message, kind: AyuMessageHistoryRecord.Kind, updated: StoreMessage? = nil) {
-+    let original = transaction.getPreferencesEntry(key: ayuHistoryKey)?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
++    let original = ayuDecodeHistoryState(entry: transaction.getPreferencesEntry(key: ayuHistoryKey))
 +    var state = original
 +    let now = Int64(Date().timeIntervalSince1970)
 +    state.prune(now: now)
@@ -69406,7 +70231,7 @@ index 00000000..3fe3c82a
 +    }
 +    if state != original {
 +        ayuRemoveExpiredTombstones(transaction: transaction, previous: original, updated: state)
-+        transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in PreferencesEntry(state) })
++        transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in ayuEncodeHistoryState(state) })
 +    }
 +}
 +
@@ -69419,9 +70244,10 @@ index 00000000..3fe3c82a
 +    } else {
 +        ayuArchiveMessage(transaction: transaction, mediaBox: mediaBox, message: message, kind: .deleted)
 +    }
-+    let state = transaction.getPreferencesEntry(key: ayuHistoryKey)?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
-+    guard !message.text.isEmpty,
-+          state.records.contains(where: { $0.kind == .deleted && $0.peerId == message.id.peerId.toInt64() && $0.messageId == message.id.id && $0.text == message.text }) else { return false }
++    let state = ayuDecodeHistoryState(entry: transaction.getPreferencesEntry(key: ayuHistoryKey))
++    let hasContent = !message.text.isEmpty || !message.media.isEmpty
++    guard hasContent,
++          state.records.contains(where: { $0.kind == .deleted && $0.peerId == message.id.peerId.toInt64() && $0.messageId == message.id.id }) else { return false }
 +    if alreadyDeleted { return true }
 +    transaction.updateMessage(message.id, update: { previous in
 +        var forwardInfo: StoreMessageForwardInfo?
@@ -69437,9 +70263,8 @@ index 00000000..3fe3c82a
 +        flags.remove(.TopIndexable)
 +        flags.remove(.CountedAsIncoming)
 +        flags.remove(.ReactionsArePossible)
-+        // Media copies remain in the bounded archive. The inline tombstone is text-only,
-+        // so deleting an album never pins an unbounded set of original media resources.
-+        return .update(StoreMessage(id: previous.id, customStableId: nil, globallyUniqueId: previous.globallyUniqueId, groupingKey: nil, threadId: previous.threadId, timestamp: previous.timestamp, flags: flags, tags: [], globalTags: [], localTags: [], forwardInfo: forwardInfo, authorId: previous.author?.id, text: previous.text, attributes: attributes, media: []))
++        let tombstoneText = previous.text.isEmpty ? (previous.media.first is TelegramMediaImage ? "📷" : (previous.media.first is TelegramMediaFile ? "📎" : "💬")) : previous.text
++        return .update(StoreMessage(id: previous.id, customStableId: nil, globallyUniqueId: previous.globallyUniqueId, groupingKey: nil, threadId: previous.threadId, timestamp: previous.timestamp, flags: flags, tags: [], globalTags: [], localTags: [], forwardInfo: forwardInfo, authorId: previous.author?.id, text: tombstoneText, attributes: attributes, media: []))
 +    })
 +    return true
 +}
@@ -69465,7 +70290,7 @@ index 00000000..3fe3c82a
 +    func updateAyuMessageHistory(saveEdits: Bool? = nil, saveDeleted: Bool? = nil, saveFormatting: Bool? = nil, saveReactions: Bool? = nil, saveForBots: Bool? = nil, saveMedia: Bool? = nil, mediaPrivateChats: Bool? = nil, mediaPublicChannels: Bool? = nil, mediaPrivateChannels: Bool? = nil, mediaPublicGroups: Bool? = nil, mediaPrivateGroups: Bool? = nil, clear: Bool = false) -> Signal<Void, NoError> {
 +        return self.account.postbox.transaction { transaction -> Void in
 +            transaction.updatePreferencesEntry(key: ayuHistoryKey, { entry in
-+                var state = entry?.get(AyuMessageHistoryState.self) ?? AyuMessageHistoryState()
++                var state = ayuDecodeHistoryState(entry: entry)
 +                let previous = state
 +                if let saveEdits { state.saveEdits = saveEdits }
 +                if let saveDeleted { state.saveDeleted = saveDeleted }
@@ -69481,17 +70306,51 @@ index 00000000..3fe3c82a
 +                if clear { state.clear() }
 +                state.prune(now: Int64(Date().timeIntervalSince1970))
 +                ayuRemoveExpiredTombstones(transaction: transaction, previous: previous, updated: state)
-+                return PreferencesEntry(state)
++                return ayuEncodeHistoryState(state)
 +            })
++        }
++    }
++}
++
++public extension TelegramEngine.Messages {
++    func ayuSetMediaArchiveLimits(fileMB: Int32, quotaMB: Int32) -> Signal<Bool, NoError> {
++        return self.account.postbox.transaction { transaction -> Bool in
++            let previous = ayuPruneHistory(transaction: transaction)
++            var state = previous
++            do { try state.setMediaLimits(fileMB: fileMB, quotaMB: quotaMB) } catch { return false }
++            transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in ayuEncodeHistoryState(state) })
++            return true
++        }
++    }
++    func ayuRemoveArchivedMedia(ids: Set<String>) -> Signal<Void, NoError> {
++        return self.account.postbox.transaction { transaction -> Void in
++            let previous = ayuPruneHistory(transaction: transaction)
++            var state = previous; state.removeMedia(ids: ids)
++            transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in ayuEncodeHistoryState(state) })
++            ayuRemoveExpiredTombstones(transaction: transaction, previous: previous, updated: state)
++        }
++    }
++}
++
++public extension TelegramEngine.Messages {
++    func ayuArchivedMediaFiles() -> Signal<[(AyuArchivedAttachment, URL?)], NoError> {
++        return self.account.postbox.transaction { transaction -> [(AyuArchivedAttachment, URL?)] in
++            let state = ayuPruneHistory(transaction: transaction)
++            let store = AyuArchiveFileStore.shared(basePath: self.account.postbox.mediaBox.basePath)
++            var seen = Set<String>()
++            return state.records.flatMap { $0.attachments ?? [] }.compactMap { file in
++                guard seen.insert(file.id).inserted else { return nil }
++                return (file, store.url(for: file))
++            }
 +        }
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
 new file mode 100644
-index 00000000..46e371d9
+index 00000000..5a5a6b96
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,169 @@
 +import Foundation
 +
 +public struct AyuMessageHistoryRecord: Codable, Equatable {
@@ -69566,6 +70425,8 @@ index 00000000..46e371d9
 +    public var saveFormatting = true
 +    public var saveReactions = true
 +    public var saveForBots = true
++    public var mediaFileLimitMB: Int32 = 25
++    public var mediaQuotaMB: Int32 = 250
 +    public var saveMedia = false
 +    public var mediaPrivateChats = true
 +    public var mediaPublicChannels = false
@@ -69582,6 +70443,7 @@ index 00000000..46e371d9
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case saveEdits, saveDeleted, saveFormatting, saveReactions, saveForBots, records, nextId
++        case mediaFileLimitMB, mediaQuotaMB
 +        case saveMedia, mediaPrivateChats, mediaPublicChannels, mediaPrivateChannels, mediaPublicGroups, mediaPrivateGroups
 +    }
 +
@@ -69592,6 +70454,9 @@ index 00000000..46e371d9
 +        self.saveFormatting = try values.decodeIfPresent(Bool.self, forKey: .saveFormatting) ?? true
 +        self.saveReactions = try values.decodeIfPresent(Bool.self, forKey: .saveReactions) ?? true
 +        self.saveForBots = try values.decodeIfPresent(Bool.self, forKey: .saveForBots) ?? true
++        self.mediaFileLimitMB = try values.decodeIfPresent(Int32.self, forKey: .mediaFileLimitMB) ?? 25
++        self.mediaQuotaMB = try values.decodeIfPresent(Int32.self, forKey: .mediaQuotaMB) ?? 250
++        if !(1...250).contains(self.mediaFileLimitMB) || !(25...2000).contains(self.mediaQuotaMB) || self.mediaFileLimitMB > self.mediaQuotaMB { self.mediaFileLimitMB = 25; self.mediaQuotaMB = 250 }
 +        self.saveMedia = try values.decodeIfPresent(Bool.self, forKey: .saveMedia) ?? false
 +        self.mediaPrivateChats = try values.decodeIfPresent(Bool.self, forKey: .mediaPrivateChats) ?? true
 +        self.mediaPublicChannels = try values.decodeIfPresent(Bool.self, forKey: .mediaPublicChannels) ?? false
@@ -69612,6 +70477,18 @@ index 00000000..46e371d9
 +    public mutating func remove(peerId: Int64, messageId: Int32? = nil) {
 +        self.records.removeAll { record in
 +            record.peerId == peerId && (messageId == nil || record.messageId == messageId)
++        }
++    }
++
++    public mutating func setMediaLimits(fileMB: Int32, quotaMB: Int32) throws {
++        guard (1...250).contains(fileMB), (25...2000).contains(quotaMB), fileMB <= quotaMB else { throw AyuPluginError.invalidInput }
++        self.mediaFileLimitMB = fileMB; self.mediaQuotaMB = quotaMB
++    }
++    public mutating func removeMedia(ids: Set<String>) {
++        self.records = self.records.compactMap { record in
++            let attachments = (record.attachments ?? []).filter { !ids.contains($0.id) }
++            guard !record.text.isEmpty || !attachments.isEmpty else { return nil }
++            return AyuMessageHistoryRecord(id: record.id, peerId: record.peerId, messageId: record.messageId, messageTimestamp: record.messageTimestamp, capturedAt: record.capturedAt, kind: record.kind, text: record.text, formatting: record.formatting, reactions: record.reactions, attachments: attachments.isEmpty ? nil : attachments)
 +        }
 +    }
 +
@@ -69645,10 +70522,10 @@ index 00000000..46e371d9
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageShot.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageShot.swift
 new file mode 100644
-index 00000000..b23ce61d
+index 00000000..ed6a35f2
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageShot.swift
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,40 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -69660,6 +70537,11 @@ index 00000000..b23ce61d
 +        return !self.attributes.contains {
 +            $0 is AutoremoveTimeoutMessageAttribute || $0 is AutoclearTimeoutMessageAttribute || $0 is EphemeralMessageAttribute || $0 is EphemeralReplacementMessageAttribute || $0 is EphemeralOutgoingMessageAttribute || $0 is RestrictedContentMessageAttribute
 +        } && !self.media.contains { $0 is TelegramMediaAction || $0 is TelegramMediaExpiredContent }
++    }
++
++    /// Repeat as a copy: a sender-hidden forward, so it needs a real attachment (a link preview alone is text).
++    var ayuCanRepeatAsCopy: Bool {
++        return self.ayuCanMessageShot && self.media.contains(where: { !($0 is TelegramMediaWebpage) })
 +    }
 +}
 +
@@ -70255,6 +71137,159 @@ index 00000000..b1bfb1e8
 +        return query
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuTranslation.swift b/submodules/TelegramCore/Sources/AyuGram/AyuTranslation.swift
+new file mode 100644
+index 00000000..d5255315
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuTranslation.swift
+@@ -0,0 +1,98 @@
++import Foundation
++import Security
++import CryptoKit
++import SwiftSignalKit
++
++public enum AyuTranslationKeys {
++    private static func query(accountId: Int64, settings: AyuAdvancedSettings) throws -> [String: Any] {
++        let endpoint = try AyuTranslationRequest.endpoint(settings).absoluteString
++        let hash = SHA256.hash(data: Data(endpoint.utf8)).map { String(format: "%02x", $0) }.joined()
++        return [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: (Bundle.main.bundleIdentifier ?? "AyuGram") + ".translation", kSecAttrAccount as String: "\(accountId)." + settings.translationProvider.rawValue + "." + hash]
++    }
++    public static func read(accountId: Int64, settings: AyuAdvancedSettings) throws -> String? {
++        var query = try self.query(accountId: accountId, settings: settings)
++        query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
++        var value: CFTypeRef?
++        let status = SecItemCopyMatching(query as CFDictionary, &value)
++        if status == errSecItemNotFound { return nil }
++        guard status == errSecSuccess, let data = value as? Data, let key = String(data: data, encoding: .utf8) else { throw AyuTranslationError.credentialStorage }
++        return key
++    }
++    public static func write(accountId: Int64, settings: AyuAdvancedSettings, key: String) throws {
++        guard key.utf8.count <= 1024, !key.contains("\n"), !key.contains("\r") else { throw AyuTranslationError.configuration }
++        let query = try self.query(accountId: accountId, settings: settings)
++        if key.isEmpty {
++            let status = SecItemDelete(query as CFDictionary)
++            guard status == errSecSuccess || status == errSecItemNotFound else { throw AyuTranslationError.credentialStorage }
++            return
++        }
++        let attributes: [String: Any] = [kSecValueData as String: Data(key.utf8), kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
++        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
++        if status == errSecItemNotFound {
++            var item = query; attributes.forEach { item[$0.key] = $0.value }
++            guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw AyuTranslationError.credentialStorage }
++        } else if status != errSecSuccess { throw AyuTranslationError.credentialStorage }
++    }
++}
++private final class AyuTranslationDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
++    // URLSession uses a private serial delegate queue; cancellation does not mutate this state.
++    let provider: AyuAdvancedSettings.TranslationProvider
++    let subscriber: Subscriber<String, AyuTranslationError>
++    private var data = Data()
++    private var done = false
++    init(provider: AyuAdvancedSettings.TranslationProvider, subscriber: Subscriber<String, AyuTranslationError>) { self.provider = provider; self.subscriber = subscriber }
++    private func fail(_ error: AyuTranslationError, session: URLSession) {
++        guard !self.done else { return }; self.done = true
++        self.subscriber.putError(error); session.invalidateAndCancel()
++    }
++    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
++    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
++        guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode), response.expectedContentLength <= 262144 else {
++            completionHandler(.cancel); self.fail(.provider((response as? HTTPURLResponse)?.statusCode ?? 0), session: session); return
++        }
++        completionHandler(.allow)
++    }
++    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
++        guard !self.done else { return }
++        guard self.data.count + data.count <= 262144 else { self.fail(.tooLarge, session: session); return }
++        self.data.append(data)
++    }
++    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
++        guard !self.done else { return }
++        if error != nil { self.fail(.network, session: session); return }
++        do {
++            let result = try AyuTranslationRequest.result(self.data, provider: self.provider)
++            self.done = true; self.subscriber.putNext(result); self.subscriber.putCompletion(); session.finishTasksAndInvalidate()
++        } catch { self.fail(.empty, session: session) }
++    }
++}
++public extension TelegramEngine.Messages {
++    func ayuTranslate(text: String) -> Signal<String, AyuTranslationError> {
++        let settings = self.account.network.ayuGhostMode.current.advanced
++        guard !text.isEmpty, text.utf8.count <= 16384 else { return .fail(.tooLarge) }
++        if settings.translationProvider == .telegram {
++            return self.translate(text: text, toLang: settings.translationTarget)
++            |> mapError { _ -> AyuTranslationError in .network }
++            |> mapToSignal { result -> Signal<String, AyuTranslationError> in
++                guard let result else { return .fail(.empty) }; return .single(result.0)
++            }
++        }
++        let accountId = self.account.id.int64
++        return Signal { subscriber in
++            do {
++                let key = try AyuTranslationKeys.read(accountId: accountId, settings: settings)
++                let request = try AyuTranslationRequest.build(settings: settings, text: text, key: key)
++                let delegate = AyuTranslationDelegate(provider: settings.translationProvider, subscriber: subscriber)
++                let configuration = URLSessionConfiguration.ephemeral
++                configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil; configuration.httpShouldSetCookies = false
++                configuration.timeoutIntervalForRequest = 30; configuration.timeoutIntervalForResource = 45
++                let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
++                let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: queue)
++                let task = session.dataTask(with: request); task.resume()
++                return ActionDisposable { task.cancel(); session.invalidateAndCancel() }
++            } catch let error as AyuTranslationError { subscriber.putError(error) }
++            catch { subscriber.putError(.configuration) }
++            return EmptyDisposable
++        }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuTranslationRequest.swift b/submodules/TelegramCore/Sources/AyuGram/AyuTranslationRequest.swift
+new file mode 100644
+index 00000000..0efb3ac6
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuTranslationRequest.swift
+@@ -0,0 +1,43 @@
++import Foundation
++
++public enum AyuTranslationError: Error { case configuration, credentialStorage, network, provider(Int), empty, tooLarge }
++public enum AyuTranslationRequest {
++    public static func endpoint(_ settings: AyuAdvancedSettings) throws -> URL {
++        switch settings.translationProvider {
++        case .telegram: throw AyuTranslationError.configuration
++        case .deepLFree: return URL(string: "https://api-free.deepl.com/v2/translate")!
++        case .deepLPro: return URL(string: "https://api.deepl.com/v2/translate")!
++        case .libreTranslate:
++            try settings.validate()
++            guard !settings.libreTranslateURL.isEmpty, let url = URL(string: settings.libreTranslateURL) else { throw AyuTranslationError.configuration }
++            return url.lastPathComponent == "translate" ? url : url.appendingPathComponent("translate")
++        }
++    }
++    public static func build(settings: AyuAdvancedSettings, text: String, key: String?) throws -> URLRequest {
++        try settings.validate()
++        guard !text.isEmpty, text.utf8.count <= 16384 else { throw AyuTranslationError.tooLarge }
++        let key = key ?? ""
++        guard key.utf8.count <= 1024, !key.contains("\r"), !key.contains("\n") else { throw AyuTranslationError.configuration }
++        var request = URLRequest(url: try self.endpoint(settings), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
++        request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
++        var body: [String: Any]
++        if settings.translationProvider == .libreTranslate {
++            body = ["q": text, "source": "auto", "target": settings.translationTarget.lowercased(), "format": "text"]
++            if !key.isEmpty { body["api_key"] = key }
++        } else {
++            guard !key.isEmpty else { throw AyuTranslationError.configuration }
++            request.setValue("DeepL-Auth-Key " + key, forHTTPHeaderField: "Authorization")
++            body = ["text": [text], "target_lang": settings.translationTarget.uppercased()]
++        }
++        request.httpBody = try JSONSerialization.data(withJSONObject: body)
++        return request
++    }
++    public static func result(_ data: Data, provider: AyuAdvancedSettings.TranslationProvider) throws -> String {
++        guard data.count <= 262144, let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw AyuTranslationError.tooLarge }
++        let text: String?
++        if provider == .libreTranslate { text = value["translatedText"] as? String }
++        else { text = (value["translations"] as? [[String: Any]])?.first?["text"] as? String }
++        guard let text, !text.isEmpty, text.utf8.count <= 65536 else { throw AyuTranslationError.empty }
++        return text
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/Network/Network.swift b/submodules/TelegramCore/Sources/Network/Network.swift
 index 7a8db1d8..9a9c1f95 100644
 --- a/submodules/TelegramCore/Sources/Network/Network.swift
@@ -70276,10 +71311,10 @@ index 7a8db1d8..9a9c1f95 100644
          self.baseTcpConnectionInterfaceFactory = baseTcpConnectionInterfaceFactory
          self.isAppExtension = isAppExtension
 diff --git a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
-index 9cb3108a..4594a614 100644
+index 9cb3108a..dd443778 100644
 --- a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
 +++ b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
-@@ -728,11 +728,29 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
+@@ -728,11 +728,40 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
  }
  
  public func enqueueMessages(account: Account, peerId: PeerId, messages: [EnqueueMessage]) -> Signal<[MessageId?], NoError> {
@@ -70301,40 +71336,54 @@ index 9cb3108a..4594a614 100644
 +    } else {
 +        pluginMessages = messages
 +    }
++    let ghostSettings = account.network.ayuGhostMode.current
++    let scheduledMessages: [EnqueueMessage]
++    if ghostSettings.isActive, peerId.namespace != Namespaces.Peer.SecretChat,
++       let timestamp = ghostSettings.advanced.scheduledTimestamp(now: Int32(clamping: Int64(Date().timeIntervalSince1970))) {
++        scheduledMessages = pluginMessages.map { item in
++            guard case let .message(text, attributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = item,
++                  !text.isEmpty, mediaReference == nil, inlineStickers.isEmpty, threadId == nil, replyToStoryId == nil,
++                  !attributes.contains(where: { $0 is OutgoingScheduleInfoMessageAttribute || $0 is AutoremoveTimeoutMessageAttribute || $0 is AutoclearTimeoutMessageAttribute }) else { return item }
++            return .message(text: text, attributes: attributes + [OutgoingScheduleInfoMessageAttribute(scheduleTime: timestamp, repeatPeriod: nil)], inlineStickers: inlineStickers, mediaReference: mediaReference, threadId: threadId, replyToMessageId: replyToMessageId, replyToStoryId: replyToStoryId, localGroupingKey: localGroupingKey, correlationId: correlationId, bubbleUpEmojiOrStickersets: bubbleUpEmojiOrStickersets)
++        }
++    } else { scheduledMessages = pluginMessages }
      let signal: Signal<[(Bool, EnqueueMessage)], NoError>
      if let transformOutgoingMessageMedia = account.transformOutgoingMessageMedia {
 -        signal = opportunisticallyTransformOutgoingMedia(network: account.network, postbox: account.postbox, transformOutgoingMessageMedia: transformOutgoingMessageMedia, messages: messages, userInteractive: true)
-+        signal = opportunisticallyTransformOutgoingMedia(network: account.network, postbox: account.postbox, transformOutgoingMessageMedia: transformOutgoingMessageMedia, messages: pluginMessages, userInteractive: true)
++        signal = opportunisticallyTransformOutgoingMedia(network: account.network, postbox: account.postbox, transformOutgoingMessageMedia: transformOutgoingMessageMedia, messages: scheduledMessages, userInteractive: true)
      } else {
 -        signal = .single(messages.map { (false, $0) })
-+        signal = .single(pluginMessages.map { (false, $0) })
++        signal = .single(scheduledMessages.map { (false, $0) })
      }
      return signal
      |> mapToSignal { messages -> Signal<[MessageId?], NoError> in
 diff --git a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
-index 3d99e59d..52ffc91e 100644
+index 3d99e59d..c86b5963 100644
 --- a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
 +++ b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
-@@ -4622,8 +4622,15 @@ func replayFinalState(
+@@ -4622,19 +4622,38 @@ func replayFinalState(
              case let .DeleteEphemeralMessages(peerId, ids):
                  deleteEphemeralMessages(transaction: transaction, peerId: peerId, ids: ids)
              case let .DeleteMessagesWithGlobalIds(ids):
-+                var retainedIds = Set<MessageId>()
-+                for id in transaction.messageIdsForGlobalIds(ids) {
-+                    if let message = transaction.getMessage(id), ayuRetainDeletedMessage(transaction: transaction, mediaBox: mediaBox, message: message) {
-+                        retainedIds.insert(id)
++                var retainedGlobalIds = Set<Int32>()
++                for globalId in ids {
++                    if let messageId = transaction.messageIdsForGlobalIds([globalId]).first,
++                       let message = transaction.getMessage(messageId),
++                       ayuRetainDeletedMessage(transaction: transaction, mediaBox: mediaBox, message: message) {
++                        retainedGlobalIds.insert(globalId)
 +                    }
 +                }
-+                let retainedGlobalIds = Set(retainedIds.map { $0.id })
                  var resourceIds: [MediaResourceId] = []
 -                transaction.deleteMessagesWithGlobalIds(ids, forEachMedia: { media in
-+                transaction.deleteMessagesWithGlobalIds(ids.filter { !retainedGlobalIds.contains($0) }, forEachMedia: { media in
++                let idsToDelete = ids.filter { !retainedGlobalIds.contains($0) }
++                transaction.deleteMessagesWithGlobalIds(idsToDelete, forEachMedia: { media in
                      addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
                  })
                  if !resourceIds.isEmpty {
-@@ -4631,7 +4638,16 @@ func replayFinalState(
+                     let _ = mediaBox.removeCachedResources(Array(Set(resourceIds)), force: true).start()
                  }
-                 deletedMessageIds.append(contentsOf: ids.map { .global($0) })
+-                deletedMessageIds.append(contentsOf: ids.map { .global($0) })
++                deletedMessageIds.append(contentsOf: idsToDelete.map { .global($0) })
              case let .DeleteMessages(ids):
 -                _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids, manualAddMessageThreadStatsDifference: { id, add, remove in
 +                var retainedIds = Set<MessageId>()
@@ -70346,11 +71395,16 @@ index 3d99e59d..52ffc91e 100644
 +                        }
 +                    }
 +                }
-+                _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids.filter { !retainedIds.contains($0) }, manualAddMessageThreadStatsDifference: { id, add, remove in
++                let idsToDelete = ids.filter { !retainedIds.contains($0) }
++                _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: idsToDelete, manualAddMessageThreadStatsDifference: { id, add, remove in
                      addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)
                  })
-                 deletedMessageIds.append(contentsOf: ids.map { .messageId($0) })
-@@ -4668,6 +4684,9 @@ func replayFinalState(
+-                deletedMessageIds.append(contentsOf: ids.map { .messageId($0) })
++                deletedMessageIds.append(contentsOf: idsToDelete.map { .messageId($0) })
+             case let .UpdateMinAvailableMessage(id):
+                 if let message = transaction.getMessage(id) {
+                     updatePeerChatInclusionWithMinTimestamp(transaction: transaction, id: id.peerId, minTimestamp: message.timestamp, forceRootGroupIfNotExists: false)
+@@ -4668,6 +4687,9 @@ func replayFinalState(
                      invalidateGroupStats.insert(Namespaces.PeerGroup.archive)
                  }
              case let .EditMessage(id, message):
@@ -70360,7 +71414,7 @@ index 3d99e59d..52ffc91e 100644
                  var generatedEvent: (reactionAuthor: Peer, reaction: MessageReaction.Reaction, message: Message, timestamp: Int32)?
                  transaction.updateMessage(id, update: { previousMessage in
                      let peers: [PeerId:Peer] = previousMessage.peers.reduce([:], { current, value in
-@@ -6410,6 +6429,7 @@ func replayFinalState(
+@@ -6410,6 +6432,7 @@ func replayFinalState(
          })
      }
      
@@ -70424,7 +71478,7 @@ index e8e08874..5e9ee37c 100644
              if peerId == accountPeerId {
                  return .complete()
 diff --git a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
-index a5cf2d90..4b805aaa 100644
+index a5cf2d90..4aae1d1d 100644
 --- a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
 +++ b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
 @@ -1226,6 +1226,7 @@ public final class PendingMessageManager {
@@ -70435,15 +71489,16 @@ index a5cf2d90..4b805aaa 100644
                  
                  for attribute in messages[0].0.attributes {
                      if let replyAttribute = attribute as? ReplyMessageAttribute {
-@@ -1510,6 +1511,7 @@ public final class PendingMessageManager {
+@@ -1510,6 +1511,8 @@ public final class PendingMessageManager {
                  return sendMessageRequest
                  |> deliverOn(queue)
                  |> mapToSignal { result -> Signal<Void, MTRpcError> in
 +                    network.ayuReassertOfflineAfterSending()
++                    ayuMarkReadAfterSending(postbox: postbox, network: network, stateManager: stateManager, messages: messages.map { $0.0 })
                      if let strongSelf = self {
                          return strongSelf.applySentGroupMessages(postbox: postbox, stateManager: stateManager, messages: messages.map { $0.0 }, result: result)
                          |> mapError { _ -> MTRpcError in
-@@ -1728,6 +1730,7 @@ public final class PendingMessageManager {
+@@ -1728,6 +1731,7 @@ public final class PendingMessageManager {
                  var suggestedPost: Api.SuggestedPost?
                  
                  var flags: Int32 = 0
@@ -70451,11 +71506,12 @@ index a5cf2d90..4b805aaa 100644
                  
                  var topMsgId: Int32?
                  var monoforumPeerId: Api.InputPeer?
-@@ -2132,6 +2135,7 @@ public final class PendingMessageManager {
+@@ -2132,6 +2136,8 @@ public final class PendingMessageManager {
                              |> mapError { _ -> MTRpcError in
                              }
                          case let .result(result):
 +                            network.ayuReassertOfflineAfterSending()
++                            ayuMarkReadAfterSending(postbox: postbox, network: network, stateManager: stateManager, messages: [message])
                              return strongSelf.applySentMessage(postbox: postbox, stateManager: stateManager, message: message, content: content, result: result)
                              |> mapError { _ -> MTRpcError in
                              }
@@ -71009,6 +72065,88 @@ index 1875e7fe..e60152fc 100644
                  if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
                      dateReactionsAndPeers = ([], [])
                  }
+diff --git a/submodules/TelegramUI/Components/EmojiStatusSelectionComponent/Sources/EmojiStatusSelectionComponent.swift b/submodules/TelegramUI/Components/EmojiStatusSelectionComponent/Sources/EmojiStatusSelectionComponent.swift
+index bb5a8c8a..f402ab6c 100644
+--- a/submodules/TelegramUI/Components/EmojiStatusSelectionComponent/Sources/EmojiStatusSelectionComponent.swift
++++ b/submodules/TelegramUI/Components/EmojiStatusSelectionComponent/Sources/EmojiStatusSelectionComponent.swift
+@@ -1398,6 +1398,14 @@ public final class EmojiStatusSelectionController: ViewController {
+             guard let controller = self.controller else {
+                 return
+             }
++
++            // Local selection never reaches either normal or long-press server mutation paths.
++            if controller.localStatusOnly {
++                guard case let .customStatusSelection(completion) = controller.mode, item?.itemGift == nil else { return }
++                completion(item?.itemFile?._parse(), nil)
++                controller.dismiss()
++                return
++            }
+             
+             if isPreview {
+                 guard let item = item else {
+@@ -1548,6 +1556,7 @@ public final class EmojiStatusSelectionController: ViewController {
+     private let currentSelection: Int64?
+     private let color: UIColor?
+     private let mode: Mode
++    private let localStatusOnly: Bool
+     private let destinationItemView: () -> UIView?
+         
+     fileprivate let _ready = Promise<Bool>()
+@@ -1561,9 +1570,10 @@ public final class EmojiStatusSelectionController: ViewController {
+     
+     public var pushController: ((ViewController) -> Void)?
+     
+-    public init(context: AccountContext, mode: Mode, sourceView: UIView, emojiContent: Signal<EmojiPagerContentComponent, NoError>, currentSelection: Int64?, color: UIColor? = nil, destinationItemView: @escaping () -> UIView?) {
++    public init(context: AccountContext, mode: Mode, localStatusOnly: Bool = false, sourceView: UIView, emojiContent: Signal<EmojiPagerContentComponent, NoError>, currentSelection: Int64?, color: UIColor? = nil, destinationItemView: @escaping () -> UIView?) {
+         self.context = context
+         self.mode = mode
++        self.localStatusOnly = localStatusOnly
+         self.sourceView = sourceView
+         self.emojiContent = emojiContent
+         self.currentSelection = currentSelection
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
+index fdc996cb..1e2caf51 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
+@@ -683,6 +683,14 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+             }
+         }
+         
++        let ayuCosmetics = self.context.account.network.ayuGhostMode.current.advanced
++        if peer?.id == self.context.account.peerId, ayuCosmetics.localEmojiStatusEnabled, self.isSettings || self.isMyProfile {
++            if let id = ayuCosmetics.localStatusFileId {
++                statusIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: id), expirationDate: nil))
++                if case .premium = credibilityIcon { credibilityIcon = .none }
++            } else if case .none = statusIcon, case .none = credibilityIcon { credibilityIcon = .premium }
++        }
++
+         var isForum = false
+         if case let .channel(channel) = peer, channel.isForumOrMonoForum {
+             isForum = true
+@@ -976,8 +984,9 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+                 emojiExpandedStatusContent = emojiRegularStatusContent
+             case let .emojiStatus(emojiStatus):
+                 currentEmojiStatus = emojiStatus
+-                emojiRegularStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
+-                emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
++                let ayuLoop = peer?.id != self.context.account.peerId || ayuCosmetics.localStatusFileId != emojiStatus.fileId || ayuCosmetics.animateLocalEmoji
++                emojiRegularStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: ayuLoop ? .forever : .count(1))
++                emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: ayuLoop ? .forever : .count(1))
+             }
+             
+             let iconSize = self.titleCredibilityIconView.update(
+@@ -1041,8 +1050,9 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+             switch statusIcon {
+             case let .emojiStatus(emojiStatus):
+                 currentEmojiStatus = emojiStatus
+-                emojiRegularStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
+-                emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
++                let ayuLoop = peer?.id != self.context.account.peerId || ayuCosmetics.localStatusFileId != emojiStatus.fileId || ayuCosmetics.animateLocalEmoji
++                emojiRegularStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: ayuLoop ? .forever : .count(1))
++                emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: ayuLoop ? .forever : .count(1))
+                 if case let .starGift(_, _, _, slug, _, _, _, _, _) = emojiStatus.content {
+                     particleColor = UIColor.white
+                     uniqueGiftSlug = slug
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 index 34f23770..c50a60b1 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
@@ -71046,7 +72184,7 @@ index 34f23770..c50a60b1 100644
      for section in InfoSection.allCases {
          if let sectionItems = items[section], !sectionItems.isEmpty {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-index 8c4a24b7..ecc341a9 100644
+index 8c4a24b7..a606fcd8 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 @@ -161,6 +161,7 @@ enum PeerInfoContextSubject {
@@ -71057,21 +72195,71 @@ index 8c4a24b7..ecc341a9 100644
      case avatar
      case edit
      case proxy
-@@ -2535,7 +2536,8 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -2234,6 +2235,10 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+                 guard let strongSelf = self else {
+                     return
+                 }
++                if strongSelf.context.account.network.ayuGhostMode.current.advanced.localEmojiStatusEnabled {
++                    strongSelf.ayuOpenLocalEmojiStatus(sourceView: sourceView)
++                    return
++                }
+                 let currentTimestamp = CACurrentMediaTime()
+                 if let previousTimestamp, currentTimestamp < previousTimestamp + 1.0 {
+                     return
+@@ -2306,6 +2311,11 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+                 guard let strongSelf = self, let peer = strongSelf.data?.peer else {
+                     return
+                 }
++                if peer.id == strongSelf.context.account.peerId, strongSelf.context.account.network.ayuGhostMode.current.advanced.localEmojiStatusEnabled {
++                    strongSelf.ayuOpenLocalEmojiStatus(sourceView: sourceView)
++                    return
++                }
++
+                 let currentTimestamp = CACurrentMediaTime()
+                 if let previousTimestamp, currentTimestamp < previousTimestamp + 1.0 {
+                     return
+@@ -2535,7 +2545,8 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
  
          self.dataDisposable = combineLatest(
              queue: Queue.mainQueue(),
 -            screenData,
-+            combineLatest(screenData, context.account.network.ayuGhostMode.signal |> map { $0.interface.showPeerIds } |> distinctUntilChanged)
-+            |> map { data, _ in data },
++            combineLatest(screenData, context.account.network.ayuGhostMode.signal |> map { $0.interface.showPeerIds } |> distinctUntilChanged, context.account.network.ayuGhostMode.signal |> map { $0.advanced } |> distinctUntilChanged)
++            |> map { data, _, _ in data },
              self.forceIsContactPromise.get(),
              reactionSourceMessage
          ).startStrict(next: { [weak self] data, forceIsContact, reactionSourceMessage in
+@@ -7692,3 +7703,26 @@ struct ClearPeerHistory {
+         }
+     }
+ }
++
++extension PeerInfoScreenNode {
++    func ayuOpenLocalEmojiStatus(sourceView: UIView) {
++        guard self.peerId == self.context.account.peerId, self.emojiStatusSelectionController == nil else { return }
++        let context = self.context
++        let current = context.account.network.ayuGhostMode.current.advanced.localStatusFileId
++        self.emojiStatusSelectionController?.dismiss()
++        let picker = EmojiStatusSelectionController(context: context, mode: .customStatusSelection(completion: { [weak self] file, _ in
++            do {
++                try context.account.network.ayuGhostMode.update { settings in
++                    settings.advanced.localEmojiStatusEnabled = true
++                    settings.advanced.localEmojiFileId = file?.fileId.id
++                }
++            } catch {
++                let data = context.sharedContext.currentPresentationData.with { $0 }
++                self?.controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Локальный статус не сохранён." : "Local status was not saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++            }
++        }), localStatusOnly: true, sourceView: sourceView, emojiContent: EmojiPagerContentComponent.emojiInputData(context: context, animationCache: context.animationCache, animationRenderer: context.animationRenderer, isStandalone: false, subject: .status, hasTrending: false, topReactionItems: [], areUnicodeEmojiEnabled: false, areCustomEmojiEnabled: true, chatPeerId: context.account.peerId, selectedItems: current.map { Set([EngineMedia.Id(namespace: Namespaces.Media.CloudFile, id: $0)]) } ?? Set(), topStatusTitle: "AyuGram · Local"), currentSelection: current, destinationItemView: { [weak sourceView] in sourceView })
++        picker.pushController = { [weak self] controller in self?.controller?.push(controller) }
++        self.emojiStatusSelectionController = picker
++        self.controller?.present(picker, in: .window(.root))
++    }
++}
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
-index 63293572..147ae1c6 100644
+index 63293572..96d3fb3e 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
-@@ -395,6 +395,16 @@ extension PeerInfoScreenNode {
+@@ -395,6 +395,24 @@ extension PeerInfoScreenNode {
                      return .single(items)
                  }
                  
@@ -71082,6 +72270,14 @@ index 63293572..147ae1c6 100644
 +                        complete(.default)
 +                        guard let self else { return }
 +                        ayuPresentChatColorPicker(context: self.context, peerId: self.peerId)
++                    })))
++                }
++
++                if strongSelf.peerId.namespace != Namespaces.Peer.SecretChat {
++                    items.append(.action(ContextMenuActionItem(text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Экспорт чата / Избранное" : "Export chat / Saved Messages", icon: { theme in generateTintedImage(image: UIImage(systemName: "square.and.arrow.up"), color: theme.contextMenu.primaryColor) }, action: { [weak self] _, complete in
++                        complete(.default)
++                        guard let self else { return }
++                        ayuPresentChatExport(context: self.context, peerId: self.peerId)
 +                    })))
 +                }
 +
@@ -137396,10 +138592,10 @@ index 00000000..a149ea52
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift
 new file mode 100644
-index 00000000..f4aae11e
+index 00000000..65d2f500
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,74 @@
 +import Foundation
 +import Display
 +import SwiftSignalKit
@@ -137434,16 +138630,31 @@ index 00000000..f4aae11e
 +                self.interfaceInteraction?.beginMessageSearch(.everything, query)
 +                return
 +            }
-+            guard self.presentationInterfaceState.interfaceState.editMessage == nil, canSendMessagesToChat(self.presentationInterfaceState), AyuTextToolsPolicy.canRepeat(message.text) else { self.ayuTextToolError(); return }
++            let canRepeatText = AyuTextToolsPolicy.canRepeat(message.text)
++            let canSendCopy = message.ayuCanRepeatAsCopy && message.id.peerId.namespace != Namespaces.Peer.SecretChat
++            guard self.presentationInterfaceState.interfaceState.editMessage == nil, canSendMessagesToChat(self.presentationInterfaceState), canRepeatText || canSendCopy else { self.ayuTextToolError(); return }
 +            let length = (message.text as NSString).length
 +            let entities = ((message.attributes.first(where: { $0 is TextEntitiesMessageAttribute }) as? TextEntitiesMessageAttribute)?.entities ?? []).filter {
 +                $0.range.lowerBound >= 0 && $0.range.upperBound <= length && $0.range.lowerBound < $0.range.upperBound
 +            }
 +            let text = chatInputStateStringWithAppliedEntities(message.text, entities: entities)
 +            let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
-+            self.present(textAlertController(context: self.context, title: ru ? "Повторить текст" : "Repeat Text", text: ru ? "Добавить текст в конец черновика? Вложения и исходный ответ не копируются. Отправить сообщение нужно вручную." : "Append the text to your draft? Attachments and the original reply are not copied. Send the message manually after reviewing it.", actions: [
-+                TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
-+                TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: { [weak self] in
++            let sourceId = message.id
++            var actions: [TextAlertAction] = [TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {})]
++            if canSendCopy {
++                // A copy is a forward with the sender hidden: media is reused server-side and the
++                // original message stays untouched. Protected and expiring content never gets here.
++                actions.append(TextAlertAction(type: canRepeatText ? .genericAction : .defaultAction, title: ru ? "Отправить копию" : "Send a copy", action: { [weak self] in
++                    guard let self, !self.presentationInterfaceState.copyProtectionEnabled, self.presentationInterfaceState.interfaceState.editMessage == nil, canSendMessagesToChat(self.presentationInterfaceState), self.chatLocation.peerId == sourceId.peerId else { return }
++                    self.sendMessages([.forward(source: sourceId, threadId: self.chatLocation.threadId, grouping: .auto, attributes: [ForwardOptionsMessageAttribute(hideNames: true, hideCaptions: false)], correlationId: nil)])
++                }))
++            }
++            guard canRepeatText else {
++                self.present(textAlertController(context: self.context, title: ru ? "Повторить сообщение" : "Repeat Message", text: ru ? "Отправить копию сообщения с вложениями без указания автора? Оригинал не изменится." : "Send a copy of this message with its attachments and without the original sender? The original stays unchanged.", actions: actions), in: .window(.root))
++                return
++            }
++            self.present(textAlertController(context: self.context, title: ru ? "Повторить сообщение" : "Repeat Message", text: ru ? (canSendCopy ? "Добавить текст в черновик или сразу отправить копию с вложениями без указания автора?" : "Добавить текст в конец черновика? Отправить сообщение нужно вручную.") : (canSendCopy ? "Append the text to your draft, or send a copy with attachments and without the original sender right away?" : "Append the text to your draft? Send the message manually after reviewing it."), actions: actions + [
++                TextAlertAction(type: .defaultAction, title: ru ? "В черновик" : "To draft", action: { [weak self] in
 +                    guard let self, !self.presentationInterfaceState.copyProtectionEnabled, self.presentationInterfaceState.interfaceState.editMessage == nil, canSendMessagesToChat(self.presentationInterfaceState) else { return }
 +                    let _ = self.presentVoiceMessageDiscardAlert(action: { [weak self] in
 +                        guard let self, !self.presentationInterfaceState.copyProtectionEnabled, self.presentationInterfaceState.interfaceState.editMessage == nil, canSendMessagesToChat(self.presentationInterfaceState) else { return }
@@ -137961,7 +139172,7 @@ index 0fb1ee10..eb1aa155 100644
                  let lastHeaderId = filteredEntries.last.flatMap { listMessageDateHeaderId(timestamp: $0.index.timestamp) } ?? 0
                  let processedView = ChatHistoryView(originalView: view, filteredEntries: filteredEntries, associatedData: associatedData, lastHeaderId: lastHeaderId, id: id, locationInput: update.2, ignoreMessagesInTimestampRange: update.3, ignoreMessageIds: update.4)
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..66fde174 100644
+index 1ade8c01..5971ffd5 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -138009,7 +139220,7 @@ index 1ade8c01..66fde174 100644
              if !actions.isEmpty {
                  actions.insert(.separator, at: 0)
              }
-@@ -2479,6 +2485,105 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2479,6 +2485,110 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
@@ -138054,8 +139265,8 @@ index 1ade8c01..66fde174 100644
 +                })))
 +            }
 +            if chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
-+                if ayuInterface.showRepeatText, canSendMessagesToChat(chatPresentationInterfaceState), chatPresentationInterfaceState.interfaceState.editMessage == nil, AyuTextToolsPolicy.canRepeat(message.text) {
-+                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Повторить текст" : "AyuGram · Repeat Text", icon: { theme in
++                if ayuInterface.showRepeatText, canSendMessagesToChat(chatPresentationInterfaceState), chatPresentationInterfaceState.interfaceState.editMessage == nil, AyuTextToolsPolicy.canRepeat(message.text) || (EngineMessage(message).ayuCanRepeatAsCopy && message.id.peerId.namespace != Namespaces.Peer.SecretChat) {
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Повторить" : "AyuGram · Repeat", icon: { theme in
 +                        return UIImage(systemName: "repeat")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
 +                    }, action: { controller, _ in
 +                        controller?.dismiss(completion: {
@@ -138072,6 +139283,11 @@ index 1ade8c01..66fde174 100644
 +                        })
 +                    })))
 +                }
++            }
++            if !message.text.isEmpty, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Перевести" : "AyuGram · Translate", icon: { theme in UIImage(systemName: "character.bubble")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal) }, action: { controller, _ in
++                    controller?.dismiss(completion: { ayuPresentTranslation(context: context, text: message.text) })
++                })))
 +            }
 +            if context.account.network.ayuGhostMode.current.plugins.installed.contains(where: { $0.enabled }), chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, message.id.peerId.namespace != Namespaces.Peer.SecretChat, EngineMessage(message).adAttribute == nil {
 +                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Плагины" : "AyuGram · Plugins", icon: { theme in
@@ -138155,10 +139371,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..6c89f2bc
+index 00000000..59f2f963
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,748 @@
+@@ -0,0 +1,824 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -138907,6 +140123,82 @@ index 00000000..6c89f2bc
 +check(chatColorRegistry.activeChatColors == nil, "Removal stops rendering")
 +check(pluginThrows { try chatColorRegistry.setChatColor(id: chatColorManifest.id, peerKey: "123", hex: "ffffff") }, "Late edits must not resurrect an uninstalled plugin")
 +print("PASS: \(checks) model checks including Chat Colors persistence, isolation, HEX and brightness")
++
++// Advanced blocks: real Foundation models, including disk-backed export output.
++var advancedPolicy = AyuAdvancedSettings()
++check(!advancedPolicy.scheduleOutgoing && !advancedPolicy.markReadAfterSend && advancedPolicy.localStatusFileId == nil, "Advanced features default to upstream behavior")
++advancedPolicy.setScheduling(true)
++check(advancedPolicy.scheduledTimestamp(now: 100) == 130, "Scheduling uses the selected delay")
++check(advancedPolicy.scheduledTimestamp(now: Int32.max) == nil, "Scheduling must not overflow timestamps")
++advancedPolicy.setReadAfterSend(true)
++check(!advancedPolicy.scheduleOutgoing && advancedPolicy.markReadAfterSend, "Read-after-send disables scheduling")
++advancedPolicy.setScheduling(true)
++check(advancedPolicy.scheduleOutgoing && !advancedPolicy.markReadAfterSend, "Scheduling disables read-after-send")
++advancedPolicy.markReadAfterSend = true
++check(pluginThrows { try advancedPolicy.validate() }, "Contradictory send policies are rejected")
++advancedPolicy = AyuAdvancedSettings(); advancedPolicy.localEmojiFileId = 12345
++check(advancedPolicy.localStatusFileId == nil, "Stored local emoji does not display while disabled")
++advancedPolicy.localEmojiStatusEnabled = true
++check(advancedPolicy.localStatusFileId == 12345, "Enabled local status resolves its stored file ID")
++advancedPolicy.animateLocalEmoji = false
++let advancedData = try JSONEncoder().encode(advancedPolicy)
++let restoredAdvanced = try JSONDecoder().decode(AyuAdvancedSettings.self, from: advancedData)
++check(restoredAdvanced == advancedPolicy, "Advanced settings persist without changing server peer flags")
++let advancedOld = try JSONDecoder().decode(AyuAdvancedSettings.self, from: Data("{}".utf8))
++check(advancedOld == AyuAdvancedSettings(), "Missing advanced fields migrate to defaults")
++for url in ["http://example.test", "https://user:pass@example.test", "https://example.test/?key=x", "https://example.test/#x"] {
++    var settings = AyuAdvancedSettings(); settings.libreTranslateURL = url
++    check(pluginThrows { try settings.validate() }, "Unsafe/misconfigured translation endpoints are rejected")
++}
++var translationPolicy = AyuAdvancedSettings(); translationPolicy.translationProvider = .libreTranslate; translationPolicy.libreTranslateURL = "https://lt.example.test/api"
++let libreRequest = try AyuTranslationRequest.build(settings: translationPolicy, text: "Hello \"world\"\nПривет", key: "test-key")
++check(libreRequest.url?.absoluteString == "https://lt.example.test/api/translate" && libreRequest.httpMethod == "POST", "LibreTranslate uses the configured HTTPS endpoint")
++let libreBody = try JSONSerialization.jsonObject(with: libreRequest.httpBody!) as! [String: Any]
++check(libreBody["q"] as? String == "Hello \"world\"\nПривет" && libreBody["api_key"] as? String == "test-key", "Translation text is encoded as JSON without truncation")
++translationPolicy.translationProvider = .deepLFree
++let deepLRequest = try AyuTranslationRequest.build(settings: translationPolicy, text: "Hello", key: "test-key")
++check(deepLRequest.url?.host == "api-free.deepl.com" && deepLRequest.value(forHTTPHeaderField: "Authorization") == "DeepL-Auth-Key test-key", "DeepL Free uses its proper endpoint and auth header")
++check(pluginThrows { _ = try AyuTranslationRequest.build(settings: translationPolicy, text: "Hello", key: nil) }, "DeepL cannot silently run without a key")
++check(pluginThrows { _ = try AyuTranslationRequest.build(settings: translationPolicy, text: "Hello", key: "test\r\nInjected") }, "Credential line breaks must not reach HTTP headers")
++let translatedLibre = try AyuTranslationRequest.result(Data("{\"translatedText\":\"Привет\"}".utf8), provider: .libreTranslate)
++let translatedDeepL = try AyuTranslationRequest.result(Data("{\"translations\":[{\"text\":\"Hallo\"}]}".utf8), provider: .deepLFree)
++check(translatedLibre == "Привет" && translatedDeepL == "Hallo", "Provider response formats decode correctly")
++check(pluginThrows { _ = try AyuTranslationRequest.result(Data(repeating: 0, count: 262145), provider: .libreTranslate) }, "Oversized provider responses are rejected")
++check(pluginThrows { _ = try AyuTranslationRequest.result(Data("{}".utf8), provider: .deepLFree) }, "Missing translations are failures, not empty success")
++var enlargedArchive = AyuMessageHistoryState()
++try enlargedArchive.setMediaLimits(fileMB: 100, quotaMB: 500)
++let archiveLimitsData = try JSONEncoder().encode(enlargedArchive)
++let restoredArchiveLimits = try JSONDecoder().decode(AyuMessageHistoryState.self, from: archiveLimitsData)
++check(restoredArchiveLimits.mediaFileLimitMB == 100 && restoredArchiveLimits.mediaQuotaMB == 500, "Archive limits persist")
++check(pluginThrows { try enlargedArchive.setMediaLimits(fileMB: 251, quotaMB: 500) }, "Oversized archive limits are rejected")
++check(enlargedArchive.mediaFileLimitMB == 100, "Failed limit edits retain previous values")
++enlargedArchive.saveDeleted = true; enlargedArchive.saveMedia = true
++let advancedAttachment = AyuArchivedAttachment(id: "advanced-file", storedName: "advanced.bin", displayName: "Example", byteCount: 10)
++enlargedArchive.append(peerId: 1, messageId: 1, messageTimestamp: 100, kind: .deleted, text: "Retained text", now: 1800000000, attachments: [advancedAttachment])
++enlargedArchive.removeMedia(ids: Set([advancedAttachment.id]))
++check(enlargedArchive.records.first?.text == "Retained text" && enlargedArchive.records.first?.attachments == nil, "Removing archived media preserves text history")
++#if AYU_POSTBOX_TESTS
++check(postboxRoundTrip(enlargedArchive) == enlargedArchive, "New media settings use the actual pinned Postbox codec")
++#endif
++let exportParent = root.appendingPathComponent("export-model-tests")
++var exportOptions = AyuChatExportOptions(); exportOptions.maximumMessages = 10
++let exportWriter = try AyuChatExportWriter(parent: exportParent, options: exportOptions)
++let maliciousExportText = "<script>alert('x')</script> & \"quoted\"\n😀"
++let newExportRow = AyuChatExportMessage(id: 2, timestamp: 200, author: "A & B", authorId: "user1", text: maliciousExportText, peerId: "1")
++let oldExportRow = AyuChatExportMessage(id: 1, timestamp: 100, author: "Earlier", authorId: "user1", text: "Old", peerId: "1")
++try exportWriter.appendPage([newExportRow]); try exportWriter.appendPage([oldExportRow])
++let exportedIds = try exportWriter.messageIds(page: 1)
++check(exportedIds == [1], "Disk pages preserve IDs for oldest-first forwarding")
++let exportedFolder = try exportWriter.finish(title: "<Chat>", peerId: 1, type: "personal_chat", truncated: false)
++let exportedObject = try JSONSerialization.jsonObject(with: Data(contentsOf: exportedFolder.appendingPathComponent("result.json"))) as! [String: Any]
++let exportedRows = exportedObject["messages"] as! [[String: Any]]
++check(exportedRows.count == 2 && (exportedRows[0]["id"] as? Int) == 1 && (exportedRows[1]["text"] as? String) == maliciousExportText, "JSON export preserves text and reverses history pages into chronological order")
++let exportedHtml = try String(contentsOf: exportedFolder.appendingPathComponent("messages.html"), encoding: .utf8)
++check(!exportedHtml.contains("<script>alert") && exportedHtml.contains("&lt;script&gt;") && exportedHtml.contains("Content-Security-Policy"), "HTML export escapes message markup and disables scripts")
++check(!FileManager.default.fileExists(atPath: exportedFolder.appendingPathComponent("pages").path), "Completed exports omit internal spool files")
++exportWriter.discard()
++check(!FileManager.default.fileExists(atPath: exportedFolder.path), "Discard removes only the owned temporary export")
++print("PASS: \(checks) model checks including advanced sending, local cosmetics, translation requests, archive limits and HTML/JSON export")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

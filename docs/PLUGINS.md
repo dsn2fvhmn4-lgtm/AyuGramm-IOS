@@ -21,8 +21,8 @@ download progress/cancel controls retain their normal states. This affects this
 client's rendering, not how other Telegram clients show the file.
 
 Installed plugins can now supply an individual avatar, displayed in the manager
-and action list. Missing avatars use the puzzle fallback. Search+ uses a duck emoji
-as a local substitute for the original Android animated sticker-pack reference.
+and action list. Missing avatars use the puzzle fallback. Search+ uses a magnifying
+glass matching its search function.
 No sticker-pack download or remote avatar request is performed.
 
 ## Authoring tools and avatars
@@ -36,7 +36,7 @@ ExteraGram's Python/Java SDK is a separate system and is not required by this AB
 An optional `icon` field accepts:
 
 ```json
-"icon": { "kind": "emoji", "value": "🦆" }
+"icon": { "kind": "symbol", "value": "magnifyingglass" }
 ```
 
 Use `kind: "symbol"` with `puzzlepiece.fill`, `magnifyingglass`, `textformat`,

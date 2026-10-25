@@ -1,5 +1,5 @@
 diff --git a/Telegram/BUILD b/Telegram/BUILD
-index 1ac8279b..d8884182 100644
+index 1ac8279b..32207879 100644
 --- a/Telegram/BUILD
 +++ b/Telegram/BUILD
 @@ -341,7 +341,7 @@ alternate_icon_folders = [
@@ -29,7 +29,47 @@ index 1ac8279b..d8884182 100644
      <key>CFBundleIdentifier</key>
      <string>{telegram_bundle_id}</string>
      <key>CFBundleName</key>
-@@ -1922,10 +1922,11 @@ ios_application(
+@@ -1847,6 +1847,16 @@ plist_fragment(
+     <false/>
+     <key>UTImportedTypeDeclarations</key>
+     <array>
++        <dict>
++            <key>UTTypeIdentifier</key>
++            <string>one.ayugram.ios.plugin</string>
++            <key>UTTypeDescription</key>
++            <string>AyuGram Plugin</string>
++            <key>UTTypeConformsTo</key>
++            <array><string>public.data</string></array>
++            <key>UTTypeTagSpecification</key>
++            <dict><key>public.filename-extension</key><array><string>plugin</string></array></dict>
++        </dict>
+         <dict>
+             <key>UTTypeConformsTo</key>
+             <array>
+@@ -1869,6 +1879,22 @@ plist_fragment(
+             </dict>
+         </dict>
+     </array>
++    <key>CFBundleDocumentTypes</key>
++    <array>
++        <dict>
++            <key>CFBundleTypeName</key><string>AyuGram Plugin</string>
++            <key>CFBundleTypeRole</key><string>Viewer</string>
++            <key>LSHandlerRank</key><string>Alternate</string>
++            <key>LSItemContentTypes</key><array><string>one.ayugram.ios.plugin</string></array>
++        </dict>
++        <dict>
++            <key>CFBundleTypeName</key><string>Telegram Theme</string>
++            <key>CFBundleTypeRole</key><string>Viewer</string>
++            <key>LSHandlerRank</key><string>Alternate</string>
++            <key>LSItemContentTypes</key><array><string>org.telegram.Telegram-iOS.theme</string></array>
++        </dict>
++    </array>
++    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+     <key>CADisableMinimumFrameDurationOnPhone</key>
+     <true/>
+     <key>UIApplicationSupportsIndirectInputEvents</key>
+@@ -1922,10 +1948,11 @@ ios_application(
          ":RequiredDeviceCapabilitiesPlist",
          ":UrlTypesInfoPlist",
      ],
@@ -66976,10 +67016,10 @@ index 00000000..8effdde3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..4a0e1823
+index 00000000..915941e1
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,178 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -66991,8 +67031,11 @@ index 00000000..4a0e1823
 +    private let russian: Bool
 +    private let palette: AyuPreferencesPalette?
 +    private var reading = false
-+    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil) {
++    private var initialImport: (URL, String)?
++    private var applying = false
++    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil, initialImport: (URL, String)? = nil) {
 +        self.store = store; self.russian = russian; self.palette = palette
++        self.initialImport = initialImport
 +        super.init(style: .grouped)
 +        self.title = russian ? "Плагины" : "Plugins"
 +    }
@@ -67009,6 +67052,10 @@ index 00000000..4a0e1823
 +        super.viewWillAppear(animated)
 +        self.tableView.reloadData()
 +    }
++    override func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++        if let initial = self.initialImport { self.initialImport = nil; self.readImport(initial.0, filename: initial.1) }
++    }
 +    @objc private func done() { self.dismiss(animated: true) }
 +    override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); ayuFitPreferencesHeader(self.tableView) }
 +    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
@@ -67020,7 +67067,7 @@ index 00000000..4a0e1823
 +    }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
 +        guard section == 0 else { return nil }
-+        return self.russian ? "Файлы .plugin. Установка отключена по умолчанию. Android-плагины требуют отдельного адаптера; поддерживается предоставленная версия Search+ 2.6.1. Действия доступны через меню сообщения → Плагины." : ".plugin files. New installations start disabled. Android plugins require a dedicated adapter; the supplied Search+ 2.6.1 is supported. Open a message menu → Plugins to run actions."
++        return self.russian ? "После подтверждения импорта совместимый плагин проверяется и включается автоматически. Поддерживаются Search+ 2.6.1 и шаблоны простых хуков исходящего текста. Ручные действия: меню сообщения → Плагины." : "After import confirmation, compatible plugins are checked and enabled automatically. Search+ 2.6.1 and simple outgoing-text hook templates are supported. Manual actions: message menu → Plugins."
 +    }
 +    private func puzzleIcon() -> UIImage {
 +        return ayuPluginAvatar()
@@ -67046,7 +67093,7 @@ index 00000000..4a0e1823
 +        return cell
 +    }
 +    private func error(_ error: Error) {
-+        let message = self.russian ? "Файл не поддерживается, повреждён, превышает лимит 512 КБ либо настройки не удалось сохранить. Для Android-кода нужен адаптер именно этой версии. Данные остальных плагинов сохранены." : "The file is unsupported, invalid, exceeds 512 KB, or settings could not be saved. Android code needs an adapter for its exact version. Other plugins were retained."
++        let message = (self.russian ? "Не удалось импортировать плагин. Существующие плагины сохранены.\n\n" : "Plugin import failed. Existing plugins were retained.\n\n") + ((error as? AyuPluginConversionError)?.errorDescription ?? (self.russian ? "Неподдерживаемый формат, превышение лимита или ошибка сохранения." : "Unsupported format, limit exceeded, or save failure."))
 +        self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: message)
 +    }
 +    private func alert(title: String, message: String) {
@@ -67060,7 +67107,7 @@ index 00000000..4a0e1823
 +    }
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
-+        guard !self.reading else { return }
++        guard !self.reading, !self.applying else { return }
 +        if indexPath.section == 0 {
 +            guard !self.reading else { return }
 +            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
@@ -67074,6 +67121,10 @@ index 00000000..4a0e1823
 +    }
 +    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
 +        guard let url = urls.first, !self.reading else { return }
++        self.readImport(url, filename: url.lastPathComponent, picker: controller)
++    }
++    private func readImport(_ url: URL, filename: String, picker: UIViewController? = nil) {
++        guard url.isFileURL, !self.reading, !self.applying else { return }
 +        self.reading = true
 +        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 +            let scoped = url.startAccessingSecurityScopedResource()
@@ -67090,7 +67141,7 @@ index 00000000..4a0e1823
 +                    guard data.count + count <= AyuPluginImporter.maximumFileBytes else { throw AyuPluginError.invalidFile }
 +                    data.append(contentsOf: buffer.prefix(count))
 +                }
-+                result = .success(try AyuPluginImporter.parse(data, filename: url.lastPathComponent))
++                result = .success(try AyuPluginImporter.parse(data, filename: filename))
 +            } catch { result = .failure(error) }
 +            DispatchQueue.main.async { [weak self] in
 +                guard let self else { return }
@@ -67102,20 +67153,49 @@ index 00000000..4a0e1823
 +                    case let .success(manifest): self.confirmInstall(manifest)
 +                    }
 +                }
-+                if controller.presentingViewController != nil { controller.dismiss(animated: true, completion: complete) }
++                if let picker, picker.presentingViewController != nil { picker.dismiss(animated: true, completion: complete) }
 +                else { complete() }
 +            }
 +        }
 +    }
 +    private func confirmInstall(_ manifest: AyuPluginManifest) {
-+        let alert = UIAlertController(title: self.russian ? "Установить плагин?" : "Install plugin?", message: self.details(manifest) + (self.russian ? "\n\nУстановка или замена выключит плагин. Включи его после проверки возможностей." : "\n\nInstallation or replacement disables the plugin. Enable it after reviewing its capabilities."), preferredStyle: .alert)
-+        alert.addAction(UIAlertAction(title: self.russian ? "Установить / заменить" : "Install / replace", style: .default, handler: { [weak self] _ in
++        let expected = self.store.current.plugins.installed.first(where: { $0.manifest.id == manifest.id })
++        let alert = UIAlertController(title: self.russian ? "Импортировать плагин?" : "Import plugin?", message: self.details(manifest) + (self.russian ? "\n\nПроверь действия и ограничения. После подтверждения приложение подготовит плагин и включит его. При замене включится новая версия." : "\n\nReview the actions and limitations. Confirming prepares and enables the plugin. Replacement enables the new version."), preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: self.russian ? "Импортировать и включить" : "Import and enable", style: .default, handler: { [weak self] _ in
 +            guard let self else { return }
-+            do { try self.store.update { try $0.plugins.install(manifest) }; self.tableView.reloadData() }
-+            catch { self.error(error) }
++            let begin: () -> Void = { [weak self] in self?.apply(manifest, expected: expected) }
++            if let presented = self.presentedViewController { presented.dismiss(animated: true, completion: begin) }
++            else { begin() }
 +        }))
 +        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
 +        self.present(alert, animated: true)
++    }
++    private func apply(_ manifest: AyuPluginManifest, expected: AyuInstalledPlugin?) {
++        guard !self.applying else { return }
++        self.applying = true
++        let progress = UIActivityIndicatorView(style: .medium); progress.startAnimating()
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(customView: progress)
++        self.navigationItem.rightBarButtonItem?.isEnabled = false
++        self.isModalInPresentation = true
++        self.navigationController?.isModalInPresentation = true
++        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++            let result = Result { try AyuPluginActivation.prepare(manifest) }
++            DispatchQueue.main.async { [weak self] in
++                guard let self else { return }
++                self.applying = false; self.navigationItem.leftBarButtonItem = nil
++                self.navigationItem.rightBarButtonItem?.isEnabled = true; self.isModalInPresentation = false
++                self.navigationController?.isModalInPresentation = false
++                do {
++                    let prepared = try result.get()
++                    try self.store.update {
++                        guard $0.plugins.installed.first(where: { $0.manifest.id == prepared.id }) == expected else { throw AyuPluginError.invalidManifest }
++                        try $0.plugins.installAndActivate(prepared)
++                    }
++                    self.tableView.reloadData()
++                    self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: prepared.id, russian: self.russian, palette: self.palette), animated: true)
++                } catch { self.error(error) }
++            }
++        }
 +    }
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPreferencesHubController.swift b/submodules/SettingsUI/Sources/AyuPreferencesHubController.swift
@@ -67245,10 +67325,10 @@ index 00000000..74829371
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..5c7ba7d0
+index 00000000..ebd0407b
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,479 @@
+@@ -0,0 +1,485 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -67361,9 +67441,15 @@ index 00000000..5c7ba7d0
 +}
 +
 +private func ayuPresentPlugins(context: AccountContext) {
++    ayuImportPlugin(context: context, fileURL: nil, filename: nil)
++}
++
++public func ayuImportPlugin(context: AccountContext, fileURL: URL?, filename: String?) {
 +    let data = context.sharedContext.currentPresentationData.with { $0 }
 +    let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
-+    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette)
++    let initialImport: (URL, String)?
++    if let fileURL, let filename { initialImport = (fileURL, filename) } else { initialImport = nil }
++    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, initialImport: initialImport)
 +    let navigation = UINavigationController(rootViewController: plugins)
 +    navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
 +    context.sharedContext.applicationBindings.presentNativeController(navigation)
@@ -67838,6 +67924,151 @@ index bf906980..d8c5312f 100644
      declareEncodable(TelegramMediaGame.self, f: { TelegramMediaGame(decoder: $0) })
      declareEncodable(TelegramMediaInvoice.self, f: { TelegramMediaInvoice(decoder: $0) })
      declareEncodable(TelegramMediaWebFile.self, f: { TelegramMediaWebFile(decoder: $0) })
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAndroidPluginConverter.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAndroidPluginConverter.swift
+new file mode 100644
+index 00000000..d66f528c
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuAndroidPluginConverter.swift
+@@ -0,0 +1,139 @@
++import Foundation
++
++public struct AyuPluginConversionError: LocalizedError {
++    public let line: Int
++    public let reason: String
++    public var errorDescription: String? { return "Android conversion, line \(self.line): \(self.reason)" }
++}
++
++/// A whole-file grammar, not substring matching or Python execution. Unrecognized statements reject conversion.
++public enum AyuAndroidPluginConverter {
++    public static let templateID = "exteraGram/literal-send-hook-v1"
++    private enum Token: Equatable { case word(String), literal(String), mark(String) }
++    private struct Row { let number: Int; let indent: Int; let tokens: [Token] }
++    private static func fail(_ line: Int, _ reason: String = "No complete iOS template for this syntax") -> AyuPluginConversionError {
++        return AyuPluginConversionError(line: line, reason: reason)
++    }
++    private static func tokens(_ source: String, line: Int) throws -> [Token] {
++        let chars = Array(source.unicodeScalars)
++        var index = 0, result: [Token] = []
++        while index < chars.count {
++            let char = chars[index]
++            if char == " " { index += 1; continue }
++            if char == "#" { break }
++            if char == "\"" || char == "'" {
++                let quote = char; index += 1; var value = ""; var closed = false
++                while index < chars.count {
++                    let current = chars[index]; index += 1
++                    if current == quote { closed = true; break }
++                    if current == "\\" {
++                        guard index < chars.count else { throw self.fail(line) }
++                        let escaped = chars[index]; index += 1
++                        switch escaped {
++                        case "n": value.append("\n")
++                        case "r": value.append("\r")
++                        case "t": value.append("\t")
++                        case "\\", "\"", "'": value.unicodeScalars.append(escaped)
++                        default: throw self.fail(line, "Unsupported string escape")
++                        }
++                    } else { value.unicodeScalars.append(current) }
++                }
++                guard closed else { throw self.fail(line, "Unterminated string") }
++                result.append(.literal(value)); continue
++            }
++            if (65...90).contains(char.value) || (97...122).contains(char.value) || char == "_" {
++                let start = index; index += 1
++                while index < chars.count {
++                    let value = chars[index].value
++                    if (65...90).contains(value) || (97...122).contains(value) || (48...57).contains(value) || value == 95 { index += 1 }
++                    else { break }
++                }
++                var word = ""
++                for scalar in chars[start..<index] { word.unicodeScalars.append(scalar) }
++                result.append(.word(word)); continue
++            }
++            guard ".=():,->".unicodeScalars.contains(char) else { throw self.fail(line) }
++            result.append(.mark(String(char))); index += 1
++        }
++        return result
++    }
++    private static func pattern(_ text: String) -> [Token] { return (try? self.tokens(text, line: 0)) ?? [] }
++    public static func convert(_ data: Data, sourceSHA256: String) throws -> AyuPluginManifest {
++        guard data.count <= 65536, let source = String(data: data, encoding: .utf8), !source.contains("\0"), !source.contains("\t") else { throw self.fail(0, "Template source must be UTF-8, at most 64 KB, with spaces for indentation") }
++        let lines = source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
++        guard lines.count <= 512 else { throw self.fail(0, "Template has too many lines") }
++        var rows: [Row] = []
++        for (index, line) in lines.enumerated() {
++            guard line.utf8.count <= 4096 else { throw self.fail(index + 1, "Line exceeds template limit") }
++            let parsed = try self.tokens(line, line: index + 1)
++            if !parsed.isEmpty { rows.append(Row(number: index + 1, indent: line.prefix(while: { $0 == " " }).count, tokens: parsed)) }
++        }
++        var cursor = 0
++        func expect(_ text: String, indent: Int) throws {
++            guard cursor < rows.count, rows[cursor].indent == indent, rows[cursor].tokens == self.pattern(text) else { throw self.fail(cursor < rows.count ? rows[cursor].number : lines.count) }
++            cursor += 1
++        }
++        func expectOne(_ texts: [String], indent: Int) throws {
++            guard cursor < rows.count, rows[cursor].indent == indent, texts.contains(where: { self.pattern($0) == rows[cursor].tokens }) else { throw self.fail(cursor < rows.count ? rows[cursor].number : lines.count) }
++            cursor += 1
++        }
++        guard cursor < rows.count else { throw self.fail(0) }
++        let imports = rows[cursor]
++        guard imports.indent == 0, imports.tokens.count == 8,
++              Array(imports.tokens.prefix(3)) == self.pattern("from base_plugin import"),
++              imports.tokens[4] == .mark(","), imports.tokens[6] == .mark(","),
++              Set([imports.tokens[3], imports.tokens[5], imports.tokens[7]].compactMap { token -> String? in if case let .word(value) = token { return value }; return nil }) == Set(["BasePlugin", "HookResult", "HookStrategy"]) else { throw self.fail(imports.number, "Only the supported base_plugin imports are accepted") }
++        cursor += 1
++        let hasTypingImport = cursor < rows.count && rows[cursor].tokens == self.pattern("from typing import Any") && rows[cursor].indent == 0
++        if hasTypingImport { cursor += 1 }
++        var metadata: [String: String] = [:]
++        let keys = Set(["__id__", "__name__", "__author__", "__version__", "__description__", "__icon__", "__min_version__", "__app_version__", "__sdk_version__"])
++        while cursor < rows.count, rows[cursor].tokens.first != .word("class") {
++            let row = rows[cursor]
++            guard row.indent == 0, row.tokens.count == 3, case let .word(key) = row.tokens[0], keys.contains(key), metadata[key] == nil,
++                  row.tokens[1] == .mark("="), case let .literal(value) = row.tokens[2] else { throw self.fail(row.number, "Metadata must contain literal strings only") }
++            metadata[key] = value; cursor += 1
++        }
++        guard cursor < rows.count else { throw self.fail(lines.count, "Missing plugin class") }
++        let declaration = rows[cursor]
++        guard declaration.indent == 0, declaration.tokens.count == 6, declaration.tokens[0] == .word("class"),
++              case let .word(className) = declaration.tokens[1], Array(declaration.tokens.suffix(4)) == self.pattern("(BasePlugin):") else { throw self.fail(declaration.number) }
++        let reserved = Set(["BasePlugin", "HookResult", "HookStrategy", "Any", "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"])
++        guard !reserved.contains(className) else { throw self.fail(declaration.number, "Plugin class must not shadow SDK names or Python keywords") }
++        cursor += 1
++        try expectOne(["def on_plugin_load(self):", "def on_plugin_load(self) -> None:"], indent: 4)
++        try expect("self.add_on_send_message_hook()", indent: 8)
++        if cursor < rows.count, rows[cursor].tokens == self.pattern("def on_send_message_hook(self, account: int, params: Any) -> HookResult:"), !hasTypingImport { throw self.fail(rows[cursor].number, "Typed template requires typing.Any import") }
++        try expectOne(["def on_send_message_hook(self, account, params):", "def on_send_message_hook(self, account: int, params: Any) -> HookResult:"], indent: 4)
++        var prefix: String?
++        if cursor < rows.count, rows[cursor].tokens.first == .word("if") {
++            let row = rows[cursor]
++            guard row.indent == 8, row.tokens.count == 10, Array(row.tokens.prefix(7)) == self.pattern("if params.message.startswith("),
++                  case let .literal(value) = row.tokens[7], Array(row.tokens.suffix(2)) == self.pattern("):") else { throw self.fail(row.number) }
++            prefix = value; cursor += 1
++        }
++        var actions: [AyuPluginAction] = []
++        let bodyIndent = prefix == nil ? 8 : 12
++        while cursor < rows.count, rows[cursor].tokens.first != .word("return") {
++            let row = rows[cursor]
++            guard row.indent == bodyIndent, row.tokens.count == 14,
++                  Array(row.tokens.prefix(10)) == self.pattern("params.message = params.message.replace("),
++                  case let .literal(find) = row.tokens[10], row.tokens[11] == .mark(","),
++                  case let .literal(replacement) = row.tokens[12], row.tokens[13] == .mark(")") else { throw self.fail(row.number) }
++            // No optional replace count, semicolon, or expression is silently discarded.
++            actions.append(AyuPluginAction(id: "send_\(actions.count)", title: "Outgoing text replacement", kind: .outgoingReplace, find: find, replacement: replacement, prefix: prefix))
++            guard actions.count <= 8, prefix == nil || actions.count == 1 else { throw self.fail(row.number, "Conditional templates support one replacement; unconditional templates support eight") }
++            cursor += 1
++        }
++        try expect("return HookResult(strategy=HookStrategy.MODIFY, params=params)", indent: bodyIndent)
++        if prefix != nil { try expect("return HookResult()", indent: 8) }
++        guard cursor == rows.count, let id = metadata["__id__"], let name = metadata["__name__"] else { throw self.fail(cursor < rows.count ? rows[cursor].number : lines.count, "Entire plugin must match a supported template") }
++        let manifest = AyuPluginManifest(id: id, name: name, author: metadata["__author__"] ?? "Unknown", version: metadata["__version__"] ?? "1.0", summary: metadata["__description__"] ?? "Converted outgoing-text hook", actions: actions, convertedFrom: self.templateID, sourceSHA256: sourceSHA256, limitations: [
++            "Automatic literal replacements apply to plain cloud text only. Entity-bearing/formatted text (including links), media captions, secret chats and forwards are unchanged.",
++            "Replacement must be nonempty and must not expand UTF-8 or UTF-16 length. Enabled plugins run in installation order.",
++            "This file matched the complete literal-send-hook template. Python, Java, Xposed, external dependencies and additional statements are not executed."
++        ])
++        try manifest.validate()
++        return manifest
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAppearanceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAppearanceSettings.swift
 new file mode 100644
 index 00000000..e48eaf76
@@ -69013,10 +69244,10 @@ index 00000000..35137a2f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..eb7df5f6
+index 00000000..0d46e2b4
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,205 @@
 +import Foundation
 +import CryptoKit
 +
@@ -69024,20 +69255,23 @@ index 00000000..eb7df5f6
 +
 +/// Versioned, declarative plugin ABI. No Android or Python code is executed.
 +public struct AyuPluginAction: Codable, Equatable {
-+    public enum Kind: String, Codable { case search, searchTerms, replaceText }
++    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace }
 +    public var id: String
 +    public var title: String
 +    public var kind: Kind
 +    public var find: String?
 +    public var replacement: String?
-+    public init(id: String, title: String, kind: Kind, find: String? = nil, replacement: String? = nil) {
++    public var prefix: String?
++    public init(id: String, title: String, kind: Kind, find: String? = nil, replacement: String? = nil, prefix: String? = nil) {
 +        self.id = id; self.title = title; self.kind = kind; self.find = find; self.replacement = replacement
++        self.prefix = prefix
 +    }
 +    public var permission: String {
++        if self.kind == .outgoingReplace { return "messages.outgoing.modify" }
 +        return self.kind == .replaceText ? "draft.prepare" : "search.messages"
 +    }
 +    public func queries(_ input: String) throws -> [String] {
-+        guard self.kind != .replaceText, input.utf8.count <= 2048 else { throw AyuPluginError.invalidInput }
++        guard self.kind == .search || self.kind == .searchTerms, input.utf8.count <= 2048 else { throw AyuPluginError.invalidInput }
 +        let parts = self.kind == .searchTerms ? input.components(separatedBy: "|") : [input]
 +        guard parts.count <= 6 else { throw AyuPluginError.invalidInput }
 +        var result: [String] = []
@@ -69086,10 +69320,15 @@ index 00000000..eb7df5f6
 +              (self.convertedFrom?.count ?? 0) <= 128, (self.sourceSHA256?.count ?? 0) <= 64 else { throw AyuPluginError.invalidManifest }
 +        for action in self.actions {
 +            guard validID(action.id), !action.title.isEmpty, action.title.count <= 80 else { throw AyuPluginError.invalidManifest }
-+            if action.kind == .replaceText {
++            if action.kind == .replaceText || action.kind == .outgoingReplace {
 +                guard let find = action.find, !find.isEmpty, find.utf8.count <= 128,
 +                      let replacement = action.replacement, replacement.utf8.count <= 128 else { throw AyuPluginError.invalidManifest }
++                if action.kind == .outgoingReplace {
++                    guard !replacement.isEmpty, replacement.utf8.count <= find.utf8.count,
++                          replacement.utf16.count <= find.utf16.count, (action.prefix?.utf8.count ?? 0) <= 128 else { throw AyuPluginError.invalidManifest }
++                }
 +            } else if action.find != nil || action.replacement != nil { throw AyuPluginError.invalidManifest }
++            if action.kind != .outgoingReplace && action.prefix != nil { throw AyuPluginError.invalidManifest }
 +        }
 +    }
 +    public var permissions: [String] { return Array(Set(self.actions.map(\.permission))).sorted() }
@@ -69117,6 +69356,24 @@ index 00000000..eb7df5f6
 +    }
 +    public mutating func setEnabled(id: String, enabled: Bool) {
 +        if let index = self.installed.firstIndex(where: { $0.manifest.id == id }) { self.installed[index].enabled = enabled }
++    }
++    public mutating func installAndActivate(_ prepared: AyuPluginManifest) throws {
++        var candidate = self
++        try candidate.install(prepared)
++        try candidate.activate(prepared, expected: prepared)
++        self = candidate
++    }
++    public func outgoingText(_ text: String) -> String {
++        var result = text
++        for plugin in self.installed where plugin.enabled {
++            for action in plugin.manifest.actions where action.kind == .outgoingReplace {
++                if let prefix = action.prefix, !prefix.isEmpty, (result as NSString).range(of: prefix, options: [.anchored, .literal]).location == NSNotFound { continue }
++                guard let find = action.find, !find.isEmpty, let replacement = action.replacement, !replacement.isEmpty,
++                      replacement.utf8.count <= find.utf8.count, replacement.utf16.count <= find.utf16.count else { continue }
++                result = result.replacingOccurrences(of: find, with: replacement, options: .literal)
++            }
++        }
++        return result
 +    }
 +    public mutating func activate(_ prepared: AyuPluginManifest, expected: AyuPluginManifest) throws {
 +        try prepared.validate()
@@ -69146,9 +69403,18 @@ index 00000000..eb7df5f6
 +                let find = action.find ?? ""
 +                let marker = find.contains("A") ? "B" : "A"
 +                _ = try action.transformed(find + "\n" + marker)
++            case .outgoingReplace:
++                guard let find = action.find, let replacement = action.replacement else { throw AyuPluginError.invalidManifest }
++                let sample = action.prefix ?? find
++                guard sample.replacingOccurrences(of: find, with: replacement, options: .literal).utf8.count <= sample.utf8.count else { throw AyuPluginError.invalidInput }
 +            }
 +        }
 +        if manifest.convertedFrom != nil {
++            if manifest.convertedFrom == AyuAndroidPluginConverter.templateID {
++                guard let hash = manifest.sourceSHA256, hash.count == 64, hash.allSatisfy({ $0.isHexDigit }),
++                      manifest.actions.allSatisfy({ $0.kind == .outgoingReplace }) else { throw AyuPluginError.invalidManifest }
++                return prepared
++            }
 +            guard let hash = manifest.sourceSHA256 else { throw AyuPluginError.unsupportedAndroidPlugin }
 +            let converted = try AyuPluginImporter.reviewedAdapter(sourceSHA256: hash)
 +            guard converted == manifest else { throw AyuPluginError.unsupportedAndroidPlugin }
@@ -69168,7 +69434,8 @@ index 00000000..eb7df5f6
 +        }
 +        // Conversion is a reviewed native adapter, never a metadata-based execution shortcut.
 +        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-+        return try self.reviewedAdapter(sourceSHA256: hash)
++        if let reviewed = try? self.reviewedAdapter(sourceSHA256: hash) { return reviewed }
++        return try AyuAndroidPluginConverter.convert(data, sourceSHA256: hash)
 +    }
 +    static func reviewedAdapter(sourceSHA256 hash: String) throws -> AyuPluginManifest {
 +        guard hash == "802dd326787e3640f55f20ac5462539c03202184e540578a4531c693c2c3458a" else { throw AyuPluginError.unsupportedAndroidPlugin }
@@ -69353,6 +69620,42 @@ index 7a8db1d8..9a9c1f95 100644
          self.useRequestTimeoutTimers = useRequestTimeoutTimers
          self.baseTcpConnectionInterfaceFactory = baseTcpConnectionInterfaceFactory
          self.isAppExtension = isAppExtension
+diff --git a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
+index 9cb3108a..4594a614 100644
+--- a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
++++ b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
+@@ -728,11 +728,29 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
+ }
+ 
+ public func enqueueMessages(account: Account, peerId: PeerId, messages: [EnqueueMessage]) -> Signal<[MessageId?], NoError> {
++    let plugins = account.network.ayuGhostMode.current.plugins
++    let pluginMessages: [EnqueueMessage]
++    if plugins.installed.contains(where: { $0.enabled && $0.manifest.actions.contains(where: { $0.kind == .outgoingReplace }) }) {
++        pluginMessages = messages.map { message in
++            guard peerId.namespace != Namespaces.Peer.SecretChat,
++                  case let .message(text, attributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = message,
++                  mediaReference == nil, inlineStickers.isEmpty,
++                  !attributes.contains(where: { attribute in
++                      if let entities = attribute as? TextEntitiesMessageAttribute { return !entities.entities.isEmpty }
++                      return false
++                  }) else { return message }
++            let result = plugins.outgoingText(text)
++            guard !result.utf8.elementsEqual(text.utf8) else { return message }
++            return .message(text: result, attributes: attributes, inlineStickers: inlineStickers, mediaReference: mediaReference, threadId: threadId, replyToMessageId: replyToMessageId, replyToStoryId: replyToStoryId, localGroupingKey: localGroupingKey, correlationId: correlationId, bubbleUpEmojiOrStickersets: bubbleUpEmojiOrStickersets)
++        }
++    } else {
++        pluginMessages = messages
++    }
+     let signal: Signal<[(Bool, EnqueueMessage)], NoError>
+     if let transformOutgoingMessageMedia = account.transformOutgoingMessageMedia {
+-        signal = opportunisticallyTransformOutgoingMedia(network: account.network, postbox: account.postbox, transformOutgoingMessageMedia: transformOutgoingMessageMedia, messages: messages, userInteractive: true)
++        signal = opportunisticallyTransformOutgoingMedia(network: account.network, postbox: account.postbox, transformOutgoingMessageMedia: transformOutgoingMessageMedia, messages: pluginMessages, userInteractive: true)
+     } else {
+-        signal = .single(messages.map { (false, $0) })
++        signal = .single(pluginMessages.map { (false, $0) })
+     }
+     return signal
+     |> mapToSignal { messages -> Signal<[MessageId?], NoError> in
 diff --git a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
 index 3d99e59d..52ffc91e 100644
 --- a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
@@ -135522,7 +135825,7 @@ index 00000000..e8586698
 +</defs>
 +</svg>
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
-index 1ceb46bc..f843a646 100644
+index 1ceb46bc..53bcd9e9 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
 +++ b/submodules/TelegramUI/Sources/AppDelegate.swift
 @@ -310,6 +310,23 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
@@ -135702,6 +136005,17 @@ index 1ceb46bc..f843a646 100644
                  }))
              } else {
                  authContextReadyDisposable.set(nil)
+@@ -3020,7 +3066,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         }
+         self.openUrlWhenReadyDisposable.set((signal
+         |> deliverOnMainQueue).start(next: { [weak self] context in
+-            if (WalletContext.isTonConnectUrl(url.absoluteString) || url.scheme?.lowercased() == "ton"), !WalletConfiguration.with(appConfiguration: context.context.currentAppConfiguration.with { $0 }).isAvailable {
++            if url.isFileURL, url.pathExtension.lowercased() == "plugin" {
++                ayuImportPlugin(context: context.context, fileURL: url, filename: url.lastPathComponent)
++            } else if (WalletContext.isTonConnectUrl(url.absoluteString) || url.scheme?.lowercased() == "ton"), !WalletConfiguration.with(appConfiguration: context.context.currentAppConfiguration.with { $0 }).isAvailable {
+                 self?.presentWalletUnavailable(in: context)
+             } else if WalletContext.isTonConnectUrl(url.absoluteString) {
+                 context.context.walletContext?.processTonConnectUrl(url.absoluteString)
 diff --git a/submodules/TelegramUI/Sources/AyuStartupFailureController.swift b/submodules/TelegramUI/Sources/AyuStartupFailureController.swift
 new file mode 100644
 index 00000000..e726360c
@@ -136117,10 +136431,10 @@ index 00000000..2c07baa7
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
 new file mode 100644
-index 00000000..5cf9ade0
+index 00000000..7611a2f9
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,152 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -136149,8 +136463,9 @@ index 00000000..5cf9ade0
 +        super.init(style: .insetGrouped)
 +        self.title = russian ? "Плагины" : "Plugins"
 +        for plugin in context.account.network.ayuGhostMode.current.plugins.installed where plugin.enabled {
-+            for action in plugin.manifest.actions { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
++            for action in plugin.manifest.actions where action.kind != .outgoingReplace { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
 +        }
++        if self.commands.isEmpty { self.status = russian ? "Включённые хуки работают автоматически при обычной отправке текста. Здесь нет ручных действий." : "Enabled hooks run automatically during ordinary text sending. There are no manual actions here." }
 +    }
 +    required init?(coder: NSCoder) { return nil }
 +    deinit { self.request.dispose() }
@@ -136993,6 +137308,31 @@ index 1ade8c01..66fde174 100644
          return ContextController.Items(content: .list(actions), tip: nil)
      }
  }
+diff --git a/submodules/TelegramUI/Sources/OpenChatMessage.swift b/submodules/TelegramUI/Sources/OpenChatMessage.swift
+index c46cc951..b3430c9a 100644
+--- a/submodules/TelegramUI/Sources/OpenChatMessage.swift
++++ b/submodules/TelegramUI/Sources/OpenChatMessage.swift
+@@ -233,6 +233,20 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
+             case let .document(file, immediateShare):
+                 params.dismissInput()
+                 let presentationData = params.context.sharedContext.currentPresentationData.with { $0 }
++                if !immediateShare, let name = file.fileName, name.lowercased().hasSuffix(".plugin"), !params.message.isCopyProtected(), !params.copyProtected, params.message.id.peerId.namespace != Namespaces.Peer.SecretChat {
++                    let _ = (params.context.engine.resources.data(resource: EngineMediaResource(file.resource))
++                    |> filter { $0.isComplete }
++                    |> take(1)
++                    |> timeout(3.0, queue: Queue.mainQueue(), alternate: .single(EngineMediaResource.ResourceData(path: "", availableSize: 0, isComplete: false)))
++                    |> deliverOnMainQueue).startStandalone(next: { data in
++                        guard data.isComplete else {
++                            params.present(textAlertController(context: params.context, title: "AyuGram", text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Сначала дождись загрузки файла, затем нажми на него ещё раз." : "Wait for the file to download, then tap it again.", actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), nil, .window(.root))
++                            return
++                        }
++                        ayuImportPlugin(context: params.context, fileURL: URL(fileURLWithPath: data.path), filename: name)
++                    })
++                    return true
++                }
+                 if immediateShare {
+                     let controller = params.context.sharedContext.makeShareScreen(context: params.context, params: ShareControllerParams(subject: .media(.standalone(media: file), nil), immediateExternalShare: true))
+                     params.present(controller, nil, .window(.root))
 diff --git a/submodules/WalletContext/Sources/WalletSecurity.swift b/submodules/WalletContext/Sources/WalletSecurity.swift
 index 3d13bc4d..3ca0e6c7 100644
 --- a/submodules/WalletContext/Sources/WalletSecurity.swift
@@ -137008,10 +137348,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..1bb0df1f
+index 00000000..910ff396
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,547 @@
+@@ -0,0 +1,587 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -137559,6 +137899,46 @@ index 00000000..1bb0df1f
 +let preparedReplacement = try AyuPluginActivation.prepare(replacementPlugin)
 +check(preparedReplacement == replacementPlugin, "Supported literal replacement passes local handler check")
 +print("PASS: \(checks) total model checks including transactional activation and reviewed conversion")
++
++guard CommandLine.arguments.count > 1 else { fatalError("Pass the actual plugin-fixture directory to the host harness") }
++let pluginFixtures = URL(fileURLWithPath: CommandLine.arguments[1])
++for name in ["android_literal_hook", "android_prefix_hook", "android_typed_hook"] {
++    let source = try Data(contentsOf: pluginFixtures.appendingPathComponent(name + ".plugin"))
++    let converted = try AyuPluginImporter.parse(source, filename: name + ".plugin")
++    let expectedData = try Data(contentsOf: pluginFixtures.appendingPathComponent(name + ".expected.json"))
++    let expected = try JSONDecoder().decode(AyuPluginManifest.self, from: expectedData)
++    check(converted == expected, "Native conversion must match the independently generated AST fixture")
++    let prepared = try AyuPluginActivation.prepare(converted)
++    var hooks = AyuPluginRegistry()
++    try hooks.installAndActivate(prepared)
++    if name != "android_prefix_hook" {
++        check(hooks.outgoingText("tehh tehh") == "the the", "Converted literal hook automatically changes outgoing text")
++        check(hooks.outgoingText("untouched") == "untouched", "Unmatched text remains unchanged")
++        hooks.setEnabled(id: converted.id, enabled: false)
++        check(hooks.outgoingText("tehh") == "tehh", "Disabling unregisters the outgoing behavior")
++        let sourceString = String(data: source, encoding: .utf8)!
++        for invalid in [sourceString + "\nprint('extra')\n", sourceString.replacingOccurrences(of: "\"tehh\", \"the\"", with: "\"tehh\", \"the\", 1"), sourceString.replacingOccurrences(of: "\"tehh\", \"the\"", with: "\"a\", \"too long\"")] {
++            check(pluginThrows { _ = try AyuPluginImporter.parse(Data(invalid.utf8), filename: "invalid.plugin") }, "Unsupported statements/count/expansion must reject whole-file conversion")
++        }
++    } else {
++        check(hooks.outgoingText("[note] text [note]") == "NOTE text NOTE", "Conditional hook applies its guard once to the supported single replacement")
++        check(hooks.outgoingText("text [note]") == "text [note]", "Nonmatching prefixes keep text unchanged")
++    }
++    let oldHooks = hooks
++    check(pluginThrows { try hooks.installAndActivate(invalidPlugin) }, "Bad import-and-enable must fail atomically")
++    check(hooks == oldHooks, "Failed automatic activation preserves existing registry")
++}
++print("PASS: \(checks) checks including actual Android-template conversion and native outgoing hook policies")
++
++let unicodeAction = AyuPluginAction(id: "unicode", title: "Unicode", kind: .outgoingReplace, find: "e\u{301}", replacement: "é")
++let unicodeManifest = AyuPluginManifest(id: "unicode_hook", name: "Unicode", author: "Tests", version: "1", summary: "", actions: [unicodeAction])
++var unicodeHooks = AyuPluginRegistry()
++try unicodeHooks.installAndActivate(unicodeManifest)
++check(Array(unicodeHooks.outgoingText("e\u{301}").utf8) == Array("é".utf8), "Literal outgoing hooks preserve requested byte-level normalization changes")
++let inverseLiteral = AyuPluginAction(id: "literal", title: "Literal", kind: .outgoingReplace, find: "é", replacement: "x")
++try unicodeHooks.installAndActivate(AyuPluginManifest(id: "unicode_hook", name: "Unicode", author: "Tests", version: "1", summary: "", actions: [inverseLiteral]))
++check(Array(unicodeHooks.outgoingText("e\u{301}").utf8) == Array("e\u{301}".utf8), "Literal replacements must not match canonically equivalent but distinct source strings")
++print("PASS: \(checks) model checks including literal Unicode hook semantics")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

@@ -2,14 +2,48 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 
 path = Path(__file__).resolve().parents[2] / 'tools/convert_plugin.py'
+sys.path.insert(0, str(path.parent))
 spec = importlib.util.spec_from_file_location('ayu_convert_plugin', path)
 converter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(converter)
 
 
 class PluginConverterTests(unittest.TestCase):
+    def test_supported_hook_templates_convert_without_execution(self):
+        import json
+        for name in ['android_literal_hook', 'android_prefix_hook', 'android_typed_hook']:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as folder:
+                source = path.parents[1] / 'plugins' / (name + '.plugin')
+                destination = Path(folder) / 'converted.plugin'
+                converter.convert(source, destination)
+                manifest = json.loads(destination.read_text(encoding='utf-8'))
+                self.assertEqual(manifest['actions'][0]['kind'], 'outgoingReplace')
+                self.assertEqual(manifest['convertedFrom'], 'exteraGram/literal-send-hook-v1')
+                self.assertEqual(manifest['actions'][0].get('prefix'), '[note]' if 'prefix' in name else None)
+
+    def test_extra_code_and_expanding_rules_reject_the_entire_plugin(self):
+        from plugin_patterns import compile_source
+        template = (path.parents[1] / 'plugins/android_literal_hook.plugin').read_text(encoding='utf-8')
+        for source in [template + '\nprint("unexpected")\n', template.replace('"tehh", "the"', '"a", "too long"'), template.replace('"tehh", "the"', '"a", ""'), template.replace('class LiteralHookDemo', '@arbitrary_decorator\nclass LiteralHookDemo')]:
+            with self.subTest(source=source[-50:]), self.assertRaises(ValueError):
+                compile_source(source.encode())
+
+    def test_generic_class_and_method_parameters_are_rejected(self):
+        from plugin_patterns import compile_source
+        source = (path.parents[1] / 'plugins/android_literal_hook.plugin').read_text(encoding='utf-8')
+        for changed in [source.replace('class LiteralHookDemo(', 'class LiteralHookDemo[T]('), source.replace('def on_plugin_load(', 'def on_plugin_load[T](')]:
+            with self.assertRaises(ValueError):
+                compile_source(changed.encode())
+
+    def test_replacement_count_is_not_silently_ignored(self):
+        from plugin_patterns import compile_source
+        source = (path.parents[1] / 'plugins/android_literal_hook.plugin').read_text(encoding='utf-8')
+        with self.assertRaises(ValueError):
+            compile_source(source.replace('"tehh", "the"', '"tehh", "the", 1').encode())
+
     def test_unreviewed_python_metadata_does_not_select_an_adapter(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / 'search_plus.plugin'

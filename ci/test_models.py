@@ -40,14 +40,14 @@ def run(source: Path):
                         *map(str, codec), str(output / 'murmur.o'),
                         '-o', str(output / 'libPostbox.dylib')], check=True)
         ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
-        models = [ayu / name for name in ('AyuPlugins.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuTextToolsPolicy.swift', 'AyuRegexSettings.swift',
+        models = [ayu / name for name in ('AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuTextToolsPolicy.swift', 'AyuRegexSettings.swift',
                                          'AyuArchiveFileStore.swift', 'AyuMessageHistoryState.swift')]
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
                         '-D', 'AYU_POSTBOX_TESTS', '-I', str(output), '-L', str(output), '-lPostbox',
                         '-Xlinker', '-rpath', '-Xlinker', str(output),
                         *map(str, models), str(source / 'tools/ayu-tests/main.swift'),
                         '-o', str(output / 'ayu-tests')], check=True)
-        subprocess.run([str(output / 'ayu-tests')], check=True)
+        subprocess.run([str(output / 'ayu-tests'), str(Path(__file__).resolve().parents[1] / 'plugins')], check=True)
 
 
 if __name__ == '__main__':

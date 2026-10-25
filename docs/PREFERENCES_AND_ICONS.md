@@ -28,7 +28,7 @@ opens its own page: large generic puzzle icon, name, version, author, descriptio
 enable switch, supported actions/limitations, export and confirmed removal. The
 enable flow retains the existing local compatibility checks and adapter behavior.
 Popping or closing that page cancels an uncommitted preparation result. This work
-does not expand Android conversion support before the requested iPhone test.
+is complemented by the later [automatic hook-template import](PLUGIN_CONVERSION.md).
 
 The common puzzle icon is drawn at the requested display size with preserved
 symbol proportions. It is shared by plugin rows, headers and action lists.

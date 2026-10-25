@@ -1,6 +1,8 @@
-"""Convert the reviewed Search+ file to the native .plugin ABI without executing it."""
+"""Convert reviewed Search+ or complete Android hook templates to native .plugin without execution."""
 import argparse
 import hashlib
+import json
+from plugin_patterns import compile_source
 from pathlib import Path
 
 SEARCH_PLUS_SHA256 = '802dd326787e3640f55f20ac5462539c03202184e540578a4531c693c2c3458a'
@@ -13,12 +15,14 @@ def convert(source: Path, output: Path):
         raise ValueError('Keep the original plugin; choose a different output path')
     if not 0 < source.stat().st_size <= 512 * 1024:
         raise ValueError('Plugin size must be between 1 byte and 512 KB')
-    if hashlib.sha256(source.read_bytes()).hexdigest() != SEARCH_PLUS_SHA256:
-        raise ValueError('No reviewed native adapter for this file/version. Android code was not executed.')
-    adapter = Path(__file__).resolve().parents[1] / 'plugins/search_plus_ios.plugin'
+    data = source.read_bytes()
+    if hashlib.sha256(data).hexdigest() == SEARCH_PLUS_SHA256:
+        output_data = (Path(__file__).resolve().parents[1] / 'plugins/search_plus_ios.plugin').read_bytes()
+    else:
+        output_data = (json.dumps(compile_source(data), ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     # Exclusive create protects an existing plugin from accidental replacement.
     with output.open('xb') as destination:
-        destination.write(adapter.read_bytes())
+        destination.write(output_data)
     return output
 
 

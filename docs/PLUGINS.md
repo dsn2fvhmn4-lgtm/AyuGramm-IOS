@@ -7,14 +7,16 @@ Release 3's already uploaded IPA is unchanged.
 
 ## Installation and use
 
-1. Open **Settings -> AyuGram Preferences -> Plugins**.
-2. Choose **Import .plugin** and select a file from Files. Review its author,
-   version, capabilities and conversion limitations, then confirm installation.
-3. New or replaced plugins start disabled. Tap the plugin to open its own details
-   page with name, version, author, description and an enable switch.
+1. Tap a downloaded `.plugin` in an ordinary cloud chat, open one from Files, or
+   use **Settings -> AyuGram Preferences -> Plugins -> Import .plugin**.
+2. Review its author, version, capabilities and conversion limitations, then choose
+   **Import and enable**. Preparation and activation commit together after success.
+3. Tap an installed plugin to open its details page with name, version, author,
+   description and an enable switch.
 4. Open an ordinary cloud message's menu -> **AyuGram -> Plugins**, then choose
-   an action. Input is entered explicitly; message contents are not automatically
-   supplied to plugins. The manager also supports disable, removal and .plugin export.
+   an action. Manual actions take explicitly entered input. Automatic outgoing
+   rules instead process eligible outgoing text in the native enqueue path. The
+   manager also supports disable, removal and .plugin export.
 
 Plugin rows show a white puzzle piece on a blue circle. Downloaded `.plugin`
 documents without thumbnails use a puzzle icon in the chat's native file control;
@@ -32,11 +34,13 @@ in [plugins](../plugins).
 Enabling a plugin starts background compatibility checks and prepares its typed
 native action manifest. A progress indicator remains visible while that work runs.
 Only a successful result is committed as enabled. Invalid input, a changed/removed
-plugin or a persistence failure leaves it disabled. Closing the manager cancels
-activation before its result is committed. This checks the local format and action
+plugin or a persistence failure leaves it disabled. Closing a details page cancels
+an uncommitted manual re-enable; the fresh import-and-enable operation temporarily
+blocks modal dismissal until commit or failure. This checks the local format and action
 handlers, not end-to-end Telegram requests or Android method-hook compatibility.
 The reviewed Search+ conversion is built into the app; the desktop converter is
-optional. Unsupported Android plugins still require a dedicated adapter.
+optional. Literal outgoing-hook templates now convert locally as described in
+[automatic conversion](PLUGIN_CONVERSION.md). Other Android plugins require a dedicated adapter.
 
 ## Search+ conversion
 
@@ -74,8 +78,12 @@ Files use the `.plugin` extension and UTF-8 JSON, with format
 - `replaceText`: literal text replacement, followed by result review and explicit
   append-to-draft confirmation. No automatic send; the native recording-discard,
   editing and send-permission checks remain in effect.
+- `outgoingReplace`: automatic nonempty, nonexpanding literal replacement in plain
+  outgoing cloud text. Optional `prefix` restricts matching. See the full
+  [automatic conversion and hook scope](PLUGIN_CONVERSION.md).
 
-Permissions derive from action kinds: `search.messages` or `draft.prepare`.
+Permissions derive from action kinds: `search.messages`, `draft.prepare` or
+`messages.outgoing.modify`.
 Unknown operation kinds and ABI versions are rejected. Limits: 512 KB per file,
 12 plugins per account, 8 actions per plugin, 6 queries, 128 characters per query,
 8192 input/output UTF-8 bytes and 4096 output UTF-16 units for draft text. IDs are

@@ -90,7 +90,8 @@
             "enum": [
               "search",
               "searchTerms",
-              "replaceText"
+              "replaceText",
+              "outgoingReplace"
             ]
           },
           "find": {
@@ -106,6 +107,13 @@
               "null"
             ],
             "maxLength": 128
+          },
+          "prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
           }
         },
         "allOf": [
@@ -113,7 +121,10 @@
             "if": {
               "properties": {
                 "kind": {
-                  "const": "replaceText"
+                  "enum": [
+                    "replaceText",
+                    "outgoingReplace"
+                  ]
                 }
               }
             },
@@ -138,6 +149,31 @@
                   "type": "null"
                 },
                 "replacement": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "outgoingReplace"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "replacement": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "description": "Nonempty replacement must not expand UTF-8/UTF-16 length; native importer checks this."
+            },
+            "else": {
+              "properties": {
+                "prefix": {
                   "type": "null"
                 }
               }

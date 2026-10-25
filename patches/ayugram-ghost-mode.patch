@@ -66896,10 +66896,10 @@ index 00000000..77b19608
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
-index 00000000..21c088f3
+index 00000000..7fcdd7e0
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,155 @@
 +import UIKit
 +import Display
 +import TelegramCore
@@ -66920,6 +66920,21 @@ index 00000000..21c088f3
 +    required init?(coder: NSCoder) { return nil }
 +    deinit { if let directory = self.exportDirectory { try? FileManager.default.removeItem(at: directory) } }
 +    private var plugin: AyuInstalledPlugin? { return self.store.current.plugins.installed.first { $0.manifest.id == self.pluginID } }
++    private var isCameraPlugin: Bool { return self.plugin?.manifest.actions.contains(where: { $0.kind == .cameraFlip }) == true }
++    private var cameraSettings: AyuCameraFlipSettings { return self.plugin?.cameraFlipSettings ?? AyuCameraFlipSettings() }
++    private var cameraModes: [String] { return self.russian ? ["Свайп вверх или вниз", "Свайп вверх", "Свайп вниз", "Двойной тап"] : ["Swipe up or down", "Swipe up", "Swipe down", "Double tap"] }
++    private func updateCameraSettings(_ update: (inout AyuCameraFlipSettings) -> Void) {
++        guard !self.preparing else { return }
++        do {
++            try self.store.update { state in
++                var settings = state.plugins.installed.first(where: { $0.manifest.id == self.pluginID })?.cameraFlipSettings ?? AyuCameraFlipSettings()
++                update(&settings)
++                try state.plugins.setCameraFlipSettings(id: self.pluginID, settings: settings)
++            }
++        } catch { self.showError() }
++        self.tableView.reloadData()
++    }
++    @objc private func cameraHapticChanged(_ toggle: UISwitch) { self.updateCameraSettings { $0.haptic = toggle.isOn } }
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
 +        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
@@ -66936,7 +66951,7 @@ index 00000000..21c088f3
 +    }
 +    @objc private func done() { self.generation += 1; self.dismiss(animated: true) }
 +    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? 1 : 2 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? (self.isCameraPlugin ? 3 : 1) : 2 }
 +    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { return section == 0 ? (self.russian ? "Настройки плагина" : "Plugin settings") : nil }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
 +        guard section == 0, let manifest = self.plugin?.manifest else { return nil }
@@ -66947,6 +66962,21 @@ index 00000000..21c088f3
 +        cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
 +        cell.textLabel?.textColor = self.palette?.text ?? .label
 +        cell.textLabel?.numberOfLines = 0
++        if indexPath.section == 0, indexPath.row > 0, self.isCameraPlugin {
++            if indexPath.row == 1 {
++                cell.textLabel?.text = self.russian ? "Как переключать камеру" : "Switch camera gesture"
++                cell.detailTextLabel?.text = self.cameraModes.indices.contains(self.cameraSettings.trigger) ? self.cameraModes[self.cameraSettings.trigger] : nil
++                cell.accessoryType = .disclosureIndicator
++            } else {
++                cell.textLabel?.text = self.russian ? "Вибрация" : "Haptic feedback"
++                cell.selectionStyle = .none
++                let toggle = UISwitch(); toggle.isOn = self.cameraSettings.haptic; toggle.isEnabled = !self.preparing
++                toggle.accessibilityLabel = cell.textLabel?.text
++                toggle.addTarget(self, action: #selector(self.cameraHapticChanged(_:)), for: .valueChanged)
++                cell.accessoryView = toggle
++            }
++            return cell
++        }
 +        if indexPath.section == 0 {
 +            cell.selectionStyle = .none
 +            cell.textLabel?.text = self.russian ? "Включить плагин" : "Enable plugin"
@@ -66967,7 +66997,7 @@ index 00000000..21c088f3
 +        return cell
 +    }
 +    private func showError() {
-+        let alert = UIAlertController(title: "AyuGram", message: self.russian ? "Не удалось подготовить плагин или сохранить настройки. Он не был включён автоматически." : "Plugin preparation or saving failed. It was not enabled automatically.", preferredStyle: .alert)
++        let alert = UIAlertController(title: "AyuGram", message: self.russian ? "Не удалось применить изменения плагина. Предыдущие настройки сохранены." : "Plugin changes could not be applied. Previous settings were retained.", preferredStyle: .alert)
 +        alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
 +    }
 +    @objc private func toggle(_ toggle: UISwitch) {
@@ -66993,6 +67023,17 @@ index 00000000..21c088f3
 +    }
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
++        if indexPath.section == 0, indexPath.row == 1, self.isCameraPlugin, !self.preparing {
++            let alert = UIAlertController(title: self.russian ? "Жест" : "Gesture", message: nil, preferredStyle: .actionSheet)
++            for (index, title) in self.cameraModes.enumerated() {
++                alert.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in self?.updateCameraSettings { $0.trigger = index } }))
++            }
++            alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++            alert.popoverPresentationController?.sourceView = self.tableView
++            alert.popoverPresentationController?.sourceRect = self.tableView.rectForRow(at: indexPath)
++            self.present(alert, animated: true)
++            return
++        }
 +        guard indexPath.section == 1, !self.preparing, let plugin = self.plugin else { return }
 +        if indexPath.row == 0 {
 +            do {
@@ -67016,7 +67057,7 @@ index 00000000..21c088f3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..c5843a25
+index 00000000..fac73a88
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 @@ -0,0 +1,178 @@
@@ -67067,7 +67108,7 @@ index 00000000..c5843a25
 +    }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
 +        guard section == 0 else { return nil }
-+        return self.russian ? "После подтверждения импорта совместимый плагин проверяется и включается автоматически. Поддерживаются Search+ 2.6.1 и шаблоны простых хуков исходящего текста. Ручные действия: меню сообщения → Плагины." : "After import confirmation, compatible plugins are checked and enabled automatically. Search+ 2.6.1 and simple outgoing-text hook templates are supported. Manual actions: message menu → Plugins."
++        return self.russian ? "После подтверждения импорта совместимый плагин проверяется и включается автоматически. Поддерживаются нативные адаптеры Search+ 2.6.1, Camera Flip 0.2.0 и шаблоны хуков исходящего текста. Ручные действия: меню сообщения → Плагины." : "After import confirmation, compatible plugins are checked and enabled automatically. Native Search+ 2.6.1 and Camera Flip 0.2.0 adapters and outgoing-text hook templates are supported. Manual actions: message menu → Plugins."
 +    }
 +    private func puzzleIcon() -> UIImage {
 +        return ayuPluginAvatar()
@@ -68268,6 +68309,62 @@ index 00000000..ba034fc4
 +        return NSError(domain: "AyuMediaArchive", code: 1, userInfo: [NSLocalizedDescriptionKey: description])
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuCameraFlipPolicy.swift b/submodules/TelegramCore/Sources/AyuGram/AyuCameraFlipPolicy.swift
+new file mode 100644
+index 00000000..4b0bc25b
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuCameraFlipPolicy.swift
+@@ -0,0 +1,50 @@
++import Foundation
++
++public struct AyuCameraFlipSettings: Codable, Equatable {
++    public var trigger: Int
++    public var haptic: Bool
++    public init(trigger: Int = 0, haptic: Bool = true) { self.trigger = trigger; self.haptic = haptic }
++    public func validate() throws {
++        guard (0...3).contains(self.trigger) else { throw AyuPluginError.invalidManifest }
++    }
++}
++
++/// Native equivalent of Camera Flip 0.2.0's single-finger gesture thresholds.
++public struct AyuCameraFlipPolicy {
++    public enum Phase { case began, moved, ended, cancelled }
++    private var start: (x: Double, y: Double, time: Double)?
++    private var lastTap: Double?
++    private var lastFlip: Double?
++    private var fired = false
++    public init() {}
++    public mutating func cancel() { self.start = nil; self.lastTap = nil; self.fired = false }
++    private mutating func emit(_ time: Double) -> Bool {
++        if let last = self.lastFlip, time - last < 0.8 { return false }
++        self.lastFlip = time
++        return true
++    }
++    public mutating func handle(_ phase: Phase, x: Double, y: Double, time: Double, pointers: Int = 1, settings: AyuCameraFlipSettings) -> Bool {
++        guard x.isFinite, y.isFinite, time.isFinite, (0...3).contains(settings.trigger), pointers == 1 else { self.cancel(); return false }
++        if case .cancelled = phase { self.cancel(); return false }
++        if case .began = phase { self.start = (x, y, time); self.fired = false; return false }
++        guard let start = self.start, time >= start.time else { self.cancel(); return false }
++        let dx = x - start.x, dy = y - start.y
++        switch phase {
++        case .moved:
++            guard settings.trigger != 3, !self.fired, abs(dy) > 60, abs(dy) > 1.5 * abs(dx),
++                  settings.trigger == 0 || (settings.trigger == 1 && dy < 0) || (settings.trigger == 2 && dy > 0) else { return false }
++            self.fired = true
++            return self.emit(time)
++        case .ended:
++            self.start = nil
++            guard settings.trigger == 3, abs(dx) < 12, abs(dy) < 12, time - start.time < 0.25 else { self.lastTap = nil; return false }
++            if let last = self.lastTap, time >= last, time - last < 0.35 {
++                self.lastTap = nil
++                return self.emit(time)
++            }
++            self.lastTap = time
++            return false
++        case .began, .cancelled: return false
++        }
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift b/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift
 new file mode 100644
 index 00000000..130e741d
@@ -69278,10 +69375,10 @@ index 00000000..35137a2f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..c55c7622
+index 00000000..5e6790b2
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,295 @@
 +import Foundation
 +import CryptoKit
 +
@@ -69310,7 +69407,7 @@ index 00000000..c55c7622
 +
 +/// Versioned, declarative plugin ABI. No Android or Python code is executed.
 +public struct AyuPluginAction: Codable, Equatable {
-+    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace }
++    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip }
 +    public var id: String
 +    public var title: String
 +    public var kind: Kind
@@ -69324,6 +69421,7 @@ index 00000000..c55c7622
 +        self.prefix = prefix; self.condition = condition; self.replacementCount = replacementCount
 +    }
 +    public var permission: String {
++        if self.kind == .cameraFlip { return "camera.switch" }
 +        if self.kind == .outgoingReplace { return "messages.outgoing.modify" }
 +        return self.kind == .replaceText ? "draft.prepare" : "search.messages"
 +    }
@@ -69380,20 +69478,21 @@ index 00000000..c55c7622
 +    public var limitations: [String]
 +    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = []) {
 +        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
-+        self.apiVersion = actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1
++        self.apiVersion = actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
 +        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations
 +    }
 +    public func validate() throws {
 +        let validID: (String) -> Bool = { text in
 +            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
 +        }
-+        guard self.format == "ayugram-ios-plugin", (self.apiVersion == 1 || self.apiVersion == 2), validID(self.id),
++        guard self.format == "ayugram-ios-plugin", (1...3).contains(self.apiVersion), validID(self.id),
 +              !self.name.isEmpty, self.name.count <= 64, !self.author.isEmpty, self.author.count <= 128,
 +              !self.version.isEmpty, self.version.count <= 32, self.summary.count <= 2048,
 +              !self.actions.isEmpty, self.actions.count <= 8, Set(self.actions.map(\.id)).count == self.actions.count,
 +              self.limitations.count <= 16, self.limitations.allSatisfy({ $0.count <= 512 }),
 +              (self.convertedFrom?.count ?? 0) <= 128, (self.sourceSHA256?.count ?? 0) <= 64 else { throw AyuPluginError.invalidManifest }
 +        for action in self.actions {
++            guard action.kind != .cameraFlip || self.apiVersion >= 3 else { throw AyuPluginError.invalidManifest }
 +            guard self.apiVersion >= 2 || (action.condition == nil && action.replacementCount == nil) else { throw AyuPluginError.invalidManifest }
 +            guard validID(action.id), !action.title.isEmpty, action.title.count <= 80 else { throw AyuPluginError.invalidManifest }
 +            if action.kind == .replaceText || action.kind == .outgoingReplace {
@@ -69417,7 +69516,10 @@ index 00000000..c55c7622
 +public struct AyuInstalledPlugin: Codable, Equatable {
 +    public var manifest: AyuPluginManifest
 +    public var enabled: Bool
-+    public init(manifest: AyuPluginManifest, enabled: Bool = false) { self.manifest = manifest; self.enabled = enabled }
++    public var cameraFlipSettings: AyuCameraFlipSettings?
++    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil) {
++        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings
++    }
 +}
 +
 +public struct AyuPluginRegistry: Codable, Equatable {
@@ -69425,17 +69527,33 @@ index 00000000..c55c7622
 +    public init() {}
 +    public func validate() throws {
 +        guard self.installed.count <= 12, Set(self.installed.map { $0.manifest.id }).count == self.installed.count else { throw AyuPluginError.capacity }
-+        for plugin in self.installed { try plugin.manifest.validate() }
++        for plugin in self.installed {
++            try plugin.manifest.validate()
++            if let settings = plugin.cameraFlipSettings {
++                guard plugin.manifest.actions.contains(where: { $0.kind == .cameraFlip }) else { throw AyuPluginError.invalidManifest }
++                try settings.validate()
++            }
++        }
 +    }
 +    public mutating func install(_ manifest: AyuPluginManifest) throws {
 +        try manifest.validate()
++        let oldSettings = self.installed.first(where: { $0.manifest.id == manifest.id })?.cameraFlipSettings
 +        var updated = self.installed.filter { $0.manifest.id != manifest.id }
 +        guard updated.count < 12 else { throw AyuPluginError.capacity }
-+        updated.append(AyuInstalledPlugin(manifest: manifest))
++        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil))
 +        self.installed = updated
 +    }
 +    public mutating func setEnabled(id: String, enabled: Bool) {
 +        if let index = self.installed.firstIndex(where: { $0.manifest.id == id }) { self.installed[index].enabled = enabled }
++    }
++    public var activeCameraFlip: AyuCameraFlipSettings? {
++        guard let plugin = self.installed.first(where: { $0.enabled && $0.manifest.actions.contains(where: { $0.kind == .cameraFlip }) }) else { return nil }
++        return plugin.cameraFlipSettings ?? AyuCameraFlipSettings()
++    }
++    public mutating func setCameraFlipSettings(id: String, settings: AyuCameraFlipSettings) throws {
++        try settings.validate()
++        guard let index = self.installed.firstIndex(where: { $0.manifest.id == id }), self.installed[index].manifest.actions.contains(where: { $0.kind == .cameraFlip }) else { throw AyuPluginError.invalidManifest }
++        self.installed[index].cameraFlipSettings = settings
 +    }
 +    public mutating func installAndActivate(_ prepared: AyuPluginManifest) throws {
 +        var candidate = self
@@ -69472,7 +69590,7 @@ index 00000000..c55c7622
 +        try prepared.validate()
 +        guard prepared == expected, let index = self.installed.firstIndex(where: { $0.manifest.id == expected.id }),
 +              self.installed[index].manifest == expected, !self.installed[index].enabled else { throw AyuPluginError.invalidManifest }
-+        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true)
++        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings)
 +    }
 +    public mutating func remove(id: String) { self.installed.removeAll { $0.manifest.id == id } }
 +    public func action(pluginID: String, actionID: String) -> AyuPluginAction? {
@@ -69488,6 +69606,7 @@ index 00000000..c55c7622
 +        guard prepared == manifest else { throw AyuPluginError.invalidManifest }
 +        for action in prepared.actions {
 +            switch action.kind {
++            case .cameraFlip: break
 +            case .search:
 +                guard try action.queries("AyuGram") == ["AyuGram"] else { throw AyuPluginError.invalidInput }
 +            case .searchTerms:
@@ -69531,6 +69650,15 @@ index 00000000..c55c7622
 +        return try AyuAndroidPluginConverter.convert(data, sourceSHA256: hash)
 +    }
 +    static func reviewedAdapter(sourceSHA256 hash: String) throws -> AyuPluginManifest {
++        if hash == "61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be003555f1e98" {
++            return AyuPluginManifest(id: "camera_flip", name: "Camera Flip", author: "@its240hz (original)", version: "0.2.0-ios.1", summary: "Switch the round-video camera using vertical swipes or double taps. Gesture mode and haptic feedback are configurable.", actions: [
++                AyuPluginAction(id: "camera_flip", title: "Switch round-video camera with gestures", kind: .cameraFlip)
++            ], convertedFrom: "exteraGram Camera Flip 0.2.0", sourceSHA256: hash, limitations: [
++                "Native adapter for the round-video camera only. It uses the existing camera switch path, including torch, screen brightness and transition checks.",
++                "One finger: vertical swipe over 60 points or double tap within 350 ms; 800 ms cooldown. Pinch and controls are excluded.",
++                "Configure gesture and haptic feedback on this plugin page. Android reflection is replaced with a native bridge; source Python and Java are not executed."
++            ])
++        }
 +        guard hash == "802dd326787e3640f55f20ac5462539c03202184e540578a4531c693c2c3458a" else { throw AyuPluginError.unsupportedAndroidPlugin }
 +        return AyuPluginManifest(id: "search_plus", name: "Search+ for iOS", author: "@SearchPlusss (original)", version: "2.6.1-ios.1", summary: "Native search actions adapted from Search+. Multi-term search uses up to six phrases separated by | in the current chat.", actions: [
 +            AyuPluginAction(id: "search", title: "Search+", kind: .searchTerms)
@@ -70532,6 +70660,128 @@ index a4873696..0fdf9aba 100644
      items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 1, text: presentationData.strings.Settings_SavedMessages, icon: PresentationResourcesSettings.savedMessages, action: {
          interaction.openSettings(.savedMessages)
      }))
+diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/AyuCameraFlipGestureRecognizer.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/AyuCameraFlipGestureRecognizer.swift
+new file mode 100644
+index 00000000..ffb3af06
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/AyuCameraFlipGestureRecognizer.swift
+@@ -0,0 +1,46 @@
++import UIKit
++import UIKit.UIGestureRecognizerSubclass
++import TelegramCore
++
++/// Passive single-finger observer. It never wins over recording controls or pinch.
++final class AyuCameraFlipGestureRecognizer: UIGestureRecognizer {
++    private let configuration: () -> AyuCameraFlipSettings?
++    private let allowsTouch: (CGPoint, UIView?) -> Bool
++    private let flip: (Bool) -> Void
++    private var policy = AyuCameraFlipPolicy()
++    private var activeSettings: AyuCameraFlipSettings?
++    private weak var trackedTouch: UITouch?
++
++    init(configuration: @escaping () -> AyuCameraFlipSettings?, allowsTouch: @escaping (CGPoint, UIView?) -> Bool, flip: @escaping (Bool) -> Void) {
++        self.configuration = configuration; self.allowsTouch = allowsTouch; self.flip = flip
++        super.init(target: nil, action: nil)
++        self.cancelsTouchesInView = false; self.delaysTouchesBegan = false; self.delaysTouchesEnded = false
++    }
++    required init?(coder: NSCoder) { return nil }
++    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { return false }
++    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { return false }
++    override func reset() { super.reset(); self.trackedTouch = nil }
++    private func abort() { self.policy.cancel(); self.trackedTouch = nil; if self.state == .possible { self.state = .failed } }
++    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
++        super.touchesBegan(touches, with: event)
++        guard self.trackedTouch == nil, touches.count == 1, event.allTouches?.count == 1,
++              let touch = touches.first, let view = self.view, let settings = self.configuration(),
++              self.allowsTouch(touch.location(in: view), touch.view) else { self.abort(); return }
++        if self.activeSettings != settings { self.policy.cancel() }
++        self.activeSettings = settings; self.trackedTouch = touch
++        let point = touch.location(in: view)
++        _ = self.policy.handle(.began, x: Double(point.x), y: Double(point.y), time: touch.timestamp, settings: settings)
++    }
++    private func process(_ phase: AyuCameraFlipPolicy.Phase, touches: Set<UITouch>, event: UIEvent) {
++        guard let touch = self.trackedTouch, touches.contains(touch), let view = self.view,
++              let settings = self.activeSettings, self.configuration() == settings, event.allTouches?.count == 1 else { self.abort(); return }
++        let point = touch.location(in: view)
++        if self.policy.handle(phase, x: Double(point.x), y: Double(point.y), time: touch.timestamp, settings: settings) { self.flip(settings.haptic) }
++    }
++    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) { self.process(.moved, touches: touches, event: event) }
++    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
++        self.process(.ended, touches: touches, event: event)
++        self.trackedTouch = nil; if self.state == .possible { self.state = .failed }
++    }
++    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { self.abort() }
++}
+diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
+index 5d7709ba..ed614f0c 100644
+--- a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
++++ b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
+@@ -287,6 +287,8 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
+             
+             super.init()
+             
++            getController()?.ayuPluginFlipCamera = { [weak self] haptic in self?.togglePosition(haptic: haptic, cooldown: 0.8) }
++
+             self.startRecording.connect({ [weak self] _ in
+                 if let self, let controller = getController() {
+                     self.startVideoRecording(pressing: !controller.scheduledLock)
+@@ -317,12 +319,12 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
+         }
+         
+         private var lastFlipTimestamp: Double?
+-        func togglePosition() {
++        func togglePosition(haptic: Bool = true, cooldown: Double = 1.0) {
+             guard let controller = self.getController(), let camera = controller.camera else {
+                 return
+             }
+             let currentTimestamp = CACurrentMediaTime()
+-            if let lastFlipTimestamp = self.lastFlipTimestamp, currentTimestamp - lastFlipTimestamp < 1.0 {
++            if let lastFlipTimestamp = self.lastFlipTimestamp, currentTimestamp - lastFlipTimestamp < cooldown {
+                 return
+             }
+             self.lastFlipTimestamp = currentTimestamp
+@@ -330,7 +332,7 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
+             let isFrontCamera = controller.cameraState.position == .back
+             camera.togglePosition()
+                                     
+-            self.hapticFeedback.impact(.veryLight)
++            if haptic { self.hapticFeedback.impact(.veryLight) }
+             
+             self.updateScreenBrightness(isFrontCamera: isFrontCamera)
+             
+@@ -1107,6 +1109,24 @@ public class VideoMessageCameraScreen: ViewController {
+             
+             let pinchGestureRecognizer = UIPinchGestureRecognizer(target: self, action: #selector(self.handlePinch(_:)))
+             self.view.addGestureRecognizer(pinchGestureRecognizer)
++            let ayuFlip = AyuCameraFlipGestureRecognizer(configuration: { [weak self] in
++                guard let self, self.cameraIsActive, self.camera != nil, self.previewState == nil, !self.transitioningToPreview, self.controller?.ayuPluginFlipCamera != nil else { return nil }
++                return self.context.account.network.ayuGhostMode.current.plugins.activeCameraFlip
++            }, allowsTouch: { [weak self] point, touchedView in
++                guard let self else { return false }
++                let point = self.view.convert(point, to: self.previewContainerContentView)
++                let bounds = self.previewContainerContentView.bounds
++                let radius = min(bounds.width, bounds.height) * 0.5
++                guard radius > 0, hypot(point.x - bounds.midX, point.y - bounds.midY) < radius else { return false }
++                var current = touchedView
++                while let view = current, view !== self.view {
++                    if self.isComponentControl(view) { return false }
++                    current = view.superview
++                }
++                return true
++            }, flip: { [weak self] haptic in self?.controller?.ayuPluginFlipCamera?(haptic) })
++            self.view.addGestureRecognizer(ayuFlip)
++
+         }
+                 
+         fileprivate func setupCamera() {
+@@ -1729,6 +1749,7 @@ public class VideoMessageCameraScreen: ViewController {
+     
+     private var audioSessionDisposable: Disposable?
+     
++    fileprivate var ayuPluginFlipCamera: ((Bool) -> Void)?
+     private let hapticFeedback = HapticFeedback()
+     
+     private var validLayout: ContainerViewLayout?
 diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Blue.imageset/AyuGram.png b/submodules/TelegramUI/Images.xcassets/AyuGram/Blue.imageset/AyuGram.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..a97e0a67519d9fe7016fcf5ced8193c819ddab0d
@@ -136524,7 +136774,7 @@ index 00000000..2c07baa7
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
 new file mode 100644
-index 00000000..7611a2f9
+index 00000000..787cd601
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
 @@ -0,0 +1,152 @@
@@ -136556,9 +136806,9 @@ index 00000000..7611a2f9
 +        super.init(style: .insetGrouped)
 +        self.title = russian ? "Плагины" : "Plugins"
 +        for plugin in context.account.network.ayuGhostMode.current.plugins.installed where plugin.enabled {
-+            for action in plugin.manifest.actions where action.kind != .outgoingReplace { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
++            for action in plugin.manifest.actions where action.kind == .search || action.kind == .searchTerms || action.kind == .replaceText { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
 +        }
-+        if self.commands.isEmpty { self.status = russian ? "Включённые хуки работают автоматически при обычной отправке текста. Здесь нет ручных действий." : "Enabled hooks run automatically during ordinary text sending. There are no manual actions here." }
++        if self.commands.isEmpty { self.status = russian ? "Здесь нет ручных действий. Автоматические функции включённых плагинов работают в соответствующих разделах приложения." : "There are no manual actions here. Enabled plugins run automatic features in their corresponding app screens." }
 +    }
 +    required init?(coder: NSCoder) { return nil }
 +    deinit { self.request.dispose() }
@@ -137441,10 +137691,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..74e1f617
+index 00000000..13839dab
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,636 @@
+@@ -0,0 +1,693 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -137921,7 +138171,7 @@ index 00000000..74e1f617
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data(repeating: 0, count: AyuPluginImporter.maximumFileBytes + 1), filename: "test.plugin") }, "File size checked before parsing")
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data("__id__ = 'search_plus'\nraise Exception()".utf8), filename: "test.plugin") }, "Spoofed Android metadata must not select the reviewed adapter or execute code")
 +var invalidPlugin = plugin
-+invalidPlugin.apiVersion = 3
++invalidPlugin.apiVersion = 4
 +check(pluginThrows { try invalidPlugin.validate() }, "Unknown plugin ABI rejected")
 +invalidPlugin = plugin; invalidPlugin.id = "../escape"
 +check(pluginThrows { try invalidPlugin.validate() }, "Path-like IDs rejected")
@@ -138081,6 +138331,63 @@ index 00000000..74e1f617
 +downgradedRule.actions = [AyuPluginAction(id: "count", title: "Count", kind: .outgoingReplace, find: "aa", replacement: "a", replacementCount: 1)]
 +downgradedRule.apiVersion = 1
 +check(pluginThrows { try downgradedRule.validate() }, "New hook fields require API 2 instead of silently dropping behavior")
++
++let cameraFixture = try Data(contentsOf: pluginFixtures.appendingPathComponent("camera_flip_ios.plugin"))
++let cameraManifest = try AyuPluginImporter.parse(cameraFixture, filename: "camera_flip.plugin")
++let reviewedCameraManifest = try AyuPluginImporter.reviewedAdapter(sourceSHA256: cameraManifest.sourceSHA256!)
++check(cameraManifest == reviewedCameraManifest && cameraManifest.apiVersion == 3, "Camera adapter fixture must match the actual native reviewed mapping")
++let preparedCamera = try AyuPluginActivation.prepare(cameraManifest)
++var cameraRegistry = AyuPluginRegistry()
++try cameraRegistry.installAndActivate(preparedCamera)
++check(cameraRegistry.activeCameraFlip == AyuCameraFlipSettings(), "Enabled camera plugin receives original defaults")
++try cameraRegistry.setCameraFlipSettings(id: cameraManifest.id, settings: AyuCameraFlipSettings(trigger: 3, haptic: false))
++try cameraRegistry.installAndActivate(preparedCamera)
++check(cameraRegistry.activeCameraFlip == AyuCameraFlipSettings(trigger: 3, haptic: false), "Replacing/reactivating must preserve independent plugin settings")
++try store.update { try $0.plugins.installAndActivate(preparedCamera); try $0.plugins.setCameraFlipSettings(id: cameraManifest.id, settings: AyuCameraFlipSettings(trigger: 2, haptic: false)) }
++let restoredCamera = AyuGhostModeStore(accountPath: first.path).current.plugins.activeCameraFlip
++check(restoredCamera == AyuCameraFlipSettings(trigger: 2, haptic: false), "Camera plugin settings and enabled state survive account restart")
++cameraRegistry.setEnabled(id: cameraManifest.id, enabled: false)
++check(cameraRegistry.activeCameraFlip == nil, "Disabling removes camera gesture configuration immediately")
++check(pluginThrows { try cameraRegistry.setCameraFlipSettings(id: cameraManifest.id, settings: AyuCameraFlipSettings(trigger: 4)) }, "Unknown gesture modes must be rejected")
++cameraRegistry.remove(id: cameraManifest.id)
++check(cameraRegistry.activeCameraFlip == nil, "Removing camera plugin removes its runtime behavior")
++check(pluginThrows { try cameraRegistry.setCameraFlipSettings(id: cameraManifest.id, settings: AyuCameraFlipSettings()) }, "Settings must not resurrect a removed plugin")
++var oldCameraABI = cameraManifest; oldCameraABI.apiVersion = 2
++check(pluginThrows { try oldCameraABI.validate() }, "Camera bridge requires API 3 so old clients cannot misinterpret it")
++check(pluginThrows { _ = try AyuPluginImporter.parse(Data("__id__ = 'camera_flip'\n__name__ = 'spoof'\nprint('extra')".utf8), filename: "camera.plugin") }, "Unreviewed camera source must not select the adapter by metadata")
++var gesturePolicy = AyuCameraFlipPolicy()
++let swipeSettings = AyuCameraFlipSettings()
++check(!gesturePolicy.handle(.began, x: 0, y: 0, time: 1, settings: swipeSettings), "Touch-down must not flip")
++check(!gesturePolicy.handle(.moved, x: 0, y: 60, time: 1.05, settings: swipeSettings), "Exact swipe threshold must not flip")
++check(gesturePolicy.handle(.moved, x: 0, y: 61, time: 1.1, settings: swipeSettings), "Vertical motion over threshold flips")
++check(!gesturePolicy.handle(.moved, x: 0, y: 90, time: 1.2, settings: swipeSettings), "One touch cannot fire twice")
++_ = gesturePolicy.handle(.began, x: 0, y: 0, time: 1.3, settings: swipeSettings)
++check(!gesturePolicy.handle(.moved, x: 0, y: -70, time: 1.4, settings: swipeSettings), "Cooldown blocks a rapid second flip")
++_ = gesturePolicy.handle(.began, x: 0, y: 0, time: 2, settings: swipeSettings)
++check(!gesturePolicy.handle(.moved, x: 70, y: 70, time: 2.1, settings: swipeSettings), "Diagonal movement is not a vertical swipe")
++check(gesturePolicy.handle(.moved, x: 5, y: -70, time: 2.2, settings: swipeSettings), "Cooldown expiry allows the next valid flip")
++for mode in [1, 2] {
++    var directionPolicy = AyuCameraFlipPolicy()
++    let settings = AyuCameraFlipSettings(trigger: mode)
++    _ = directionPolicy.handle(.began, x: 0, y: 0, time: 1, settings: settings)
++    check(!directionPolicy.handle(.moved, x: 0, y: mode == 1 ? 80 : -80, time: 1.1, settings: settings), "Direction filter must reject the opposite swipe")
++    check(directionPolicy.handle(.moved, x: 0, y: mode == 1 ? -80 : 80, time: 1.2, settings: settings), "Direction filter accepts the selected swipe")
++}
++var tapPolicy = AyuCameraFlipPolicy()
++let tapSettings = AyuCameraFlipSettings(trigger: 3)
++_ = tapPolicy.handle(.began, x: 10, y: 10, time: 10, settings: tapSettings)
++check(!tapPolicy.handle(.ended, x: 11, y: 11, time: 10.1, settings: tapSettings), "First tap must not flip")
++_ = tapPolicy.handle(.began, x: 10, y: 10, time: 10.2, settings: tapSettings)
++check(tapPolicy.handle(.ended, x: 11, y: 11, time: 10.3, settings: tapSettings), "Two short taps inside the window flip")
++_ = tapPolicy.handle(.began, x: 10, y: 10, time: 11, settings: tapSettings)
++_ = tapPolicy.handle(.ended, x: 11, y: 11, time: 11.1, settings: tapSettings)
++_ = tapPolicy.handle(.began, x: 10, y: 10, time: 11.2, pointers: 2, settings: tapSettings)
++check(!tapPolicy.handle(.ended, x: 11, y: 11, time: 11.3, settings: tapSettings), "Multitouch cancels the pending tap sequence")
++_ = tapPolicy.handle(.began, x: 10, y: 10, time: 12, settings: tapSettings)
++check(!tapPolicy.handle(.ended, x: 10, y: 10, time: 12.3, settings: tapSettings), "Long presses are not taps")
++_ = tapPolicy.handle(.began, x: 0, y: 0, time: 13, settings: swipeSettings)
++check(!tapPolicy.handle(.moved, x: Double.nan, y: 80, time: 13.1, settings: swipeSettings), "Invalid coordinates must not trigger camera operations")
++print("PASS: \(checks) model checks including the reviewed Camera Flip bridge, persistence and gesture thresholds")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

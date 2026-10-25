@@ -86,7 +86,7 @@ def main():
         if manager.exists():
             ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
             models = [ayu / name for name in (
-                'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
+                'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
                 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotSettings.swift',
                 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuRegexSettings.swift')]
             with tempfile.TemporaryDirectory(prefix='ayu-plugin-sdk-') as directory:
@@ -106,7 +106,8 @@ def main():
                     else:
                         result = subprocess.run([*flags, '-typecheck', '-I', directory, str(manager),
                                                  str(source / 'submodules/SettingsUI/Sources/AyuPluginDetailsController.swift'),
-                                                 str(source / 'submodules/SettingsUI/Sources/AyuPreferencesHubController.swift')], capture_output=True, text=True)
+                                                 str(source / 'submodules/SettingsUI/Sources/AyuPreferencesHubController.swift'),
+                                                 str(source / 'submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/AyuCameraFlipGestureRecognizer.swift')], capture_output=True, text=True)
                         if result.returncode:
                             errors.append(f'Actual plugin manager UIKit SDK check:\n{result.stdout}{result.stderr}')
                         else:

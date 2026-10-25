@@ -5,6 +5,8 @@ import json
 from plugin_patterns import compile_source
 from pathlib import Path
 
+CAMERA_FLIP_SHA256 = '61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be003555f1e98'
+
 SEARCH_PLUS_SHA256 = '802dd326787e3640f55f20ac5462539c03202184e540578a4531c693c2c3458a'
 
 
@@ -18,6 +20,8 @@ def convert(source: Path, output: Path):
     data = source.read_bytes()
     if hashlib.sha256(data).hexdigest() == SEARCH_PLUS_SHA256:
         output_data = (Path(__file__).resolve().parents[1] / 'plugins/search_plus_ios.plugin').read_bytes()
+    elif hashlib.sha256(data).hexdigest() == CAMERA_FLIP_SHA256:
+        output_data = (Path(__file__).resolve().parents[1] / 'plugins/camera_flip_ios.plugin').read_bytes()
     else:
         output_data = (json.dumps(compile_source(data), ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     # Exclusive create protects an existing plugin from accidental replacement.

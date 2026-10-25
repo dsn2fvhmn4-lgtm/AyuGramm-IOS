@@ -24,7 +24,7 @@ download progress/cancel controls retain their normal states. This affects this
 client's rendering, not how other Telegram clients show the file.
 
 All plugins use the same white puzzle piece on a blue circle, including Search+.
-Individual icon metadata from older files is ignored. API versions 1 and 2 are built into
+Individual icon metadata from older files is ignored. API versions 1, 2 and 3 are built into
 this app; no separate SDK installation is needed. Authors can use
 [plugin.schema.json](../plugins/plugin.schema.json) and the ready-to-import examples
 in [plugins](../plugins).
@@ -40,7 +40,7 @@ blocks modal dismissal until commit or failure. This checks the local format and
 handlers, not end-to-end Telegram requests or Android method-hook compatibility.
 The reviewed Search+ conversion is built into the app; the desktop converter is
 optional. Literal outgoing-hook templates now convert locally as described in
-[automatic conversion](PLUGIN_CONVERSION.md). Other Android plugins require a dedicated adapter.
+[automatic conversion](PLUGIN_CONVERSION.md). Camera Flip 0.2.0 also has a reviewed native adapter. Other Android plugins require a dedicated adapter.
 
 ## Search+ conversion
 
@@ -67,10 +67,10 @@ Optional Windows conversion without changing the original:
 python tools/convert_plugin.py search_plus.plugin search_plus_ios.plugin
 ```
 
-## ABI versions 1 and 2
+## ABI versions 1, 2 and 3
 
 Files use the `.plugin` extension and UTF-8 JSON, with format
-`ayugram-ios-plugin`, apiVersion `1` or `2`, metadata and declared actions. See
+`ayugram-ios-plugin`, apiVersion `1`, `2` or `3`, metadata and declared actions. See
 [text_replace_example.plugin](../plugins/text_replace_example.plugin).
 
 - `search`: a single current-chat search.
@@ -84,8 +84,11 @@ Files use the `.plugin` extension and UTF-8 JSON, with format
   New condition/count fields require API version 2; older clients reject them. See the full
   [automatic conversion and hook scope](PLUGIN_CONVERSION.md).
 
+- `cameraFlip` (API 3): native round-video camera gestures, configured on the plugin page.
+  See the [reviewed adapter and five-file inventory](ANDROID_PLUGIN_BRIDGES.md).
+
 Permissions derive from action kinds: `search.messages`, `draft.prepare` or
-`messages.outgoing.modify`.
+`messages.outgoing.modify` or `camera.switch`.
 Unknown operation kinds and ABI versions are rejected. Limits: 512 KB per file,
 12 plugins per account, 8 actions per plugin, 6 queries, 128 characters per query,
 8192 input/output UTF-8 bytes and 4096 output UTF-16 units for draft text. IDs are

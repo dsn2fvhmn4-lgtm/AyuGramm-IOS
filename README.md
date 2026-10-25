@@ -102,3 +102,5 @@ Based on [Telegram-iOS](https://github.com/TelegramMessenger/Telegram-iOS). Feat
 Planning, feature scope, limitations and verification are recorded in the accompanying Markdown documents. Read their current status before treating a feature as tested.
 
 The authors are not responsible for any crashes, errors, or other issues. By installing the client, you acknowledge that you are aware of all the rules for using the application.
+
+Camera Flip native adapter and the supplied five-plugin dependency inventory: [bridge status](docs/ANDROID_PLUGIN_BRIDGES.md). Source changes require a new native build; the published IPA is unchanged.

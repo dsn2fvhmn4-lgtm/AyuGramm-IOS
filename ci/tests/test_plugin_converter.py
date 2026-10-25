@@ -64,6 +64,15 @@ class PluginConverterTests(unittest.TestCase):
             with self.subTest(count=count), self.assertRaises(ValueError):
                 compile_source(source.replace('"tehh", "the"', '"tehh", "the", ' + count).encode())
 
+    def test_camera_metadata_does_not_select_reviewed_adapter(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'camera_flip.plugin'
+            destination = Path(folder) / 'native.plugin'
+            source.write_text('__id__ = "camera_flip"\n__name__ = "Camera Flip"\nprint("extra")', encoding='utf-8')
+            with self.assertRaises(ValueError):
+                converter.convert(source, destination)
+            self.assertFalse(destination.exists())
+
     def test_unreviewed_python_metadata_does_not_select_an_adapter(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / 'search_plus.plugin'

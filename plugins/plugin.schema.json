@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AyuGramm-IOS plugin API 1",
+  "title": "AyuGramm-IOS plugin API 1 and 2",
   "type": "object",
   "required": [
     "format",
@@ -18,7 +18,10 @@
       "const": "ayugram-ios-plugin"
     },
     "apiVersion": {
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "id": {
       "type": "string",
@@ -114,6 +117,42 @@
               "null"
             ],
             "maxLength": 128
+          },
+          "replacementCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 4096
+          },
+          "condition": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "kind",
+              "value",
+              "negated"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "prefix",
+                  "suffix",
+                  "contains",
+                  "equals"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "negated": {
+                "type": "boolean"
+              }
+            }
           }
         },
         "allOf": [
@@ -175,6 +214,28 @@
               "properties": {
                 "prefix": {
                   "type": "null"
+                },
+                "condition": {
+                  "type": "null"
+                },
+                "replacementCount": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "prefix",
+                "condition"
+              ],
+              "properties": {
+                "prefix": {
+                  "type": "string"
+                },
+                "condition": {
+                  "type": "object"
                 }
               }
             }
@@ -182,5 +243,32 @@
         ]
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "apiVersion": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actions": {
+            "items": {
+              "properties": {
+                "condition": {
+                  "type": "null"
+                },
+                "replacementCount": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

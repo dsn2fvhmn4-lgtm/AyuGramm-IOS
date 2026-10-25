@@ -24,7 +24,7 @@ download progress/cancel controls retain their normal states. This affects this
 client's rendering, not how other Telegram clients show the file.
 
 All plugins use the same white puzzle piece on a blue circle, including Search+.
-Individual icon metadata from older files is ignored. API version 1 is built into
+Individual icon metadata from older files is ignored. API versions 1 and 2 are built into
 this app; no separate SDK installation is needed. Authors can use
 [plugin.schema.json](../plugins/plugin.schema.json) and the ready-to-import examples
 in [plugins](../plugins).
@@ -67,10 +67,10 @@ Optional Windows conversion without changing the original:
 python tools/convert_plugin.py search_plus.plugin search_plus_ios.plugin
 ```
 
-## ABI version 1
+## ABI versions 1 and 2
 
 Files use the `.plugin` extension and UTF-8 JSON, with format
-`ayugram-ios-plugin`, apiVersion `1`, metadata and declared actions. See
+`ayugram-ios-plugin`, apiVersion `1` or `2`, metadata and declared actions. See
 [text_replace_example.plugin](../plugins/text_replace_example.plugin).
 
 - `search`: a single current-chat search.
@@ -79,7 +79,9 @@ Files use the `.plugin` extension and UTF-8 JSON, with format
   append-to-draft confirmation. No automatic send; the native recording-discard,
   editing and send-permission checks remain in effect.
 - `outgoingReplace`: automatic nonempty, nonexpanding literal replacement in plain
-  outgoing cloud text. Optional `prefix` restricts matching. See the full
+  outgoing cloud text. Optional `prefix` or a literal `condition` restricts
+  matching. `replacementCount` optionally limits replacements to 0...4096.
+  New condition/count fields require API version 2; older clients reject them. See the full
   [automatic conversion and hook scope](PLUGIN_CONVERSION.md).
 
 Permissions derive from action kinds: `search.messages`, `draft.prepare` or

@@ -86,16 +86,36 @@ def compile_source(data):
     call = load.body[0].value
     require(attribute(call.func, 'self', 'add_on_send_message_hook') and not call.args and not call.keywords)
     actions_body = send.body
-    prefix = None
+    predicate = None
     if actions_body and isinstance(actions_body[0], ast.If):
         require(len(actions_body) == 2)
-        condition = actions_body[0]
-        call = condition.test
-        require(not condition.orelse and isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute))
-        require(attribute(call.func.value, 'params', 'message') and call.func.attr == 'startswith' and len(call.args) == 1 and not call.keywords)
-        prefix = literal(call.args[0])
+        branch = actions_body[0]
+        require(not branch.orelse)
+        test = branch.test
+        negated = isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)
+        if negated:
+            test = test.operand
+        if isinstance(test, ast.Call):
+            require(isinstance(test.func, ast.Attribute) and attribute(test.func.value, 'params', 'message'))
+            require(test.func.attr in ('startswith', 'endswith') and len(test.args) == 1 and not test.keywords)
+            kind = 'prefix' if test.func.attr == 'startswith' else 'suffix'
+            value = literal(test.args[0])
+        elif isinstance(test, ast.Compare):
+            require(len(test.ops) == 1 and len(test.comparators) == 1)
+            if isinstance(test.ops[0], (ast.In, ast.NotIn)):
+                require(attribute(test.comparators[0], 'params', 'message'))
+                kind, value = 'contains', literal(test.left)
+                negated ^= isinstance(test.ops[0], ast.NotIn)
+            else:
+                require(isinstance(test.ops[0], (ast.Eq, ast.NotEq)) and attribute(test.left, 'params', 'message'))
+                kind, value = 'equals', literal(test.comparators[0])
+                negated ^= isinstance(test.ops[0], ast.NotEq)
+        else:
+            raise ValueError('Unsupported text condition')
+        predicate = dict(kind=kind, value=value, negated=negated)
+        require(len(value.encode()) <= 128)
         return_value(actions_body[1], modify=False)
-        actions_body = condition.body
+        actions_body = branch.body
         require(len(actions_body) == 2, 'Conditional templates support one replacement')
     require(2 <= len(actions_body) <= 9)
     return_value(actions_body[-1])
@@ -104,18 +124,26 @@ def compile_source(data):
         require(isinstance(item, ast.Assign) and len(item.targets) == 1 and attribute(item.targets[0], 'params', 'message'))
         call = item.value
         require(isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute))
-        require(attribute(call.func.value, 'params', 'message') and call.func.attr == 'replace' and len(call.args) == 2 and not call.keywords)
-        find, replacement = map(literal, call.args)
+        require(attribute(call.func.value, 'params', 'message') and call.func.attr == 'replace' and len(call.args) in (2, 3) and not call.keywords)
+        find, replacement = map(literal, call.args[:2])
+        count = None
+        if len(call.args) == 3:
+            require(isinstance(call.args[2], ast.Constant) and type(call.args[2].value) is int and 0 <= call.args[2].value <= 4096, 'Replacement count must be an integer from 0 to 4096')
+            count = call.args[2].value
         utf16 = lambda value: len(value.encode('utf-16-le')) // 2
         require(0 < len(find.encode()) <= 128 and replacement and len(replacement.encode()) <= len(find.encode()) and utf16(replacement) <= utf16(find), 'Automatic replacements must be nonempty and nonexpanding')
-        require(prefix is None or len(prefix.encode()) <= 128)
         action = dict(id=f'send_{len(actions)}', title='Outgoing text replacement', kind='outgoingReplace', find=find, replacement=replacement)
-        if prefix is not None:
-            action['prefix'] = prefix
+        if predicate is not None:
+            if predicate['kind'] == 'prefix' and not predicate['negated']:
+                action['prefix'] = predicate['value']
+            else:
+                action['condition'] = predicate
+        if count is not None:
+            action['replacementCount'] = count
         actions.append(action)
     require('__id__' in metadata and '__name__' in metadata)
     require(0 < len(metadata['__id__']) <= 64 and all(char in 'abcdefghijklmnopqrstuvwxyz0123456789_-' for char in metadata['__id__']))
     for key, limit in [('__name__', 64), ('__author__', 128), ('__version__', 32), ('__description__', 2048)]:
         require(len(metadata.get(key, '')) <= limit)
     require(bool(metadata['__name__']) and bool(metadata.get('__author__', 'Unknown')) and bool(metadata.get('__version__', '1.0')))
-    return dict(format='ayugram-ios-plugin', apiVersion=1, id=metadata['__id__'], name=metadata['__name__'], author=metadata.get('__author__', 'Unknown'), version=metadata.get('__version__', '1.0'), summary=metadata.get('__description__', 'Converted outgoing-text hook'), actions=actions, convertedFrom=TEMPLATE_ID, sourceSHA256=hashlib.sha256(data).hexdigest(), limitations=LIMITATIONS)
+    return dict(format='ayugram-ios-plugin', apiVersion=2 if any('condition' in a or 'replacementCount' in a for a in actions) else 1, id=metadata['__id__'], name=metadata['__name__'], author=metadata.get('__author__', 'Unknown'), version=metadata.get('__version__', '1.0'), summary=metadata.get('__description__', 'Converted outgoing-text hook'), actions=actions, convertedFrom=TEMPLATE_ID, sourceSHA256=hashlib.sha256(data).hexdigest(), limitations=LIMITATIONS)

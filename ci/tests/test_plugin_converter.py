@@ -38,11 +38,31 @@ class PluginConverterTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 compile_source(changed.encode())
 
-    def test_replacement_count_is_not_silently_ignored(self):
+    def test_unsupported_replacement_count_is_rejected(self):
         from plugin_patterns import compile_source
         source = (path.parents[1] / 'plugins/android_literal_hook.plugin').read_text(encoding='utf-8')
         with self.assertRaises(ValueError):
-            compile_source(source.replace('"tehh", "the"', '"tehh", "the", 1').encode())
+            compile_source(source.replace('"tehh", "the"', '"tehh", "the", True').encode())
+
+    def test_extended_hook_matrix_matches_expected_manifests(self):
+        import json
+        from plugin_patterns import compile_source
+        matrix = json.loads((path.parents[1] / 'plugins/android_hook_matrix.json').read_text(encoding='utf-8'))
+        for case in matrix:
+            with self.subTest(case=case['name']):
+                self.assertEqual(compile_source(case['source'].encode()), case['expected'])
+                self.assertEqual(case['expected']['apiVersion'], 2, 'Extended conditions/counts must not be consumed by API-1 clients')
+
+    def test_unsupported_conditions_and_counts_reject_whole_source(self):
+        from plugin_patterns import compile_source
+        source = (path.parents[1] / 'plugins/android_prefix_hook.plugin').read_text(encoding='utf-8')
+        for expression in ['params.message.startswith("[note]") or True', 'params.message.endswith("[note]", 1)', '"x" in params.message.lower()', 'params.message == "x" == "y"']:
+            with self.subTest(expression=expression), self.assertRaises(ValueError):
+                compile_source(source.replace('params.message.startswith("[note]")', expression).encode())
+        source = (path.parents[1] / 'plugins/android_literal_hook.plugin').read_text(encoding='utf-8')
+        for count in ['-1', '4097', 'True', '1.0', 'self.limit', '1, 2']:
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                compile_source(source.replace('"tehh", "the"', '"tehh", "the", ' + count).encode())
 
     def test_unreviewed_python_metadata_does_not_select_an_adapter(self):
         with tempfile.TemporaryDirectory() as folder:

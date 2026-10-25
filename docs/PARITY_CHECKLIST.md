@@ -30,7 +30,7 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | showKillButtonInDrawer | Android lifecycle behavior; iOS implementation not defined |
 | keepAliveService | Android foreground-service behavior; iOS background execution is platform controlled |
 | disableAds | Unchanged; sponsored messages are excluded from local filters |
-| localPremium | No server entitlement changes; local-only emoji status in own profile/settings in source |
+| localPremium | Desktop-style local Premium in source: own account shown as Premium in this client (badge, emoji statuses, Premium emoji/stickers), server limits and server-enforced checks keep the real subscription, custom emoji from a non-Premium sender go out as `tg://emoji?id=` links and render back as custom emoji; local-only emoji status in own profile/settings |
 | syncEnabled | Pending; no sync transport or archive upload is enabled |
 | useSecureConnection | Pending as part of sync; no insecure transport introduced |
 | WALMode | Android Room implementation detail; account storage remains upstream Postbox |

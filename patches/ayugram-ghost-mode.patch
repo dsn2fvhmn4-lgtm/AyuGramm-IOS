@@ -66127,10 +66127,10 @@ index 509d3bd2..aa199597 100644
          "//submodules/TemporaryCachedPeerDataManager:TemporaryCachedPeerDataManager",
 diff --git a/submodules/AccountContext/Sources/AyuAdvancedControllers.swift b/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
 new file mode 100644
-index 00000000..63389737
+index 00000000..c9106cda
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,177 @@
 +import UIKit
 +import Display
 +import TelegramCore
@@ -66156,7 +66156,7 @@ index 00000000..63389737
 +    required init?(coder: NSCoder) { return nil }
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
-+        switch self.page { case .sending: self.title = "Ghost Mode+"; case .translation: self.title = self.ru ? "Переводчики" : "Translation providers"; case .cosmetics: self.title = self.ru ? "Локальный эмодзи-статус" : "Local emoji status" }
++        switch self.page { case .sending: self.title = "Ghost Mode+"; case .translation: self.title = self.ru ? "Переводчики" : "Translation providers"; case .cosmetics: self.title = self.ru ? "Локальный Premium" : "Local Premium" }
 +        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
 +    }
 +    override func viewWillAppear(_ animated: Bool) { super.viewWillAppear(animated); self.tableView.reloadData() }
@@ -66170,7 +66170,7 @@ index 00000000..63389737
 +        let alert = UIAlertController(title: "AyuGram", message: self.ru ? "Настройки не сохранены. Проверь адрес HTTPS, код языка и доступ к Keychain." : "Settings were not saved. Check the HTTPS URL, language code and Keychain access.", preferredStyle: .alert)
 +        alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
 +    }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { switch self.page { case .sending, .cosmetics: return 4; case .translation: return 6 } }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { switch self.page { case .sending: return 4; case .cosmetics: return 5; case .translation: return 6 } }
 +    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
 +        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
 +        cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
@@ -66185,10 +66185,11 @@ index 00000000..63389737
 +            default: cell.detailTextLabel?.text = self.ru ? "Отложенная отправка: обычный облачный текст без медиа и тем, пока включён призрак. Прочитать после отправки: только принятые сервером обычные облачные сообщения, без тем и секретных чатов; отправляет квитанцию даже при скрытии прочтений. Режимы исключают друг друга." : "Scheduling: plain cloud text without media/topics while Ghost Mode is active. Read after send: accepted ordinary cloud sends without topics/secret chats; explicitly sends a receipt even when read receipts are hidden. Modes are mutually exclusive."
 +            }
 +        case .cosmetics:
-+            cell.textLabel?.text = self.ru ? ["Локальный статус в своём профиле", "Повторять анимацию", "Убрать выбранное эмодзи", "Выбор статуса"][indexPath.row] : ["Local status in own profile", "Loop animation", "Clear selected emoji", "Choose a status"][indexPath.row]
-+            if indexPath.row == 0 { toggleValue = self.settings.localEmojiStatusEnabled }
-+            else if indexPath.row == 1 { toggleValue = self.settings.animateLocalEmoji }
-+            else if indexPath.row == 3 { cell.detailTextLabel?.text = self.ru ? "Включи опцию, открой свой профиль/настройки и нажми на значок рядом с именем. Выбранное эмодзи и анимация видны только в этом клиенте; серверный статус и подписка не меняются. Без повтора анимация проигрывается один раз." : "Enable, open your own profile/settings and tap the icon beside your name. The chosen emoji and animation are local to this client; server status and subscription remain unchanged. Disabling loop plays it once." }
++            cell.textLabel?.text = self.ru ? ["Локальный Telegram Premium β", "Локальный статус в своём профиле", "Повторять анимацию", "Убрать выбранное эмодзи", "Как это работает"][indexPath.row] : ["Local Telegram Premium β", "Local status in own profile", "Loop animation", "Clear selected emoji", "How it works"][indexPath.row]
++            if indexPath.row == 0 { toggleValue = self.settings.localPremium }
++            else if indexPath.row == 1 { toggleValue = self.settings.localEmojiStatusEnabled }
++            else if indexPath.row == 2 { toggleValue = self.settings.animateLocalEmoji }
++            else if indexPath.row == 4 { cell.detailTextLabel?.text = self.ru ? "Локальный Premium открывает в этом клиенте Premium-оформление: значок, эмодзи-статусы, Premium-эмодзи и стикеры. Подписка, лимиты и проверки сервера не меняются. Premium-эмодзи без подписки отправляются ссылками tg://emoji — в AyuGram они видны как эмодзи, в других клиентах как обычные эмодзи-ссылки. В Избранном эмодзи отправляются как есть. Часть экранов обновится после перезапуска приложения.\n\nЛокальный статус: включи опцию, открой свой профиль/настройки и нажми на значок рядом с именем. Статус виден только в этом клиенте. Без повтора анимация проигрывается один раз." : "Local Premium unlocks Premium presentation in this client: badge, emoji statuses, Premium emoji and stickers. Subscription, limits and server checks are unchanged. Without a subscription, Premium emoji are sent as tg://emoji links: AyuGram shows them as emoji, other clients as plain emoji links. Saved Messages keep them as is. Some screens update after restarting the app.\n\nLocal status: enable it, open your own profile/settings and tap the icon beside your name. It is visible in this client only. Disabling loop plays the animation once." }
 +        case .translation:
 +            cell.textLabel?.text = self.ru ? ["Провайдер AyuGram", "Язык перевода", "HTTPS-адрес LibreTranslate", "Добавить/заменить API-ключ", "Удалить API-ключ", "Использование"][indexPath.row] : ["AyuGram provider", "Target language", "LibreTranslate HTTPS URL", "Add/replace API key", "Remove API key", "Usage"][indexPath.row]
 +            switch indexPath.row {
@@ -66210,7 +66211,7 @@ index 00000000..63389737
 +        self.update { value in
 +            switch self.page {
 +            case .sending: if toggle.tag == 0 { value.setScheduling(toggle.isOn) } else { value.setReadAfterSend(toggle.isOn) }
-+            case .cosmetics: if toggle.tag == 0 { value.localEmojiStatusEnabled = toggle.isOn } else { value.animateLocalEmoji = toggle.isOn }
++            case .cosmetics: if toggle.tag == 0 { value.localPremium = toggle.isOn } else if toggle.tag == 1 { value.localEmojiStatusEnabled = toggle.isOn } else { value.animateLocalEmoji = toggle.isOn }
 +            case .translation: break
 +            }
 +        }
@@ -66233,7 +66234,7 @@ index 00000000..63389737
 +            let alert = UIAlertController(title: self.title, message: nil, preferredStyle: .actionSheet)
 +            for delay in [Int32(10), 30, 60, 300, 3600] { alert.addAction(UIAlertAction(title: "\(delay) s", style: .default, handler: { [weak self] _ in self?.update { $0.scheduleDelay = delay } })) }
 +            alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); alert.popoverPresentationController?.sourceView = tableView; alert.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath); self.present(alert, animated: true)
-+        case .cosmetics: if indexPath.row == 2 { self.update { $0.localEmojiFileId = nil } }
++        case .cosmetics: if indexPath.row == 3 { self.update { $0.localEmojiFileId = nil } }
 +        case .translation:
 +            switch indexPath.row {
 +            case 0:
@@ -68121,7 +68122,7 @@ index 00000000..74829371
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..1a4387ba
+index 00000000..62e89bd3
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 @@ -0,0 +1,489 @@
@@ -68307,7 +68308,7 @@ index 00000000..1a4387ba
 +            entries = [.link(51, ru ? "Переводчики" : "Translation providers"), .link(2, ru ? "Отправка сообщений" : "Sending Options"), .link(5, ru ? "Интерфейс" : "Interface"), .link(6, ru ? "Меню сообщения" : "Message Menu")]
 +        case 3:
 +            title = ru ? "Оформление" : "Appearance"
-+            entries = [.link(52, ru ? "Локальный эмодзи-статус" : "Local emoji status"), .link(4, ru ? "Оформление чатов" : "Chat Appearance"), .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"), .link(20, ru ? "Иконка приложения" : "App Icon")]
++            entries = [.link(52, ru ? "Локальный Premium и статус" : "Local Premium and status"), .link(4, ru ? "Оформление чатов" : "Chat Appearance"), .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"), .link(20, ru ? "Иконка приложения" : "App Icon")]
 +        case 4:
 +            title = ru ? "Чаты" : "Chats"
 +            entries = [.link(8, ru ? "Скрытые сообщения" : "Hidden Messages"), .link(9, ru ? "Реакции в чатах" : "Chat Reactions")]
@@ -68701,14 +68702,15 @@ index 8c474034..2212f0ad 100644
          context.sharedContext.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.contactSynchronizationSettings, ApplicationSpecificSharedDataKeys.webBrowserSettings]),
          context.engine.data.subscribe(TelegramEngine.EngineData.Item.Configuration.ApplicationSpecificPreference(key: PreferencesKeys.webBrowserSettings))
 diff --git a/submodules/TelegramCore/Sources/Account/Account.swift b/submodules/TelegramCore/Sources/Account/Account.swift
-index af6b6078..62aa9008 100644
+index af6b6078..0b749cb1 100644
 --- a/submodules/TelegramCore/Sources/Account/Account.swift
 +++ b/submodules/TelegramCore/Sources/Account/Account.swift
-@@ -1497,6 +1497,7 @@ public class Account {
+@@ -1497,6 +1497,8 @@ public class Account {
          
          let pendingMessageManager = self.pendingMessageManager
          Logger.shared.log("Account", "Begin watching unsent message ids")
 +        self.managedOperationsDisposable.add(ayuManageArchiveFiles(postbox: self.postbox).start())
++        self.managedOperationsDisposable.add(ayuManageLocalPremium(postbox: self.postbox, network: self.network, peerId: peerId).start())
          self.managedOperationsDisposable.add(postbox.unsentMessageIdsView().start(next: { [weak pendingMessageManager] view in
              pendingMessageManager?.updatePendingMessageIds(view.ids)
          }))
@@ -68726,10 +68728,10 @@ index bf906980..d8c5312f 100644
      declareEncodable(TelegramMediaWebFile.self, f: { TelegramMediaWebFile(decoder: $0) })
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAdvancedSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAdvancedSettings.swift
 new file mode 100644
-index 00000000..1c54ba0b
+index 00000000..126d1117
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuAdvancedSettings.swift
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,46 @@
 +import Foundation
 +
 +public struct AyuAdvancedSettings: Codable, Equatable {
@@ -68743,8 +68745,9 @@ index 00000000..1c54ba0b
 +    public var localEmojiStatusEnabled = false
 +    public var localEmojiFileId: Int64?
 +    public var animateLocalEmoji = true
++    public var localPremium = false
 +    public init() {}
-+    private enum CodingKeys: String, CodingKey { case scheduleOutgoing, markReadAfterSend, scheduleDelay, translationProvider, translationTarget, libreTranslateURL, localEmojiStatusEnabled, localEmojiFileId, animateLocalEmoji }
++    private enum CodingKeys: String, CodingKey { case scheduleOutgoing, markReadAfterSend, scheduleDelay, translationProvider, translationTarget, libreTranslateURL, localEmojiStatusEnabled, localEmojiFileId, animateLocalEmoji, localPremium }
 +    public init(from decoder: Decoder) throws {
 +        let c = try decoder.container(keyedBy: CodingKeys.self)
 +        self.scheduleOutgoing = try c.decodeIfPresent(Bool.self, forKey: .scheduleOutgoing) ?? false
@@ -68756,6 +68759,7 @@ index 00000000..1c54ba0b
 +        self.localEmojiStatusEnabled = try c.decodeIfPresent(Bool.self, forKey: .localEmojiStatusEnabled) ?? false
 +        self.localEmojiFileId = try c.decodeIfPresent(Int64.self, forKey: .localEmojiFileId)
 +        self.animateLocalEmoji = try c.decodeIfPresent(Bool.self, forKey: .animateLocalEmoji) ?? true
++        self.localPremium = try c.decodeIfPresent(Bool.self, forKey: .localPremium) ?? false
 +        try self.validate()
 +    }
 +    public mutating func setScheduling(_ value: Bool) { self.scheduleOutgoing = value; if value { self.markReadAfterSend = false } }
@@ -69991,6 +69995,113 @@ index 00000000..1d618f7c
 +        case .channel: return "-100\(magnitude)"
 +        }
 +    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift
+new file mode 100644
+index 00000000..c6485d01
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift
+@@ -0,0 +1,101 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++/// Desktop/Android `localPremium`: the account's own user is treated as Premium by this client
++/// only. Server entitlements, limits and other clients are unchanged, so limit decisions keep
++/// using `isServerPremium`. Custom emoji that the server would strip from a non-Premium sender
++/// are sent as `tg://emoji?id=` text links, which AyuGram clients render back as custom emoji.
++public enum AyuLocalPremium {
++    private struct State {
++        var local = false
++        var server = false
++    }
++
++    private static let lock = NSLock()
++    private static var states: [PeerId: State] = [:]
++
++    public static let emojiUrlPrefix = "tg://emoji?id="
++
++    /// Whether `peerId` is an account of this process with local Premium enabled.
++    public static func contains(_ peerId: PeerId) -> Bool {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.states[peerId]?.local ?? false
++    }
++
++    static func update(peerId: PeerId, local: Bool? = nil, server: Bool? = nil) {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        var state = self.states[peerId] ?? State()
++        if let local { state.local = local }
++        if let server { state.server = server }
++        self.states[peerId] = state
++    }
++
++    /// Custom emoji are rewritten only while local Premium hides a missing server subscription.
++    static func rewritesCustomEmoji(accountPeerId: PeerId) -> Bool {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        guard let state = self.states[accountPeerId] else { return false }
++        return state.local && !state.server
++    }
++
++    public static func emojiFileId(url: String) -> Int64? {
++        guard url.hasPrefix(self.emojiUrlPrefix) else { return nil }
++        let digits = url.dropFirst(self.emojiUrlPrefix.count)
++        guard !digits.isEmpty, digits.count <= 19, digits.allSatisfy({ $0.isASCII && $0.isNumber }), let id = Int64(digits), id > 0 else { return nil }
++        return id
++    }
++
++    /// Display-only: a `tg://emoji?id=` link covering exactly one emoji becomes that custom emoji.
++    /// Stored entities are not changed, so edits, quotes and forwards keep the original link.
++    public static func displayEntities(text: String, entities: [MessageTextEntity]) -> [MessageTextEntity] {
++        guard entities.contains(where: { if case let .TextUrl(url) = $0.type { return url.hasPrefix(self.emojiUrlPrefix) } else { return false } }) else {
++            return entities
++        }
++        let nsText = text as NSString
++        return entities.map { entity in
++            guard case let .TextUrl(url) = entity.type, let fileId = self.emojiFileId(url: url) else { return entity }
++            let range = NSRange(location: entity.range.lowerBound, length: entity.range.upperBound - entity.range.lowerBound)
++            guard range.location >= 0, range.length > 0, range.upperBound <= nsText.length, self.isSingleEmoji(nsText.substring(with: range)) else { return entity }
++            return MessageTextEntity(range: entity.range, type: .CustomEmoji(stickerPack: nil, fileId: fileId))
++        }
++    }
++
++    /// Outgoing text and captions: custom emoji become links unless the server already allows them
++    /// (a real subscription or Saved Messages).
++    static func outgoingEntities(_ entities: [MessageTextEntity], accountPeerId: PeerId, peerId: PeerId) -> [MessageTextEntity] {
++        guard peerId != accountPeerId, entities.contains(where: { if case .CustomEmoji = $0.type { return true } else { return false } }), self.rewritesCustomEmoji(accountPeerId: accountPeerId) else {
++            return entities
++        }
++        return entities.map { entity in
++            guard case let .CustomEmoji(_, fileId) = entity.type else { return entity }
++            return MessageTextEntity(range: entity.range, type: .TextUrl(url: self.emojiUrlPrefix + "\(fileId)"))
++        }
++    }
++
++    static func outgoingAttribute(_ attribute: TextEntitiesMessageAttribute, accountPeerId: PeerId, peerId: PeerId) -> TextEntitiesMessageAttribute {
++        let entities = self.outgoingEntities(attribute.entities, accountPeerId: accountPeerId, peerId: peerId)
++        return entities == attribute.entities ? attribute : TextEntitiesMessageAttribute(entities: entities)
++    }
++
++    private static func isSingleEmoji(_ string: String) -> Bool {
++        guard string.count == 1, let first = string.unicodeScalars.first else { return false }
++        return first.properties.isEmojiPresentation || (first.properties.isEmoji && string.unicodeScalars.count > 1)
++    }
++}
++
++/// Keeps the registry in step with this account's setting and its server Premium flag.
++func ayuManageLocalPremium(postbox: Postbox, network: Network, peerId: PeerId) -> Signal<Void, NoError> {
++    AyuLocalPremium.update(peerId: peerId, local: network.ayuGhostMode.current.advanced.localPremium)
++    let local = network.ayuGhostMode.signal
++    |> map { $0.advanced.localPremium }
++    |> distinctUntilChanged
++    |> map { value -> Void in AyuLocalPremium.update(peerId: peerId, local: value) }
++    let server = postbox.peerView(id: peerId)
++    |> map { view -> Bool in view.peers[peerId]?.isServerPremium ?? false }
++    |> distinctUntilChanged
++    |> map { value -> Void in AyuLocalPremium.update(peerId: peerId, server: value) }
++    return combineLatest(local, server) |> map { _ in }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift
 new file mode 100644
@@ -71357,6 +71468,19 @@ index 9cb3108a..dd443778 100644
      }
      return signal
      |> mapToSignal { messages -> Signal<[MessageId?], NoError> in
+diff --git a/submodules/TelegramCore/Sources/PendingMessages/RequestEditMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/RequestEditMessage.swift
+index 5d933383..36f11df6 100644
+--- a/submodules/TelegramCore/Sources/PendingMessages/RequestEditMessage.swift
++++ b/submodules/TelegramCore/Sources/PendingMessages/RequestEditMessage.swift
+@@ -154,7 +154,7 @@ private func requestEditMessageInternal(accountPeerId: PeerId, postbox: Postbox,
+                 
+                 var apiEntities: [Api.MessageEntity]?
+                 if let entities {
+-                    apiEntities = apiTextAttributeEntities(entities, associatedPeers: associatedPeers)
++                    apiEntities = apiTextAttributeEntities(AyuLocalPremium.outgoingAttribute(entities, accountPeerId: accountPeerId, peerId: messageId.peerId), associatedPeers: associatedPeers)
+                     flags |= Int32(1 << 3)
+                 }
+                 
 diff --git a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
 index 3d99e59d..c86b5963 100644
 --- a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
@@ -71477,8 +71601,21 @@ index e8e08874..5e9ee37c 100644
          if let peer = transaction.getPeer(peerId) {
              if peerId == accountPeerId {
                  return .complete()
+diff --git a/submodules/TelegramCore/Sources/State/MessageReactions.swift b/submodules/TelegramCore/Sources/State/MessageReactions.swift
+index b1a5ae4e..20264590 100644
+--- a/submodules/TelegramCore/Sources/State/MessageReactions.swift
++++ b/submodules/TelegramCore/Sources/State/MessageReactions.swift
+@@ -62,7 +62,7 @@ public func updateMessageReactionsInteractively(account: Account, messageIds: [M
+             }
+         }
+         
+-        let isPremium = (transaction.getPeer(account.peerId) as? TelegramUser)?.isPremium ?? false
++        let isPremium = (transaction.getPeer(account.peerId) as? TelegramUser)?.isServerPremium ?? false
+         let appConfiguration = transaction.getPreferencesEntry(key: PreferencesKeys.appConfiguration)?.get(AppConfiguration.self) ?? .defaultValue
+         let maxCount: Int
+         if isPremium {
 diff --git a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
-index a5cf2d90..4aae1d1d 100644
+index a5cf2d90..f201b8bc 100644
 --- a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
 +++ b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
 @@ -1226,6 +1226,7 @@ public final class PendingMessageManager {
@@ -71489,6 +71626,15 @@ index a5cf2d90..4aae1d1d 100644
                  
                  for attribute in messages[0].0.attributes {
                      if let replyAttribute = attribute as? ReplyMessageAttribute {
+@@ -1409,7 +1410,7 @@ public final class PendingMessageManager {
+                                     var messageEntities: [Api.MessageEntity]?
+                                     for attribute in message.attributes {
+                                         if let attribute = attribute as? TextEntitiesMessageAttribute {
+-                                            messageEntities = apiTextAttributeEntities(attribute, associatedPeers: message.peers)
++                                            messageEntities = apiTextAttributeEntities(AyuLocalPremium.outgoingAttribute(attribute, accountPeerId: accountPeerId, peerId: message.id.peerId), associatedPeers: message.peers)
+                                         }
+                                     }
+                                     
 @@ -1510,6 +1511,8 @@ public final class PendingMessageManager {
                  return sendMessageRequest
                  |> deliverOn(queue)
@@ -71506,6 +71652,15 @@ index a5cf2d90..4aae1d1d 100644
                  
                  var topMsgId: Int32?
                  var monoforumPeerId: Api.InputPeer?
+@@ -1766,7 +1770,7 @@ public final class PendingMessageManager {
+                     } else if let attribute = attribute as? ForwardSourceInfoAttribute {
+                         forwardSourceInfoAttribute = attribute
+                     } else if let attribute = attribute as? TextEntitiesMessageAttribute {
+-                        messageEntities = apiTextAttributeEntities(attribute, associatedPeers: message.peers)
++                        messageEntities = apiTextAttributeEntities(AyuLocalPremium.outgoingAttribute(attribute, accountPeerId: accountPeerId, peerId: message.id.peerId), associatedPeers: message.peers)
+                     } else if let attribute = attribute as? OutgoingContentInfoMessageAttribute {
+                         if attribute.flags.contains(.disableLinkPreviews) {
+                             flags |= Int32(1 << 1)
 @@ -2132,6 +2136,8 @@ public final class PendingMessageManager {
                              |> mapError { _ -> MTRpcError in
                              }
@@ -71537,6 +71692,32 @@ index b2e65895..b3ff988c 100644
                      |> map(Optional.init)
                      |> `catch` { _ -> Signal<Api.messages.AffectedMessages?, NoError> in
                          return .single(nil)
+diff --git a/submodules/TelegramCore/Sources/State/SynchronizeSavedGifsOperation.swift b/submodules/TelegramCore/Sources/State/SynchronizeSavedGifsOperation.swift
+index 7cbef8db..58615c3e 100644
+--- a/submodules/TelegramCore/Sources/State/SynchronizeSavedGifsOperation.swift
++++ b/submodules/TelegramCore/Sources/State/SynchronizeSavedGifsOperation.swift
+@@ -62,7 +62,7 @@ public enum SavedGifResult {
+ public func toggleGifSaved(account: Account, fileReference: FileMediaReference, saved: Bool) -> Signal<SavedGifResult, NoError> {
+     if saved {
+         return account.postbox.transaction { transaction -> Signal<SavedGifResult, NoError> in
+-            let isPremium = transaction.getPeer(account.peerId)?.isPremium ?? false
++            let isPremium = transaction.getPeer(account.peerId)?.isServerPremium ?? false
+             let items = transaction.getOrderedListItems(collectionId: Namespaces.OrderedItemList.CloudRecentGifs)
+             
+             let appConfiguration = transaction.getPreferencesEntry(key: PreferencesKeys.appConfiguration)?.get(AppConfiguration.self) ?? .defaultValue
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Data/PeersData.swift b/submodules/TelegramCore/Sources/TelegramEngine/Data/PeersData.swift
+index 967786ba..37ccd151 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Data/PeersData.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Data/PeersData.swift
+@@ -1793,7 +1793,7 @@ public extension TelegramEngine.EngineData.Item {
+                     return false
+                 }
+                 
+-                if let peer = basicPeerView.peer, peer.isPremium {
++                if let peer = basicPeerView.peer, peer.isServerPremium {
+                     return false
+                 }
+                 
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
 index 041f0e62..3056cc9f 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ApplyMaxReadIndexInteractively.swift
@@ -71568,6 +71749,19 @@ index 041f0e62..3056cc9f 100644
                      }
                  } else if peer.isMonoForum {
                      if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(item.threadId)).flatMap(apiInputPeer) {
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ChatList.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ChatList.swift
+index 6cb755ca..6fd677df 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ChatList.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ChatList.swift
+@@ -686,7 +686,7 @@ public extension EngineChatList {
+             displaySavedMessagesAsTopicList = value.value
+         }
+         
+-        let isPremium = view.accountPeer?.isPremium ?? false
++        let isPremium = view.accountPeer?.isServerPremium ?? false
+ 
+         var items: [EngineChatList.Item] = []
+         loop: for entry in view.entries {
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessages.swift
 index 31699c8d..0e77bb7c 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/DeleteMessages.swift
@@ -71616,6 +71810,168 @@ index 5c0a9101..92d7de3d 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatFolders.swift b/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatFolders.swift
+index fc1d37c3..bc75d17e 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatFolders.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatFolders.swift
+@@ -76,7 +76,7 @@ func _internal_exportChatFolder(account: Account, filterId: Int32, title: String
+         |> `catch` { error -> Signal<Api.chatlists.ExportedChatlistInvite, ExportChatFolderError> in
+             if error.errorDescription == "INVITES_TOO_MUCH" || error.errorDescription == "CHATLISTS_TOO_MUCH" {
+                 return account.postbox.transaction { transaction -> (AppConfiguration, Bool) in
+-                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isPremium ?? false)
++                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isServerPremium ?? false)
+                 }
+                 |> castError(ExportChatFolderError.self)
+                 |> mapToSignal { appConfiguration, isPremium -> Signal<Api.chatlists.ExportedChatlistInvite, ExportChatFolderError> in
+@@ -101,7 +101,7 @@ func _internal_exportChatFolder(account: Account, filterId: Int32, title: String
+                 return .fail(.someUserTooManyChannels)
+             } else if error.errorDescription == "CHANNELS_TOO_MUCH" {
+                 return account.postbox.transaction { transaction -> (AppConfiguration, Bool) in
+-                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isPremium ?? false)
++                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isServerPremium ?? false)
+                 }
+                 |> castError(ExportChatFolderError.self)
+                 |> mapToSignal { appConfiguration, isPremium -> Signal<Api.chatlists.ExportedChatlistInvite, ExportChatFolderError> in
+@@ -425,7 +425,7 @@ func _internal_joinChatFolderLink(account: Account, slug: String, peerIds: [Engi
+         |> `catch` { error -> Signal<Api.Updates, JoinChatFolderLinkError> in
+             if error.errorDescription == "USER_CHANNELS_TOO_MUCH" {
+                 return account.postbox.transaction { transaction -> (AppConfiguration, Bool) in
+-                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isPremium ?? false)
++                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isServerPremium ?? false)
+                 }
+                 |> castError(JoinChatFolderLinkError.self)
+                 |> mapToSignal { appConfiguration, isPremium -> Signal<Api.Updates, JoinChatFolderLinkError> in
+@@ -440,7 +440,7 @@ func _internal_joinChatFolderLink(account: Account, slug: String, peerIds: [Engi
+                 }
+             } else if error.errorDescription == "DIALOG_FILTERS_TOO_MUCH" {
+                 return account.postbox.transaction { transaction -> (AppConfiguration, Bool) in
+-                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isPremium ?? false)
++                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isServerPremium ?? false)
+                 }
+                 |> castError(JoinChatFolderLinkError.self)
+                 |> mapToSignal { appConfiguration, isPremium -> Signal<Api.Updates, JoinChatFolderLinkError> in
+@@ -455,7 +455,7 @@ func _internal_joinChatFolderLink(account: Account, slug: String, peerIds: [Engi
+                 }
+             } else if error.errorDescription == "CHATLISTS_TOO_MUCH" {
+                 return account.postbox.transaction { transaction -> (AppConfiguration, Bool) in
+-                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isPremium ?? false)
++                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isServerPremium ?? false)
+                 }
+                 |> castError(JoinChatFolderLinkError.self)
+                 |> mapToSignal { appConfiguration, isPremium -> Signal<Api.Updates, JoinChatFolderLinkError> in
+@@ -470,7 +470,7 @@ func _internal_joinChatFolderLink(account: Account, slug: String, peerIds: [Engi
+                 }
+             } else if error.errorDescription == "CHANNELS_TOO_MUCH" {
+                 return account.postbox.transaction { transaction -> (AppConfiguration, Bool) in
+-                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isPremium ?? false)
++                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isServerPremium ?? false)
+                 }
+                 |> castError(JoinChatFolderLinkError.self)
+                 |> mapToSignal { appConfiguration, isPremium -> Signal<Api.Updates, JoinChatFolderLinkError> in
+@@ -704,7 +704,7 @@ func _internal_joinAvailableChatsInFolder(account: Account, updates: ChatFolderU
+         |> `catch` { error -> Signal<Api.Updates, JoinChatFolderLinkError> in
+             if error.errorDescription == "DIALOG_FILTERS_TOO_MUCH" {
+                 return account.postbox.transaction { transaction -> (AppConfiguration, Bool) in
+-                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isPremium ?? false)
++                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isServerPremium ?? false)
+                 }
+                 |> castError(JoinChatFolderLinkError.self)
+                 |> mapToSignal { appConfiguration, isPremium -> Signal<Api.Updates, JoinChatFolderLinkError> in
+@@ -719,7 +719,7 @@ func _internal_joinAvailableChatsInFolder(account: Account, updates: ChatFolderU
+                 }
+             } else if error.errorDescription == "FILTERS_TOO_MUCH" {
+                 return account.postbox.transaction { transaction -> (AppConfiguration, Bool) in
+-                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isPremium ?? false)
++                    return (currentAppConfiguration(transaction: transaction), transaction.getPeer(account.peerId)?.isServerPremium ?? false)
+                 }
+                 |> castError(JoinChatFolderLinkError.self)
+                 |> mapToSignal { appConfiguration, isPremium -> Signal<Api.Updates, JoinChatFolderLinkError> in
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Peers/Peer.swift b/submodules/TelegramCore/Sources/TelegramEngine/Peers/Peer.swift
+index 6ad0af16..47d50f1b 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Peers/Peer.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Peers/Peer.swift
+@@ -516,7 +516,11 @@ public extension EnginePeer {
+     var isPremium: Bool {
+         return self._asPeer().isPremium
+     }
+-    
++
++    var isServerPremium: Bool {
++        return self._asPeer().isServerPremium
++    }
++
+     var isSubscription: Bool {
+         return self._asPeer().isSubscription
+     }
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Peers/TelegramEnginePeers.swift b/submodules/TelegramCore/Sources/TelegramEngine/Peers/TelegramEnginePeers.swift
+index a5f736c0..b541e2b9 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Peers/TelegramEnginePeers.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Peers/TelegramEnginePeers.swift
+@@ -1399,7 +1399,7 @@ public extension TelegramEngine {
+                     let appConfiguration: AppConfiguration = transaction.getPreferencesEntry(key: PreferencesKeys.appConfiguration)?.get(AppConfiguration.self) ?? AppConfiguration.defaultValue
+                     
+                     let accountPeer = transaction.getPeer(self.account.peerId)
+-                    let limitsConfiguration = UserLimitsConfiguration(appConfiguration: appConfiguration, isPremium: accountPeer?.isPremium ?? false)
++                    let limitsConfiguration = UserLimitsConfiguration(appConfiguration: appConfiguration, isPremium: accountPeer?.isServerPremium ?? false)
+                     let limit = limitsConfiguration.maxPinnedSavedChatCount
+                     
+                     return (transaction.getPeerPinnedThreads(peerId: id), Int(limit))
+@@ -1699,7 +1699,7 @@ public extension TelegramEngine {
+                 guard let accountPeer = basicAccountPeerView.peer else {
+                     return false
+                 }
+-                if accountPeer.isPremium {
++                if accountPeer.isServerPremium {
+                     return false
+                 }
+                 
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Peers/TogglePeerChatPinned.swift b/submodules/TelegramCore/Sources/TelegramEngine/Peers/TogglePeerChatPinned.swift
+index aa11e522..1ce4fdde 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Peers/TogglePeerChatPinned.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Peers/TogglePeerChatPinned.swift
+@@ -14,7 +14,7 @@ public enum TogglePeerChatPinnedResult {
+ 
+ func _internal_toggleItemPinned(postbox: Postbox, accountPeerId: PeerId, location: TogglePeerChatPinnedLocation, itemId: PinnedItemId) -> Signal<TogglePeerChatPinnedResult, NoError> {
+     return postbox.transaction { transaction -> TogglePeerChatPinnedResult in
+-        let isPremium = transaction.getPeer(accountPeerId)?.isPremium ?? false
++        let isPremium = transaction.getPeer(accountPeerId)?.isServerPremium ?? false
+         
+         let appConfiguration = transaction.getPreferencesEntry(key: PreferencesKeys.appConfiguration)?.get(AppConfiguration.self) ?? .defaultValue
+         let userLimitsConfiguration = UserLimitsConfiguration(appConfiguration: appConfiguration, isPremium: isPremium)
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Stickers/SavedStickers.swift b/submodules/TelegramCore/Sources/TelegramEngine/Stickers/SavedStickers.swift
+index 2597c7d5..aec92939 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Stickers/SavedStickers.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Stickers/SavedStickers.swift
+@@ -11,7 +11,7 @@ public enum SavedStickerResult {
+ func _internal_toggleStickerSaved(postbox: Postbox, network: Network, accountPeerId: PeerId, file: TelegramMediaFile, saved: Bool) -> Signal<SavedStickerResult, AddSavedStickerError> {
+     if saved {
+         return postbox.transaction { transaction -> Signal<SavedStickerResult, AddSavedStickerError> in
+-            let isPremium = transaction.getPeer(accountPeerId)?.isPremium ?? false
++            let isPremium = transaction.getPeer(accountPeerId)?.isServerPremium ?? false
+             let items = transaction.getOrderedListItems(collectionId: Namespaces.OrderedItemList.CloudSavedStickers)
+             
+             let appConfiguration = transaction.getPreferencesEntry(key: PreferencesKeys.appConfiguration)?.get(AppConfiguration.self) ?? .defaultValue
+diff --git a/submodules/TelegramCore/Sources/Utils/PeerUtils.swift b/submodules/TelegramCore/Sources/Utils/PeerUtils.swift
+index 26cebdb4..d2e609dc 100644
+--- a/submodules/TelegramCore/Sources/Utils/PeerUtils.swift
++++ b/submodules/TelegramCore/Sources/Utils/PeerUtils.swift
+@@ -225,6 +225,16 @@ public extension Peer {
+     }
+     
+     var isPremium: Bool {
++        switch self {
++        case let user as TelegramUser:
++            return user.flags.contains(.isPremium) || AyuLocalPremium.contains(user.id)
++        default:
++            return false
++        }
++    }
++
++    /// The subscription the server knows about; limits and server-enforced checks use this.
++    var isServerPremium: Bool {
+         switch self {
+         case let user as TelegramUser:
+             return user.flags.contains(.isPremium)
 diff --git a/submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift b/submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift
 new file mode 100644
 index 00000000..73b546fa
@@ -72184,7 +72540,7 @@ index 34f23770..c50a60b1 100644
      for section in InfoSection.allCases {
          if let sectionItems = items[section], !sectionItems.isEmpty {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-index 8c4a24b7..a606fcd8 100644
+index 8c4a24b7..07254d64 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 @@ -161,6 +161,7 @@ enum PeerInfoContextSubject {
@@ -72199,7 +72555,7 @@ index 8c4a24b7..a606fcd8 100644
                  guard let strongSelf = self else {
                      return
                  }
-+                if strongSelf.context.account.network.ayuGhostMode.current.advanced.localEmojiStatusEnabled {
++                if strongSelf.context.account.network.ayuGhostMode.current.advanced.localEmojiStatusEnabled || (strongSelf.context.account.network.ayuGhostMode.current.advanced.localPremium && !(strongSelf.data?.peer?.isServerPremium ?? false)) {
 +                    strongSelf.ayuOpenLocalEmojiStatus(sourceView: sourceView)
 +                    return
 +                }
@@ -72210,7 +72566,7 @@ index 8c4a24b7..a606fcd8 100644
                  guard let strongSelf = self, let peer = strongSelf.data?.peer else {
                      return
                  }
-+                if peer.id == strongSelf.context.account.peerId, strongSelf.context.account.network.ayuGhostMode.current.advanced.localEmojiStatusEnabled {
++                if peer.id == strongSelf.context.account.peerId, strongSelf.context.account.network.ayuGhostMode.current.advanced.localEmojiStatusEnabled || (strongSelf.context.account.network.ayuGhostMode.current.advanced.localPremium && !peer.isServerPremium) {
 +                    strongSelf.ayuOpenLocalEmojiStatus(sourceView: sourceView)
 +                    return
 +                }
@@ -137818,6 +138174,27 @@ index 00000000..e8586698
 +</clipPath>
 +</defs>
 +</svg>
+diff --git a/submodules/TelegramUI/Sources/AccountContext.swift b/submodules/TelegramUI/Sources/AccountContext.swift
+index b264bc03..ad077f5c 100644
+--- a/submodules/TelegramUI/Sources/AccountContext.swift
++++ b/submodules/TelegramUI/Sources/AccountContext.swift
+@@ -573,10 +573,12 @@ public final class AccountContextImpl: AccountContext {
+             strongSelf.tonGiftStickersPromise.set(.single(stickers))
+         })
+         
+-        self.userLimitsConfigurationDisposable = (self.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.Peer(id: account.peerId))
+-        |> mapToSignal { peer -> Signal<(Bool, EngineConfiguration.UserLimits), NoError> in
+-            let isPremium = peer?.isPremium ?? false
+-            return self.engine.data.subscribe(TelegramEngine.EngineData.Item.Configuration.UserLimits(isPremium: isPremium))
++        // AyuGram local Premium changes what this client shows, never the limits the server enforces.
++        self.userLimitsConfigurationDisposable = (combineLatest(self.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.Peer(id: account.peerId)), account.network.ayuGhostMode.signal |> map { $0.advanced.localPremium } |> distinctUntilChanged)
++        |> mapToSignal { peer, localPremium -> Signal<(Bool, EngineConfiguration.UserLimits), NoError> in
++            let serverPremium = peer?.isServerPremium ?? false
++            let isPremium = serverPremium || localPremium
++            return self.engine.data.subscribe(TelegramEngine.EngineData.Item.Configuration.UserLimits(isPremium: serverPremium))
+             |> map { userLimits in
+                 return (isPremium, userLimits)
+             }
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
 index 1ceb46bc..53bcd9e9 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
@@ -139356,6 +139733,28 @@ index c46cc951..b3430c9a 100644
                  if immediateShare {
                      let controller = params.context.sharedContext.makeShareScreen(context: params.context, params: ShareControllerParams(subject: .media(.standalone(media: file), nil), immediateExternalShare: true))
                      params.present(controller, nil, .window(.root))
+diff --git a/submodules/TextFormat/Sources/StringWithAppliedEntities.swift b/submodules/TextFormat/Sources/StringWithAppliedEntities.swift
+index d0ec7066..c20bc97a 100644
+--- a/submodules/TextFormat/Sources/StringWithAppliedEntities.swift
++++ b/submodules/TextFormat/Sources/StringWithAppliedEntities.swift
+@@ -199,7 +199,7 @@ func adjustedEntityRangesApplyingSubstitutions(
+ public func stringWithAppliedCustomEmojiEntities(_ string: NSAttributedString, entities: [MessageTextEntity], message: EngineRawMessage?) -> NSAttributedString {
+     let updatedString = NSMutableAttributedString(attributedString: string)
+ 
+-    for entity in entities {
++    for entity in AyuLocalPremium.displayEntities(text: string.string, entities: entities) {
+         guard case let .CustomEmoji(_, fileId) = entity.type else {
+             continue
+         }
+@@ -221,6 +221,8 @@ public func stringWithAppliedCustomEmojiEntities(_ string: NSAttributedString, e
+ }
+ 
+ public func stringWithAppliedEntities(_ text: String, entities: [MessageTextEntity], strings: PresentationStrings? = nil, dateTimeFormat: PresentationDateTimeFormat? = nil, baseColor: UIColor, linkColor: UIColor, baseQuoteTintColor: UIColor? = nil, baseQuoteSecondaryTintColor: UIColor? = nil, baseQuoteTertiaryTintColor: UIColor? = nil, codeBlockTitleColor: UIColor? = nil, codeBlockAccentColor: UIColor? = nil, codeBlockBackgroundColor: UIColor? = nil, codeBlockFillColor: UIColor? = nil, baseFont: UIFont, linkFont: UIFont, boldFont: UIFont, italicFont: UIFont, boldItalicFont: UIFont, fixedFont: UIFont, blockQuoteFont: UIFont, underlineLinks: Bool = true, external: Bool = false, message: EngineRawMessage?, entityFiles: [EngineMedia.Id: TelegramMediaFile] = [:], adjustQuoteFontSize: Bool = false, cachedMessageSyntaxHighlight: CachedMessageSyntaxHighlight? = nil, paragraphAlignment: NSTextAlignment? = nil) -> NSAttributedString {
++    // AyuGram local Premium: custom emoji sent as tg://emoji links render as the emoji again.
++    let entities = AyuLocalPremium.displayEntities(text: text, entities: entities)
+     let baseQuoteTintColor = baseQuoteTintColor ?? baseColor
+     
+     var nsString: NSString?
 diff --git a/submodules/WalletContext/Sources/WalletSecurity.swift b/submodules/WalletContext/Sources/WalletSecurity.swift
 index 3d13bc4d..3ca0e6c7 100644
 --- a/submodules/WalletContext/Sources/WalletSecurity.swift

@@ -25,9 +25,12 @@ These blocks were added after the Chat Colors plugin and are not in any publishe
 - Lists archived copies captured with local history, with usage, per-file and total limits (1–250 MB / 25–2000 MB), export through the system document picker, and removal. Removing media keeps the text history. Lowering limits does not delete older files.
 - Files are staged and moved atomically; stale staging files are pruned after 5 minutes.
 
-## Local emoji status (Settings → AyuGram → Appearance → Local emoji status)
+## Local Premium and status (Settings → AyuGram → Appearance → Local Premium and status)
 
-- Shows a chosen emoji status, with optional single-play animation, in your own profile/settings only. The server status, subscription and other clients are not changed.
+- **Local Telegram Premium β** (Desktop/Android `localPremium`): this client treats your own account as Premium for presentation — badge, emoji status picker, Premium emoji and stickers. The subscription, limits (pinned chats, folders, saved GIFs/stickers, reactions per message) and server-enforced checks keep using the real server flag, so no limit is raised that the server would refuse.
+- Without a real subscription, custom emoji in sent or edited text/captions are rewritten to `tg://emoji?id=<id>` text links (Saved Messages keep them). Any such link covering exactly one emoji renders as that custom emoji; stored entities, quotes and edits keep the link. Other clients show a linked plain emoji.
+- Some screens pick the change up after an app restart; the AyuGram settings and account context update immediately.
+- **Local emoji status** shows a chosen emoji status, with optional single-play animation, in your own profile/settings only. With local Premium and no subscription, tapping your status opens this local picker. The server status, subscription and other clients are not changed.
 
 ## Repeat (message menu → AyuGram · Repeat)
 

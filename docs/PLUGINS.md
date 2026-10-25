@@ -20,6 +20,35 @@ documents without thumbnails use a puzzle icon in the chat's native file control
 download progress/cancel controls retain their normal states. This affects this
 client's rendering, not how other Telegram clients show the file.
 
+Installed plugins can now supply an individual avatar, displayed in the manager
+and action list. Missing avatars use the puzzle fallback. Search+ uses a duck emoji
+as a local substitute for the original Android animated sticker-pack reference.
+No sticker-pack download or remote avatar request is performed.
+
+## Authoring tools and avatars
+
+No separate runtime SDK needs to be installed. API version 1 is built into the
+app; authors create a declarative `.plugin` file. The editor schema is
+[plugin.schema.json](../plugins/plugin.schema.json), with ready-to-import examples
+in [plugins](../plugins). It describes supported operations, not Android/Python APIs.
+ExteraGram's Python/Java SDK is a separate system and is not required by this ABI.
+
+An optional `icon` field accepts:
+
+```json
+"icon": { "kind": "emoji", "value": "🦆" }
+```
+
+Use `kind: "symbol"` with `puzzlepiece.fill`, `magnifyingglass`, `textformat`,
+`line.3.horizontal.decrease`, `star.fill` or `bolt.fill`. Or use `kind: "png"`
+with the base64-encoded PNG bytes in `value`: at most 64 KiB and 256x256 pixels.
+Images are bounded and downsampled before drawing inside a 44-point circular
+avatar. Invalid PNG headers or oversized images are rejected at import; PNGs
+that pass header validation but fail decoding display the puzzle fallback.
+Emoji must be one grapheme and at most 64 UTF-8 bytes. Older files with no icon
+remain compatible. Schema checks aid authoring; the native importer additionally
+enforces byte limits, emoji validity, unique IDs and image dimensions.
+
 ## Search+ conversion
 
 The exact supplied **Search+ 2.6.1** file is recognized by SHA-256:

@@ -64,6 +64,7 @@ def main():
     # implementations before the expensive full Telegram build.
     sdk_sources = [source / 'submodules/TelegramUI/Sources' / name for name in (
         'Chat/AyuMessageShotCanvas.swift', 'AyuStartupStorage.swift', 'AyuStartupFailureController.swift')]
+    sdk_sources.append(source / 'submodules/Display/Source/AyuPluginAvatar.swift')
     if any(path.exists() for path in sdk_sources):
         sdk = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], text=True).strip()
         for path in sdk_sources:
@@ -93,11 +94,17 @@ def main():
                 if result.returncode:
                     errors.append(f'Actual plugin model SDK harness:\n{result.stdout}{result.stderr}')
                 else:
-                    result = subprocess.run([*flags, '-typecheck', '-I', directory, str(manager)], capture_output=True, text=True)
+                    result = subprocess.run([*flags, '-emit-module', '-module-name', 'Display',
+                                             '-emit-module-path', str(Path(directory) / 'Display.swiftmodule'),
+                                             str(source / 'submodules/Display/Source/AyuPluginAvatar.swift')], capture_output=True, text=True)
                     if result.returncode:
-                        errors.append(f'Actual plugin manager UIKit SDK check:\n{result.stdout}{result.stderr}')
+                        errors.append(f'Actual plugin avatar SDK harness:\n{result.stdout}{result.stderr}')
                     else:
-                        print('PASS: actual plugin manager checked against UIKit and actual model-only harness; full Telegram integration remains separate')
+                        result = subprocess.run([*flags, '-typecheck', '-I', directory, str(manager)], capture_output=True, text=True)
+                        if result.returncode:
+                            errors.append(f'Actual plugin manager UIKit SDK check:\n{result.stdout}{result.stderr}')
+                        else:
+                            print('PASS: actual plugin manager checked against UIKit and actual model-only harness; full Telegram integration remains separate')
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'PASS: {len(paths)} changed Swift sources parsed; UI import and Telegram API contracts checked. Full type checking still occurs during the native build.')

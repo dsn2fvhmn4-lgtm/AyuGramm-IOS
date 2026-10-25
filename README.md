@@ -2,7 +2,9 @@
 
 <img src="assets/branding/AyuGram-logo.png" width="128" alt="AyuGram for iOS logo">
 
-An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. The latest [v0.2.0 Feature Preview, build 8](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/tag/v0.2.0-preview) is available. See the [release description](docs/releases/v0.2.0.md) for features, installation and verification limits. The earlier v0.1.0 release contains Ghost Mode only.
+An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. [Release 3](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/tag/v0.3.0-preview) is available as **AyuGramm-IOS.ipa**. See the [complete Release 3 changelog](docs/releases/v0.3.0.md) for additions, fixes, installation and verification status. [Previous releases](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases) remain available.
+
+Release 3 source changes add message-menu controls, author search, filter management, MessageShot appearance, text-to-draft/search/ID tools, reversible local message hiding, reaction-display settings and updated app artwork. Reliability changes cover filter scope, image bounds, missing App Group access, startup diagnostics and database-key persistence. The detailed changelog distinguishes source changes from pending device verification.
 
 ## Current implementation
 

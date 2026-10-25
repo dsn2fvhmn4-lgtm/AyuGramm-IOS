@@ -15,6 +15,7 @@ class UIContractTests(unittest.TestCase):
     def test_formatted_history_requires_its_actual_module(self):
         self.assertTrue(contract_errors('stringWithAppliedEntities(text, entities: [])'))
         self.assertFalse(contract_errors('import TextFormat\nstringWithAppliedEntities(text, entities: [])'))
+        self.assertFalse(contract_errors('stringWithAppliedEntities(text, entities: [])', 'submodules/TextFormat/Sources/StringWithAppliedEntities.swift'))
 
     def test_reaction_helpers_require_the_declaring_module(self):
         call = 'item.context.ayuVisibleMessageReactionsAndPeers(accountPeer: peer, message: message)'

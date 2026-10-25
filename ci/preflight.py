@@ -8,11 +8,12 @@ import tempfile
 import plistlib
 
 
-def contract_errors(source):
+def contract_errors(source, path=''):
     errors = []
     if re.search(r'textAlertController\s*\(\s*context:', source) and 'import PresentationDataUtils' not in source:
         errors.append('textAlertController(context:) requires PresentationDataUtils')
-    if 'stringWithAppliedEntities(' in source and 'import TextFormat' not in source:
+    # TextFormat's own sources declare these functions and cannot import their module.
+    if 'stringWithAppliedEntities(' in source and 'import TextFormat' not in source and not path.startswith('submodules/TextFormat/'):
         errors.append('stringWithAppliedEntities requires TextFormat')
     if re.search(r'\.ayuVisibleMessageReactions(?:AndPeers)?\s*\(', source) and 'import AccountContext' not in source:
         errors.append('AyuGram reaction display helpers require AccountContext')
@@ -43,7 +44,7 @@ def main():
         paths.update(path.decode('utf-8') for path in output.split(b'\0') if path.endswith(b'.swift'))
     errors = []
     for path in sorted(paths):
-        for error in contract_errors((source / path).read_text(encoding='utf-8')):
+        for error in contract_errors((source / path).read_text(encoding='utf-8'), path):
             errors.append(f'{path}: {error}')
         for error in reaction_dependency_errors(source / path):
             errors.append(f'{path}: {error}')

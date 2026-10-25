@@ -76,11 +76,13 @@ jobs:
       - name: Apply port and run source checks
         run: |
           set -euo pipefail
-          python3 ci/prepare.py telegram
-          git -C telegram diff --check
-          python3 -m unittest discover -s ci/tests -p 'test_*.py'
-          python3 ci/preflight.py telegram
-          python3 ci/test_models.py telegram | tee "$RUNNER_TEMP/ayu-tests.log"
+          {
+            python3 ci/prepare.py telegram
+            git -C telegram diff --check
+            python3 -m unittest discover -s ci/tests -p 'test_*.py'
+            python3 ci/preflight.py telegram
+            python3 ci/test_models.py telegram | tee "$RUNNER_TEMP/ayu-tests.log"
+          } 2>&1 | tee "$RUNNER_TEMP/ayu-checks.log"
       - name: Fetch pinned native dependencies
         if: github.event_name == 'push' || inputs.native_build
         run: |
@@ -99,6 +101,9 @@ jobs:
       - name: Build native AyuGram port
         if: github.event_name == 'push' || inputs.native_build
         run: python3 -u ci/build.py telegram --phase port --configuration "$CONFIGURATION"
+      - name: Show errors on the run page
+        if: failure()
+        run: python3 ci/annotate_failure.py "AyuGram build failed" "$RUNNER_TEMP/ayu-checks.log" telegram/artifacts/port/build.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

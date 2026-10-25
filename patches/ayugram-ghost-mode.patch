@@ -67140,10 +67140,10 @@ index 00000000..e56a4624
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuChatColorsController.swift b/submodules/SettingsUI/Sources/AyuChatColorsController.swift
 new file mode 100644
-index 00000000..5b024579
+index 00000000..82b56cf0
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuChatColorsController.swift
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,132 @@
 +import UIKit
 +import Display
 +import SwiftSignalKit
@@ -67186,11 +67186,13 @@ index 00000000..5b024579
 +    private func loadTitles() {
 +        let keys = self.keys
 +        let data = self.context.sharedContext.currentPresentationData.with { $0 }
-+        self.peerRequest.set((self.context.account.postbox.transaction { transaction -> [String: String] in
++        let ids = keys.compactMap { key -> (String, EnginePeer.Id)? in Int64(key).map { (key, EnginePeer.Id($0)) } }
++        self.peerRequest.set((self.context.engine.data.get(EngineDataMap(ids.map { TelegramEngine.EngineData.Item.Peer.Peer(id: $0.1) }))
++        |> map { peers -> [String: String] in
 +            var result: [String: String] = [:]
-+            for key in keys {
-+                if let raw = Int64(key), let peer = transaction.getPeer(EnginePeer.Id(raw)) {
-+                    let title = EnginePeer(peer).displayTitle(strings: data.strings, displayOrder: data.nameDisplayOrder)
++            for (key, id) in ids {
++                if let peer = peers[id] ?? nil {
++                    let title = peer.displayTitle(strings: data.strings, displayOrder: data.nameDisplayOrder)
 +                    if !title.isEmpty { result[key] = title }
 +                }
 +            }

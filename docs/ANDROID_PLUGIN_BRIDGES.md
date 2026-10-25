@@ -7,7 +7,7 @@ plugin code or load embedded native libraries. Original source files remain unch
 | Supplied file | Required integration | Current source status |
 | --- | --- | --- |
 | camera_flip.plugin 0.2.0 | Round-camera touch events, existing flip action, settings | Native adapter added; macOS compilation and iPhone verification pending |
-| chat_colors.plugin 1.0 | Chat-list row background, peer color storage, context/profile menus, color picker and brightness | No adapter implemented |
+| chat_colors.plugin 1.0 | Chat-list row background, peer color storage, context/profile menus, color picker and brightness | Native adapter added; macOS compilation and iPhone verification pending |
 | game_arcade.plugin 1.1 | Native web view, 3 external game URLs, injected scripts, cookies/cache lifecycle, menus and intercepted dot commands | No adapter implemented |
 | story_scheduler.plugin 1.1 | Durable media queue, story uploader/privacy/peer models, schedule picker, retries and wakeup lifecycle | No adapter implemented |
 | unlim_accounts.plugin 1.0 | Android 12.10.6 account internals plus embedded DEX/JNI runtime | No adapter implemented; file exceeds current 512 KB import limit |
@@ -78,3 +78,40 @@ python tools/analyze_plugin.py input.plugin --output report.json
 
 The report lists dependencies and source identity. It does not convert unknown
 plugins or mark unimplemented bridges as available.
+
+## Chat Colors native adapter
+
+- Exact source SHA-256: `a7217c0cc672615e3558b8f3391b522f7e031bc0900a84315b4eb4f53ece8de5`.
+- Authors retained: @lerowc and @lerowplug. Import the unchanged supplied file or
+  [chat_colors_ios.plugin](../plugins/chat_colors_ios.plugin). New actions require
+  API 4, so earlier clients reject them.
+- Enable the installed plugin. Long-press a chat in the list, or open its profile
+  menu, then choose **Chat color**. The current-chat plugin action opens the same picker.
+- Native picker: all nine original presets, custom #RGB/#RRGGBB, external color
+  website and removal. Validation happens before saving. No Android view or drawing
+  bytecode runs.
+- Plugin details -> Chat colors: feature switch, original 10%-100% brightness
+  steps (default 30%), colored-chat list with account-local titles, reset-all
+  confirmation, website and author channel. Personal preferences stay in the
+  account; exported plugin manifests contain functionality, not those preferences.
+- Colors use complete encoded iOS peer IDs, not Android dialog IDs or usernames.
+  Different peer namespaces and accounts keep independent settings. Existing
+  Android personal settings are not imported.
+- Row nodes observe the active provider. Color/brightness changes, feature/plugin
+  disable and uninstall update visible rows without a list reload. Reused nodes
+  clear prior tint; delayed updates from a different account are ignored. No
+  disk reads or title lookups run in the rendering callback.
+- Tint overlays the normal/pinned base under text and native highlight layers.
+  Selected rows retain native selection. Message-search rows, sponsored entries,
+  community cards, placeholders and archive group references are excluded.
+- Up to 1024 colored chats per provider/account. The first enabled Chat Colors
+  provider supplies rendering; personal settings survive replacement and re-enable.
+- Actual Swift host checks cover HEX normalization/rejection, exact Android alpha
+  rounding, namespaced key separation, persistence, failed updates, account
+  isolation, feature/plugin disable, replacement, removal and count/brightness
+  validation. The UIKit picker is included in the cheap actual SDK check.
+- macOS compilation, simulator-frame review and iPhone behavior remain unverified.
+  Before release test light/dark, pinned/selected/highlight/reveal, recycled cells,
+  profile/list/message entry points, invalid HEX, save failure, removal while the
+  picker is open, reset, multiple accounts and all brightness steps. No build was
+  started by this source task.

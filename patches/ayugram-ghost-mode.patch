@@ -66104,6 +66104,40 @@ index 4c3a6419..8d103a44 100644
      buildParser.add_argument(
          '--buildNumber',
          required=True,
+diff --git a/submodules/AccountContext/BUILD b/submodules/AccountContext/BUILD
+index 509d3bd2..aa199597 100644
+--- a/submodules/AccountContext/BUILD
++++ b/submodules/AccountContext/BUILD
+@@ -10,6 +10,7 @@ swift_library(
+         "-warnings-as-errors",
+     ],
+     deps = [
++        "//submodules/Display",
+         "//submodules/TelegramAudio:TelegramAudio",
+         "//submodules/AsyncDisplayKit:AsyncDisplayKit",
+         "//submodules/TemporaryCachedPeerDataManager:TemporaryCachedPeerDataManager",
+diff --git a/submodules/AccountContext/Sources/AyuChatColors.swift b/submodules/AccountContext/Sources/AyuChatColors.swift
+new file mode 100644
+index 00000000..c063b4cf
+--- /dev/null
++++ b/submodules/AccountContext/Sources/AyuChatColors.swift
+@@ -0,0 +1,16 @@
++import UIKit
++import Display
++import TelegramCore
++
++public func ayuPresentChatColorPicker(context: AccountContext, peerId: EnginePeer.Id, pluginID: String? = nil) {
++    let store = context.account.network.ayuGhostMode
++    guard let id = pluginID ?? store.current.plugins.chatColorsProviderID,
++          let plugin = store.current.plugins.installed.first(where: { $0.manifest.id == id && $0.manifest.actions.contains(where: { $0.kind == .chatColors }) }) else { return }
++    let data = context.sharedContext.currentPresentationData.with { $0 }
++    let picker = AyuChatColorPickerController(current: plugin.chatColorSettings?.colors[String(peerId.toInt64())], russian: data.strings.baseLanguageCode.hasPrefix("ru"), save: { hex in
++        try store.update { try $0.plugins.setChatColor(id: id, peerKey: String(peerId.toInt64()), hex: hex) }
++    }, openWebsite: { context.sharedContext.applicationBindings.openUrl("https://htmlcolorcodes.com/color-picker/") })
++    let navigation = UINavigationController(rootViewController: picker)
++    navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
++    context.sharedContext.applicationBindings.presentNativeController(navigation)
++}
 diff --git a/submodules/AccountContext/Sources/AyuReactionDisplay.swift b/submodules/AccountContext/Sources/AyuReactionDisplay.swift
 new file mode 100644
 index 00000000..5ccfee08
@@ -66140,6 +66174,25 @@ index 00000000..5ccfee08
 +        return mergedMessageReactionsAndPeers(accountPeerId: self.account.peerId, accountPeer: accountPeer, message: message)
 +    }
 +}
+diff --git a/submodules/ChatListUI/Sources/ChatContextMenus.swift b/submodules/ChatListUI/Sources/ChatContextMenus.swift
+index f753a8ea..f9c1b489 100644
+--- a/submodules/ChatListUI/Sources/ChatContextMenus.swift
++++ b/submodules/ChatListUI/Sources/ChatContextMenus.swift
+@@ -136,6 +136,14 @@ func chatContextMenuItems(context: AccountContext, peerId: EnginePeer.Id, promoI
+                     }
+ 
+                     var items: [ContextMenuItem] = []
++                    if context.account.network.ayuGhostMode.current.plugins.chatColorsProviderID != nil {
++                        items.append(.action(ContextMenuActionItem(text: strings.baseLanguageCode.hasPrefix("ru") ? "Цвет чата" : "Chat color", icon: { theme in
++                            generateTintedImage(image: UIImage(systemName: "paintpalette"), color: theme.contextMenu.primaryColor)
++                        }, action: { _, complete in
++                            complete(.default)
++                            ayuPresentChatColorPicker(context: context, peerId: peerId)
++                        })))
++                    }
+ 
+                     if case let .search(search) = source {
+                         switch search {
 diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
 index 5bdff8a6..bd215887 100644
 --- a/submodules/ChatListUI/Sources/ChatListController.swift
@@ -66156,6 +66209,166 @@ index 5bdff8a6..bd215887 100644
                      strongSelf.tabBarItem.badgeValue = ""
                  } else {
                      strongSelf.tabBarItem.badgeValue = compactNumericCountString(Int(count.0), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator)
+diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
+index e41738b1..1b705c7d 100644
+--- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
++++ b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
+@@ -1384,6 +1384,22 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+     public private(set) var item: ChatListItem?
+     
+     private let backgroundNode: ASDisplayNode
++    private let ayuChatColorNode: ASDisplayNode = {
++        let node = ASDisplayNode(); node.isLayerBacked = true; node.displaysAsynchronously = false; node.isHidden = true
++        return node
++    }()
++    private let ayuChatColorsDisposable = MetaDisposable()
++    private var ayuChatColors: AyuChatColorSettings?
++    private func updateAyuChatColor() {
++        guard let item = self.item, !item.selected, !item.useCommunityViewLayout, case let .peer(peerData) = item.content,
++              !peerData.displayAsMessage, peerData.customMessageListData == nil, peerData.promoInfo == nil,
++              let color = self.ayuChatColors?.color(peerKey: String(peerData.peer.peerId.toInt64())) else {
++            self.ayuChatColorNode.isHidden = true; self.ayuChatColorNode.backgroundColor = nil
++            return
++        }
++        self.ayuChatColorNode.backgroundColor = UIColor(rgb: color.rgb, alpha: CGFloat(color.alpha))
++        self.ayuChatColorNode.isHidden = false
++    }
+     private let highlightedBackgroundNode: ASDisplayNode
+     
+     let contextContainer: ContextControllerSourceNode
+@@ -1754,6 +1770,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+         self.isAccessibilityElement = true
+         
+         self.addSubnode(self.backgroundNode)
++        self.addSubnode(self.ayuChatColorNode)
+         self.addSubnode(self.separatorNode)
+         
+         self.addSubnode(self.contextContainer)
+@@ -1830,6 +1847,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+     }
+ 
+     deinit {
++        self.ayuChatColorsDisposable.dispose()
+         self.cachedDataDisposable.dispose()
+     }
+     
+@@ -1843,6 +1861,18 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+     func setupItem(item: ChatListItem, synchronousLoads: Bool) {
+         let previousItem = self.item
+         self.item = item
++        if previousItem?.context.account.id != item.context.account.id {
++            let ayuColorAccountId = item.context.account.id
++            self.ayuChatColors = item.context.account.network.ayuGhostMode.current.plugins.activeChatColors
++            self.ayuChatColorsDisposable.set((item.context.account.network.ayuGhostMode.signal
++            |> map { $0.plugins.activeChatColors }
++            |> distinctUntilChanged
++            |> deliverOnMainQueue).startStrict(next: { [weak self] settings in
++                guard let self, self.item?.context.account.id == ayuColorAccountId else { return }
++                self.ayuChatColors = settings; self.updateAyuChatColor()
++            }))
++        }
++        self.updateAyuChatColor()
+         
+         var storyState: ChatListItemContent.StoryState?
+         if case let .peer(peerData) = item.content {
+@@ -5406,6 +5436,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                     }
+                     
+                     transition.updateFrame(node: strongSelf.backgroundNode, frame: CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: layout.contentSize.width, height: itemHeight)))
++                    transition.updateFrame(node: strongSelf.ayuChatColorNode, frame: CGRect(origin: .zero, size: CGSize(width: layout.contentSize.width, height: itemHeight)))
++                    strongSelf.updateAyuChatColor()
+                     let backgroundColor: UIColor
+                     let highlightedBackgroundColor: UIColor
+                     if item.selected {
+@@ -5437,8 +5469,10 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                     
+                     if let inlineNavigationLocation = item.interaction.inlineNavigationLocation {
+                         transition.updateAlpha(node: strongSelf.backgroundNode, alpha: 1.0 - inlineNavigationLocation.progress)
++                        transition.updateAlpha(node: strongSelf.ayuChatColorNode, alpha: 1.0 - inlineNavigationLocation.progress)
+                     } else {
+                         transition.updateAlpha(node: strongSelf.backgroundNode, alpha: 1.0)
++                        transition.updateAlpha(node: strongSelf.ayuChatColorNode, alpha: 1.0)
+                     }
+                     
+                     strongSelf.highlightedBackgroundNode.backgroundColor = highlightedBackgroundColor
+diff --git a/submodules/Display/Source/AyuChatColorPickerController.swift b/submodules/Display/Source/AyuChatColorPickerController.swift
+new file mode 100644
+index 00000000..0a78c188
+--- /dev/null
++++ b/submodules/Display/Source/AyuChatColorPickerController.swift
+@@ -0,0 +1,72 @@
++import UIKit
++
++public final class AyuChatColorPickerController: UITableViewController {
++    private let russian: Bool
++    private let current: String?
++    private let save: (String?) throws -> Void
++    private let openWebsite: () -> Void
++    private let presets: [(String, String, String)] = [
++        ("Оранжевый", "Orange", "FF8A00"), ("Синий", "Blue", "2F80ED"),
++        ("Зелёный", "Green", "27AE60"), ("Фиолетовый", "Purple", "9B51E0"),
++        ("Красный", "Red", "EB5757"), ("Жёлтый", "Yellow", "F2C94C"),
++        ("Розовый", "Pink", "FF5FA2"), ("Бирюзовый", "Turquoise", "1ABC9C"),
++        ("Белый", "White", "FFFFFF")
++    ]
++    public init(current: String?, russian: Bool, save: @escaping (String?) throws -> Void, openWebsite: @escaping () -> Void) {
++        self.current = current; self.russian = russian; self.save = save; self.openWebsite = openWebsite
++        super.init(style: .insetGrouped)
++        self.title = russian ? "Цвет чата" : "Chat color"
++    }
++    required public init?(coder: NSCoder) { return nil }
++    override public func viewDidLoad() {
++        super.viewDidLoad()
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(self.cancel))
++    }
++    @objc private func cancel() { self.dismiss(animated: true) }
++    override public func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override public func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? self.presets.count : 3 }
++    override public func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        return section == 0 ? ((self.russian ? "Текущий: " : "Current: ") + (self.current.map { "#" + $0 } ?? (self.russian ? "не задан" : "none"))) : nil
++    }
++    override public func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        if indexPath.section == 0 {
++            let preset = self.presets[indexPath.row]
++            cell.textLabel?.text = self.russian ? preset.0 : preset.1
++            cell.detailTextLabel?.text = "#" + preset.2
++            let rgb = UInt32(preset.2, radix: 16) ?? 0
++            let color = UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
++            cell.imageView?.image = UIImage(systemName: "circle.fill")?.withTintColor(color, renderingMode: .alwaysOriginal)
++            if self.current == preset.2 { cell.accessoryType = .checkmark }
++        } else {
++            cell.textLabel?.text = self.russian ? ["Свой цвет (#HEX)", "Подобрать цвет на сайте", "Убрать цвет"][indexPath.row] : ["Custom color (#HEX)", "Choose color on website", "Remove color"][indexPath.row]
++            if indexPath.row == 2 { cell.textLabel?.textColor = .systemRed }
++        }
++        return cell
++    }
++    private func commit(_ hex: String?) {
++        do { try self.save(hex); self.dismiss(animated: true) }
++        catch {
++            let alert = UIAlertController(title: self.russian ? "Цвет не сохранён" : "Color not saved", message: self.russian ? "Проверь HEX: #RGB или #RRGGBB. Плагин должен оставаться установленным. Предыдущие настройки сохранены." : "Use #RGB or #RRGGBB and keep the plugin installed. Previous settings were retained.", preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
++        }
++    }
++    override public func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        if indexPath.section == 0 { self.commit(self.presets[indexPath.row].2); return }
++        if indexPath.row == 1 { self.openWebsite(); return }
++        if indexPath.row == 2 { self.commit(nil); return }
++        let alert = UIAlertController(title: self.russian ? "Свой цвет" : "Custom color", message: "#RGB / #RRGGBB", preferredStyle: .alert)
++        alert.addTextField { field in
++            field.text = "#" + (self.current ?? "FF8A00"); field.keyboardType = .asciiCapable
++            field.autocapitalizationType = .allCharacters; field.autocorrectionType = .no
++        }
++        alert.addAction(UIAlertAction(title: self.russian ? "Сохранить" : "Save", style: .default, handler: { [weak self, weak alert] _ in
++            guard let self, let value = alert?.textFields?.first?.text else { return }
++            if let alert { alert.dismiss(animated: true, completion: { [weak self] in self?.commit(value) }) }
++            else { self.commit(value) }
++        }))
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        self.present(alert, animated: true)
++    }
++}
 diff --git a/submodules/Display/Source/AyuPluginAvatar.swift b/submodules/Display/Source/AyuPluginAvatar.swift
 new file mode 100644
 index 00000000..024d27f1
@@ -66531,6 +66744,142 @@ index 00000000..e56a4624
 +    }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuChatColorsController.swift b/submodules/SettingsUI/Sources/AyuChatColorsController.swift
+new file mode 100644
+index 00000000..5b024579
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuChatColorsController.swift
+@@ -0,0 +1,130 @@
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import TelegramPresentationData
++import LocalizedPeerData
++
++final class AyuChatColorsController: UITableViewController {
++    private let context: AccountContext
++    private let pluginID: String
++    private var settings = AyuChatColorSettings()
++    private var keys: [String] = []
++    private var titles: [String: String] = [:]
++    private var pluginPresent = false
++    private let observation = MetaDisposable()
++    private let peerRequest = MetaDisposable()
++    private var russian: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
++    init(context: AccountContext, pluginID: String) {
++        self.context = context; self.pluginID = pluginID
++        super.init(style: .insetGrouped)
++        self.title = "Chat Colors"
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.observation.dispose(); self.peerRequest.dispose() }
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        let pluginID = self.pluginID
++        self.observation.set((self.context.account.network.ayuGhostMode.signal
++        |> map { state in state.plugins.installed.first(where: { $0.manifest.id == pluginID }) }
++        |> distinctUntilChanged
++        |> deliverOnMainQueue).startStrict(next: { [weak self] plugin in
++            guard let self else { return }
++            self.pluginPresent = plugin?.manifest.actions.contains(where: { $0.kind == .chatColors }) == true
++            self.settings = plugin?.chatColorSettings ?? AyuChatColorSettings()
++            self.keys = self.settings.colors.keys.sorted()
++            self.tableView.reloadData(); self.loadTitles()
++        }))
++    }
++    private func loadTitles() {
++        let keys = self.keys
++        let data = self.context.sharedContext.currentPresentationData.with { $0 }
++        self.peerRequest.set((self.context.account.postbox.transaction { transaction -> [String: String] in
++            var result: [String: String] = [:]
++            for key in keys {
++                if let raw = Int64(key), let peer = transaction.getPeer(EnginePeer.Id(raw)) {
++                    let title = EnginePeer(peer).displayTitle(strings: data.strings, displayOrder: data.nameDisplayOrder)
++                    if !title.isEmpty { result[key] = title }
++                }
++            }
++            return result
++        } |> deliverOnMainQueue).startStrict(next: { [weak self] titles in
++            guard let self, self.keys == keys else { return }
++            self.titles = titles; self.tableView.reloadData()
++        }))
++    }
++    private func update(_ transform: (inout AyuChatColorSettings) -> Void) {
++        guard self.pluginPresent else { return }
++        do {
++            try self.context.account.network.ayuGhostMode.update { state in
++                var settings = state.plugins.installed.first(where: { $0.manifest.id == self.pluginID })?.chatColorSettings ?? AyuChatColorSettings()
++                transform(&settings)
++                try state.plugins.setChatColorSettings(id: self.pluginID, settings: settings)
++            }
++            self.settings = self.context.account.network.ayuGhostMode.current.plugins.installed.first(where: { $0.manifest.id == self.pluginID })?.chatColorSettings ?? AyuChatColorSettings()
++            self.keys = self.settings.colors.keys.sorted()
++        } catch { self.showError() }
++        self.tableView.reloadData()
++    }
++    private func showError() {
++        let alert = UIAlertController(title: "Chat Colors", message: self.russian ? "Изменения не сохранены. Предыдущие настройки сохранены." : "Changes were not saved. Previous settings were retained.", preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
++    }
++    @objc private func enabledChanged(_ toggle: UISwitch) { self.update { $0.enabled = toggle.isOn } }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 3 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? 3 : (section == 1 ? max(1, self.keys.count) : 2) }
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        return self.russian ? ["Основное", "Покрашенные чаты", "Действия"][section] : ["General", "Colored chats", "Actions"][section]
++    }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        if !self.pluginPresent { return self.russian ? "Плагин удалён." : "Plugin removed." }
++        return section == 1 && self.keys.isEmpty ? (self.russian ? "Удерживай чат в списке или открой меню профиля → Цвет чата." : "Long-press a chat or open its profile menu → Chat color.") : nil
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
++        if indexPath.section == 0 {
++            cell.textLabel?.text = self.russian ? ["Включить цвета", "Яркость цвета", "Подобрать цвет на сайте"][indexPath.row] : ["Enable colors", "Color brightness", "Choose color on website"][indexPath.row]
++            if indexPath.row == 0 {
++                let toggle = UISwitch(); toggle.isOn = self.settings.enabled; toggle.isEnabled = self.pluginPresent
++                toggle.accessibilityLabel = cell.textLabel?.text; toggle.addTarget(self, action: #selector(self.enabledChanged(_:)), for: .valueChanged)
++                cell.accessoryView = toggle; cell.selectionStyle = .none
++            } else if indexPath.row == 1 { cell.detailTextLabel?.text = "\((self.settings.brightness + 1) * 10)%"; cell.accessoryType = .disclosureIndicator }
++        } else if indexPath.section == 1 {
++            if self.keys.isEmpty { cell.textLabel?.text = self.russian ? "Пока ни одного чата" : "No colored chats yet"; cell.selectionStyle = .none }
++            else {
++                let key = self.keys[indexPath.row]
++                cell.textLabel?.text = self.titles[key] ?? (self.russian ? "Чат " : "Chat ") + key
++                cell.detailTextLabel?.text = "#" + (self.settings.colors[key] ?? ""); cell.accessoryType = .disclosureIndicator
++            }
++        } else {
++            cell.textLabel?.text = self.russian ? ["Сбросить все цвета", "Канал автора @lerowplug"][indexPath.row] : ["Reset all colors", "Author channel @lerowplug"][indexPath.row]
++            if indexPath.row == 0 { cell.textLabel?.textColor = .systemRed }
++        }
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard self.pluginPresent else { return }
++        if indexPath.section == 0 {
++            switch indexPath.row {
++            case 1:
++                let alert = UIAlertController(title: self.russian ? "Яркость цвета" : "Color brightness", message: nil, preferredStyle: .actionSheet)
++                for value in 0...9 { alert.addAction(UIAlertAction(title: "\((value + 1) * 10)%", style: .default, handler: { [weak self] _ in self?.update { $0.brightness = value } })) }
++                alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++                alert.popoverPresentationController?.sourceView = tableView; alert.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath)
++                self.present(alert, animated: true)
++            case 2: self.context.sharedContext.applicationBindings.openUrl("https://htmlcolorcodes.com/color-picker/")
++            default: break
++            }
++        } else if indexPath.section == 1, self.keys.indices.contains(indexPath.row), let raw = Int64(self.keys[indexPath.row]) {
++            ayuPresentChatColorPicker(context: self.context, peerId: EnginePeer.Id(raw), pluginID: self.pluginID)
++        } else if indexPath.section == 2 {
++            if indexPath.row == 1 { self.context.sharedContext.applicationBindings.openUrl("https://t.me/lerowplug"); return }
++            let alert = UIAlertController(title: self.russian ? "Сбросить все цвета?" : "Reset all colors?", message: nil, preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: self.russian ? "Сбросить" : "Reset", style: .destructive, handler: { [weak self] _ in self?.update { $0.colors.removeAll() } }))
++            alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++        }
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
 new file mode 100644
 index 00000000..a7108b76
@@ -66896,10 +67245,10 @@ index 00000000..77b19608
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
-index 00000000..7fcdd7e0
+index 00000000..acd97d26
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,167 @@
 +import UIKit
 +import Display
 +import TelegramCore
@@ -66910,10 +67259,11 @@ index 00000000..7fcdd7e0
 +    private let russian: Bool
 +    private let palette: AyuPreferencesPalette?
 +    private var preparing = false
++    private let settingsController: ((String) -> UIViewController?)?
 +    private var generation = 0
 +    private var exportDirectory: URL?
-+    init(store: AyuGhostModeStore, pluginID: String, russian: Bool, palette: AyuPreferencesPalette? = nil) {
-+        self.store = store; self.pluginID = pluginID; self.russian = russian; self.palette = palette
++    init(store: AyuGhostModeStore, pluginID: String, russian: Bool, palette: AyuPreferencesPalette? = nil, settingsController: ((String) -> UIViewController?)? = nil) {
++        self.store = store; self.pluginID = pluginID; self.russian = russian; self.palette = palette; self.settingsController = settingsController
 +        super.init(style: .grouped)
 +        self.title = russian ? "Плагин" : "Plugin"
 +    }
@@ -66921,6 +67271,8 @@ index 00000000..7fcdd7e0
 +    deinit { if let directory = self.exportDirectory { try? FileManager.default.removeItem(at: directory) } }
 +    private var plugin: AyuInstalledPlugin? { return self.store.current.plugins.installed.first { $0.manifest.id == self.pluginID } }
 +    private var isCameraPlugin: Bool { return self.plugin?.manifest.actions.contains(where: { $0.kind == .cameraFlip }) == true }
++    private var isChatColorPlugin: Bool { return self.plugin?.manifest.actions.contains(where: { $0.kind == .chatColors }) == true }
++    private var colorSettingsRow: Int { return self.isCameraPlugin ? 3 : 1 }
 +    private var cameraSettings: AyuCameraFlipSettings { return self.plugin?.cameraFlipSettings ?? AyuCameraFlipSettings() }
 +    private var cameraModes: [String] { return self.russian ? ["Свайп вверх или вниз", "Свайп вверх", "Свайп вниз", "Двойной тап"] : ["Swipe up or down", "Swipe up", "Swipe down", "Double tap"] }
 +    private func updateCameraSettings(_ update: (inout AyuCameraFlipSettings) -> Void) {
@@ -66951,7 +67303,7 @@ index 00000000..7fcdd7e0
 +    }
 +    @objc private func done() { self.generation += 1; self.dismiss(animated: true) }
 +    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? (self.isCameraPlugin ? 3 : 1) : 2 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? (1 + (self.isCameraPlugin ? 2 : 0) + (self.isChatColorPlugin ? 1 : 0)) : 2 }
 +    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { return section == 0 ? (self.russian ? "Настройки плагина" : "Plugin settings") : nil }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
 +        guard section == 0, let manifest = self.plugin?.manifest else { return nil }
@@ -66962,6 +67314,11 @@ index 00000000..7fcdd7e0
 +        cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
 +        cell.textLabel?.textColor = self.palette?.text ?? .label
 +        cell.textLabel?.numberOfLines = 0
++        if indexPath.section == 0, indexPath.row == self.colorSettingsRow, self.isChatColorPlugin {
++            cell.textLabel?.text = self.russian ? "Цвета чатов" : "Chat colors"
++            cell.accessoryType = .disclosureIndicator
++            return cell
++        }
 +        if indexPath.section == 0, indexPath.row > 0, self.isCameraPlugin {
 +            if indexPath.row == 1 {
 +                cell.textLabel?.text = self.russian ? "Как переключать камеру" : "Switch camera gesture"
@@ -67023,6 +67380,10 @@ index 00000000..7fcdd7e0
 +    }
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
++        if indexPath.section == 0, indexPath.row == self.colorSettingsRow, self.isChatColorPlugin, !self.preparing {
++            if let controller = self.settingsController?(self.pluginID) { self.navigationController?.pushViewController(controller, animated: true) }
++            return
++        }
 +        if indexPath.section == 0, indexPath.row == 1, self.isCameraPlugin, !self.preparing {
 +            let alert = UIAlertController(title: self.russian ? "Жест" : "Gesture", message: nil, preferredStyle: .actionSheet)
 +            for (index, title) in self.cameraModes.enumerated() {
@@ -67057,10 +67418,10 @@ index 00000000..7fcdd7e0
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..fac73a88
+index 00000000..cc632295
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,179 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -67074,9 +67435,10 @@ index 00000000..fac73a88
 +    private var reading = false
 +    private var initialImport: (URL, String)?
 +    private var applying = false
-+    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil, initialImport: (URL, String)? = nil) {
++    private let settingsController: ((String) -> UIViewController?)?
++    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil, initialImport: (URL, String)? = nil, settingsController: ((String) -> UIViewController?)? = nil) {
 +        self.store = store; self.russian = russian; self.palette = palette
-+        self.initialImport = initialImport
++        self.initialImport = initialImport; self.settingsController = settingsController
 +        super.init(style: .grouped)
 +        self.title = russian ? "Плагины" : "Plugins"
 +    }
@@ -67108,7 +67470,7 @@ index 00000000..fac73a88
 +    }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
 +        guard section == 0 else { return nil }
-+        return self.russian ? "После подтверждения импорта совместимый плагин проверяется и включается автоматически. Поддерживаются нативные адаптеры Search+ 2.6.1, Camera Flip 0.2.0 и шаблоны хуков исходящего текста. Ручные действия: меню сообщения → Плагины." : "After import confirmation, compatible plugins are checked and enabled automatically. Native Search+ 2.6.1 and Camera Flip 0.2.0 adapters and outgoing-text hook templates are supported. Manual actions: message menu → Plugins."
++        return self.russian ? "После подтверждения импорта совместимый плагин проверяется и включается автоматически. Поддерживаются нативные адаптеры Search+ 2.6.1, Camera Flip 0.2.0, Chat Colors 1.0 и шаблоны хуков исходящего текста. Ручные действия: меню сообщения → Плагины." : "After import confirmation, compatible plugins are checked and enabled automatically. Native Search+ 2.6.1 and Camera Flip 0.2.0 and Chat Colors 1.0 adapters and outgoing-text hook templates are supported. Manual actions: message menu → Plugins."
 +    }
 +    private func puzzleIcon() -> UIImage {
 +        return ayuPluginAvatar()
@@ -67158,7 +67520,7 @@ index 00000000..fac73a88
 +        }
 +        guard indexPath.row < self.store.current.plugins.installed.count else { return }
 +        let plugin = self.store.current.plugins.installed[indexPath.row]
-+        self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: plugin.manifest.id, russian: self.russian, palette: self.palette), animated: true)
++        self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: plugin.manifest.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController), animated: true)
 +    }
 +    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
 +        guard let url = urls.first, !self.reading else { return }
@@ -67233,7 +67595,7 @@ index 00000000..fac73a88
 +                        try $0.plugins.installAndActivate(prepared)
 +                    }
 +                    self.tableView.reloadData()
-+                    self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: prepared.id, russian: self.russian, palette: self.palette), animated: true)
++                    self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: prepared.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController), animated: true)
 +                } catch { self.error(error) }
 +            }
 +        }
@@ -67366,7 +67728,7 @@ index 00000000..74829371
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..ebd0407b
+index 00000000..dadda637
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 @@ -0,0 +1,485 @@
@@ -67490,7 +67852,7 @@ index 00000000..ebd0407b
 +    let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
 +    let initialImport: (URL, String)?
 +    if let fileURL, let filename { initialImport = (fileURL, filename) } else { initialImport = nil }
-+    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, initialImport: initialImport)
++    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, initialImport: initialImport, settingsController: { id in AyuChatColorsController(context: context, pluginID: id) })
 +    let navigation = UINavigationController(rootViewController: plugins)
 +    navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
 +    context.sharedContext.applicationBindings.presentNativeController(navigation)
@@ -68363,6 +68725,40 @@ index 00000000..4b0bc25b
 +            return false
 +        case .began, .cancelled: return false
 +        }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuChatColorSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuChatColorSettings.swift
+new file mode 100644
+index 00000000..d8600e52
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuChatColorSettings.swift
+@@ -0,0 +1,28 @@
++import Foundation
++
++public struct AyuChatColorSettings: Codable, Equatable {
++    public var enabled: Bool
++    public var brightness: Int
++    public var colors: [String: String]
++    public init(enabled: Bool = true, brightness: Int = 2, colors: [String: String] = [:]) {
++        self.enabled = enabled; self.brightness = brightness; self.colors = colors
++    }
++    public static func normalizedHex(_ input: String) -> String? {
++        var value = input.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
++        if value.hasPrefix("#") { value.removeFirst() }
++        guard [3, 6].contains(value.utf8.count), value.unicodeScalars.allSatisfy({ (48...57).contains($0.value) || (65...70).contains($0.value) }) else { return nil }
++        if value.count == 3 { value = value.map { String(repeating: String($0), count: 2) }.joined() }
++        return value
++    }
++    public func validate() throws {
++        guard (0...9).contains(self.brightness), self.colors.count <= 1024 else { throw AyuPluginError.invalidManifest }
++        for (key, color) in self.colors {
++            guard let id = Int64(key), id != 0, String(id) == key, color.utf8.count == 6, Self.normalizedHex(color) == color else { throw AyuPluginError.invalidManifest }
++        }
++    }
++    public func color(peerKey: String) -> (rgb: UInt32, alpha: Double)? {
++        guard self.enabled, let hex = self.colors[peerKey], hex.utf8.count == 6, let rgb = UInt32(hex, radix: 16), (0...9).contains(self.brightness) else { return nil }
++        let alpha = min(255, Int((Double((self.brightness + 1) * 10) * 2.55).rounded(.toNearestOrEven)))
++        return (rgb, Double(alpha) / 255.0)
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift b/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift
@@ -69375,10 +69771,10 @@ index 00000000..35137a2f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..5e6790b2
+index 00000000..0a790c61
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,295 @@
+@@ -0,0 +1,333 @@
 +import Foundation
 +import CryptoKit
 +
@@ -69407,7 +69803,7 @@ index 00000000..5e6790b2
 +
 +/// Versioned, declarative plugin ABI. No Android or Python code is executed.
 +public struct AyuPluginAction: Codable, Equatable {
-+    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip }
++    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip, chatColors }
 +    public var id: String
 +    public var title: String
 +    public var kind: Kind
@@ -69421,6 +69817,7 @@ index 00000000..5e6790b2
 +        self.prefix = prefix; self.condition = condition; self.replacementCount = replacementCount
 +    }
 +    public var permission: String {
++        if self.kind == .chatColors { return "chatlist.appearance.modify" }
 +        if self.kind == .cameraFlip { return "camera.switch" }
 +        if self.kind == .outgoingReplace { return "messages.outgoing.modify" }
 +        return self.kind == .replaceText ? "draft.prepare" : "search.messages"
@@ -69478,20 +69875,21 @@ index 00000000..5e6790b2
 +    public var limitations: [String]
 +    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = []) {
 +        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
-+        self.apiVersion = actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
++        self.apiVersion = actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
 +        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations
 +    }
 +    public func validate() throws {
 +        let validID: (String) -> Bool = { text in
 +            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
 +        }
-+        guard self.format == "ayugram-ios-plugin", (1...3).contains(self.apiVersion), validID(self.id),
++        guard self.format == "ayugram-ios-plugin", (1...4).contains(self.apiVersion), validID(self.id),
 +              !self.name.isEmpty, self.name.count <= 64, !self.author.isEmpty, self.author.count <= 128,
 +              !self.version.isEmpty, self.version.count <= 32, self.summary.count <= 2048,
 +              !self.actions.isEmpty, self.actions.count <= 8, Set(self.actions.map(\.id)).count == self.actions.count,
 +              self.limitations.count <= 16, self.limitations.allSatisfy({ $0.count <= 512 }),
 +              (self.convertedFrom?.count ?? 0) <= 128, (self.sourceSHA256?.count ?? 0) <= 64 else { throw AyuPluginError.invalidManifest }
 +        for action in self.actions {
++            guard action.kind != .chatColors || self.apiVersion >= 4 else { throw AyuPluginError.invalidManifest }
 +            guard action.kind != .cameraFlip || self.apiVersion >= 3 else { throw AyuPluginError.invalidManifest }
 +            guard self.apiVersion >= 2 || (action.condition == nil && action.replacementCount == nil) else { throw AyuPluginError.invalidManifest }
 +            guard validID(action.id), !action.title.isEmpty, action.title.count <= 80 else { throw AyuPluginError.invalidManifest }
@@ -69517,8 +69915,9 @@ index 00000000..5e6790b2
 +    public var manifest: AyuPluginManifest
 +    public var enabled: Bool
 +    public var cameraFlipSettings: AyuCameraFlipSettings?
-+    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil) {
-+        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings
++    public var chatColorSettings: AyuChatColorSettings?
++    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil, chatColorSettings: AyuChatColorSettings? = nil) {
++        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings; self.chatColorSettings = chatColorSettings
 +    }
 +}
 +
@@ -69529,6 +69928,10 @@ index 00000000..5e6790b2
 +        guard self.installed.count <= 12, Set(self.installed.map { $0.manifest.id }).count == self.installed.count else { throw AyuPluginError.capacity }
 +        for plugin in self.installed {
 +            try plugin.manifest.validate()
++            if let settings = plugin.chatColorSettings {
++                guard plugin.manifest.actions.contains(where: { $0.kind == .chatColors }) else { throw AyuPluginError.invalidManifest }
++                try settings.validate()
++            }
 +            if let settings = plugin.cameraFlipSettings {
 +                guard plugin.manifest.actions.contains(where: { $0.kind == .cameraFlip }) else { throw AyuPluginError.invalidManifest }
 +                try settings.validate()
@@ -69537,10 +69940,11 @@ index 00000000..5e6790b2
 +    }
 +    public mutating func install(_ manifest: AyuPluginManifest) throws {
 +        try manifest.validate()
-+        let oldSettings = self.installed.first(where: { $0.manifest.id == manifest.id })?.cameraFlipSettings
++        let oldPlugin = self.installed.first(where: { $0.manifest.id == manifest.id })
++        let oldSettings = oldPlugin?.cameraFlipSettings
 +        var updated = self.installed.filter { $0.manifest.id != manifest.id }
 +        guard updated.count < 12 else { throw AyuPluginError.capacity }
-+        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil))
++        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil, chatColorSettings: manifest.actions.contains(where: { $0.kind == .chatColors }) ? oldPlugin?.chatColorSettings : nil))
 +        self.installed = updated
 +    }
 +    public mutating func setEnabled(id: String, enabled: Bool) {
@@ -69554,6 +69958,27 @@ index 00000000..5e6790b2
 +        try settings.validate()
 +        guard let index = self.installed.firstIndex(where: { $0.manifest.id == id }), self.installed[index].manifest.actions.contains(where: { $0.kind == .cameraFlip }) else { throw AyuPluginError.invalidManifest }
 +        self.installed[index].cameraFlipSettings = settings
++    }
++    public var chatColorsProviderID: String? {
++        return self.installed.first(where: { $0.enabled && $0.manifest.actions.contains(where: { $0.kind == .chatColors }) })?.manifest.id
++    }
++    public var activeChatColors: AyuChatColorSettings? {
++        guard let id = self.chatColorsProviderID, let plugin = self.installed.first(where: { $0.manifest.id == id }) else { return nil }
++        let settings = plugin.chatColorSettings ?? AyuChatColorSettings()
++        return settings.enabled ? settings : nil
++    }
++    public mutating func setChatColorSettings(id: String, settings: AyuChatColorSettings) throws {
++        try settings.validate()
++        guard let index = self.installed.firstIndex(where: { $0.manifest.id == id }), self.installed[index].manifest.actions.contains(where: { $0.kind == .chatColors }) else { throw AyuPluginError.invalidManifest }
++        self.installed[index].chatColorSettings = settings
++    }
++    public mutating func setChatColor(id: String, peerKey: String, hex: String?) throws {
++        var settings = self.installed.first(where: { $0.manifest.id == id })?.chatColorSettings ?? AyuChatColorSettings()
++        if let hex {
++            guard let normalized = AyuChatColorSettings.normalizedHex(hex) else { throw AyuPluginError.invalidInput }
++            settings.colors[peerKey] = normalized
++        } else { settings.colors.removeValue(forKey: peerKey) }
++        try self.setChatColorSettings(id: id, settings: settings)
 +    }
 +    public mutating func installAndActivate(_ prepared: AyuPluginManifest) throws {
 +        var candidate = self
@@ -69590,7 +70015,7 @@ index 00000000..5e6790b2
 +        try prepared.validate()
 +        guard prepared == expected, let index = self.installed.firstIndex(where: { $0.manifest.id == expected.id }),
 +              self.installed[index].manifest == expected, !self.installed[index].enabled else { throw AyuPluginError.invalidManifest }
-+        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings)
++        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings, chatColorSettings: self.installed[index].chatColorSettings)
 +    }
 +    public mutating func remove(id: String) { self.installed.removeAll { $0.manifest.id == id } }
 +    public func action(pluginID: String, actionID: String) -> AyuPluginAction? {
@@ -69606,7 +70031,7 @@ index 00000000..5e6790b2
 +        guard prepared == manifest else { throw AyuPluginError.invalidManifest }
 +        for action in prepared.actions {
 +            switch action.kind {
-+            case .cameraFlip: break
++            case .cameraFlip, .chatColors: break
 +            case .search:
 +                guard try action.queries("AyuGram") == ["AyuGram"] else { throw AyuPluginError.invalidInput }
 +            case .searchTerms:
@@ -69650,6 +70075,15 @@ index 00000000..5e6790b2
 +        return try AyuAndroidPluginConverter.convert(data, sourceSHA256: hash)
 +    }
 +    static func reviewedAdapter(sourceSHA256 hash: String) throws -> AyuPluginManifest {
++        if hash == "a7217c0cc672615e3558b8f3391b522f7e031bc0900a84315b4eb4f53ece8de5" {
++            return AyuPluginManifest(id: "chat_colors", name: "Chat Colors", author: "@lerowc & @lerowplug (original)", version: "1.0-ios.1", summary: "Per-chat colors in the chat list, nine presets, custom HEX, brightness, colored-chat management and reset.", actions: [
++                AyuPluginAction(id: "chat_color", title: "Choose chat list color", kind: .chatColors)
++            ], convertedFrom: "exteraGram Chat Colors 1.0", sourceSHA256: hash, limitations: [
++                "Native per-account chat-list colors. Configure colors, brightness and reset in this plugin page; choose a chat from the list or profile menu.",
++                "Selected rows retain native selection. Message-search rows, loading placeholders, sponsored entries, community cards and archive group references are excluded. Up to 1024 colored chats per account.",
++                "Personal colors and preferences stay in account settings; exported manifests contain plugin functionality. Python, Java reflection and Android drawing calls are not executed."
++            ])
++        }
 +        if hash == "61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be003555f1e98" {
 +            return AyuPluginManifest(id: "camera_flip", name: "Camera Flip", author: "@its240hz (original)", version: "0.2.0-ios.1", summary: "Switch the round-video camera using vertical swipes or double taps. Gesture mode and haptic feedback are configurable.", actions: [
 +                AyuPluginAction(id: "camera_flip", title: "Switch round-video camera with gestures", kind: .cameraFlip)
@@ -70633,6 +71067,27 @@ index 8c4a24b7..ecc341a9 100644
              self.forceIsContactPromise.get(),
              reactionSourceMessage
          ).startStrict(next: { [weak self] data, forceIsContact, reactionSourceMessage in
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
+index 63293572..147ae1c6 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
+@@ -395,6 +395,16 @@ extension PeerInfoScreenNode {
+                     return .single(items)
+                 }
+                 
++                if strongSelf.context.account.network.ayuGhostMode.current.plugins.chatColorsProviderID != nil {
++                    items.append(.action(ContextMenuActionItem(text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Цвет чата" : "Chat color", icon: { theme in
++                        generateTintedImage(image: UIImage(systemName: "paintpalette"), color: theme.contextMenu.primaryColor)
++                    }, action: { [weak self] _, complete in
++                        complete(.default)
++                        guard let self else { return }
++                        ayuPresentChatColorPicker(context: self.context, peerId: self.peerId)
++                    })))
++                }
++
+                 let allHeaderButtons = Set(peerInfoHeaderButtons(peer: peer, cachedData: data.cachedData, isOpenedFromChat: strongSelf.isOpenedFromChat, isExpanded: false, videoCallsEnabled: strongSelf.videoCallsEnabled, isSecretChat: strongSelf.peerId.namespace == Namespaces.Peer.SecretChat, isContact: strongSelf.data?.isContact ?? false, threadInfo: data.threadData?.info))
+                 let headerButtons = Set(peerInfoHeaderButtons(peer: peer, cachedData: data.cachedData, isOpenedFromChat: strongSelf.isOpenedFromChat, isExpanded: true, videoCallsEnabled: strongSelf.videoCallsEnabled, isSecretChat: strongSelf.peerId.namespace == Namespaces.Peer.SecretChat, isContact: strongSelf.data?.isContact ?? false, threadInfo: strongSelf.data?.threadData?.info))
+                 
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
 index f1c1917b..c2e73081 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
@@ -136774,10 +137229,10 @@ index 00000000..2c07baa7
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
 new file mode 100644
-index 00000000..787cd601
+index 00000000..a149ea52
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,161 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -136806,7 +137261,7 @@ index 00000000..787cd601
 +        super.init(style: .insetGrouped)
 +        self.title = russian ? "Плагины" : "Plugins"
 +        for plugin in context.account.network.ayuGhostMode.current.plugins.installed where plugin.enabled {
-+            for action in plugin.manifest.actions where action.kind == .search || action.kind == .searchTerms || action.kind == .replaceText { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
++            for action in plugin.manifest.actions where action.kind == .search || action.kind == .searchTerms || action.kind == .replaceText || action.kind == .chatColors { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
 +        }
 +        if self.commands.isEmpty { self.status = russian ? "Здесь нет ручных действий. Автоматические функции включённых плагинов работают в соответствующих разделах приложения." : "There are no manual actions here. Enabled plugins run automatic features in their corresponding app screens." }
 +    }
@@ -136859,6 +137314,15 @@ index 00000000..787cd601
 +        let prompt = command.1.kind == .searchTerms
 +            ? (self.russian ? "Фразы через |, максимум 6. Результаты объединяются без повторов. Поиск в текущем чате/теме, без автоматической загрузки следующих страниц." : "Up to 6 phrases separated by |. Results are merged without duplicates. Current chat/topic only; no automatic pagination.")
 +            : (self.russian ? "Введи текст. Отправка сообщений автоматически не выполняется." : "Enter text. Messages are never sent automatically.")
++        if command.1.kind == .chatColors {
++            let context = self.context
++            let peerId = self.peerId
++            self.dismiss(animated: true, completion: {
++                guard context.account.network.ayuGhostMode.current.plugins.action(pluginID: command.0, actionID: command.1.id) == command.1 else { return }
++                ayuPresentChatColorPicker(context: context, peerId: peerId, pluginID: command.0)
++            })
++            return
++        }
 +        let alert = UIAlertController(title: command.1.title, message: prompt, preferredStyle: .alert)
 +        alert.addTextField { $0.autocorrectionType = .no }
 +        alert.addAction(UIAlertAction(title: self.russian ? "Выполнить" : "Run", style: .default, handler: { [weak self, weak alert] _ in
@@ -137691,10 +138155,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..13839dab
+index 00000000..6c89f2bc
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,748 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -138171,7 +138635,7 @@ index 00000000..13839dab
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data(repeating: 0, count: AyuPluginImporter.maximumFileBytes + 1), filename: "test.plugin") }, "File size checked before parsing")
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data("__id__ = 'search_plus'\nraise Exception()".utf8), filename: "test.plugin") }, "Spoofed Android metadata must not select the reviewed adapter or execute code")
 +var invalidPlugin = plugin
-+invalidPlugin.apiVersion = 4
++invalidPlugin.apiVersion = 5
 +check(pluginThrows { try invalidPlugin.validate() }, "Unknown plugin ABI rejected")
 +invalidPlugin = plugin; invalidPlugin.id = "../escape"
 +check(pluginThrows { try invalidPlugin.validate() }, "Path-like IDs rejected")
@@ -138388,6 +138852,61 @@ index 00000000..13839dab
 +_ = tapPolicy.handle(.began, x: 0, y: 0, time: 13, settings: swipeSettings)
 +check(!tapPolicy.handle(.moved, x: Double.nan, y: 80, time: 13.1, settings: swipeSettings), "Invalid coordinates must not trigger camera operations")
 +print("PASS: \(checks) model checks including the reviewed Camera Flip bridge, persistence and gesture thresholds")
++
++let chatColorFixture = try Data(contentsOf: pluginFixtures.appendingPathComponent("chat_colors_ios.plugin"))
++let chatColorManifest = try AyuPluginImporter.parse(chatColorFixture, filename: "chat_colors.plugin")
++let reviewedChatColors = try AyuPluginImporter.reviewedAdapter(sourceSHA256: chatColorManifest.sourceSHA256!)
++check(chatColorManifest == reviewedChatColors && chatColorManifest.apiVersion == 4, "Chat Colors fixture must match the reviewed native mapping")
++let preparedChatColors = try AyuPluginActivation.prepare(chatColorManifest)
++check(AyuChatColorSettings.normalizedHex(" #f8a ") == "FF88AA", "Short mixed-case HEX must expand and normalize")
++check(AyuChatColorSettings.normalizedHex("ff8a00") == "FF8A00", "Full HEX must normalize")
++for invalid in ["", "##fff", "FF", "FFFF", "GGGGGG", "ＦＦＦ", "#FF000000", "FFFFFF0"] {
++    check(AyuChatColorSettings.normalizedHex(invalid) == nil, "Malformed HEX must be rejected")
++}
++var chatColorRegistry = AyuPluginRegistry()
++try chatColorRegistry.installAndActivate(preparedChatColors)
++try chatColorRegistry.setChatColor(id: chatColorManifest.id, peerKey: "123", hex: "#f8a")
++try chatColorRegistry.setChatColor(id: chatColorManifest.id, peerKey: "4294967419", hex: "2F80ED")
++check(chatColorRegistry.activeChatColors?.colors["123"] == "FF88AA" && chatColorRegistry.activeChatColors?.colors["4294967419"] == "2F80ED", "Distinct encoded peer IDs must not share colors")
++let alphaSteps = [26, 51, 76, 102, 127, 153, 178, 204, 229, 255]
++for (step, alpha) in alphaSteps.enumerated() {
++    let settings = AyuChatColorSettings(brightness: step, colors: ["123": "FF88AA"])
++    try settings.validate()
++    let color = settings.color(peerKey: "123")
++    check(color?.rgb == 0xFF88AA && abs((color?.alpha ?? 0) * 255 - Double(alpha)) < 0.00001, "Native brightness must match the Android rounding policy")
++}
++let oldChatColorRegistry = chatColorRegistry
++check(pluginThrows { try chatColorRegistry.setChatColor(id: chatColorManifest.id, peerKey: "123", hex: "bad color") }, "Invalid color must fail before commit")
++check(chatColorRegistry == oldChatColorRegistry, "Failed color edit must preserve previous preferences")
++check(pluginThrows { try chatColorRegistry.setChatColor(id: chatColorManifest.id, peerKey: "../peer", hex: "ffffff") }, "Peer keys must be canonical signed integers")
++try chatColorRegistry.installAndActivate(preparedChatColors)
++check(chatColorRegistry.activeChatColors?.colors.count == 2, "Adapter replacement preserves personal colors")
++var chatColorPreferences = chatColorRegistry.activeChatColors!
++chatColorPreferences.enabled = false
++try chatColorRegistry.setChatColorSettings(id: chatColorManifest.id, settings: chatColorPreferences)
++check(chatColorRegistry.activeChatColors == nil && chatColorRegistry.chatColorsProviderID != nil, "The feature switch stops coloring while keeping the editor available")
++chatColorPreferences.enabled = true; chatColorPreferences.brightness = 7
++try chatColorRegistry.setChatColorSettings(id: chatColorManifest.id, settings: chatColorPreferences)
++try store.update { try $0.plugins.installAndActivate(preparedChatColors); try $0.plugins.setChatColorSettings(id: chatColorManifest.id, settings: chatColorPreferences) }
++let restoredChatColors = AyuGhostModeStore(accountPath: first.path).current.plugins.activeChatColors
++check(restoredChatColors == chatColorPreferences, "Personal colors, brightness and feature switch survive restart")
++check(AyuGhostModeStore(accountPath: second.path).current.plugins.activeChatColors == nil, "Chat colors must remain account-local")
++chatColorRegistry.setEnabled(id: chatColorManifest.id, enabled: false)
++check(chatColorRegistry.activeChatColors == nil && chatColorRegistry.chatColorsProviderID == nil, "Plugin disable removes color rendering and menus")
++try chatColorRegistry.activate(preparedChatColors, expected: chatColorManifest)
++check(chatColorRegistry.activeChatColors?.colors.count == 2, "Re-enable retains colors")
++try chatColorRegistry.setChatColor(id: chatColorManifest.id, peerKey: "123", hex: nil)
++check(chatColorRegistry.activeChatColors?.colors["123"] == nil, "Removing a color affects only the requested chat")
++var oversizedColors: [String: String] = [:]
++for index in 1...1025 { oversizedColors[String(index)] = "FFFFFF" }
++check(pluginThrows { try AyuChatColorSettings(colors: oversizedColors).validate() }, "Color count must be bounded")
++check(pluginThrows { try AyuChatColorSettings(brightness: 10).validate() }, "Unsupported brightness must be rejected")
++var oldChatColorsABI = chatColorManifest; oldChatColorsABI.apiVersion = 3
++check(pluginThrows { try oldChatColorsABI.validate() }, "Chat color actions require API 4")
++chatColorRegistry.remove(id: chatColorManifest.id)
++check(chatColorRegistry.activeChatColors == nil, "Removal stops rendering")
++check(pluginThrows { try chatColorRegistry.setChatColor(id: chatColorManifest.id, peerKey: "123", hex: "ffffff") }, "Late edits must not resurrect an uninstalled plugin")
++print("PASS: \(checks) model checks including Chat Colors persistence, isolation, HEX and brightness")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

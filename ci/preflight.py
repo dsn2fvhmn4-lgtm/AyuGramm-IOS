@@ -66,6 +66,7 @@ def main():
     sdk_sources = [source / 'submodules/TelegramUI/Sources' / name for name in (
         'Chat/AyuMessageShotCanvas.swift', 'AyuStartupStorage.swift', 'AyuStartupFailureController.swift')]
     sdk_sources.append(source / 'submodules/Display/Source/AyuPluginAvatar.swift')
+    sdk_sources.append(source / 'submodules/Display/Source/AyuChatColorPickerController.swift')
     sdk_sources.append(source / 'submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift')
     sdk_sources.extend(source / 'submodules/SettingsUI/Sources' / name for name in (
         'AyuPreferencesHubController.swift', 'AyuAppIconPickerController.swift'))
@@ -86,7 +87,7 @@ def main():
         if manager.exists():
             ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
             models = [ayu / name for name in (
-                'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
+                'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
                 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotSettings.swift',
                 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuRegexSettings.swift')]
             with tempfile.TemporaryDirectory(prefix='ayu-plugin-sdk-') as directory:

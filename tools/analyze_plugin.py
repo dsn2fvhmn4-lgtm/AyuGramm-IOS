@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
+CHAT_COLORS_SHA256 = 'a7217c0cc672615e3558b8f3391b522f7e031bc0900a84315b4eb4f53ece8de5'
 CAMERA_SHA256 = '61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be003555f1e98'
 
 
@@ -60,7 +61,7 @@ def analyze(source: Path):
                 externalURLs=sorted(urls), embeddedAndroidRuntimeMarkers=embedded,
                 withinCurrentImportLimit=size <= 512 * 1024,
                 requiredBridges=bridges,
-                status=('Reviewed native Camera Flip adapter in development source; macOS build and device tests pending' if digest == CAMERA_SHA256 else 'No complete native adapter implemented'),
+                status=('Reviewed native Camera Flip adapter in development source; macOS build and device tests pending' if digest == CAMERA_SHA256 else 'Reviewed native Chat Colors adapter in development source; macOS build and device tests pending' if digest == CHAT_COLORS_SHA256 else 'No complete native adapter implemented'),
                 analysisScope='Static dependency inventory only. No source or embedded binary was executed. This is not a compatibility test.')
 
 

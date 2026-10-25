@@ -104,3 +104,5 @@ Planning, feature scope, limitations and verification are recorded in the accomp
 The authors are not responsible for any crashes, errors, or other issues. By installing the client, you acknowledge that you are aware of all the rules for using the application.
 
 Camera Flip native adapter and the supplied five-plugin dependency inventory: [bridge status](docs/ANDROID_PLUGIN_BRIDGES.md). Source changes require a new native build; the published IPA is unchanged.
+
+Chat Colors 1.0 now has a reviewed native adapter in development source: presets/HEX, brightness, profile/list menus and account-local color settings. Native build and device verification remain pending.

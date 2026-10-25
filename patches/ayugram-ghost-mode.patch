@@ -22451,6 +22451,121 @@ index 5bdff8a6..bd215887 100644
                      strongSelf.tabBarItem.badgeValue = ""
                  } else {
                      strongSelf.tabBarItem.badgeValue = compactNumericCountString(Int(count.0), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator)
+diff --git a/submodules/PasscodeCore/Sources/Passcode.swift b/submodules/PasscodeCore/Sources/Passcode.swift
+index d1ff0f65..696b01d3 100644
+--- a/submodules/PasscodeCore/Sources/Passcode.swift
++++ b/submodules/PasscodeCore/Sources/Passcode.swift
+@@ -14,12 +14,14 @@ public struct PasscodeConfiguration: Equatable, Sendable {
+     public let processRole: ProcessRole
+     public let biometricKeychainService: String?
+     public let keychainScope: String?
++    public let appPrivateKeychainScope: String?
+ 
+-    public init(appGroupIdentifier: String, processRole: ProcessRole, biometricKeychainService: String? = nil, keychainScope: String? = nil) {
++    public init(appGroupIdentifier: String, processRole: ProcessRole, biometricKeychainService: String? = nil, keychainScope: String? = nil, appPrivateKeychainScope: String? = nil) {
+         self.appGroupIdentifier = appGroupIdentifier
+         self.processRole = processRole
+         self.biometricKeychainService = biometricKeychainService
+         self.keychainScope = keychainScope
++        self.appPrivateKeychainScope = appPrivateKeychainScope
+     }
+ }
+ 
+@@ -52,6 +54,9 @@ public final class PasscodeEnvironment: @unchecked Sendable {
+             return
+         }
+         guard configuration.processRole != .mainApp || privateAccessGroup != nil else { throw PasscodeError.unavailable }
++        if let scope = configuration.appPrivateKeychainScope {
++            guard configuration.processRole == .mainApp, UUID(uuidString: scope) != nil else { throw PasscodeError.unavailable }
++        }
+         self.configuration = configuration
+         self.resolvePrivateAccessGroup = privateAccessGroup
+     }
+@@ -69,6 +74,12 @@ public final class PasscodeEnvironment: @unchecked Sendable {
+         return self.configuration?.processRole == .mainApp
+     }
+ 
++    public var appPrivateKeychainScope: String? {
++        self.mutex.lock()
++        defer { self.mutex.unlock() }
++        return self.configuration?.appPrivateKeychainScope
++    }
++
+     public func sharedAccessGroup() throws -> String {
+         self.mutex.lock()
+         defer { self.mutex.unlock() }
+@@ -124,13 +135,18 @@ final class PasscodeKeychain: PasscodeStorage {
+             kSecAttrSynchronizable as String: false
+         ]
+         #if !os(macOS)
+-        query[kSecAttrAccessGroup as String] = try account.hasPrefix("biometric.") ? self.environment.privateAccessGroup() : self.environment.sharedAccessGroup()
++        if self.environment.appPrivateKeychainScope == nil {
++            query[kSecAttrAccessGroup as String] = try account.hasPrefix("biometric.") ? self.environment.privateAccessGroup() : self.environment.sharedAccessGroup()
++        }
+         #endif
+         return query
+     }
+ 
+     private func service(_ account: String) throws -> String {
+         let service = try account.hasPrefix("biometric.") ? self.environment.biometricKeychainService() : "org.telegram.passcode.v1"
++        if let scope = self.environment.appPrivateKeychainScope {
++            return "org.ayugram.private." + scope + "/" + service
++        }
+         #if os(macOS)
+         return PasscodeKeychainScope.service(service, environment: self.environment)
+         #else
+@@ -143,7 +159,7 @@ final class PasscodeKeychain: PasscodeStorage {
+             return value
+         }
+         #if os(macOS)
+-        if !account.hasPrefix("biometric."), self.environment.keychainScope == nil {
++        if !account.hasPrefix("biometric."), self.environment.keychainScope == nil, self.environment.appPrivateKeychainScope == nil {
+             return self.adoptGroupedItem(account)
+         }
+         #endif
+diff --git a/submodules/PasscodeCore/Tests/PasscodeCoreTests/AyuPrivateKeychainTests.swift b/submodules/PasscodeCore/Tests/PasscodeCoreTests/AyuPrivateKeychainTests.swift
+new file mode 100644
+index 00000000..3ae7bd95
+--- /dev/null
++++ b/submodules/PasscodeCore/Tests/PasscodeCoreTests/AyuPrivateKeychainTests.swift
+@@ -0,0 +1,37 @@
++import XCTest
++import Security
++@testable import PasscodeCore
++
++final class AyuPrivateKeychainTests: XCTestCase {
++    private func environment(scope: String) throws -> PasscodeEnvironment {
++        let result = PasscodeEnvironment()
++        try result.configure(PasscodeConfiguration(appGroupIdentifier: "group.org.ayugram.tests", processRole: .mainApp, biometricKeychainService: "wallet.biometric", appPrivateKeychainScope: scope), privateAccessGroup: { "TEAM.org.ayugram.tests" })
++        return result
++    }
++
++    func testStandaloneQueriesIsolateCredentialsAndBiometrics() throws {
++        let scope = UUID().uuidString
++        let storage = PasscodeKeychain(environment: try self.environment(scope: scope))
++        let credential = try storage.query("credential")
++        let biometric = try storage.query("biometric.test")
++        XCTAssertNil(credential[kSecAttrAccessGroup as String])
++        XCTAssertNil(biometric[kSecAttrAccessGroup as String])
++        XCTAssertEqual(credential[kSecAttrService as String] as? String, "org.ayugram.private." + scope + "/org.telegram.passcode.v1")
++        XCTAssertEqual(biometric[kSecAttrService as String] as? String, "org.ayugram.private." + scope + "/wallet.biometric")
++        let other = PasscodeKeychain(environment: try self.environment(scope: UUID().uuidString))
++        let otherCredential = try other.query("credential")
++        XCTAssertNotEqual(credential[kSecAttrService as String] as? String, otherCredential[kSecAttrService as String] as? String)
++    }
++
++    func testInvalidScopeAndExtensionAreRejected() throws {
++        XCTAssertThrowsError(try self.environment(scope: ""))
++        XCTAssertThrowsError(try self.environment(scope: "not-a-uuid"))
++        let extensionEnvironment = PasscodeEnvironment()
++        XCTAssertThrowsError(try extensionEnvironment.configure(PasscodeConfiguration(appGroupIdentifier: "group.org.ayugram.tests", processRole: .appExtension, appPrivateKeychainScope: UUID().uuidString)))
++    }
++
++    func testConfiguredScopeCannotBeChangedDuringLaunch() throws {
++        let environment = try self.environment(scope: UUID().uuidString)
++        XCTAssertThrowsError(try environment.configure(PasscodeConfiguration(appGroupIdentifier: "group.org.ayugram.tests", processRole: .mainApp, appPrivateKeychainScope: UUID().uuidString), privateAccessGroup: { "TEAM.org.ayugram.tests" }))
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuAppearanceController.swift b/submodules/SettingsUI/Sources/AyuAppearanceController.swift
 new file mode 100644
 index 00000000..e56a4624
@@ -25567,6 +25682,306 @@ index a4873696..ca936b38 100644
      items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 1, text: presentationData.strings.Settings_SavedMessages, icon: PresentationResourcesSettings.savedMessages, action: {
          interaction.openSettings(.savedMessages)
      }))
+diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
+index 1ceb46bc..b1402b3d 100644
+--- a/submodules/TelegramUI/Sources/AppDelegate.swift
++++ b/submodules/TelegramUI/Sources/AppDelegate.swift
+@@ -310,6 +310,23 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+     private let firebaseRequestVerificationSecretStream = Promise<[String: String]>([:])
+     
+     private var urlSessions: [URLSession] = []
++    private var ayuUsesStandaloneStorage = false
++    private var ayuStartupNotice: String?
++
++    private func ayuShowStartupFailure(_ details: String) {
++        self.window?.rootViewController = AyuStartupFailureController(details: details)
++        self.window?.makeKeyAndVisible()
++    }
++
++    private func ayuPresentStartupNotice() {
++        guard let message = self.ayuStartupNotice else { return }
++        self.ayuStartupNotice = nil
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
++            let alert = UIAlertController(title: "AyuGram", message: message, preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: "OK", style: .default))
++            self?.mainWindow?.presentNative(alert)
++        }
++    }
+     private func urlSession(identifier: String) -> URLSession {
+         if let existingSession = self.urlSessions.first(where: { $0.configuration.identifier == identifier }) {
+             return existingSession
+@@ -319,7 +336,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         let appGroupName = "group.\(baseAppBundleId)"
+ 
+         let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
+-        configuration.sharedContainerIdentifier = appGroupName
++        if !self.ayuUsesStandaloneStorage {
++            configuration.sharedContainerIdentifier = appGroupName
++        }
+         configuration.isDiscretionary = false
+         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
+         self.urlSessions.append(session)
+@@ -568,12 +587,32 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         
+         let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
+         
+-        let baseAppBundleId = Bundle.main.bundleIdentifier!
++        guard let baseAppBundleId = Bundle.main.bundleIdentifier,
++              let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
++            self.ayuShowStartupFailure("Stage: application identity")
++            return true
++        }
+         let appGroupName = "group.\(baseAppBundleId)"
+-        try! PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: appGroupName, processRole: .mainApp, biometricKeychainService: walletBiometricKeychainService), privateAccessGroup: {
+-            BuildConfig.keychainAccessGroup(baseAppBundleId: baseAppBundleId)
+-        })
+-        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
++        let startupStorage: AyuStartupStorage
++        do {
++            startupStorage = try AyuStartupStorage.resolve(supportURL: supportURL, sharedURL: FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName), group: appGroupName, probe: {
++                AyuStartupStorage.probeKeychain(bundleIdentifier: baseAppBundleId, group: $0)
++            })
++            try PasscodeEnvironment.shared.configure(PasscodeConfiguration(appGroupIdentifier: appGroupName, processRole: .mainApp, biometricKeychainService: walletBiometricKeychainService, appPrivateKeychainScope: startupStorage.privateKeychainScope), privateAccessGroup: {
++                BuildConfig.keychainAccessGroup(baseAppBundleId: baseAppBundleId)
++            })
++        } catch {
++            let failure = error as NSError
++            self.ayuShowStartupFailure("Stage: protected storage\nBundle: \(baseAppBundleId)\nGroup: \(appGroupName)\nError: \(failure.domain) / \(failure.code)\n\(error)")
++            return true
++        }
++        self.ayuUsesStandaloneStorage = startupStorage.isStandalone
++        let appGroupUrl = startupStorage.baseURL
++        if startupStorage.isStandalone {
++            self.ayuStartupNotice = Locale.preferredLanguages.first?.hasPrefix("ru") == true
++                ? "Автономное хранилище: подпись не предоставляет общую App Group. Может потребоваться отдельный вход. Старые данные сохранены в исходном контейнере. Расширения и кошелёк в этом режиме недоступны."
++                : "Standalone storage: this signing setup does not provide the shared App Group. A separate login may be needed. Existing data remains in its original container. Extensions and the wallet are unavailable in this mode."
++        }
+         
+         let buildConfig = BuildConfig(baseAppBundleId: baseAppBundleId)
+         self.buildConfig = buildConfig
+@@ -696,11 +735,6 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+             networkEngineFactory: RustNetworkEngineFactory()
+         )
+         
+-        guard let appGroupUrl = maybeAppGroupUrl else {
+-            self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Error 2", preferredStyle: .alert))
+-            return true
+-        }
+-        
+         var isDebugConfiguration = false
+         #if DEBUG
+         isDebugConfiguration = true
+@@ -726,11 +760,32 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         } else {
+             rootPath = rootPathForBasePath(appGroupUrl.path)
+         }
+-        if !isUITest {
++        do {
++            try FileManager.default.createDirectory(atPath: rootPath, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
++        } catch {
++            let failure = error as NSError
++            self.ayuShowStartupFailure("Stage: data directory\nError: \(failure.domain) / \(failure.code)")
++            return true
++        }
++        if !isUITest && !startupStorage.isStandalone {
+             performAppGroupUpgrades(appGroupPath: appGroupUrl.path, rootPath: rootPath)
+         }
+         
++        let keyURL = URL(fileURLWithPath: rootPath + "/.tempkey")
++        if FileManager.default.fileExists(atPath: keyURL.path) {
++            guard let existingKey = try? Data(contentsOf: keyURL), existingKey.count == 32 || existingKey.count == 48 else {
++                self.ayuShowStartupFailure("Stage: existing database key unreadable or damaged\nExisting data was not reset.")
++                return true
++            }
++        }
+         let deviceSpecificEncryptionParameters = BuildConfig.deviceSpecificEncryptionParameters(rootPath, baseAppBundleId: baseAppBundleId)
++        var persistedKey = deviceSpecificEncryptionParameters.key
++        persistedKey.append(deviceSpecificEncryptionParameters.salt)
++        guard persistedKey.count == 48,
++              (try? Data(contentsOf: URL(fileURLWithPath: rootPath + "/.tempkey"))) == persistedKey else {
++            self.ayuShowStartupFailure("Stage: database encryption key persistence\nExisting data was not reset.")
++            return true
++        }
+         let encryptionParameters = ValueBoxEncryptionParameters(forceEncryptionIfNoSet: false, key: ValueBoxEncryptionParameters.Key(data: deviceSpecificEncryptionParameters.key)!, salt: ValueBoxEncryptionParameters.Salt(data: deviceSpecificEncryptionParameters.salt)!)
+         
+         TempBox.initializeShared(basePath: rootPath, processType: "app", launchSpecificId: Int64.random(in: Int64.min ... Int64.max))
+@@ -1063,7 +1118,12 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         })
+         
+         let accountManager: AccountManager<TelegramAccountManagerTypes> = setupAccountManager(basePath: rootPath + "/accounts-metadata", isTemporary: false, isReadOnly: false, useCaches: true, removeDatabaseOnError: true, resetLocalSecrets: {
+-            try resetWalletLocalSecrets()
++            if startupStorage.isStandalone {
++                // The wallet is disabled in this isolated scope; never remove shared wallet records.
++                try PasscodeCredentialStore.shared.resetCredential(removingProtectedData: {})
++            } else {
++                try resetWalletLocalSecrets()
++            }
+         })
+         self.accountManager = accountManager
+ 
+@@ -1426,6 +1486,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+ 
+                     self.mainWindow.debugAction = nil
+                     self.mainWindow.viewController = context.rootController
++                    self.ayuPresentStartupNotice()
+                     
+                     if firstTime {
+                         let layer = context.rootController.view.layer
+@@ -1517,6 +1578,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+                 |> deliverOnMainQueue).start(next: { _ in
+                     progressDisposable.dispose()
+                     self.mainWindow.present(context.rootController, on: .root)
++                    self.ayuPresentStartupNotice()
+                 }))
+             } else {
+                 authContextReadyDisposable.set(nil)
+diff --git a/submodules/TelegramUI/Sources/AyuStartupFailureController.swift b/submodules/TelegramUI/Sources/AyuStartupFailureController.swift
+new file mode 100644
+index 00000000..e726360c
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuStartupFailureController.swift
+@@ -0,0 +1,51 @@
++import Foundation
++import UIKit
++
++final class AyuStartupFailureController: UIViewController {
++    private let details: String
++    private let russian: Bool
++    private let copyButton = UIButton(type: .system)
++    init(details: String) {
++        self.details = details
++        self.russian = Locale.preferredLanguages.first?.hasPrefix("ru") == true
++        super.init(nibName: nil, bundle: nil)
++    }
++    required init?(coder: NSCoder) { return nil }
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.view.backgroundColor = .systemBackground
++        let title = UILabel()
++        title.text = "AyuGram"
++        title.font = .preferredFont(forTextStyle: .largeTitle)
++        title.adjustsFontForContentSizeCategory = true
++        let message = UILabel()
++        message.numberOfLines = 0
++        message.font = .preferredFont(forTextStyle: .body)
++        message.adjustsFontForContentSizeCategory = true
++        message.text = self.russian ? "Не удалось подготовить защищённое хранилище. Данные и ключи не сбрасывались. Разблокируй iPhone и перезапусти приложение. Если ошибка повторится, скопируй диагностику и проверь способ подписи." : "Protected storage could not be initialized. Data and keys were not reset. Unlock your iPhone and restart the app. If this repeats, copy the diagnostics and check the signing setup."
++        let diagnostics = UITextView()
++        diagnostics.isEditable = false
++        diagnostics.font = .monospacedSystemFont(ofSize: 14.0, weight: .regular)
++        diagnostics.text = self.details
++        diagnostics.backgroundColor = .secondarySystemBackground
++        self.copyButton.setTitle(self.russian ? "Копировать диагностику" : "Copy diagnostics", for: .normal)
++        self.copyButton.addTarget(self, action: #selector(self.copyDetails), for: .touchUpInside)
++        let stack = UIStackView(arrangedSubviews: [title, message, diagnostics, self.copyButton])
++        stack.axis = .vertical
++        stack.spacing = 20.0
++        stack.translatesAutoresizingMaskIntoConstraints = false
++        self.view.addSubview(stack)
++        NSLayoutConstraint.activate([
++            stack.leadingAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.leadingAnchor, constant: 24.0),
++            stack.trailingAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.trailingAnchor, constant: -24.0),
++            stack.topAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.topAnchor, constant: 24.0),
++            stack.bottomAnchor.constraint(lessThanOrEqualTo: self.view.safeAreaLayoutGuide.bottomAnchor, constant: -24.0),
++            diagnostics.heightAnchor.constraint(equalToConstant: 220.0),
++            self.copyButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44.0)
++        ])
++    }
++    @objc private func copyDetails() {
++        UIPasteboard.general.string = self.details
++        self.copyButton.setTitle(self.russian ? "Скопировано" : "Copied", for: .normal)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuStartupStorage.swift b/submodules/TelegramUI/Sources/AyuStartupStorage.swift
+new file mode 100644
+index 00000000..e7c72fa0
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuStartupStorage.swift
+@@ -0,0 +1,84 @@
++import Foundation
++import Security
++import LocalAuthentication
++
++enum AyuStartupStorageError: Error {
++    case invalidMarker
++    case keychain(OSStatus)
++}
++
++struct AyuStartupStorage {
++    let baseURL: URL
++    let privateKeychainScope: String?
++    var isStandalone: Bool { return self.privateKeychainScope != nil }
++
++    static func resolve(supportURL: URL, sharedURL: URL?, group: String, probe: (String?) -> OSStatus) throws -> AyuStartupStorage {
++        let files = FileManager.default
++        let local = supportURL.appendingPathComponent("AyuGramStandalone", isDirectory: true)
++        let marker = local.appendingPathComponent(".keychain-scope")
++        let hasMarker = files.fileExists(atPath: marker.path)
++        // Never invent new keys for an existing standalone database whose scope was lost.
++        if !hasMarker, files.fileExists(atPath: local.appendingPathComponent("telegram-data").path) {
++            throw AyuStartupStorageError.invalidMarker
++        }
++        if !hasMarker, let sharedURL {
++            let status = probe(group)
++            if status == errSecSuccess { return AyuStartupStorage(baseURL: sharedURL, privateKeychainScope: nil) }
++            // Locked/unavailable keychains are not entitlement failures. Do not reset or switch data.
++            guard status == errSecMissingEntitlement else { throw AyuStartupStorageError.keychain(status) }
++        }
++        let status = probe(nil)
++        guard status == errSecSuccess else { throw AyuStartupStorageError.keychain(status) }
++        let scope: String
++        if hasMarker {
++            let attributes = try files.attributesOfItem(atPath: marker.path)
++            guard let size = attributes[.size] as? NSNumber, size.intValue <= 64,
++                  let text = String(data: try Data(contentsOf: marker), encoding: .utf8), UUID(uuidString: text) != nil else {
++                throw AyuStartupStorageError.invalidMarker
++            }
++            scope = text
++        } else {
++            scope = UUID().uuidString
++            #if os(iOS)
++            try files.createDirectory(at: local, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
++            try Data(scope.utf8).write(to: marker, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
++            #else
++            try files.createDirectory(at: local, withIntermediateDirectories: true)
++            try Data(scope.utf8).write(to: marker, options: .atomic)
++            #endif
++            var values = URLResourceValues()
++            values.isExcludedFromBackup = true
++            var excluded = local
++            try excluded.setResourceValues(values)
++        }
++        return AyuStartupStorage(baseURL: local, privateKeychainScope: scope)
++    }
++
++    /// A disposable, nonsecret record tests access without touching account credentials.
++    static func probeKeychain(bundleIdentifier: String, group: String?) -> OSStatus {
++        var query: [String: Any] = [
++            kSecClass as String: kSecClassGenericPassword,
++            kSecAttrService as String: "org.ayugram.startup.probe." + bundleIdentifier,
++            kSecAttrAccount as String: UUID().uuidString,
++            kSecAttrSynchronizable as String: false
++        ]
++        if let group { query[kSecAttrAccessGroup as String] = group }
++        var insert = query
++        insert[kSecValueData as String] = Data([0x41, 0x59, 0x55])
++        insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
++        let added = SecItemAdd(insert as CFDictionary, nil)
++        guard added == errSecSuccess else { return added }
++        let identity = query
++        defer { _ = SecItemDelete(identity as CFDictionary) }
++        let authentication = LAContext()
++        authentication.interactionNotAllowed = true
++        query[kSecUseAuthenticationContext as String] = authentication
++        query[kSecReturnData as String] = true
++        query[kSecMatchLimit as String] = kSecMatchLimitOne
++        var value: CFTypeRef?
++        let read = SecItemCopyMatching(query as CFDictionary, &value)
++        guard read == errSecSuccess else { return read }
++        guard let data = value as? Data, data == Data([0x41, 0x59, 0x55]) else { return errSecDecode }
++        return errSecSuccess
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
 new file mode 100644
 index 00000000..e912d793
@@ -26545,6 +26960,19 @@ index 1ade8c01..74820fcc 100644
          return ContextController.Items(content: .list(actions), tip: nil)
      }
  }
+diff --git a/submodules/WalletContext/Sources/WalletSecurity.swift b/submodules/WalletContext/Sources/WalletSecurity.swift
+index 3d13bc4d..3ca0e6c7 100644
+--- a/submodules/WalletContext/Sources/WalletSecurity.swift
++++ b/submodules/WalletContext/Sources/WalletSecurity.swift
+@@ -67,6 +67,8 @@ enum WalletVault {
+     static func service(namespace: String) -> String { self.envelopeServicePrefix + namespace }
+ 
+     static func keychainAccessGroup() throws -> String? {
++        // Standalone compatibility storage never reads/writes the legacy wallet vault.
++        guard PasscodeEnvironment.shared.appPrivateKeychainScope == nil else { throw PasscodeError.unavailable }
+         #if os(macOS)
+         return nil
+         #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
 index 00000000..78f8b503
@@ -27006,3 +27434,100 @@ index 00000000..78f8b503
 +check(postboxRoundTrip(postboxHistory) == postboxHistory, "Actual Postbox: clearing records preserves opt-ins")
 +print("PASS: \(checks) total checks, including the actual pinned Postbox encoder/decoder; device/UI testing remains separate")
 +#endif
+diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
+new file mode 100644
+index 00000000..11c5756d
+--- /dev/null
++++ b/tools/ayu-tests/startup/main.swift
+@@ -0,0 +1,91 @@
++import Foundation
++import Security
++
++var checks = 0
++func check(_ value: @autoclosure () -> Bool, _ message: String) {
++    precondition(value(), message)
++    checks += 1
++}
++let files = FileManager.default
++let root = files.temporaryDirectory.appendingPathComponent("ayu-startup-tests-" + UUID().uuidString)
++try files.createDirectory(at: root, withIntermediateDirectories: true)
++defer { try? files.removeItem(at: root) }
++let shared = root.appendingPathComponent("shared")
++try files.createDirectory(at: shared, withIntermediateDirectories: true)
++let sentinel = shared.appendingPathComponent("account-sentinel")
++try Data([1, 2, 3]).write(to: sentinel)
++let group = "group.org.ayugram.tests"
++let normalURL = root.appendingPathComponent("normal")
++var probes: [String?] = []
++let normal = try AyuStartupStorage.resolve(supportURL: normalURL, sharedURL: shared, group: group, probe: {
++    probes.append($0)
++    return errSecSuccess
++})
++check(normal.baseURL == shared && !normal.isStandalone, "Valid App Group must stay shared")
++check(probes == [group], "Shared startup must probe its entitlement")
++check(!files.fileExists(atPath: normalURL.path), "Shared startup must not create standalone data")
++
++let privateURL = root.appendingPathComponent("private")
++probes = []
++let isolated = try AyuStartupStorage.resolve(supportURL: privateURL, sharedURL: shared, group: group, probe: {
++    probes.append($0)
++    return $0 == nil ? errSecSuccess : errSecMissingEntitlement
++})
++check(isolated.isStandalone, "Missing Keychain entitlement must select standalone")
++check(probes == [group, nil], "Fallback must verify the private Keychain")
++let scope = isolated.privateKeychainScope!
++check(UUID(uuidString: scope) != nil, "Standalone credentials need an independent scope")
++let database = isolated.baseURL.appendingPathComponent("telegram-data")
++try files.createDirectory(at: database, withIntermediateDirectories: true)
++try Data([4, 5, 6]).write(to: database.appendingPathComponent("sentinel"))
++probes = []
++let restarted = try AyuStartupStorage.resolve(supportURL: privateURL, sharedURL: shared, group: group, probe: {
++    probes.append($0)
++    return errSecSuccess
++})
++check(restarted.privateKeychainScope == scope && restarted.baseURL == isolated.baseURL, "Restart must retain data and credentials even if the App Group becomes available")
++check(probes == [nil], "Existing private data must not switch back to shared credentials")
++let other = try AyuStartupStorage.resolve(supportURL: root.appendingPathComponent("other"), sharedURL: nil, group: group, probe: { _ in errSecSuccess })
++check(other.privateKeychainScope != scope, "Independent containers must not share passcode records")
++
++for status in [errSecInteractionNotAllowed, errSecNotAvailable, errSecAuthFailed] {
++    let support = root.appendingPathComponent("failure-\(status)")
++    do {
++        _ = try AyuStartupStorage.resolve(supportURL: support, sharedURL: shared, group: group, probe: { _ in status })
++        preconditionFailure("Unavailable Keychain must stop startup")
++    } catch AyuStartupStorageError.keychain(let actual) {
++        check(actual == status, "Preserve the real Keychain status")
++    }
++    check(!files.fileExists(atPath: support.path), "A locked Keychain must not cause a data switch")
++}
++let unavailable = root.appendingPathComponent("private-unavailable")
++do {
++    _ = try AyuStartupStorage.resolve(supportURL: unavailable, sharedURL: nil, group: group, probe: { _ in errSecMissingEntitlement })
++    preconditionFailure("Missing default Keychain must stop startup")
++} catch AyuStartupStorageError.keychain(let status) {
++    check(status == errSecMissingEntitlement, "Default Keychain errors must be reported")
++}
++check(!files.fileExists(atPath: unavailable.path), "Failed private probe must not create a new identity")
++
++let marker = isolated.baseURL.appendingPathComponent(".keychain-scope")
++for invalid in ["invalid", String(repeating: "x", count: 100)] {
++    try Data(invalid.utf8).write(to: marker)
++    do {
++        _ = try AyuStartupStorage.resolve(supportURL: privateURL, sharedURL: shared, group: group, probe: { _ in errSecSuccess })
++        preconditionFailure("Corrupt marker must stop startup")
++    } catch AyuStartupStorageError.invalidMarker {
++        checks += 1
++    }
++}
++try files.removeItem(at: marker)
++do {
++    _ = try AyuStartupStorage.resolve(supportURL: privateURL, sharedURL: shared, group: group, probe: { _ in errSecSuccess })
++    preconditionFailure("An existing database must not receive a replacement scope")
++} catch AyuStartupStorageError.invalidMarker {
++    checks += 1
++}
++let original = try Data(contentsOf: sentinel)
++let retained = try Data(contentsOf: database.appendingPathComponent("sentinel"))
++check(original == Data([1, 2, 3]), "Shared data must remain untouched")
++check(retained == Data([4, 5, 6]), "Standalone data must survive all failed startup attempts")
++print("PASS: \(checks) actual startup-storage checks; device/signing tests remain separate")

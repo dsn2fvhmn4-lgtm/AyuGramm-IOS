@@ -16,6 +16,11 @@ def run(source: Path):
     source = source.resolve()
     with tempfile.TemporaryDirectory(prefix='ayu-postbox-tests-') as directory:
         output = Path(directory)
+        subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
+                        str(source / 'submodules/TelegramUI/Sources/AyuStartupStorage.swift'),
+                        str(source / 'tools/ayu-tests/startup/main.swift'),
+                        '-o', str(output / 'startup-tests')], check=True)
+        subprocess.run([str(output / 'startup-tests')], check=True)
         murmur = source / 'submodules/MurMurHash32'
         header = murmur / 'PublicHeaders/MurMurHash32/MurMurHash32.h'
         (output / 'module.modulemap').write_text(

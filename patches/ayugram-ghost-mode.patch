@@ -67999,10 +67999,10 @@ index 00000000..cc632295
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPreferencesHubController.swift b/submodules/SettingsUI/Sources/AyuPreferencesHubController.swift
 new file mode 100644
-index 00000000..74829371
+index 00000000..7d6107d3
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPreferencesHubController.swift
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,53 @@
 +import UIKit
 +
 +struct AyuPreferencesPalette {
@@ -68056,78 +68056,12 @@ index 00000000..74829371
 +        tableView.tableHeaderView = header
 +    }
 +}
-+
-+final class AyuPreferencesHubController: UITableViewController {
-+    private let russian: Bool
-+    private let palette: AyuPreferencesPalette
-+    private let open: (Int) -> Void
-+    private var categories: [(String, String, Int)] {
-+        return [
-+            ("AyuGram", "heart", 0),
-+            (self.russian ? "Фильтры" : "Filters", "line.3.horizontal.decrease.circle", 1),
-+            (self.russian ? "Основные" : "General", "square.grid.2x2", 2),
-+            (self.russian ? "Оформление" : "Appearance", "paintpalette", 3),
-+            (self.russian ? "Чаты" : "Chats", "bubble.left.and.bubble.right", 4),
-+            (self.russian ? "Другое" : "Other", "star", 5),
-+            (self.russian ? "Плагины" : "Plugins", "puzzlepiece", 6)
-+        ]
-+    }
-+    init(russian: Bool, palette: AyuPreferencesPalette, open: @escaping (Int) -> Void) {
-+        self.russian = russian; self.palette = palette; self.open = open
-+        super.init(style: .grouped)
-+        self.tableView.backgroundColor = palette.background
-+        self.tableView.rowHeight = UITableView.automaticDimension
-+        self.tableView.estimatedRowHeight = 52
-+    }
-+    required init?(coder: NSCoder) { return nil }
-+    override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); ayuFitPreferencesHeader(self.tableView) }
-+    private func symbol(_ name: String) -> UIImage {
-+        return UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).image { _ in
-+            guard let image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .regular))?.withTintColor(self.palette.secondary, renderingMode: .alwaysOriginal), image.size.width > 0, image.size.height > 0 else { return }
-+            let scale = min(22 / image.size.width, 22 / image.size.height)
-+            let width = image.size.width * scale, height = image.size.height * scale
-+            image.draw(in: CGRect(x: (24 - width) / 2, y: (24 - height) / 2, width: width, height: height))
-+        }
-+    }
-+    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? self.categories.count : 2 }
-+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-+        return section == 0 ? (self.russian ? "Категории" : "Categories") : (self.russian ? "Ссылки" : "Links")
-+    }
-+    override func tableView(_ tableView: UITableView, willDisplayHeaderView view: UIView, forSection section: Int) {
-+        (view as? UITableViewHeaderFooterView)?.textLabel?.textColor = self.palette.accent
-+    }
-+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-+        let cell = UITableViewCell(style: .value1, reuseIdentifier: nil)
-+        cell.backgroundColor = self.palette.panel
-+        cell.textLabel?.textColor = self.palette.text; cell.detailTextLabel?.textColor = self.palette.accent
-+        cell.textLabel?.font = .preferredFont(forTextStyle: .body); cell.textLabel?.adjustsFontForContentSizeCategory = true
-+        cell.textLabel?.numberOfLines = 0
-+        cell.imageView?.tintColor = self.palette.secondary
-+        cell.accessoryType = .disclosureIndicator
-+        if indexPath.section == 0 {
-+            let row = self.categories[indexPath.row]
-+            cell.textLabel?.text = row.0; cell.imageView?.image = self.symbol(row.1)
-+        } else if indexPath.row == 0 {
-+            cell.textLabel?.text = self.russian ? "Канал" : "Channel"
-+            cell.detailTextLabel?.text = "@neosay1337"; cell.imageView?.image = self.symbol("megaphone")
-+        } else {
-+            cell.textLabel?.text = self.russian ? "Документация" : "Documentation"
-+            cell.imageView?.image = self.symbol("globe")
-+        }
-+        return cell
-+    }
-+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-+        tableView.deselectRow(at: indexPath, animated: true)
-+        self.open(indexPath.section == 0 ? self.categories[indexPath.row].2 : 10 + indexPath.row)
-+    }
-+}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..62e89bd3
+index 00000000..65ce1765
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,489 @@
+@@ -0,0 +1,579 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -68138,7 +68072,6 @@ index 00000000..62e89bd3
 +import ItemListUI
 +import AccountContext
 +import TextFormat
-+import LegacyUI
 +
 +private struct AyuSettingsArguments {
 +    let open: (Int32) -> Void
@@ -68217,22 +68150,119 @@ index 00000000..62e89bd3
 +    }
 +}
 +
++private enum AyuHubEntry: ItemListNodeEntry {
++    case categoriesHeader(String)
++    case category(Int32, String, UIImage?)
++    case linksHeader(String)
++    case link(Int32, String, String, UIImage?)
++    case info(String)
++
++    var section: ItemListSectionId {
++        switch self {
++        case .categoriesHeader, .category: return 0
++        case .linksHeader, .link, .info: return 1
++        }
++    }
++
++    // Entries are listed in display order; the list requires ascending stable ids.
++    var stableId: Int32 {
++        switch self {
++        case .categoriesHeader: return 0
++        case let .category(index, _, _): return 1 + index
++        case .linksHeader: return 100
++        case let .link(index, _, _, _): return 101 + index
++        case .info: return 200
++        }
++    }
++
++    static func < (lhs: AyuHubEntry, rhs: AyuHubEntry) -> Bool { return lhs.stableId < rhs.stableId }
++
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! AyuHubArguments
++        switch self {
++        case let .categoriesHeader(text), let .linksHeader(text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .category(index, title, icon):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, label: "", sectionId: self.section, style: .blocks, action: { arguments.openCategory(Int(index)) })
++        case let .link(index, title, label, icon):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.openLink(Int(index)) })
++        case let .info(text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        }
++    }
++}
++
++private struct AyuHubArguments {
++    let openCategory: (Int) -> Void
++    let openLink: (Int) -> Void
++}
++
++private enum AyuHubCategory: CaseIterable {
++    case ayuGram, filters, general, appearance, chats, plugins
++
++    func title(_ ru: Bool) -> String {
++        switch self {
++        case .ayuGram: return "AyuGram"
++        case .filters: return ru ? "Фильтры" : "Filters"
++        case .general: return ru ? "Основные" : "General"
++        case .appearance: return ru ? "Оформление" : "Appearance"
++        case .chats: return ru ? "Чаты" : "Chats"
++        case .plugins: return ru ? "Плагины" : "Plugins"
++        }
++    }
++
++    var icon: UIImage? {
++        switch self {
++        case .ayuGram: return AyuSettingsIcons.logo
++        case .filters: return AyuSettingsIcons.symbol("line.3.horizontal.decrease", color: UIColor(rgb: 0xFF3B30))
++        case .general: return AyuSettingsIcons.symbol("gearshape.fill", color: UIColor(rgb: 0x8E8E93))
++        case .appearance: return AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0x32ADE6))
++        case .chats: return AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x34C759))
++        case .plugins: return AyuSettingsIcons.symbol("puzzlepiece.extension.fill", color: UIColor(rgb: 0xAF52DE))
++        }
++    }
++}
++
 +public func ayuSettingsController(context: AccountContext) -> ViewController {
-+    let data = context.sharedContext.currentPresentationData.with { $0 }
-+    let wrapper = LegacyController(presentation: .navigation, theme: data.theme, strings: data.strings)
-+    wrapper.title = "AyuGram Preferences"
-+    let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
-+    let screen = AyuPreferencesHubController(russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, open: { [weak wrapper] id in
-+        switch id {
-+        case 1: wrapper?.push(ayuChatOptionsController(context: context, regex: true))
-+        case 6: ayuPresentPlugins(context: context)
-+        case 10: ayuOpenChannel(context: context, navigation: wrapper?.navigationController as? NavigationController)
-+        case 11: context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/blob/main/README.md")
-+        default: wrapper?.push(ayuSettingsCategoryController(context: context, category: id))
++    var push: ((ViewController) -> Void)?
++    var navigation: (() -> NavigationController?)?
++    let categories = AyuHubCategory.allCases
++    let arguments = AyuHubArguments(openCategory: { index in
++        switch categories[index] {
++        case .ayuGram: push?(ayuSettingsCategoryController(context: context, category: 0))
++        case .filters: push?(ayuChatOptionsController(context: context, regex: true))
++        case .general: push?(ayuSettingsCategoryController(context: context, category: 2))
++        case .appearance: push?(ayuSettingsCategoryController(context: context, category: 3))
++        case .chats: push?(ayuSettingsCategoryController(context: context, category: 4))
++        case .plugins: ayuPresentPlugins(context: context)
++        }
++    }, openLink: { index in
++        if index == 0 {
++            ayuOpenChannel(context: context, navigation: navigation?())
++        } else {
++            context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
 +        }
 +    })
-+    wrapper.bind(controller: screen)
-+    return wrapper
++    let signal = context.sharedContext.presentationData
++    |> deliverOnMainQueue
++    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        var entries: [AyuHubEntry] = [.categoriesHeader(ru ? "НАСТРОЙКИ" : "SETTINGS")]
++        for (index, category) in categories.enumerated() {
++            entries.append(.category(Int32(index), category.title(ru), category.icon))
++        }
++        entries.append(.linksHeader(ru ? "ССЫЛКИ" : "LINKS"))
++        entries.append(.link(0, ru ? "Канал" : "Channel", "@neosay1337", AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF))))
++        entries.append(.link(1, ru ? "Исходный код и документация" : "Source and documentation", "", AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))))
++        entries.append(.info(ru ? "Неофициальный клиент. Оригинальные AyuGram Android и Desktop используются как источники поведения и оформления. Полный перенос функций ещё продолжается." : "Unofficial client. Original AyuGram Android and Desktop inform behavior and appearance. Full feature parity is still in progress."))
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    push = { [weak controller] in controller?.push($0) }
++    navigation = { [weak controller] in controller?.navigationController as? NavigationController }
++    return controller
 +}
 +
 +private func ayuOpenChannel(context: AccountContext, navigation: NavigationController?) {
@@ -68268,12 +68298,28 @@ index 00000000..62e89bd3
 +    context.sharedContext.applicationBindings.presentNativeController(navigation)
 +}
 +
-+private func ayuSettingsCategoryController(context: AccountContext, category: Int) -> ViewController {
++/// Rows of a category as (action, title), in display order. Entry ids are row positions,
++/// because ItemListController requires entries in ascending stable-id order.
++private func ayuCategoryRows(category: Int, ru: Bool) -> (title: String, rows: [(Int32, String)]) {
++    switch category {
++    case 0:
++        return ("AyuGram", [(0, "Ghost Mode"), (50, "Ghost Mode+"), (1, ru ? "История сообщений" : "Message History"), (53, ru ? "Медиаархив" : "Media Archive")])
++    case 2:
++        return (ru ? "Основные" : "General", [(51, ru ? "Переводчики" : "Translation providers"), (2, ru ? "Отправка сообщений" : "Sending Options"), (5, ru ? "Интерфейс" : "Interface"), (6, ru ? "Меню сообщения" : "Message Menu")])
++    case 3:
++        return (ru ? "Оформление" : "Appearance", [(52, ru ? "Локальный Premium и статус" : "Local Premium and status"), (4, ru ? "Оформление чатов" : "Chat Appearance"), (7, ru ? "Оформление MessageShot" : "MessageShot Appearance"), (20, ru ? "Иконка приложения" : "App Icon")])
++    default:
++        return (ru ? "Чаты" : "Chats", [(8, ru ? "Скрытые сообщения" : "Hidden Messages"), (9, ru ? "Реакции в чатах" : "Chat Reactions")])
++    }
++}
 +
++private func ayuSettingsCategoryController(context: AccountContext, category: Int) -> ViewController {
 +    var push: ((ViewController) -> Void)?
-+    var openChannel: (() -> Void)?
-+    let arguments = AyuSettingsArguments(open: { id in
-+        switch id {
++    let arguments = AyuSettingsArguments(open: { index in
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let rows = ayuCategoryRows(category: category, ru: ru).rows
++        guard rows.indices.contains(Int(index)) else { return }
++        switch rows[Int(index)].0 {
 +        case 0: push?(ayuGhostModeController(context: context))
 +        case 1: push?(ayuMessageHistoryController(context: context))
 +        case 2: push?(ayuChatOptionsController(context: context, regex: false))
@@ -68289,41 +68335,19 @@ index 00000000..62e89bd3
 +        case 51: ayuPresentAdvancedSettings(context: context, page: .translation)
 +        case 52: ayuPresentAdvancedSettings(context: context, page: .cosmetics)
 +        case 53: ayuPresentMediaArchive(context: context)
-+        case 31: openChannel?()
-+        case 32: context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
-+        case 11: ayuPresentPlugins(context: context)
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
 +    let signal = context.sharedContext.presentationData
 +    |> deliverOnMainQueue
 +    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
-+        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
-+        let title: String
-+        let entries: [AyuSettingsEntry]
-+        switch category {
-+        case 0:
-+            title = "AyuGram"
-+            entries = [.link(0, "Ghost Mode"), .link(50, "Ghost Mode+"), .link(1, ru ? "История сообщений" : "Message History"), .link(53, ru ? "Медиаархив" : "Media Archive")]
-+        case 2:
-+            title = ru ? "Основные" : "General"
-+            entries = [.link(51, ru ? "Переводчики" : "Translation providers"), .link(2, ru ? "Отправка сообщений" : "Sending Options"), .link(5, ru ? "Интерфейс" : "Interface"), .link(6, ru ? "Меню сообщения" : "Message Menu")]
-+        case 3:
-+            title = ru ? "Оформление" : "Appearance"
-+            entries = [.link(52, ru ? "Локальный Premium и статус" : "Local Premium and status"), .link(4, ru ? "Оформление чатов" : "Chat Appearance"), .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"), .link(20, ru ? "Иконка приложения" : "App Icon")]
-+        case 4:
-+            title = ru ? "Чаты" : "Chats"
-+            entries = [.link(8, ru ? "Скрытые сообщения" : "Hidden Messages"), .link(9, ru ? "Реакции в чатах" : "Chat Reactions")]
-+        default:
-+            title = ru ? "Другое" : "Other"
-+            entries = [.link(31, ru ? "Канал @neosay1337" : "Channel @neosay1337"), .link(32, ru ? "Исходный код и документация" : "Source and documentation"), .info(33, ru ? "Неофициальный клиент. Оригинальные AyuGram Android и Desktop используются как источники поведения и оформления. Полный перенос функций ещё продолжается." : "Unofficial client. Original AyuGram Android and Desktop inform behavior and appearance. Full feature parity is still in progress.")]
-+        }
++        let (title, rows) = ayuCategoryRows(category: category, ru: presentationData.strings.baseLanguageCode.hasPrefix("ru"))
++        let entries: [AyuSettingsEntry] = rows.enumerated().map { index, row in AyuSettingsEntry.link(Int32(index), row.1) }
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
-+    openChannel = { [weak controller] in ayuOpenChannel(context: context, navigation: controller?.navigationController as? NavigationController) }
 +    return controller
 +}
 +
@@ -72010,6 +72034,56 @@ index 00000000..73b546fa
 +        AyuAppIconPreset(name: "AyuOriginalExtera2", assetName: "AyuGram/OriginalExtera2", title: "AyuGram Extera2", russianTitle: "AyuGram Extera2"),
 +    ]
 +}
+diff --git a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
+new file mode 100644
+index 00000000..330f6655
+--- /dev/null
++++ b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
+@@ -0,0 +1,44 @@
++import Foundation
++import UIKit
++import Display
++
++/// 30 pt rounded-square icons matching `renderSettingsIcon`, for AyuGram rows in Settings.
++public enum AyuSettingsIcons {
++    private static let size = CGSize(width: 30.0, height: 30.0)
++    private static let cornerRadius: CGFloat = 8.0
++
++    /// The mod's own full-bleed logo.
++    public static let logo: UIImage? = generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++        let bounds = CGRect(origin: CGPoint(), size: size)
++        context.clear(bounds)
++        context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++        context.clip()
++        if let image = UIImage(bundleImageName: "AyuGram/Brand") {
++            UIGraphicsPushContext(context)
++            image.draw(in: bounds)
++            UIGraphicsPopContext()
++        } else {
++            context.setFillColor(UIColor(rgb: 0x8E5CF7).cgColor)
++            context.fill(bounds)
++        }
++    })
++
++    /// A white SF Symbol on a colored rounded square.
++    public static func symbol(_ name: String, color: UIColor) -> UIImage? {
++        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            context.clear(bounds)
++            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++            context.setFillColor(color.cgColor)
++            context.fillPath()
++            guard let image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15.0, weight: .semibold))?.withTintColor(.white, renderingMode: .alwaysOriginal), image.size.width > 0.0, image.size.height > 0.0 else {
++                return
++            }
++            let scale = min(18.0 / image.size.width, 18.0 / image.size.height, 1.0)
++            let imageSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
++            UIGraphicsPushContext(context)
++            image.draw(in: CGRect(origin: CGPoint(x: (size.width - imageSize.width) / 2.0, y: (size.height - imageSize.height) / 2.0), size: imageSize))
++            UIGraphicsPopContext()
++        })
++    }
++}
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
 index 63df27a6..0dfe90b7 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
@@ -72658,14 +72732,14 @@ index f1c1917b..c2e73081 100644
              self.controller?.openAvatarForEditing()
          case .edit:
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
-index a4873696..0fdf9aba 100644
+index a4873696..ca3a1aba 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 @@ -222,6 +222,9 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
          }
      }
      
-+    items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 100, text: "AyuGram Preferences", icon: UIImage(systemName: "star", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular))?.withTintColor(presentationData.theme.list.itemAccentColor, renderingMode: .alwaysOriginal), action: {
++    items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 100, text: "AyuGram", icon: AyuSettingsIcons.logo, action: {
 +        interaction.openSettings(.ayuGram)
 +    }))
      items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 1, text: presentationData.strings.Settings_SavedMessages, icon: PresentationResourcesSettings.savedMessages, action: {

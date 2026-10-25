@@ -1,16 +1,18 @@
 # Preferences panels and app icons - source after Release 3
 
-The Settings entry now reads **AyuGram Preferences**, with an outlined star in
-place of the previous security icon. The page starts directly with category rows
-and links. The large logo/version/description header has been removed at the
-owner's request. Plugin detail pages retain their own identity and description.
+The Settings entry reads **AyuGram** and uses the mod's own logo as a 30 pt
+rounded Settings icon (the earlier outlined star rendered black and was replaced).
+The AyuGram page is a native Telegram item list in the iOS Settings style: a
+**Settings** section with colored category icons (**AyuGram** with the logo,
+**Filters**, **General**, **Appearance**, **Chats**, **Plugins**), a **Links**
+section (channel **@neosay1337**, source and documentation) and the project note.
+The previous UIKit hub inside a LegacyController and the separate **Other**
+category are gone.
 
-Categories use line icons: **AyuGram** (heart), **Filters**, **General**,
-**Appearance**, **Chats**, **Other** and **Plugins**. Every category opens existing
-settings or a working native screen; no inactive placeholder switches are added.
-The channel is **@neosay1337**. The other link opens this project's documentation.
-There is no community-chat or Translate link.
-
+Category pages list their rows in display order with positional ids.
+ItemListController requires ascending stable ids; the earlier AyuGram, General and
+Appearance pages used action ids out of order (for example 0, 50, 1, 53), which
+fails MergeLists' precondition and crashed on opening.
 Existing controls are grouped as follows:
 
 | Category | Pages |

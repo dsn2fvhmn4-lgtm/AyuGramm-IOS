@@ -66,6 +66,7 @@ def main():
     sdk_sources = [source / 'submodules/TelegramUI/Sources' / name for name in (
         'Chat/AyuMessageShotCanvas.swift', 'AyuStartupStorage.swift', 'AyuStartupFailureController.swift')]
     sdk_sources.append(source / 'submodules/Display/Source/AyuPluginAvatar.swift')
+    sdk_sources.append(source / 'submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift')
     sdk_sources.extend(source / 'submodules/SettingsUI/Sources' / name for name in (
         'AyuPreferencesHubController.swift', 'AyuAppIconPickerController.swift'))
     if any(path.exists() for path in sdk_sources):
@@ -113,24 +114,25 @@ def main():
         # Compile just the actual artwork before starting the full Telegram target.
         icon_root = source / 'Telegram/Telegram-iOS'
         if (icon_root / 'AyuBlue.icon').exists():
+            icon_names = ['Telegram'] + sorted(path.stem for path in icon_root.glob('Ayu*.icon'))
+            alternate_args = [argument for name in icon_names[1:] for argument in ('--alternate-app-icon', name)]
             with tempfile.TemporaryDirectory(prefix='ayu-icon-sdk-') as directory:
                 result = subprocess.run(['xcrun', 'actool', '--compile', directory,
                                          '--platform', 'iphoneos', '--minimum-deployment-target', '15.0',
                                          '--target-device', 'iphone', '--target-device', 'ipad',
-                                         '--app-icon', 'Telegram', '--alternate-app-icon', 'AyuBlue',
-                                         '--alternate-app-icon', 'AyuGraphite',
+                                         '--app-icon', 'Telegram', *alternate_args,
                                          '--output-partial-info-plist', str(Path(directory) / 'icons.plist'),
-                                         *[str(icon_root / (name + '.icon')) for name in ('Telegram', 'AyuBlue', 'AyuGraphite')]],
+                                         *[str(icon_root / (name + '.icon')) for name in icon_names]],
                                         capture_output=True, text=True)
                 if result.returncode:
                     errors.append(f'Icon Composer SDK compilation:\n{result.stdout}{result.stderr}')
                 else:
                     compiled_icons = plistlib.loads((Path(directory) / 'icons.plist').read_bytes())
                     alternates = compiled_icons.get('CFBundleIcons', {}).get('CFBundleAlternateIcons', {})
-                    if not {'AyuBlue', 'AyuGraphite'}.issubset(alternates):
-                        errors.append('Icon Composer metadata is missing AyuBlue or AyuGraphite before the full build')
+                    if not set(icon_names[1:]).issubset(alternates):
+                        errors.append('Icon Composer metadata is missing declared AyuGram alternate icons before the full build')
                     else:
-                        print('PASS: primary and both alternate Icon Composer bundles and their metadata compiled before the full build')
+                        print(f'PASS: {len(icon_names)} Icon Composer bundles and their metadata compiled before the full build')
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'PASS: {len(paths)} changed Swift sources parsed; UI import and Telegram API contracts checked. Full type checking still occurs during the native build.')

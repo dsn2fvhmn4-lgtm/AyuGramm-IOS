@@ -8,6 +8,8 @@ Release 3 source changes add message-menu controls, author search, filter manage
 
 ## Current implementation
 
+The next development block reorganizes **AyuGram Preferences** into categories, adds the **@neosay1337** channel link, full plugin-details pages and a native app-icon picker with original/blue/graphite artwork. See [preferences and icon changes](docs/PREFERENCES_AND_ICONS.md) for scope and pending native verification. Release 3's existing IPA is unchanged.
+
 Development source after Release 3 adds **Settings → AyuGram → Plugins**, native `.plugin` import/export and actions, a reviewed partial Search+ 2.6.1 adapter, and puzzle-piece icons. See [supported operations, conversion limits and verification](docs/PLUGINS.md). The already published Release 3 IPA does not contain this block.
 
 This repository contains a reproducible native source patch against Telegram-iOS commit `fb0e62ba8a147f0821da6aa63c09da7d79a10111`. `ci/prepare.py` checks the exact commit before applying it. The complete upstream client supplies authentication, chats, media and calls; these still require regression testing for this port.

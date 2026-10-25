@@ -97,6 +97,10 @@ if not ipa.is_file():
     raise SystemExit("Build command returned without an IPA artifact")
 with zipfile.ZipFile(ipa) as archive:
     info = plistlib.loads(archive.read("Payload/Telegram.app/Info.plist"))
+    if args.phase == "port" and (source / "Telegram/Telegram-iOS/AyuBlue.icon").exists():
+        alternate_icons = info.get("CFBundleIcons", {}).get("CFBundleAlternateIcons", {})
+        if not {"AyuBlue", "AyuGraphite"}.issubset(alternate_icons):
+            raise SystemExit("Built IPA is missing the declared AyuGram alternate icons")
     binary = archive.read("Payload/Telegram.app/" + info["CFBundleExecutable"])
     if binary[:4] != b"\xcf\xfa\xed\xfe":
         raise SystemExit("Expected a 64-bit Mach-O executable")

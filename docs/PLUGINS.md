@@ -7,10 +7,11 @@ Release 3's already uploaded IPA is unchanged.
 
 ## Installation and use
 
-1. Open **Settings -> AyuGram -> Plugins**.
+1. Open **Settings -> AyuGram Preferences -> Plugins**.
 2. Choose **Import .plugin** and select a file from Files. Review its author,
    version, capabilities and conversion limitations, then confirm installation.
-3. New or replaced plugins start disabled. Tap the plugin and enable it explicitly.
+3. New or replaced plugins start disabled. Tap the plugin to open its own details
+   page with name, version, author, description and an enable switch.
 4. Open an ordinary cloud message's menu -> **AyuGram -> Plugins**, then choose
    an action. Input is entered explicitly; message contents are not automatically
    supplied to plugins. The manager also supports disable, removal and .plugin export.

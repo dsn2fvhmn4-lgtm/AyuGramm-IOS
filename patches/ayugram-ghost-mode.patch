@@ -23080,12 +23080,173 @@ index 00000000..77b19608
 +    }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
+new file mode 100644
+index 00000000..730fb591
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
+@@ -0,0 +1,155 @@
++import Foundation
++import UIKit
++import UniformTypeIdentifiers
++import TelegramCore
++
++final class AyuPluginManagerController: UITableViewController, UIDocumentPickerDelegate {
++    private let store: AyuGhostModeStore
++    private let russian: Bool
++    private var reading = false
++    private var exportDirectory: URL?
++    init(store: AyuGhostModeStore, russian: Bool) {
++        self.store = store; self.russian = russian
++        super.init(style: .insetGrouped)
++        self.title = russian ? "Плагины" : "Plugins"
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { if let directory = self.exportDirectory { try? FileManager.default.removeItem(at: directory) } }
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        self.tableView.rowHeight = UITableView.automaticDimension
++        self.tableView.estimatedRowHeight = 88
++    }
++    @objc private func done() { self.dismiss(animated: true) }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
++        return section == 0 ? 1 : self.store.current.plugins.installed.count
++    }
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        return section == 0 ? nil : (self.russian ? "Установленные" : "Installed")
++    }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        guard section == 0 else { return nil }
++        return self.russian ? "Файлы .plugin. Установка отключена по умолчанию. Android-плагины требуют отдельного адаптера; поддерживается предоставленная версия Search+ 2.6.1. Действия доступны через меню сообщения → Плагины." : ".plugin files. New installations start disabled. Android plugins require a dedicated adapter; the supplied Search+ 2.6.1 is supported. Open a message menu → Plugins to run actions."
++    }
++    private func puzzleIcon() -> UIImage {
++        return UIGraphicsImageRenderer(size: CGSize(width: 44, height: 44)).image { renderer in
++            UIColor(red: 0.24, green: 0.60, blue: 0.80, alpha: 1).setFill()
++            renderer.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: 44, height: 44))
++            UIImage(systemName: "puzzlepiece.fill")?.withTintColor(.white, renderingMode: .alwaysOriginal).draw(in: CGRect(x: 10, y: 10, width: 24, height: 24))
++        }
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        cell.imageView?.image = self.puzzleIcon()
++        cell.textLabel?.numberOfLines = 0
++        cell.detailTextLabel?.numberOfLines = 0
++        if indexPath.section == 0 {
++            cell.textLabel?.text = self.russian ? "Импортировать .plugin" : "Import .plugin"
++            cell.detailTextLabel?.text = self.russian ? "Файлы → просмотр возможностей → установка" : "Files → review capabilities → install"
++        } else {
++            let item = self.store.current.plugins.installed[indexPath.row]
++            cell.textLabel?.text = item.manifest.name
++            cell.detailTextLabel?.text = "\(item.manifest.version) · \(item.manifest.author)\n" + (item.enabled ? (self.russian ? "Включён" : "Enabled") : (self.russian ? "Выключен" : "Disabled"))
++            cell.accessoryType = item.enabled ? .checkmark : .disclosureIndicator
++        }
++        return cell
++    }
++    private func error(_ error: Error) {
++        let message = self.russian ? "Файл не поддерживается, повреждён, превышает лимит 512 КБ либо настройки не удалось сохранить. Для Android-кода нужен адаптер именно этой версии. Данные остальных плагинов сохранены." : "The file is unsupported, invalid, exceeds 512 KB, or settings could not be saved. Android code needs an adapter for its exact version. Other plugins were retained."
++        self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: message)
++    }
++    private func alert(title: String, message: String) {
++        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: "OK", style: .default))
++        self.present(alert, animated: true)
++    }
++    private func details(_ manifest: AyuPluginManifest) -> String {
++        let capabilities = manifest.actions.map { "• " + $0.title + " (" + $0.permission + ")" }.joined(separator: "\n")
++        return "\(manifest.version) · \(manifest.author)\n\n\(manifest.summary)\n\n\(capabilities)" + (manifest.limitations.isEmpty ? "" : "\n\n" + manifest.limitations.joined(separator: "\n\n"))
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        if indexPath.section == 0 {
++            guard !self.reading else { return }
++            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
++            picker.delegate = self
++            self.present(picker, animated: true)
++            return
++        }
++        guard indexPath.row < self.store.current.plugins.installed.count else { return }
++        let plugin = self.store.current.plugins.installed[indexPath.row]
++        let alert = UIAlertController(title: plugin.manifest.name, message: self.details(plugin.manifest), preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: plugin.enabled ? (self.russian ? "Выключить" : "Disable") : (self.russian ? "Включить" : "Enable"), style: .default, handler: { [weak self] _ in
++            guard let self else { return }
++            do { try self.store.update { $0.plugins.setEnabled(id: plugin.manifest.id, enabled: !plugin.enabled) }; self.tableView.reloadData() }
++            catch { self.error(error) }
++        }))
++        alert.addAction(UIAlertAction(title: self.russian ? "Экспортировать .plugin" : "Export .plugin", style: .default, handler: { [weak self] _ in self?.export(plugin.manifest) }))
++        alert.addAction(UIAlertAction(title: self.russian ? "Удалить" : "Remove", style: .destructive, handler: { [weak self] _ in
++            guard let self else { return }
++            do { try self.store.update { $0.plugins.remove(id: plugin.manifest.id) }; self.tableView.reloadData() }
++            catch { self.error(error) }
++        }))
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        self.present(alert, animated: true)
++    }
++    private func export(_ manifest: AyuPluginManifest) {
++        do {
++            if let directory = self.exportDirectory { try? FileManager.default.removeItem(at: directory) }
++            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ayu-plugin-export-" + UUID().uuidString, isDirectory: true)
++            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++            self.exportDirectory = directory
++            let file = directory.appendingPathComponent(manifest.id + ".plugin")
++            try AyuPluginImporter.export(manifest).write(to: file, options: .atomic)
++            let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
++            self.present(picker, animated: true)
++        } catch { self.error(error) }
++    }
++    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
++        guard let url = urls.first, !self.reading else { return }
++        self.reading = true
++        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++            let scoped = url.startAccessingSecurityScopedResource()
++            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
++            let result: Result<AyuPluginManifest, Error>
++            do {
++                guard let stream = InputStream(url: url) else { throw AyuPluginError.invalidFile }
++                stream.open(); defer { stream.close() }
++                var data = Data(); var buffer = [UInt8](repeating: 0, count: 8192)
++                while true {
++                    let count = stream.read(&buffer, maxLength: buffer.count)
++                    guard count >= 0 else { throw AyuPluginError.invalidFile }
++                    if count == 0 { break }
++                    guard data.count + count <= AyuPluginImporter.maximumFileBytes else { throw AyuPluginError.invalidFile }
++                    data.append(contentsOf: buffer.prefix(count))
++                }
++                result = .success(try AyuPluginImporter.parse(data, filename: url.lastPathComponent))
++            } catch { result = .failure(error) }
++            DispatchQueue.main.async { [weak self] in
++                guard let self else { return }
++                self.reading = false
++                let complete: () -> Void = { [weak self] in
++                    guard let self else { return }
++                    switch result {
++                    case let .failure(error): self.error(error)
++                    case let .success(manifest): self.confirmInstall(manifest)
++                    }
++                }
++                if controller.presentingViewController != nil { controller.dismiss(animated: true, completion: complete) }
++                else { complete() }
++            }
++        }
++    }
++    private func confirmInstall(_ manifest: AyuPluginManifest) {
++        let alert = UIAlertController(title: self.russian ? "Установить плагин?" : "Install plugin?", message: self.details(manifest) + (self.russian ? "\n\nУстановка или замена выключит плагин. Включи его после проверки возможностей." : "\n\nInstallation or replacement disables the plugin. Enable it after reviewing its capabilities."), preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: self.russian ? "Установить / заменить" : "Install / replace", style: .default, handler: { [weak self] _ in
++            guard let self else { return }
++            do { try self.store.update { try $0.plugins.install(manifest) }; self.tableView.reloadData() }
++            catch { self.error(error) }
++        }))
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        self.present(alert, animated: true)
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..1e30156a
+index 00000000..8f97482a
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,420 @@
+@@ -0,0 +1,425 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -23188,6 +23349,10 @@ index 00000000..1e30156a
 +        case 7: push?(ayuMessageShotSettingsController(context: context))
 +        case 8: push?(ayuHiddenMessagesController(context: context))
 +        case 9: push?(ayuReactionSettingsController(context: context))
++        case 11:
++            let data = context.sharedContext.currentPresentationData.with { $0 }
++            let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"))
++            context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: plugins))
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
@@ -23206,7 +23371,8 @@ index 00000000..1e30156a
 +            .link(7, ru ? "Оформление MessageShot" : "MessageShot Appearance"),
 +            .link(8, ru ? "Скрытые сообщения" : "Hidden Messages"),
 +            .link(9, ru ? "Реакции в чатах" : "Chat Reactions"),
-+            .info(10, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
++            .link(11, ru ? "🧩 Плагины" : "🧩 Plugins"),
++            .info(12, ru ? "Неофициальный клиент. Полный набор функций AyuGram ещё переносится." : "Unofficial client. Full AyuGram feature parity is still in progress.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
@@ -23872,10 +24038,10 @@ index 00000000..c509943f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 new file mode 100644
-index 00000000..b62f73eb
+index 00000000..bc98c6bd
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,158 @@
 +import Foundation
 +
 +/// Per-account, opt-in policy for ordinary cloud chats. Media consumption and secret-chat
@@ -23894,12 +24060,14 @@ index 00000000..b62f73eb
 +    public var messageShot = AyuMessageShotSettings()
 +    public var hiddenMessages = AyuHiddenMessagesSettings()
 +    public var reactionDisplay = AyuReactionDisplaySettings()
++    public var plugins = AyuPluginRegistry()
 +
 +    private enum CodingKeys: String, CodingKey {
 +        case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend, interface
 +        case messageShot
 +        case hiddenMessages
 +        case reactionDisplay
++        case plugins
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -23918,6 +24086,13 @@ index 00000000..b62f73eb
 +        self.messageShot = (try? values.decode(AyuMessageShotSettings.self, forKey: .messageShot)) ?? AyuMessageShotSettings()
 +        self.hiddenMessages = (try? values.decode(AyuHiddenMessagesSettings.self, forKey: .hiddenMessages)) ?? AyuHiddenMessagesSettings()
 +        self.reactionDisplay = (try? values.decode(AyuReactionDisplaySettings.self, forKey: .reactionDisplay)) ?? AyuReactionDisplaySettings()
++        do {
++            self.plugins = try values.decodeIfPresent(AyuPluginRegistry.self, forKey: .plugins) ?? AyuPluginRegistry()
++            try self.plugins.validate()
++        } catch {
++            // Corrupt/unknown plugin data must not reset Ghost Mode or other account policy.
++            self.plugins = AyuPluginRegistry()
++        }
 +    }
 +
 +    public init(hideReadReceipts: Bool = false, hideOnline: Bool = false, hideTyping: Bool = false, hideUploadProgress: Bool = false) {
@@ -23983,15 +24158,16 @@ index 00000000..b62f73eb
 +        return self.value
 +    }
 +
-+    public func update(_ transform: (inout AyuGhostModeSettings) -> Void) throws {
++    public func update(_ transform: (inout AyuGhostModeSettings) throws -> Void) throws {
 +        self.lock.lock()
 +        defer { self.lock.unlock() }
 +        var updated = self.value
-+        transform(&updated)
++        try transform(&updated)
 +        updated.appearance.normalize()
 +        try updated.appearance.validate()
 +        guard updated != self.value else { return }
 +        try updated.regexFilters.validate()
++        try updated.plugins.validate()
 +        let data = try JSONEncoder().encode(updated)
 +        #if os(iOS)
 +        try data.write(to: self.fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
@@ -24779,6 +24955,144 @@ index 00000000..35137a2f
 +        }
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
+new file mode 100644
+index 00000000..44a10090
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
+@@ -0,0 +1,132 @@
++import Foundation
++import CryptoKit
++
++public enum AyuPluginError: Error { case invalidFile, unsupportedAndroidPlugin, invalidManifest, capacity, invalidInput }
++
++/// Versioned, declarative plugin ABI. No Android or Python code is executed.
++public struct AyuPluginAction: Codable, Equatable {
++    public enum Kind: String, Codable { case search, searchTerms, replaceText }
++    public var id: String
++    public var title: String
++    public var kind: Kind
++    public var find: String?
++    public var replacement: String?
++    public init(id: String, title: String, kind: Kind, find: String? = nil, replacement: String? = nil) {
++        self.id = id; self.title = title; self.kind = kind; self.find = find; self.replacement = replacement
++    }
++    public var permission: String {
++        return self.kind == .replaceText ? "draft.prepare" : "search.messages"
++    }
++    public func queries(_ input: String) throws -> [String] {
++        guard self.kind != .replaceText, input.utf8.count <= 2048 else { throw AyuPluginError.invalidInput }
++        let parts = self.kind == .searchTerms ? input.components(separatedBy: "|") : [input]
++        guard parts.count <= 6 else { throw AyuPluginError.invalidInput }
++        var result: [String] = []
++        for part in parts {
++            let query = part.trimmingCharacters(in: .whitespacesAndNewlines)
++            guard !query.isEmpty, query.count <= 128 else { throw AyuPluginError.invalidInput }
++            if !result.contains(query) { result.append(query) }
++        }
++        return result
++    }
++    public func transformed(_ input: String) throws -> String {
++        guard self.kind == .replaceText, input.utf8.count <= 8192,
++              let find = self.find, !find.isEmpty, let replacement = self.replacement else { throw AyuPluginError.invalidInput }
++        let text = input.replacingOccurrences(of: find, with: replacement)
++        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
++              text.utf8.count <= 8192, text.utf16.count <= 4096 else { throw AyuPluginError.invalidInput }
++        return text
++    }
++}
++
++public struct AyuPluginManifest: Codable, Equatable {
++    public var format = "ayugram-ios-plugin"
++    public var apiVersion = 1
++    public var id: String
++    public var name: String
++    public var author: String
++    public var version: String
++    public var summary: String
++    public var actions: [AyuPluginAction]
++    public var convertedFrom: String?
++    public var sourceSHA256: String?
++    public var limitations: [String]
++    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = []) {
++        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
++        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations
++    }
++    public func validate() throws {
++        let validID: (String) -> Bool = { text in
++            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
++        }
++        guard self.format == "ayugram-ios-plugin", self.apiVersion == 1, validID(self.id),
++              !self.name.isEmpty, self.name.count <= 64, !self.author.isEmpty, self.author.count <= 128,
++              !self.version.isEmpty, self.version.count <= 32, self.summary.count <= 2048,
++              !self.actions.isEmpty, self.actions.count <= 8, Set(self.actions.map(\.id)).count == self.actions.count,
++              self.limitations.count <= 16, self.limitations.allSatisfy({ $0.count <= 512 }),
++              (self.convertedFrom?.count ?? 0) <= 128, (self.sourceSHA256?.count ?? 0) <= 64 else { throw AyuPluginError.invalidManifest }
++        for action in self.actions {
++            guard validID(action.id), !action.title.isEmpty, action.title.count <= 80 else { throw AyuPluginError.invalidManifest }
++            if action.kind == .replaceText {
++                guard let find = action.find, !find.isEmpty, find.utf8.count <= 128,
++                      let replacement = action.replacement, replacement.utf8.count <= 128 else { throw AyuPluginError.invalidManifest }
++            } else if action.find != nil || action.replacement != nil { throw AyuPluginError.invalidManifest }
++        }
++    }
++    public var permissions: [String] { return Array(Set(self.actions.map(\.permission))).sorted() }
++}
++
++public struct AyuInstalledPlugin: Codable, Equatable {
++    public var manifest: AyuPluginManifest
++    public var enabled: Bool
++    public init(manifest: AyuPluginManifest, enabled: Bool = false) { self.manifest = manifest; self.enabled = enabled }
++}
++
++public struct AyuPluginRegistry: Codable, Equatable {
++    public private(set) var installed: [AyuInstalledPlugin] = []
++    public init() {}
++    public func validate() throws {
++        guard self.installed.count <= 12, Set(self.installed.map { $0.manifest.id }).count == self.installed.count else { throw AyuPluginError.capacity }
++        for plugin in self.installed { try plugin.manifest.validate() }
++    }
++    public mutating func install(_ manifest: AyuPluginManifest) throws {
++        try manifest.validate()
++        var updated = self.installed.filter { $0.manifest.id != manifest.id }
++        guard updated.count < 12 else { throw AyuPluginError.capacity }
++        updated.append(AyuInstalledPlugin(manifest: manifest))
++        self.installed = updated
++    }
++    public mutating func setEnabled(id: String, enabled: Bool) {
++        if let index = self.installed.firstIndex(where: { $0.manifest.id == id }) { self.installed[index].enabled = enabled }
++    }
++    public mutating func remove(id: String) { self.installed.removeAll { $0.manifest.id == id } }
++    public func action(pluginID: String, actionID: String) -> AyuPluginAction? {
++        return self.installed.first(where: { $0.enabled && $0.manifest.id == pluginID })?.manifest.actions.first(where: { $0.id == actionID })
++    }
++}
++
++public enum AyuPluginImporter {
++    public static let maximumFileBytes = 512 * 1024
++    public static func parse(_ data: Data, filename: String) throws -> AyuPluginManifest {
++        guard (filename as NSString).pathExtension.lowercased() == "plugin", !data.isEmpty, data.count <= self.maximumFileBytes else { throw AyuPluginError.invalidFile }
++        if let manifest = try? JSONDecoder().decode(AyuPluginManifest.self, from: data) {
++            try manifest.validate()
++            return manifest
++        }
++        // Conversion is a reviewed native adapter, never a metadata-based execution shortcut.
++        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
++        guard hash == "802dd326787e3640f55f20ac5462539c03202184e540578a4531c693c2c3458a" else { throw AyuPluginError.unsupportedAndroidPlugin }
++        return AyuPluginManifest(id: "search_plus", name: "Search+ for iOS", author: "@SearchPlusss (original)", version: "2.6.1-ios.1", summary: "Native search actions adapted from Search+. Multi-term search uses up to six phrases separated by | in the current chat.", actions: [
++            AyuPluginAction(id: "search", title: "Search+", kind: .searchTerms)
++        ], convertedFrom: "exteraGram Search+ 2.6.1", sourceSHA256: hash, limitations: [
++            "Search is limited to the current chat and up to 40 results per phrase; no automatic pagination.",
++            "Android hooks, global search injection, user lookup by ID/phone and custom date/type/author filters are not converted.",
++            "The original Python code is not executed. This installs the listed native adapter actions only."
++        ])
++    }
++    public static func export(_ manifest: AyuPluginManifest) throws -> Data {
++        try manifest.validate()
++        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
++        return try encoder.encode(manifest)
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuReactionDisplaySettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuReactionDisplaySettings.swift
 new file mode 100644
 index 00000000..a1a49e38
@@ -25401,7 +25715,7 @@ index 0d9792e7..a0727e86 100644
              
              var reactionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode))?
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
-index 21291a56..04da957b 100644
+index 21291a56..6ec77b13 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
 @@ -903,7 +903,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
@@ -25413,6 +25727,19 @@ index 21291a56..04da957b 100644
                      if arguments.topMessage.isRestricted(platform: "ios", contentSettings: arguments.context.currentContentSettings.with { $0 }) || arguments.presentationData.isPreview {
                          dateReactionsAndPeers = ([], [])
                      }
+@@ -1006,7 +1006,11 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
+                 } else {
+                     let principalGraphics = PresentationResourcesChat.principalGraphics(theme: arguments.presentationData.theme.theme, wallpaper: arguments.presentationData.theme.wallpaper, bubbleCorners: arguments.presentationData.chatBubbleCorners)
+                     
+-                    fileIconImage = arguments.incoming ? principalGraphics.radialIndicatorFileIconIncoming : principalGraphics.radialIndicatorFileIconOutgoing
++                    if arguments.file.fileName?.lowercased().hasSuffix(".plugin") == true {
++                        fileIconImage = UIImage(systemName: "puzzlepiece.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22.0, weight: .semibold))?.withTintColor(.white, renderingMode: .alwaysOriginal)
++                    } else {
++                        fileIconImage = arguments.incoming ? principalGraphics.radialIndicatorFileIconIncoming : principalGraphics.radialIndicatorFileIconOutgoing
++                    }
+                     viewOnceIconImage = principalGraphics.radialIndicatorViewOnceIcon
+                 }
+                 
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveInstantVideoNode/Sources/ChatMessageInteractiveInstantVideoNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveInstantVideoNode/Sources/ChatMessageInteractiveInstantVideoNode.swift
 index 627ad4db..eabdd2bb 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveInstantVideoNode/Sources/ChatMessageInteractiveInstantVideoNode.swift
@@ -26248,6 +26575,163 @@ index 00000000..2c07baa7
 +        return true
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
+new file mode 100644
+index 00000000..5cbfa9e2
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
+@@ -0,0 +1,151 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import ChatControllerInteraction
++import ChatPresentationInterfaceState
++
++private final class AyuPluginRunnerController: UITableViewController {
++    private let context: AccountContext
++    private let peerId: EnginePeer.Id
++    private let threadId: Int64?
++    private let jump: (EngineMessage.Id) -> Void
++    private let draft: (String) -> Void
++    private let russian: Bool
++    private let request = MetaDisposable()
++    private var commands: [(String, AyuPluginAction, String)] = []
++    private var messages: [EngineMessage] = []
++    private var status: String
++    private var generation = 0
++    init(context: AccountContext, peerId: EnginePeer.Id, threadId: Int64?, russian: Bool, jump: @escaping (EngineMessage.Id) -> Void, draft: @escaping (String) -> Void) {
++        self.context = context; self.peerId = peerId; self.threadId = threadId; self.russian = russian
++        self.jump = jump; self.draft = draft
++        self.status = russian ? "Выбери действие плагина. Поиск: до 40 результатов на фразу." : "Choose a plugin action. Search: up to 40 results per phrase."
++        super.init(style: .insetGrouped)
++        self.title = russian ? "Плагины" : "Plugins"
++        for plugin in context.account.network.ayuGhostMode.current.plugins.installed where plugin.enabled {
++            for action in plugin.manifest.actions { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
++        }
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.request.dispose() }
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        self.tableView.rowHeight = UITableView.automaticDimension
++        self.tableView.estimatedRowHeight = 64
++    }
++    @objc private func done() { self.request.set(nil); self.dismiss(animated: true) }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? self.commands.count : self.messages.count }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        return section == 0 ? self.status : nil
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
++        if indexPath.section == 0 {
++            let command = self.commands[indexPath.row]
++            cell.imageView?.image = UIImage(systemName: "puzzlepiece.fill")
++            cell.textLabel?.text = command.1.title
++            cell.detailTextLabel?.text = command.2
++        } else {
++            let message = self.messages[indexPath.row]
++            // Do not flatten spoiler/protected text into an unformatted plugin preview.
++            cell.textLabel?.text = (self.russian ? "Сообщение №" : "Message #") + String(message.id.id)
++            cell.detailTextLabel?.text = DateFormatter.localizedString(from: Date(timeIntervalSince1970: Double(message.timestamp)), dateStyle: .medium, timeStyle: .short)
++            cell.accessoryType = .disclosureIndicator
++        }
++        return cell
++    }
++    private func available(_ command: (String, AyuPluginAction, String)) -> Bool {
++        return self.context.account.network.ayuGhostMode.current.plugins.action(pluginID: command.0, actionID: command.1.id) == command.1
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        if indexPath.section == 1 {
++            guard indexPath.row < self.messages.count else { return }
++            let id = self.messages[indexPath.row].id
++            self.request.set(nil)
++            let jump = self.jump
++            self.dismiss(animated: true, completion: { jump(id) })
++            return
++        }
++        let command = self.commands[indexPath.row]
++        guard self.available(command) else { return }
++        let prompt = command.1.kind == .searchTerms
++            ? (self.russian ? "Фразы через |, максимум 6. Результаты объединяются без повторов. Поиск в текущем чате/теме, без автоматической загрузки следующих страниц." : "Up to 6 phrases separated by |. Results are merged without duplicates. Current chat/topic only; no automatic pagination.")
++            : (self.russian ? "Введи текст. Отправка сообщений автоматически не выполняется." : "Enter text. Messages are never sent automatically.")
++        let alert = UIAlertController(title: command.1.title, message: prompt, preferredStyle: .alert)
++        alert.addTextField { $0.autocorrectionType = .no }
++        alert.addAction(UIAlertAction(title: self.russian ? "Выполнить" : "Run", style: .default, handler: { [weak self, weak alert] _ in
++            guard let self, self.available(command), let text = alert?.textFields?.first?.text else { return }
++            do {
++                if command.1.kind == .replaceText {
++                    let result = try command.1.transformed(text)
++                    let confirm = UIAlertController(title: self.russian ? "Добавить в черновик?" : "Append to draft?", message: result, preferredStyle: .alert)
++                    confirm.addAction(UIAlertAction(title: self.russian ? "Добавить" : "Append", style: .default, handler: { [weak self] _ in
++                        guard let self, self.available(command) else { return }
++                        let draft = self.draft
++                        self.dismiss(animated: true, completion: { draft(result) })
++                    }))
++                    confirm.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++                    self.present(confirm, animated: true)
++                } else { self.search(try command.1.queries(text), command: command) }
++            } catch {
++                self.status = self.russian ? "Некорректный текст или превышен лимит. Фраза поиска: 1–128 символов; максимум 6 фраз." : "Invalid input or limit exceeded. Search phrases: 1–128 characters, up to 6 phrases."
++                self.tableView.reloadData()
++            }
++        }))
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        self.present(alert, animated: true)
++    }
++    private func search(_ queries: [String], command: (String, AyuPluginAction, String)) {
++        self.generation += 1
++        let generation = self.generation
++        self.messages = []
++        self.status = self.russian ? "Поиск…" : "Searching…"
++        self.tableView.reloadData()
++        let signals: [Signal<[EngineMessage], NoError>] = queries.map { query in
++            return self.context.engine.messages.searchMessages(location: .peer(peerId: self.peerId, fromId: nil, tags: nil, reactions: nil, threadId: self.threadId, minDate: nil, maxDate: nil), query: query, state: nil, limit: 40)
++            |> take(1)
++            |> map { result in result.0.messages.map { EngineMessage($0) } }
++        }
++        self.request.set((combineLatest(signals)
++        |> map { Optional($0) }
++        |> timeout(15.0, queue: Queue.mainQueue(), alternate: .single(nil))
++        |> deliverOnMainQueue).start(next: { [weak self] batches in
++            guard let self, self.generation == generation else { return }
++            guard self.available(command) else { self.messages = []; self.status = self.russian ? "Плагин выключен или изменён." : "Plugin disabled or changed."; self.tableView.reloadData(); return }
++            guard let batches else { self.status = self.russian ? "Время ожидания истекло. Попробуй снова." : "Search timed out. Try again."; self.tableView.reloadData(); return }
++            var unique: [EngineMessage.Id: EngineMessage] = [:]
++            for message in batches.flatMap({ $0 }) where message.id.peerId == self.peerId { unique[message.id] = message }
++            self.messages = unique.values.sorted { $0.timestamp == $1.timestamp ? $0.id.id > $1.id.id : $0.timestamp > $1.timestamp }
++            self.status = (self.russian ? "Результатов: " : "Results: ") + String(self.messages.count) + (self.russian ? ". До 40 на фразу; это не вся история." : ". Up to 40 per phrase; this is not the entire history.")
++            self.tableView.reloadData()
++        }))
++    }
++}
++
++extension ChatControllerImpl {
++    func ayuOpenPlugins() {
++        guard let peerId = self.chatLocation.peerId, peerId.namespace != Namespaces.Peer.SecretChat else { return }
++        let controller = AyuPluginRunnerController(context: self.context, peerId: peerId, threadId: self.chatLocation.threadId, russian: self.presentationData.strings.baseLanguageCode.hasPrefix("ru"), jump: { [weak self] id in
++            guard let self, self.chatLocation.peerId == id.peerId else { return }
++            self.navigateToMessage(messageLocation: .id(id, NavigateToMessageParams(timestamp: nil, quote: nil)), animated: true, forceInCurrentChat: true)
++        }, draft: { [weak self] text in
++            guard let self, canSendMessagesToChat(self.presentationInterfaceState), self.presentationInterfaceState.interfaceState.editMessage == nil, AyuTextToolsPolicy.canRepeat(text) else { return }
++            let _ = self.presentVoiceMessageDiscardAlert(action: { [weak self] in
++                guard let self, canSendMessagesToChat(self.presentationInterfaceState), self.presentationInterfaceState.interfaceState.editMessage == nil else { return }
++                self.interfaceInteraction?.updateTextInputStateAndMode { state, _ in
++                    let addition = NSAttributedString(string: (state.isEmpty ? "" : "\n") + text)
++                    return (state.replacingFlatRange(NSRange(location: state.content.length, length: 0), with: addition), .text)
++                }
++                self.chatDisplayNode.ensureInputViewFocused()
++            })
++        })
++        self.context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: controller))
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift
 new file mode 100644
 index 00000000..f4aae11e
@@ -26815,7 +27299,7 @@ index 0fb1ee10..eb1aa155 100644
                  let lastHeaderId = filteredEntries.last.flatMap { listMessageDateHeaderId(timestamp: $0.index.timestamp) } ?? 0
                  let processedView = ChatHistoryView(originalView: view, filteredEntries: filteredEntries, associatedData: associatedData, lastHeaderId: lastHeaderId, id: id, locationInput: update.2, ignoreMessagesInTimestampRange: update.3, ignoreMessageIds: update.4)
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..74820fcc 100644
+index 1ade8c01..66fde174 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -26863,7 +27347,7 @@ index 1ade8c01..74820fcc 100644
              if !actions.isEmpty {
                  actions.insert(.separator, at: 0)
              }
-@@ -2479,6 +2485,96 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2479,6 +2485,105 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
@@ -26927,6 +27411,15 @@ index 1ade8c01..74820fcc 100644
 +                    })))
 +                }
 +            }
++            if context.account.network.ayuGhostMode.current.plugins.installed.contains(where: { $0.enabled }), chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, message.id.peerId.namespace != Namespaces.Peer.SecretChat, EngineMessage(message).adAttribute == nil {
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Плагины" : "AyuGram · Plugins", icon: { theme in
++                    return UIImage(systemName: "puzzlepiece.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                }, action: { controller, _ in
++                    controller?.dismiss(completion: {
++                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuOpenPlugins()
++                    })
++                })))
++            }
 +            if ayuInterface.showCopyMessageIds, EngineMessage(message).adAttribute == nil {
 +                let kind: AyuPeerIdFormat.Kind = message.id.peerId.namespace == Namespaces.Peer.CloudChannel ? .channel : (message.id.peerId.namespace == Namespaces.Peer.CloudGroup ? .group : .user)
 +                let chatId = AyuPeerIdFormat.text(id: message.id.peerId.id._internalGetInt64Value(), kind: kind)
@@ -26975,10 +27468,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..78f8b503
+index 00000000..d3351082
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,519 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -27434,6 +27927,70 @@ index 00000000..78f8b503
 +check(postboxRoundTrip(postboxHistory) == postboxHistory, "Actual Postbox: clearing records preserves opt-ins")
 +print("PASS: \(checks) total checks, including the actual pinned Postbox encoder/decoder; device/UI testing remains separate")
 +#endif
++
++func pluginThrows(_ body: () throws -> Void) -> Bool {
++    do { try body(); return false } catch { return true }
++}
++let searchAction = AyuPluginAction(id: "search", title: "Search", kind: .searchTerms)
++let plugin = AyuPluginManifest(id: "test_search", name: "Test", author: "Tests", version: "1", summary: "Test search", actions: [searchAction])
++try plugin.validate()
++let nativePluginData = try AyuPluginImporter.export(plugin)
++let importedPlugin = try AyuPluginImporter.parse(nativePluginData, filename: "test.PLUGIN")
++check(importedPlugin == plugin, "Native .plugin export/import must round-trip")
++check(plugin.permissions == ["search.messages"], "Capabilities derive from actual operations")
++let queries = try searchAction.queries(" one | two |one ")
++check(queries == ["one", "two"], "Split search must trim and deduplicate phrases")
++check(pluginThrows { _ = try searchAction.queries("one||two") }, "Empty phrases must be rejected")
++check(pluginThrows { _ = try searchAction.queries("1|2|3|4|5|6|7") }, "Search concurrency must be bounded")
++check(pluginThrows { _ = try searchAction.queries(String(repeating: "x", count: 129)) }, "Long queries must not be truncated")
++check(pluginThrows { _ = try AyuPluginImporter.parse(nativePluginData, filename: "test.py") }, "Import accepts .plugin only")
++check(pluginThrows { _ = try AyuPluginImporter.parse(Data(), filename: "test.plugin") }, "Empty files rejected")
++check(pluginThrows { _ = try AyuPluginImporter.parse(Data(repeating: 0, count: AyuPluginImporter.maximumFileBytes + 1), filename: "test.plugin") }, "File size checked before parsing")
++check(pluginThrows { _ = try AyuPluginImporter.parse(Data("__id__ = 'search_plus'\nraise Exception()".utf8), filename: "test.plugin") }, "Spoofed Android metadata must not select the reviewed adapter or execute code")
++var invalidPlugin = plugin
++invalidPlugin.apiVersion = 2
++check(pluginThrows { try invalidPlugin.validate() }, "Unknown plugin ABI rejected")
++invalidPlugin = plugin; invalidPlugin.id = "../escape"
++check(pluginThrows { try invalidPlugin.validate() }, "Path-like IDs rejected")
++invalidPlugin = plugin; invalidPlugin.actions.append(searchAction)
++check(pluginThrows { try invalidPlugin.validate() }, "Duplicate action IDs rejected")
++var registry = AyuPluginRegistry()
++try registry.install(plugin)
++check(registry.installed.count == 1 && !registry.installed[0].enabled, "Imported plugin starts disabled")
++check(registry.action(pluginID: plugin.id, actionID: "search") == nil, "Disabled plugin actions are unavailable")
++registry.setEnabled(id: plugin.id, enabled: true)
++check(registry.action(pluginID: plugin.id, actionID: "search") == searchAction, "Enabled action can resolve")
++try registry.install(plugin)
++check(registry.installed.count == 1 && !registry.installed[0].enabled, "Replacement is atomic and disables the plugin")
++for index in 1...11 {
++    var another = plugin; another.id = "p\(index)"; try registry.install(another)
++}
++let fullRegistry = registry
++var overflowPlugin = plugin; overflowPlugin.id = "overflow"
++check(pluginThrows { try registry.install(overflowPlugin) }, "Registry size must be bounded")
++check(registry == fullRegistry, "Capacity failure must preserve registry")
++registry.remove(id: plugin.id)
++check(registry.installed.count == 11, "Uninstall removes only the selected plugin")
++let replaceAction = AyuPluginAction(id: "replace", title: "Replace", kind: .replaceText, find: "[x]", replacement: "done")
++let replaced = try replaceAction.transformed("[x] .* [x]")
++check(replaced == "done .* done", "Text replacement is literal, not arbitrary regex/code")
++check(replaceAction.permission == "draft.prepare", "Replacement only prepares a draft")
++check(pluginThrows { _ = try replaceAction.transformed(String(repeating: "x", count: 8193)) }, "Draft input bounded")
++try store.update { try $0.plugins.install(plugin) }
++try store.update { $0.plugins.setEnabled(id: plugin.id, enabled: true) }
++let reloadedPlugins = AyuGhostModeStore(accountPath: first.path).current
++check(reloadedPlugins.plugins.action(pluginID: plugin.id, actionID: "search") == searchAction, "Plugin state survives account restart")
++let priorPluginSettings = store.current
++check(pluginThrows { try store.update { try $0.plugins.install(invalidPlugin) } }, "Invalid plugin persistence fails")
++check(store.current == priorPluginSettings, "Failed plugin transaction preserves all account settings")
++let oldSettings = try JSONDecoder().decode(AyuGhostModeSettings.self, from: Data("{}".utf8))
++check(oldSettings.plugins.installed.isEmpty, "Old settings gain an empty registry")
++let invalidPluginObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(invalidPlugin))
++let damagedRegistryData = try JSONSerialization.data(withJSONObject: ["hideOnline": true, "plugins": ["installed": [["manifest": invalidPluginObject, "enabled": true]]]])
++let recoveredPluginSettings = try JSONDecoder().decode(AyuGhostModeSettings.self, from: damagedRegistryData)
++check(recoveredPluginSettings.hideOnline && recoveredPluginSettings.plugins.installed.isEmpty, "Bad plugin registry must not reset privacy policy")
++check(AyuGhostModeStore(accountPath: second.path).current.plugins.installed.isEmpty, "Plugins remain isolated per account")
++print("PASS: \(checks) total model checks including plugin import/registry/runtime policies; native UI/device checks remain separate")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

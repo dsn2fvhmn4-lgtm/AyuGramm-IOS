@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 
 def contract_errors(source):
@@ -74,6 +75,29 @@ def main():
                 errors.append(f'{path.name} SDK type check:\n{result.stdout}{result.stderr}')
             else:
                 print(f'PASS: actual {path.name} type-checked against the iOS Simulator SDK')
+        # Model-only harness from real source, without Telegram network/database stubs.
+        # It checks the actual plugin manager against UIKit and actual model signatures.
+        manager = source / 'submodules/SettingsUI/Sources/AyuPluginManagerController.swift'
+        if manager.exists():
+            ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
+            models = [ayu / name for name in (
+                'AyuPlugins.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
+                'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotSettings.swift',
+                'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuRegexSettings.swift')]
+            with tempfile.TemporaryDirectory(prefix='ayu-plugin-sdk-') as directory:
+                flags = ['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
+                         '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator']
+                result = subprocess.run([*flags, '-emit-module', '-module-name', 'TelegramCore',
+                                         '-emit-module-path', str(Path(directory) / 'TelegramCore.swiftmodule'),
+                                         *map(str, models)], capture_output=True, text=True)
+                if result.returncode:
+                    errors.append(f'Actual plugin model SDK harness:\n{result.stdout}{result.stderr}')
+                else:
+                    result = subprocess.run([*flags, '-typecheck', '-I', directory, str(manager)], capture_output=True, text=True)
+                    if result.returncode:
+                        errors.append(f'Actual plugin manager UIKit SDK check:\n{result.stdout}{result.stderr}')
+                    else:
+                        print('PASS: actual plugin manager checked against UIKit and actual model-only harness; full Telegram integration remains separate')
     if errors:
         raise SystemExit('\n'.join(errors))
     print(f'PASS: {len(paths)} changed Swift sources parsed; UI import and Telegram API contracts checked. Full type checking still occurs during the native build.')

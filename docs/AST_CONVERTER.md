@@ -78,3 +78,12 @@ python tools/convert_plugin.py --ast plugins/android_branch_hook.plugin output.p
 
 Upstream references: [Python Apple support](https://github.com/beeware/Python-Apple-support),
 [Python on iOS](https://docs.python.org/3/using/ios.html).
+
+## Compiler verification
+
+[macOS check 40318109369](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/actions/runs/40318109369)
+passed the real CPython Objective-C header check, Swift SDK checks, packaging and
+signing of 68 extension frameworks, 48 Python tests and 586 native model checks.
+The model checks include API 6 import, activation, execution, persistence,
+empty/oversized output rejection and old-version rejection. The compiler-check
+workflow does not boot a simulator or launch an application.

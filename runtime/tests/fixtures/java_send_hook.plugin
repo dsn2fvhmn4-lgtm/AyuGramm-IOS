@@ -1,0 +1,29 @@
+from base_plugin import BasePlugin, MethodHook
+from hook_utils import find_class
+from java import jclass
+
+__id__ = "java_send_hook_fixture"
+__name__ = "Java send hook fixture"
+__author__ = "@fixture"
+__version__ = "1.0"
+
+
+class AppendSignature(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        params = param.args[0]
+        if params.message == "block me":
+            param.setResult(None)
+            return
+        if self.plugin.get_setting("sign", True):
+            params.message = params.message + " ~sig"
+
+
+class JavaSendHookFixture(BasePlugin):
+    def on_plugin_load(self):
+        helper = find_class("org.telegram.messenger.SendMessagesHelper")
+        params_class = jclass("org.telegram.messenger.SendMessagesHelper$SendMessageParams")
+        method = helper.getDeclaredMethod("sendMessage", params_class)
+        self.hook_method(method, AppendSignature(self))

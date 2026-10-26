@@ -1,0 +1,22 @@
+from base_plugin import BasePlugin, HookResult, HookStrategy
+
+__id__ = "send_hook_fixture"
+__name__ = "Send hook fixture"
+__description__ = "Upper-cases .up messages and cancels .nosend"
+__author__ = "@fixture"
+__version__ = "1.0"
+
+
+class SendHookFixture(BasePlugin):
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+
+    def on_send_message_hook(self, account, params):
+        if not isinstance(params.message, str):
+            return HookResult()
+        if params.message == ".nosend":
+            return HookResult(strategy=HookStrategy.CANCEL)
+        if params.message.startswith(".up "):
+            params.message = params.message[4:].upper()
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+        return HookResult()

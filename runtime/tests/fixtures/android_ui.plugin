@@ -1,0 +1,23 @@
+from base_plugin import BasePlugin, MethodHook
+from hook_utils import find_class, get_private_field
+from org.telegram.messenger import AndroidUtilities
+from android.widget import TextView
+
+__id__ = "android_ui_fixture"
+__name__ = "Android UI fixture"
+__author__ = "@fixture"
+__version__ = "0.3"
+
+
+class CellHook(MethodHook):
+    def after_hooked_method(self, param):
+        get_private_field(param.thisObject, "currentMessageObject")
+
+
+class AndroidUiFixture(BasePlugin):
+    def on_plugin_load(self):
+        cell = find_class("org.telegram.ui.Cells.ChatMessageCell")
+        self.hook_all_methods(cell, "setMessageObject", CellHook())
+        self.padding = AndroidUtilities.dp(8)
+        self.view = TextView(None)
+        AndroidUtilities.getRealScreenSize()

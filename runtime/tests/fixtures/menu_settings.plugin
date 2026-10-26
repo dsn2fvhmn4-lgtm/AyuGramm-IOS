@@ -1,0 +1,42 @@
+from base_plugin import BasePlugin, MenuItemData, MenuItemType
+from android_utils import copy_to_clipboard
+from ui.bulletin import BulletinHelper
+from ui.settings import Header, Switch, Input, Selector
+from ui.alert import AlertDialogBuilder
+from org.telegram.messenger import R
+
+__id__ = "menu_settings_fixture"
+__name__ = "Menu and settings fixture"
+__author__ = "@fixture"
+__version__ = "2.1"
+
+
+class MenuSettingsFixture(BasePlugin):
+    def on_plugin_load(self):
+        self.add_menu_item(MenuItemData(menu_type=MenuItemType.MESSAGE_CONTEXT_MENU, text="Copy upper",
+                                        on_click=self.copy_upper, icon=R.drawable.msg_copy))
+        self.add_menu_item(MenuItemData(menu_type=MenuItemType.CHAT_ACTION_MENU, text="Ask", on_click=self.ask))
+
+    def create_settings(self):
+        return [
+            Header(text="Copy"),
+            Switch(key="notify", text="Show bulletin", default=True),
+            Input(key="suffix", text="Suffix", default="!"),
+            Selector(key="mode", text="Mode", default=1, items=["lower", "upper"]),
+        ]
+
+    def copy_upper(self, context):
+        text = context["message"].messageText
+        if self.get_setting("mode", 1) == 1:
+            text = text.upper()
+        copy_to_clipboard(text + self.get_setting("suffix", "!"))
+        if self.get_setting("notify", True):
+            BulletinHelper.show_success("Copied")
+
+    def ask(self, context):
+        builder = AlertDialogBuilder(None)
+        builder.set_title("Question")
+        builder.set_message("Proceed?")
+        builder.set_positive_button("Yes", lambda b, which: self.set_setting("answered", which))
+        builder.set_negative_button("No")
+        builder.show()

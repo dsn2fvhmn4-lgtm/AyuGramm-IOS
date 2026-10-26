@@ -66,6 +66,8 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | disableOpenLinkWarning (Desktop) | Skip the "Open this link?" prompt for text links; disguised hosts (login part), proxies and forced prompts still ask |
 | unlimitedRecentStickers (Desktop) | Local recent stickers cap raised from 20 to 200; the server list is unchanged |
 | spoofWebviewAsAndroid (Desktop) | Mini apps are requested with platform "android" instead of "ios" |
+| streamerMode (Desktop) | Streamer mode: the app window is left out of screenshots, screen recordings and screen sharing through Telegram's secret-chat secure layer; the system keyboard stays visible |
+| hideAllChatsFolder (Desktop) | Hide All Chats folder: while at least one folder exists the tab is hidden and the first folder opens; the All Chats page stays last in the container |
 Additional Desktop-only scope (not implemented by these flags): shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata, conditional/always silent-send modes, translation providers (Telegram/LibreTranslate/DeepL), chat export (HTML+JSON, forward to Saved Messages) and the media archive manager already have source implementations.
 
 Release gates: clean pinned-patch application, UI import/API-contract checks, parse all changed Swift sources, compile/run real Foundation models, full Telegram target type check/link/package, then device and recorded simulator checks. The 32-check result applies only to the earlier history revision; newly added regex/migration/metadata/media-archive tests have not yet run on a Mac.

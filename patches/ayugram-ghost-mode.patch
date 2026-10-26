@@ -66901,7 +66901,7 @@ index f753a8ea..9367fba0 100644
                      if case let .search(search) = source {
                          switch search {
 diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
-index 5bdff8a6..d5773315 100644
+index 5bdff8a6..fbd8ff65 100644
 --- a/submodules/ChatListUI/Sources/ChatListController.swift
 +++ b/submodules/ChatListUI/Sources/ChatListController.swift
 @@ -452,9 +452,9 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
@@ -66937,6 +66937,87 @@ index 5bdff8a6..d5773315 100644
                      |> deliverOnMainQueue).startStrict(next: { [weak self] rawStoryArchiveSubscriptions in
                          guard let self else {
                              return
+@@ -4049,10 +4052,23 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+             
+             let (_, items) = countAndFilterItems
+             var filterItems: [ChatListFilterTabEntry] = []
+-            
++
++            // AyuGram "Hide All Chats folder": while at least one folder exists, the All Chats
++            // tab is not shown and the first folder opens. The container keeps the All Chats
++            // page (last) because it assumes that page always exists.
++            let ayuHideAllChats = strongSelf.context.account.network.ayuGhostMode.current.interface.hideAllChatsFolder && items.contains(where: { item in
++                if case .filter = item.0 {
++                    return true
++                }
++                return false
++            })
++
+             for (filter, unreadCount, hasUnmutedUnread) in items {
+                 switch filter {
+                     case .allChats:
++                        if ayuHideAllChats {
++                            break
++                        }
+                         if let isPremium = isPremium, !isPremium && filterItems.count > 0 {
+                             filterItems.insert(.all(unreadCount: 0), at: 0)
+                         } else {
+@@ -4069,7 +4085,17 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                 resolvedItems = []
+             }
+             
+-            let firstItem = countAndFilterItems.1.first?.0 ?? .allChats
++            let firstItem: ChatListFilter
++            if ayuHideAllChats {
++                firstItem = countAndFilterItems.1.first(where: { item in
++                    if case .filter = item.0 {
++                        return true
++                    }
++                    return false
++                })?.0 ?? .allChats
++            } else {
++                firstItem = countAndFilterItems.1.first?.0 ?? .allChats
++            }
+             let firstItemEntryId: ChatListFilterTabEntryId
+             switch firstItem {
+                 case .allChats:
+@@ -4077,9 +4103,14 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                 case let .filter(id, _, _, _):
+                     firstItemEntryId = .filter(id)
+             }
+-            
++
+             var selectedEntryId = !strongSelf.initializedFilters ? firstItemEntryId : strongSelf.chatListDisplayNode.mainContainerNode.currentItemFilter
+             var resetCurrentEntry = false
++            if ayuHideAllChats && selectedEntryId == .all {
++                // Resolved here: the fallback search below cannot start from the first tab.
++                selectedEntryId = firstItemEntryId
++                resetCurrentEntry = strongSelf.initializedFilters
++            }
+             if !resolvedItems.contains(where: { $0.id == selectedEntryId }) {
+                 resetCurrentEntry = true
+                 if let tabContainerData = strongSelf.tabContainerData {
+@@ -4108,6 +4139,9 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                 switch item.0 {
+                     case .allChats:
+                         hasAllChats = true
++                        if ayuHideAllChats {
++                            break
++                        }
+                         if let isPremium = isPremium, !isPremium && availableFilters.count > 0 {
+                             availableFilters.insert(.all, at: 0)
+                         } else {
+@@ -4117,7 +4151,9 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                         availableFilters.append(.filter(item.0))
+                 }
+             }
+-            if !hasAllChats {
++            if ayuHideAllChats {
++                availableFilters.append(.all)
++            } else if !hasAllChats {
+                 availableFilters.insert(.all, at: 0)
+             }
+             strongSelf.chatListDisplayNode.mainContainerNode.updateAvailableFilters(availableFilters, limit: filtersLimit)
 diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 index e41738b1..bc54a27b 100644
 --- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
@@ -68779,10 +68860,10 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..8e52a93b
+index 00000000..78fb171d
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,603 @@
+@@ -0,0 +1,608 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -69210,6 +69291,8 @@ index 00000000..8e52a93b
 +                case 12: $0.interface.disableOpenLinkWarning = value
 +                case 13: $0.interface.unlimitedRecentStickers = value
 +                case 14: $0.interface.spoofWebAppAsAndroid = value
++                case 15: $0.interface.streamerMode = value
++                case 16: $0.interface.hideAllChatsFolder = value
 +                default: break
 +                }
 +            }
@@ -69247,6 +69330,9 @@ index 00000000..8e52a93b
 +            .toggle(12, ru ? "Не спрашивать при открытии ссылок" : "Disable open link warning", value.disableOpenLinkWarning),
 +            .toggle(13, ru ? "Больше недавних стикеров" : "Unlimited recent stickers", value.unlimitedRecentStickers),
 +            .toggle(14, ru ? "Мини-приложения как на Android" : "Open mini apps as Android", value.spoofWebAppAsAndroid),
++            .toggle(15, ru ? "Режим стримера" : "Streamer mode", value.streamerMode),
++            .toggle(16, ru ? "Скрыть папку «Все чаты»" : "Hide All Chats folder", value.hideAllChatsFolder),
++            .info(17, ru ? "Режим стримера убирает окно AyuGram со скриншотов, записи экрана и трансляций, как секретные чаты; на самом телефоне всё видно, клавиатура системная и не скрывается. «Все чаты» скрываются, только если есть хотя бы одна папка; открывается первая папка. Применяется при следующем обновлении папок или после перезапуска." : "Streamer mode leaves the AyuGram window out of screenshots, screen recordings and streams, like secret chats; the phone itself still shows everything and the system keyboard is not hidden. All Chats is hidden only while at least one folder exists; the first folder opens. Applies on the next folder update or after a restart."),
 +            .info(20, ru ? "Истории, похожие каналы и приветственный стикер применяются при следующем открытии списка чатов или чата (надёжнее всего — после перезапуска). Скрытые истории не отмечаются просмотренными. Счётчики заменяются точкой. Спойлеры и zalgo-фильтр работают для текста сообщений. Предупреждение остаётся для ссылок с поддельным адресом и прокси. «Больше недавних стикеров» хранит до 200 вместо 20 на этом устройстве. Мини-приложения получают платформу android вместо ios." : "Stories, similar channels and the greeting sticker apply the next time the chat list or a chat opens (most reliably after a restart). Hidden stories are not marked as viewed. Counters become a dot. Spoilers and the zalgo filter apply to message text. The warning stays for links with a disguised host and for proxies. Unlimited recent stickers keeps up to 200 instead of 20 on this device. Mini apps receive the android platform instead of ios."),
 +            .info(30, ru ? "Нажатие на ID копирует его. Счётчик меняется только на вкладке «Чаты»; состояние прочтения сохраняется. Быстрая пересылка скрывается возле обычных пузырьков, а комментарии и рекламные действия остаются доступны. MessageShot находится в меню сообщения и в действиях «Поделиться» для выбранных сообщений." : "Tap a profile ID to copy it. The badge setting affects the Chats tab and preserves read state. Quick-share hiding applies to ordinary bubbles; comment and sponsored-message actions remain available. MessageShot appears in the message menu and selected-message Share choices.")
 +        ]
@@ -70859,10 +70945,10 @@ index 00000000..ae6b26ad
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..521ee594
+index 00000000..c5014c28
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,84 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -70891,6 +70977,8 @@ index 00000000..521ee594
 +    public var filterZalgo = false
 +    public var spoofWebAppAsAndroid = false
 +    public var unlimitedRecentStickers = false
++    public var streamerMode = false
++    public var hideAllChatsFolder = false
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
@@ -70900,7 +70988,7 @@ index 00000000..521ee594
 +        case showRepeatText, showSearchPhrase, showCopyMessageIds
 +        case showHideMessage
 +        case hideStories, hideSimilarChannels, hidePremiumStatuses, hideUnreadCounters, revealSpoilers
-+        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers
++        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers, streamerMode, hideAllChatsFolder
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -70928,6 +71016,8 @@ index 00000000..521ee594
 +        self.filterZalgo = try values.decodeIfPresent(Bool.self, forKey: .filterZalgo) ?? false
 +        self.spoofWebAppAsAndroid = try values.decodeIfPresent(Bool.self, forKey: .spoofWebAppAsAndroid) ?? false
 +        self.unlimitedRecentStickers = try values.decodeIfPresent(Bool.self, forKey: .unlimitedRecentStickers) ?? false
++        self.streamerMode = try values.decodeIfPresent(Bool.self, forKey: .streamerMode) ?? false
++        self.hideAllChatsFolder = try values.decodeIfPresent(Bool.self, forKey: .hideAllChatsFolder) ?? false
 +    }
 +}
 +
@@ -139986,14 +140076,25 @@ index 1ceb46bc..53bcd9e9 100644
              } else if WalletContext.isTonConnectUrl(url.absoluteString) {
                  context.context.walletContext?.processTonConnectUrl(url.absoluteString)
 diff --git a/submodules/TelegramUI/Sources/ApplicationContext.swift b/submodules/TelegramUI/Sources/ApplicationContext.swift
-index fe34b998..3073f36b 100644
+index fe34b998..dcfec8ae 100644
 --- a/submodules/TelegramUI/Sources/ApplicationContext.swift
 +++ b/submodules/TelegramUI/Sources/ApplicationContext.swift
-@@ -167,7 +167,10 @@ final class AuthorizedApplicationContext {
+@@ -156,7 +156,8 @@ final class AuthorizedApplicationContext {
+     private var showNewsTab: Bool
+     private var showNewsTabDisposable: Disposable?
+     private var enablePostboxTransactionsDiposable: Disposable?
+-    
++    private var ayuStreamerMode: AyuStreamerMode?
++
+     init(sharedApplicationContext: SharedApplicationContext, mainWindow: Window1, context: AccountContextImpl, accountManager: AccountManager<TelegramAccountManagerTypes>, showCallsTab: Bool, reinitializedNotificationSettings: @escaping () -> Void) {
+         self.sharedApplicationContext = sharedApplicationContext
+         
+@@ -167,7 +168,11 @@ final class AuthorizedApplicationContext {
          self.lockedCoveringView = LockedWindowCoveringView(theme: presentationData.theme)
          
          self.context = context
 -        
++        self.ayuStreamerMode = AyuStreamerMode(window: mainWindow, context: context)
 +
 +        // Start the embedded Python plugin runtime (no-op unless this build embeds CPython).
 +        AyuPythonBootstrap.shared.install(context: context)
@@ -140290,6 +140391,49 @@ index 00000000..e7c72fa0
 +        guard read == errSecSuccess else { return read }
 +        guard let data = value as? Data, data == Data([0x41, 0x59, 0x55]) else { return errSecDecode }
 +        return errSecSuccess
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuStreamerMode.swift b/submodules/TelegramUI/Sources/AyuStreamerMode.swift
+new file mode 100644
+index 00000000..662c8032
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuStreamerMode.swift
+@@ -0,0 +1,37 @@
++import Foundation
++import UIKit
++import SwiftSignalKit
++import TelegramCore
++import Display
++import UIKitRuntimeUtils
++
++/// AyuGram streamer mode (Desktop parity): while enabled for the active account, the app's
++/// window content is left out of screenshots, screen recordings and screen sharing, using
++/// the same secure-layer mechanism Telegram applies to secret chats. The person holding
++/// the phone still sees everything; the system keyboard is a separate window and stays visible.
++final class AyuStreamerMode {
++    private let disposable: Disposable
++
++    init(window: Window1, context: AccountContextImpl) {
++        let disposable = MetaDisposable()
++        self.disposable = disposable
++        disposable.set((context.account.network.ayuGhostMode.signal
++        |> map { $0.interface.streamerMode }
++        |> distinctUntilChanged
++        |> deliverOnMainQueue).startStrict(next: { [weak window] enabled in
++            guard let window else {
++                return
++            }
++            // Compared with the layer's own state, so switching to an account with the mode off
++            // also clears what the previous account set; an untouched layer is never toggled.
++            let layer = window.hostView.containerView.layer
++            if getLayerDisableScreenshots(layer) != enabled {
++                setLayerDisableScreenshots(layer, enabled)
++            }
++        }))
++    }
++
++    deinit {
++        self.disposable.dispose()
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift

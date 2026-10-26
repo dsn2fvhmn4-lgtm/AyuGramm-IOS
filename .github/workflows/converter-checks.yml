@@ -2,6 +2,11 @@ name: Converter preflight
 
 on:
   workflow_dispatch:
+    inputs:
+      simulator_only:
+        description: Run just the interpreter control after already passing SDK/model checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -33,17 +38,32 @@ jobs:
           subprocess.run(['git', '-C', 'telegram', 'fetch', '--depth=1', 'origin', pin['commit']], check=True)
           subprocess.run(['git', '-C', 'telegram', 'checkout', '--detach', 'FETCH_HEAD'], check=True)
           PY
+      - name: Apply complete port
+        run: |
+          python3 ci/prepare.py telegram
+          git -C telegram diff --check
       - name: Compile converter SDK and run real model tests
+        if: ${{ !inputs.simulator_only }}
         run: |
           set -euo pipefail
           {
-            python3 ci/prepare.py telegram
-            git -C telegram diff --check
             python3 -m unittest discover -s ci/tests -p 'test_*.py'
             python3 ci/preflight.py telegram
             python3 ci/test_models.py telegram
-            python3 ci/test_python_simulator.py telegram
           } 2>&1 | tee "$RUNNER_TEMP/converter-checks.log"
+      - name: Run embedded interpreter in iOS Simulator
+        run: |
+          set -euo pipefail
+          {
+            python3 - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'ci')
+          import python_support
+          python_support.prepare(Path('telegram'), Path(os.environ['RUNNER_TEMP']) / 'ayu-python-support', 'debug_sim_arm64')
+          PY
+            python3 ci/test_python_simulator.py telegram
+          } 2>&1 | tee -a "$RUNNER_TEMP/converter-checks.log"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

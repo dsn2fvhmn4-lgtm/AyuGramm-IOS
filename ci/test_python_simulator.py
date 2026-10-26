@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -73,8 +74,24 @@ def run(source, runtime):
         return
     selected_runtime = sorted(runtimes, key=lambda r: tuple(int(p) for p in r['version'].split('.')))[-1]
     phones = [d for d in listing['devicetypes'] if d['name'].startswith('iPhone')]
-    phone = phones[-1]
-    device = command('xcrun', 'simctl', 'create', 'AyuPython-converter-control', phone['identifier'], selected_runtime['identifier'])
+    # CoreSimulator lists historical types as well as current ones; its list is
+    # not ordered by runtime compatibility. Prefer types already paired with
+    # this runtime, then try newer phones, rejecting incompatible pairs.
+    paired = {d.get('deviceTypeIdentifier') for d in listing.get('devices', {}).get(selected_runtime['identifier'], []) if d.get('isAvailable')}
+    def rank(phone):
+        numbers = re.findall(r'\d+', phone['name'])
+        return (phone['identifier'] in paired, int(numbers[0]) if numbers else 0)
+    device = None
+    for phone in sorted(phones, key=rank, reverse=True):
+        created = subprocess.run(['xcrun', 'simctl', 'create', 'AyuPython-converter-control', phone['identifier'], selected_runtime['identifier']], capture_output=True, text=True)
+        if created.returncode == 0:
+            device = created.stdout.strip()
+            print('Interpreter control device: ' + phone['name'] + ' / ' + selected_runtime['version'])
+            break
+        if 'Incompatible device' not in created.stderr:
+            raise RuntimeError('Simulator creation failed: ' + created.stderr)
+    if device is None:
+        raise RuntimeError('No compatible iPhone type for the available iOS Simulator runtime')
     try:
         subprocess.run(['xcrun', 'simctl', 'boot', device], check=True)
         subprocess.run(['xcrun', 'simctl', 'bootstatus', device, '-b'], check=True, timeout=180)

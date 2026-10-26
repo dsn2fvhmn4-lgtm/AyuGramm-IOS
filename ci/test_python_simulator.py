@@ -72,7 +72,12 @@ def command(*args):
 
 
 def run(source, runtime):
-    listing = json.loads(command('xcrun', 'simctl', 'list', '-j'))
+    # Resolve developer tools before starting CoreSimulator; xcrun's SDK cache
+    # can block while a fresh simulator is performing its first initialization.
+    simctl = command('xcrun', '--find', 'simctl')
+    clang = command('xcrun', '--find', 'clang')
+    sdk = command('xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path')
+    listing = json.loads(command(simctl, 'list', '-j'))
     # Earlier interrupted controls used this exact reserved name. Do not touch
     # ordinary simulators or controls from other active branch runs.
     for devices in listing.get('devices', {}).values():
@@ -80,7 +85,7 @@ def run(source, runtime):
             if stale.get('name') == 'AyuPython-converter-control':
                 for operation in ('shutdown', 'delete'):
                     try:
-                        subprocess.run(['xcrun', 'simctl', operation, stale['udid']], check=False, timeout=10)
+                        subprocess.run([simctl, operation, stale['udid']], check=False, timeout=10)
                     except subprocess.TimeoutExpired:
                         print('::notice::Stale control cleanup timed out: ' + operation, flush=True)
     runtimes = [r for r in listing['runtimes'] if r.get('isAvailable') and r['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')]
@@ -100,7 +105,7 @@ def run(source, runtime):
     device = None
     for phone in sorted(phones, key=rank, reverse=True):
         control_name = 'AyuPython-converter-control-' + os.environ.get('GITHUB_RUN_ID', str(int(time.time())))
-        created = subprocess.run(['xcrun', 'simctl', 'create', control_name, phone['identifier'], selected_runtime['identifier']], capture_output=True, text=True, timeout=30)
+        created = subprocess.run([simctl, 'create', control_name, phone['identifier'], selected_runtime['identifier']], capture_output=True, text=True, timeout=30)
         if created.returncode == 0:
             device = created.stdout.strip()
             print('Interpreter control device: ' + phone['name'] + ' / ' + selected_runtime['version'], flush=True)
@@ -111,8 +116,8 @@ def run(source, runtime):
         raise RuntimeError('No compatible iPhone type for the available iOS Simulator runtime')
     try:
         print('Booting interpreter control device', flush=True)
-        subprocess.run(['xcrun', 'simctl', 'boot', device], check=True, timeout=150)
-        subprocess.run(['xcrun', 'simctl', 'bootstatus', device, '-b'], check=True, timeout=180)
+        subprocess.run([simctl, 'boot', device], check=True, timeout=150)
+        subprocess.run([simctl, 'bootstatus', device, '-b'], check=True, timeout=180)
         print('Compiling interpreter control application', flush=True)
         source = Path(source)
         with tempfile.TemporaryDirectory(prefix='ayu-python-simulator-') as folder:
@@ -129,8 +134,7 @@ def run(source, runtime):
             framework = source / 'third-party/ayu-python'
             main = folder / 'main.m'
             main.write_text(MAIN, encoding='utf-8')
-            sdk = command('xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path')
-            subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-fmodules', '-isysroot', sdk,
+            subprocess.run([clang, '-fobjc-arc', '-fmodules', '-isysroot', sdk,
                             '-target', 'arm64-apple-ios15.0-simulator', '-I', str(bridge), '-F', str(framework),
                             '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'Python',
                             '-Wl,-rpath,@executable_path/Frameworks', str(main), str(bridge / 'AyuPythonBridgeObjC.m'),
@@ -152,19 +156,19 @@ def run(source, runtime):
             (app / 'Control').chmod(0o755)
             subprocess.run(['codesign', '--force', '--deep', '--sign', '-', str(app)], check=True, timeout=60)
             print('Installing interpreter control application', flush=True)
-            subprocess.run(['xcrun', 'simctl', 'install', device, str(app)], check=True, timeout=60)
-            container = Path(command('xcrun', 'simctl', 'get_app_container', device, 'one.ayugram.converter.control', 'data'))
+            subprocess.run([simctl, 'install', device, str(app)], check=True, timeout=60)
+            container = Path(command(simctl, 'get_app_container', device, 'one.ayugram.converter.control', 'data'))
             print('Launching interpreter control application', flush=True)
             console = folder / 'control-console.log'
             with console.open('wb') as output:
-                launch = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console', device, 'one.ayugram.converter.control'], stdout=output, stderr=subprocess.STDOUT)
+                launch = subprocess.Popen([simctl, 'launch', '--console', device, 'one.ayugram.converter.control'], stdout=output, stderr=subprocess.STDOUT)
             result_path = container / 'Documents/result.json'
             deadline = time.monotonic() + 60
             while not result_path.exists() and time.monotonic() < deadline:
                 if launch.poll() is not None: break
                 time.sleep(1)
             try:
-                subprocess.run(['xcrun', 'simctl', 'terminate', device, 'one.ayugram.converter.control'], check=False, timeout=15)
+                subprocess.run([simctl, 'terminate', device, 'one.ayugram.converter.control'], check=False, timeout=15)
             except subprocess.TimeoutExpired:
                 pass
             if launch.poll() is None:
@@ -183,7 +187,7 @@ def run(source, runtime):
     finally:
         for operation in ('shutdown', 'delete'):
             try:
-                subprocess.run(['xcrun', 'simctl', operation, device], check=False, timeout=15)
+                subprocess.run([simctl, operation, device], check=False, timeout=15)
             except subprocess.TimeoutExpired:
                 print('::warning::Simulator control cleanup timed out: ' + operation, flush=True)
 

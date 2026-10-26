@@ -3,6 +3,10 @@ name: Converter preflight
 on:
   workflow_dispatch:
     inputs:
+      run_simulator:
+        description: Also run the interpreter control when an iOS Simulator can boot
+        type: boolean
+        default: false
       simulator_only:
         description: Run just the interpreter control after already passing SDK/model checks
         type: boolean
@@ -52,6 +56,7 @@ jobs:
             python3 ci/test_models.py telegram
           } 2>&1 | tee "$RUNNER_TEMP/converter-checks.log"
       - name: Run embedded interpreter in iOS Simulator
+        if: ${{ inputs.run_simulator || inputs.simulator_only }}
         run: |
           set -euo pipefail
           {

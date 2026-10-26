@@ -68860,10 +68860,10 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..78fb171d
+index 00000000..d4e6061b
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,608 @@
+@@ -0,0 +1,612 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -69293,6 +69293,8 @@ index 00000000..78fb171d
 +                case 14: $0.interface.spoofWebAppAsAndroid = value
 +                case 15: $0.interface.streamerMode = value
 +                case 16: $0.interface.hideAllChatsFolder = value
++                case 18: $0.interface.semiTransparentDeletedMessages = value
++                case 19: $0.interface.backgroundNotifications = value
 +                default: break
 +                }
 +            }
@@ -69333,6 +69335,8 @@ index 00000000..78fb171d
 +            .toggle(15, ru ? "Режим стримера" : "Streamer mode", value.streamerMode),
 +            .toggle(16, ru ? "Скрыть папку «Все чаты»" : "Hide All Chats folder", value.hideAllChatsFolder),
 +            .info(17, ru ? "Режим стримера убирает окно AyuGram со скриншотов, записи экрана и трансляций, как секретные чаты; на самом телефоне всё видно, клавиатура системная и не скрывается. «Все чаты» скрываются, только если есть хотя бы одна папка; открывается первая папка. Применяется при следующем обновлении папок или после перезапуска." : "Streamer mode leaves the AyuGram window out of screenshots, screen recordings and streams, like secret chats; the phone itself still shows everything and the system keyboard is not hidden. All Chats is hidden only while at least one folder exists; the first folder opens. Applies on the next folder update or after a restart."),
++            .toggle(18, ru ? "Полупрозрачные удалённые сообщения" : "Semi-transparent deleted messages", value.semiTransparentDeletedMessages),
++            .toggle(19, ru ? "Уведомления в фоне" : "Background notifications", value.backgroundNotifications),
 +            .info(20, ru ? "Истории, похожие каналы и приветственный стикер применяются при следующем открытии списка чатов или чата (надёжнее всего — после перезапуска). Скрытые истории не отмечаются просмотренными. Счётчики заменяются точкой. Спойлеры и zalgo-фильтр работают для текста сообщений. Предупреждение остаётся для ссылок с поддельным адресом и прокси. «Больше недавних стикеров» хранит до 200 вместо 20 на этом устройстве. Мини-приложения получают платформу android вместо ios." : "Stories, similar channels and the greeting sticker apply the next time the chat list or a chat opens (most reliably after a restart). Hidden stories are not marked as viewed. Counters become a dot. Spoilers and the zalgo filter apply to message text. The warning stays for links with a disguised host and for proxies. Unlimited recent stickers keeps up to 200 instead of 20 on this device. Mini apps receive the android platform instead of ios."),
 +            .info(30, ru ? "Нажатие на ID копирует его. Счётчик меняется только на вкладке «Чаты»; состояние прочтения сохраняется. Быстрая пересылка скрывается возле обычных пузырьков, а комментарии и рекламные действия остаются доступны. MessageShot находится в меню сообщения и в действиях «Поделиться» для выбранных сообщений." : "Tap a profile ID to copy it. The badge setting affects the Chats tab and preserves read state. Quick-share hiding applies to ordinary bubbles; comment and sponsored-message actions remain available. MessageShot appears in the message menu and selected-message Share choices.")
 +        ]
@@ -70945,10 +70949,10 @@ index 00000000..ae6b26ad
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..c5014c28
+index 00000000..30127863
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,89 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -70979,6 +70983,9 @@ index 00000000..c5014c28
 +    public var unlimitedRecentStickers = false
 +    public var streamerMode = false
 +    public var hideAllChatsFolder = false
++    public var semiTransparentDeletedMessages = false
++    /// Local notifications while the app runs in the background (no remote push in sideloaded builds).
++    public var backgroundNotifications = true
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
@@ -70988,7 +70995,7 @@ index 00000000..c5014c28
 +        case showRepeatText, showSearchPhrase, showCopyMessageIds
 +        case showHideMessage
 +        case hideStories, hideSimilarChannels, hidePremiumStatuses, hideUnreadCounters, revealSpoilers
-+        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers, streamerMode, hideAllChatsFolder
++        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers, streamerMode, hideAllChatsFolder, semiTransparentDeletedMessages, backgroundNotifications
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -71018,6 +71025,8 @@ index 00000000..c5014c28
 +        self.unlimitedRecentStickers = try values.decodeIfPresent(Bool.self, forKey: .unlimitedRecentStickers) ?? false
 +        self.streamerMode = try values.decodeIfPresent(Bool.self, forKey: .streamerMode) ?? false
 +        self.hideAllChatsFolder = try values.decodeIfPresent(Bool.self, forKey: .hideAllChatsFolder) ?? false
++        self.semiTransparentDeletedMessages = try values.decodeIfPresent(Bool.self, forKey: .semiTransparentDeletedMessages) ?? false
++        self.backgroundNotifications = try values.decodeIfPresent(Bool.self, forKey: .backgroundNotifications) ?? true
 +    }
 +}
 +
@@ -73696,7 +73705,7 @@ index e25e0195..faea175b 100644
                      dateReactionsAndPeers = ([], [])
                  }
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
-index d7da5d10..0f8226d8 100644
+index d7da5d10..90c668f3 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
 @@ -484,7 +484,7 @@ private func contentNodeMessagesAndClassesForItem(_ item: ChatMessageItem) -> ([
@@ -73737,6 +73746,18 @@ index d7da5d10..0f8226d8 100644
                  if message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
                      dateReactionsAndPeers = ([], [])
                  }
+@@ -3968,6 +3972,11 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+         strongSelf.contentContainersWrapperNode.frame = CGRect(origin: CGPoint(), size: layout.contentSize)
+         
+         strongSelf.appliedItem = item
++        // AyuGram "Semi-transparent deleted messages": locally kept deleted messages are dimmed.
++        let ayuDeletedAlpha: CGFloat = item.context.account.network.ayuGhostMode.current.interface.semiTransparentDeletedMessages && item.content.firstMessage.attributes.contains(where: { $0 is AyuDeletedMessageAttribute }) ? 0.5 : 1.0
++        if strongSelf.mainContainerNode.alpha != ayuDeletedAlpha {
++            strongSelf.mainContainerNode.alpha = ayuDeletedAlpha
++        }
+         strongSelf.appliedForwardInfo = ChatMessageAppliedForwardInfo(messageId: item.content.firstMessage.id, source: forwardSource, authorSignature: forwardAuthorSignature)
+         strongSelf.updateAccessibilityData(accessibilityData)
+         strongSelf.disablesComments = disablesComments
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift
 index 17517556..4079116c 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift
@@ -139884,7 +139905,7 @@ index b264bc03..ad077f5c 100644
                  return (isPremium, userLimits)
              }
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
-index 1ceb46bc..53bcd9e9 100644
+index 1ceb46bc..2437fd27 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
 +++ b/submodules/TelegramUI/Sources/AppDelegate.swift
 @@ -310,6 +310,23 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
@@ -140064,7 +140085,44 @@ index 1ceb46bc..53bcd9e9 100644
                  }))
              } else {
                  authContextReadyDisposable.set(nil)
-@@ -3020,7 +3066,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+@@ -1655,6 +1701,36 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+                 }
+             }
+             
++            // AyuGram: remote push cannot reach a build signed with another identity, so iOS
++            // background refresh wakes the app to fetch updates; AyuBackgroundNotifications then
++            // shows new messages as local notifications. iOS decides when (and whether) it runs.
++            let ayuRefreshTaskId = "\(baseAppBundleId).refresh"
++            BGTaskScheduler.shared.register(forTaskWithIdentifier: ayuRefreshTaskId, using: DispatchQueue.main) { task in
++                Logger.shared.log("App \(self.episodeId)", "Executing AyuGram refresh task")
++                ayuScheduleRefreshTask(identifier: ayuRefreshTaskId)
++                var completed = false
++                let complete: (Bool) -> Void = { success in
++                    if !completed {
++                        completed = true
++                        task.setTaskCompleted(success: success)
++                    }
++                }
++                task.expirationHandler = {
++                    complete(false)
++                }
++                let _ = (self.sharedContextPromise.get()
++                |> take(1)
++                |> deliverOnMainQueue).start(next: { sharedApplicationContext in
++                    // An explicit extension keeps the accounts connected for about 20 seconds,
++                    // long enough to receive the pending updates.
++                    sharedApplicationContext.wakeupManager.allowBackgroundTimeExtension(timeout: 20.0, extendNow: true)
++                    Queue.mainQueue().after(22.0, {
++                        complete(true)
++                    })
++                })
++            }
++            ayuScheduleRefreshTask(identifier: ayuRefreshTaskId)
++
+             BGTaskScheduler.shared.getPendingTaskRequests(completionHandler: { tasks in
+                 if tasks.contains(where: { $0.identifier == cleanupTaskId }) {
+                     Logger.shared.log("App \(self.episodeId)", "Already have a cleanup task pending")
+@@ -3020,7 +3096,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
          }
          self.openUrlWhenReadyDisposable.set((signal
          |> deliverOnMainQueue).start(next: { [weak self] context in
@@ -140076,25 +140134,27 @@ index 1ceb46bc..53bcd9e9 100644
              } else if WalletContext.isTonConnectUrl(url.absoluteString) {
                  context.context.walletContext?.processTonConnectUrl(url.absoluteString)
 diff --git a/submodules/TelegramUI/Sources/ApplicationContext.swift b/submodules/TelegramUI/Sources/ApplicationContext.swift
-index fe34b998..dcfec8ae 100644
+index fe34b998..9c39bcc6 100644
 --- a/submodules/TelegramUI/Sources/ApplicationContext.swift
 +++ b/submodules/TelegramUI/Sources/ApplicationContext.swift
-@@ -156,7 +156,8 @@ final class AuthorizedApplicationContext {
+@@ -156,7 +156,9 @@ final class AuthorizedApplicationContext {
      private var showNewsTab: Bool
      private var showNewsTabDisposable: Disposable?
      private var enablePostboxTransactionsDiposable: Disposable?
 -    
 +    private var ayuStreamerMode: AyuStreamerMode?
++    private var ayuBackgroundNotifications: AyuBackgroundNotifications?
 +
      init(sharedApplicationContext: SharedApplicationContext, mainWindow: Window1, context: AccountContextImpl, accountManager: AccountManager<TelegramAccountManagerTypes>, showCallsTab: Bool, reinitializedNotificationSettings: @escaping () -> Void) {
          self.sharedApplicationContext = sharedApplicationContext
          
-@@ -167,7 +168,11 @@ final class AuthorizedApplicationContext {
+@@ -167,7 +169,12 @@ final class AuthorizedApplicationContext {
          self.lockedCoveringView = LockedWindowCoveringView(theme: presentationData.theme)
          
          self.context = context
 -        
 +        self.ayuStreamerMode = AyuStreamerMode(window: mainWindow, context: context)
++        self.ayuBackgroundNotifications = AyuBackgroundNotifications(context: context)
 +
 +        // Start the embedded Python plugin runtime (no-op unless this build embeds CPython).
 +        AyuPythonBootstrap.shared.install(context: context)
@@ -140102,6 +140162,125 @@ index fe34b998..dcfec8ae 100644
          self.showCallsTab = showCallsTab
          self.showNewsTab = isNewsFeedEnabled(appConfiguration: context.currentAppConfiguration.with { $0 })
          
+diff --git a/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift b/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
+new file mode 100644
+index 00000000..c1af8a74
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
+@@ -0,0 +1,113 @@
++import Foundation
++import UIKit
++import UserNotifications
++import BackgroundTasks
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import AppLock
++import LocalizedPeerData
++
++/// Local notifications for builds without working remote push (sideloaded with another signing
++/// identity, so APNs never reaches this app). While the app is awake in the background — right after
++/// it is closed, during background refresh, a call or audio — new messages that Telegram would
++/// notify about are shown as local notifications. The account's notification settings decide
++/// whether a category notifies and whether text is previewed; muted chats stay silent.
++final class AyuBackgroundNotifications {
++    private let disposable = MetaDisposable()
++
++    init(context: AccountContextImpl) {
++        let accountId = context.account.id
++        let accountPeerId = context.account.peerId
++        let engine = context.engine
++        self.disposable.set((context.account.stateManager.notificationMessages
++        |> deliverOnMainQueue).startStrict(next: { messageList in
++            guard UIApplication.shared.applicationState != .active, !messageList.isEmpty, context.account.network.ayuGhostMode.current.interface.backgroundNotifications else {
++                return
++            }
++            let locked: Signal<Bool, NoError>
++            if let appLockContext = context.sharedContext.appLockContext as? AppLockContextImpl {
++                locked = appLockContext.isCurrentlyLocked |> take(1)
++            } else {
++                locked = .single(false)
++            }
++            let _ = (combineLatest(locked, engine.data.get(TelegramEngine.EngineData.Item.NotificationSettings.Global()))
++            |> deliverOnMainQueue).startStandalone(next: { isLocked, globalSettings in
++                let presentationData = context.sharedContext.currentPresentationData.with { $0 }
++                let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++                for (messages, _, notify, _) in messageList {
++                    guard notify, let message = messages.first, message.author?.id != accountPeerId else {
++                        continue
++                    }
++                    let isMuted = message.attributes.contains(where: { attribute in
++                        if let attribute = attribute as? NotificationInfoMessageAttribute {
++                            return attribute.flags.contains(.muted)
++                        }
++                        return false
++                    })
++                    if isMuted {
++                        continue
++                    }
++                    let peerId = message.id.peerId
++                    let category: EngineGlobalNotificationSettings.CategorySettings
++                    if peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.SecretChat {
++                        category = globalSettings.privateChats
++                    } else if let channel = message.peers[peerId] as? TelegramChannel, case .broadcast = channel.info {
++                        category = globalSettings.channels
++                    } else {
++                        category = globalSettings.groupChats
++                    }
++                    if !category.enabled {
++                        continue
++                    }
++
++                    let content = UNMutableNotificationContent()
++                    if let peer = message.peers[peerId] {
++                        content.title = EnginePeer(peer).displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
++                    } else {
++                        content.title = "AyuGram"
++                    }
++                    // Secret chats, a locked app or disabled previews never put message text on the lock screen.
++                    let showsText = category.displayPreviews && !isLocked && peerId.namespace != Namespaces.Peer.SecretChat
++                    if showsText {
++                        var text = message.text.isEmpty ? (ru ? "Медиа" : "Media") : message.text
++                        if text.count > 300 {
++                            text = String(text.prefix(300)) + "…"
++                        }
++                        if peerId.namespace != Namespaces.Peer.CloudUser, let author = message.author, author.id != peerId {
++                            text = EnginePeer(author).compactDisplayTitle + ": " + text
++                        }
++                        content.body = text
++                    } else {
++                        content.body = ru ? "Новое сообщение" : "New message"
++                    }
++                    content.sound = .default
++                    content.threadIdentifier = "\(accountId.int64)_\(peerId.toInt64())"
++                    var userInfo: [AnyHashable: Any] = ["accountId": accountId.int64, "peerId": peerId.toInt64()]
++                    if let threadId = message.threadId {
++                        userInfo["threadId"] = threadId
++                    }
++                    content.userInfo = userInfo
++                    let request = UNNotificationRequest(identifier: "ayu_\(accountId.int64)_\(peerId.toInt64())_\(message.id.namespace)_\(message.id.id)", content: content, trigger: nil)
++                    UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
++                }
++            })
++        }))
++    }
++
++    deinit {
++        self.disposable.dispose()
++    }
++}
++
++/// Asks iOS for the next background refresh; a later submission replaces a pending one.
++@available(iOS 13.0, *)
++func ayuScheduleRefreshTask(identifier: String) {
++    let request = BGAppRefreshTaskRequest(identifier: identifier)
++    request.earliestBeginDate = Date(timeIntervalSinceNow: 15.0 * 60.0)
++    do {
++        try BGTaskScheduler.shared.submit(request)
++    } catch let error {
++        Logger.shared.log("AyuGram", "Refresh task not scheduled: \(error)")
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift b/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift
 new file mode 100644
 index 00000000..87a624e2

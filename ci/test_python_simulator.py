@@ -84,7 +84,8 @@ def run(source, runtime):
     paired = {d.get('deviceTypeIdentifier') for d in listing.get('devices', {}).get(selected_runtime['identifier'], []) if d.get('isAvailable')}
     def rank(phone):
         numbers = re.findall(r'\d+', phone['name'])
-        return (phone['identifier'] in paired, int(numbers[0]) if numbers else 0)
+        preferred = {'iPhone 17 Pro': 4, 'iPhone 17': 3, 'iPhone 16 Pro': 2, 'iPhone 16': 1}
+        return (preferred.get(phone['name'], 0), int(numbers[0]) if numbers else 0, phone['identifier'] in paired)
     device = None
     for phone in sorted(phones, key=rank, reverse=True):
         created = subprocess.run(['xcrun', 'simctl', 'create', 'AyuPython-converter-control', phone['identifier'], selected_runtime['identifier']], capture_output=True, text=True, timeout=30)

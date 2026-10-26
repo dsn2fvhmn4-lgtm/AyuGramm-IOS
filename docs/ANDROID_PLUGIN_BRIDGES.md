@@ -8,11 +8,11 @@ plugin code or load embedded native libraries. Original source files remain unch
 | --- | --- | --- |
 | camera_flip.plugin 0.2.0 | Round-camera touch events, existing flip action, settings | Native adapter added; macOS compilation and iPhone verification pending |
 | chat_colors.plugin 1.0 | Chat-list row background, peer color storage, context/profile menus, color picker and brightness | Native adapter added; macOS compilation and iPhone verification pending |
-| game_arcade.plugin 1.1 | Native web view, 3 external game URLs, injected scripts, cookies/cache lifecycle, menus and intercepted dot commands | No adapter implemented |
+| game_arcade.plugin 1.1 | Native web view, 3 external game URLs, injected scripts, cookies/cache lifecycle, menus and intercepted dot commands | Native adapter added; device verification pending |
 | story_scheduler.plugin 1.1 | Durable media queue, story uploader/privacy/peer models, schedule picker, retries and wakeup lifecycle | No adapter implemented |
-| unlim_accounts.plugin 1.0 | Android 12.10.6 account internals plus embedded DEX/JNI runtime | No adapter implemented; file exceeds current 512 KB import limit |
+| unlim_accounts.plugin 1.0 | Android 12.10.6 account internals plus embedded DEX/JNI runtime | Native adapter added (client add-account limit 999); device verification pending |
 
-These examples need more than text-replacement rules. A Python interpreter alone
+Story Scheduler still needs more than text-replacement rules. A Python interpreter alone
 would not supply the referenced Java classes, Android views, DEX/JNI loader or
 Telegram Android implementation. Equivalent iOS implementations must be connected
 to native events. The inspected Unlim Accounts source explicitly requires Android
@@ -27,6 +27,40 @@ Story Scheduler's Android timer cannot establish iOS execution while the app is
 suspended or terminated. A port needs a separately specified background behavior
 and a tested persistence/recovery path. See Apple's [Background Tasks documentation](https://developer.apple.com/documentation/backgroundtasks).
 
+## Import behavior
+
+Plugins are imported like in exteraGram: the confirmation shows the plugin's name,
+version, author and description, and the plugin is enabled after **Install**.
+Adapter notes and permission lists are not shown; the version and author are shown
+without the port's `-ios.N` and `(original)` markers. Unsupported files show a short
+"not supported yet" message and leave installed plugins unchanged. The import limit is
+4 MB so Unlim Accounts (2.6 MB, recognised by SHA-256 only) can be imported.
+
+## Arcade Games native adapter
+
+- Exact source SHA-256: `421911448e6fe62b3292b43b8593ebb24056b238278bab002576381d541238bc`.
+  Authors retained: @Art_727 & @lerowplug; actions declare plugin API 5.
+- Games: 2048 (play2048.co), Flappy Bird (flappybird.io/play) and Chrome Dino
+  (chromedino.com/embed) in a full-screen portrait WKWebView with the original
+  background color. The plugin's ad-blocking script is injected at document end,
+  after every load and every 600 ms, as on Android. Popups and main-frame navigation
+  off the three game sites are refused.
+- Launch: the plugin page (Games section), chat message menu -> Plugins, or the
+  `.2048`, `.flappy`, `.dino` commands (case-insensitive, trimmed). A command opens
+  the game and is not sent; the input is cleared. Scheduled sends are not intercepted.
+- Plugin settings, as in the original: close button, exit confirmation and keeping
+  the screen awake (through the app's idle-timer extension), all on by default, plus
+  "Reset games data", which removes the three sites' website data. The Android drawer
+  menu has no iOS equivalent; the plugin page and chat Plugins menu replace it.
+
+## Unlim Accounts native adapter
+
+- Exact source SHA-256: `6c5e2f697da4d87b0409841d96dd9bf69f224073c44b555c6fd9de782c70d40f`.
+  Author retained: @rezolvePlugins; API 5.
+- iOS limits accounts only in the client (3, or 4 with Premium). While the plugin is
+  enabled in the current account, the Add Account checks in Settings, the logout and
+  delete-account options and Settings search allow up to 999 accounts. The embedded
+  Android DEX/JNI runtime is never extracted or loaded.
 ## Camera Flip native adapter
 
 - Exact supplied source hash: `61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be003555f1e98`.

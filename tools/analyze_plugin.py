@@ -8,6 +8,14 @@ from urllib.parse import urlsplit
 
 CHAT_COLORS_SHA256 = 'a7217c0cc672615e3558b8f3391b522f7e031bc0900a84315b4eb4f53ece8de5'
 CAMERA_SHA256 = '61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be003555f1e98'
+ARCADE_SHA256 = '421911448e6fe62b3292b43b8593ebb24056b238278bab002576381d541238bc'
+UNLIM_ACCOUNTS_SHA256 = '6c5e2f697da4d87b0409841d96dd9bf69f224073c44b555c6fd9de782c70d40f'
+REVIEWED_STATUS = {
+    CAMERA_SHA256: 'Reviewed native Camera Flip adapter in development source; macOS build and device tests pending',
+    CHAT_COLORS_SHA256: 'Reviewed native Chat Colors adapter in development source; macOS build and device tests pending',
+    ARCADE_SHA256: 'Reviewed native Arcade Games adapter (web view games, chat commands) in development source; device tests pending',
+    UNLIM_ACCOUNTS_SHA256: 'Reviewed native Unlim Accounts adapter (client account limit) in development source; device tests pending',
+}
 
 
 def analyze(source: Path):
@@ -59,9 +67,9 @@ def analyze(source: Path):
     return dict(file=source.name, bytes=size, sha256=digest, metadata=metadata,
                 imports=sorted(modules), sdkCalls=sorted(hooks), javaClasses=sorted(java_classes),
                 externalURLs=sorted(urls), embeddedAndroidRuntimeMarkers=embedded,
-                withinCurrentImportLimit=size <= 512 * 1024,
+                withinCurrentImportLimit=size <= 4 * 1024 * 1024,
                 requiredBridges=bridges,
-                status=('Reviewed native Camera Flip adapter in development source; macOS build and device tests pending' if digest == CAMERA_SHA256 else 'Reviewed native Chat Colors adapter in development source; macOS build and device tests pending' if digest == CHAT_COLORS_SHA256 else 'No complete native adapter implemented'),
+                status=REVIEWED_STATUS.get(digest, 'No complete native adapter implemented'),
                 analysisScope='Static dependency inventory only. No source or embedded binary was executed. This is not a compatibility test.')
 
 

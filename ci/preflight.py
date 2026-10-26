@@ -67,6 +67,7 @@ def main():
     sdk_sources = [source / 'submodules/TelegramUI/Sources' / name for name in (
         'Chat/AyuMessageShotCanvas.swift', 'AyuStartupStorage.swift', 'AyuStartupFailureController.swift')]
     sdk_sources.append(source / 'submodules/Display/Source/AyuPluginAvatar.swift')
+    sdk_sources.append(source / 'submodules/Display/Source/AyuArcadeGameController.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuChatColorPickerController.swift')
     sdk_sources.append(source / 'submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift')
     sdk_sources.extend(source / 'submodules/SettingsUI/Sources' / name for name in (
@@ -102,7 +103,8 @@ def main():
                 else:
                     result = subprocess.run([*flags, '-emit-module', '-module-name', 'Display',
                                              '-emit-module-path', str(Path(directory) / 'Display.swiftmodule'),
-                                             str(source / 'submodules/Display/Source/AyuPluginAvatar.swift')], capture_output=True, text=True)
+                                             str(source / 'submodules/Display/Source/AyuPluginAvatar.swift'),
+                                             str(source / 'submodules/Display/Source/AyuArcadeGameController.swift')], capture_output=True, text=True)
                     if result.returncode:
                         errors.append(f'Actual plugin avatar SDK harness:\n{result.stdout}{result.stderr}')
                     else:

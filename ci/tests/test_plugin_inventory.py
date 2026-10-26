@@ -22,7 +22,8 @@ class PluginInventoryTests(unittest.TestCase):
     def test_large_embedded_android_plugin_is_reported_without_loading_payloads(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / 'large.plugin'
-            source.write_text('__id__ = "large"\nDEX_BEGIN = "__DEX_BEGIN__"\nNATIVE_BEGIN = "__NATIVE_BEGIN__"\n#' + 'A' * (600 * 1024), encoding='utf-8')
+            # Above the 4 MB import limit (Unlim Accounts itself is 2.6 MB and is imported by hash).
+            source.write_text('__id__ = "large"\nDEX_BEGIN = "__DEX_BEGIN__"\nNATIVE_BEGIN = "__NATIVE_BEGIN__"\n#' + 'A' * (4200 * 1024), encoding='utf-8')
             report = analyze(source)
             self.assertTrue(report['embeddedAndroidRuntimeMarkers'])
             self.assertFalse(report['withinCurrentImportLimit'])

@@ -66562,6 +66562,27 @@ index 00000000..5ccfee08
 +        return mergedMessageReactionsAndPeers(accountPeerId: self.account.peerId, accountPeer: accountPeer, message: message)
 +    }
 +}
+diff --git a/submodules/AccountUtils/Sources/AccountUtils.swift b/submodules/AccountUtils/Sources/AccountUtils.swift
+index 44d09f56..88c3899d 100644
+--- a/submodules/AccountUtils/Sources/AccountUtils.swift
++++ b/submodules/AccountUtils/Sources/AccountUtils.swift
+@@ -6,6 +6,16 @@ import AccountContext
+ 
+ public let maximumNumberOfAccounts = 3
+ public let maximumPremiumNumberOfAccounts = 4
++/// Limit while the AyuGram port of the Unlim Accounts plugin is enabled in the current account.
++public let ayuUnlimitedNumberOfAccounts = 999
++
++/// Add-account limit for the current account: the Unlim Accounts plugin lifts the client-side cap.
++public func ayuMaximumNumberOfAccounts(context: AccountContext, premium: Bool) -> Int {
++    if context.account.network.ayuGhostMode.current.plugins.unlimitedAccounts {
++        return ayuUnlimitedNumberOfAccounts
++    }
++    return premium ? maximumPremiumNumberOfAccounts : maximumNumberOfAccounts
++}
+ 
+ public func activeAccountsAndPeers(context: AccountContext, includePrimary: Bool = false) -> Signal<((AccountContext, EnginePeer)?, [(AccountContext, EnginePeer, Int32)]), NoError> {
+     let sharedContext = context.sharedContext
 diff --git a/submodules/ChatListUI/Sources/ChatContextMenus.swift b/submodules/ChatListUI/Sources/ChatContextMenus.swift
 index f753a8ea..9367fba0 100644
 --- a/submodules/ChatListUI/Sources/ChatContextMenus.swift
@@ -66685,6 +66706,245 @@ index e41738b1..1b705c7d 100644
                      }
                      
                      strongSelf.highlightedBackgroundNode.backgroundColor = highlightedBackgroundColor
+diff --git a/submodules/Display/Source/AyuArcadeGameController.swift b/submodules/Display/Source/AyuArcadeGameController.swift
+new file mode 100644
+index 00000000..40ce1257
+--- /dev/null
++++ b/submodules/Display/Source/AyuArcadeGameController.swift
+@@ -0,0 +1,233 @@
++import UIKit
++import WebKit
++
++/// Full-screen web game for the Arcade Games plugin, mirroring its Android dialog:
++/// close button, exit confirmation, screen kept awake and the plugin's ad-blocking script.
++public final class AyuArcadeGameController: UIViewController, WKNavigationDelegate {
++    /// Hosts the games may load; all other main-frame navigations open nowhere.
++    public static let gameHosts: Set<String> = ["play2048.co", "flappybird.io", "chromedino.com"]
++
++    private let url: URL
++    private let showCloseButton: Bool
++    private let confirmExit: Bool
++    private let russian: Bool
++    private let keepAwake: (() -> (() -> Void))?
++    private var releaseAwake: (() -> Void)?
++    private var webView: WKWebView?
++    private var injectionTimer: Timer?
++
++    public init(url: URL, showCloseButton: Bool, confirmExit: Bool, russian: Bool, keepAwake: (() -> (() -> Void))?) {
++        self.url = url; self.showCloseButton = showCloseButton; self.confirmExit = confirmExit
++        self.russian = russian; self.keepAwake = keepAwake
++        super.init(nibName: nil, bundle: nil)
++        self.modalPresentationStyle = .fullScreen
++    }
++    required init?(coder: NSCoder) { return nil }
++
++    public override var prefersStatusBarHidden: Bool { return true }
++    public override var prefersHomeIndicatorAutoHidden: Bool { return true }
++    public override var supportedInterfaceOrientations: UIInterfaceOrientationMask { return .portrait }
++
++    public override func viewDidLoad() {
++        super.viewDidLoad()
++        let background = UIColor(red: 0xea / 255.0, green: 0xe8 / 255.0, blue: 0xda / 255.0, alpha: 1.0)
++        self.view.backgroundColor = background
++        let configuration = WKWebViewConfiguration()
++        configuration.mediaTypesRequiringUserActionForPlayback = .all
++        configuration.userContentController.addUserScript(WKUserScript(source: AyuArcadeGameController.adBlockScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
++        let webView = WKWebView(frame: self.view.bounds, configuration: configuration)
++        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        webView.backgroundColor = background
++        webView.isOpaque = false
++        webView.scrollView.showsVerticalScrollIndicator = false
++        webView.scrollView.showsHorizontalScrollIndicator = false
++        webView.scrollView.contentInsetAdjustmentBehavior = .never
++        webView.navigationDelegate = self
++        self.view.addSubview(webView)
++        self.webView = webView
++        webView.load(URLRequest(url: self.url))
++
++        if self.showCloseButton {
++            let button = UIButton(type: .system)
++            button.setTitle("✕", for: .normal)
++            button.titleLabel?.font = .systemFont(ofSize: 22.0, weight: .semibold)
++            button.setTitleColor(.white, for: .normal)
++            button.backgroundColor = UIColor(white: 0.0, alpha: 0.25)
++            button.layer.cornerRadius = 20.0
++            button.accessibilityLabel = self.russian ? "Закрыть игру" : "Close game"
++            button.translatesAutoresizingMaskIntoConstraints = false
++            button.addTarget(self, action: #selector(self.closeTapped), for: .touchUpInside)
++            self.view.addSubview(button)
++            NSLayoutConstraint.activate([
++                button.widthAnchor.constraint(equalToConstant: 40.0),
++                button.heightAnchor.constraint(equalToConstant: 40.0),
++                button.topAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.topAnchor, constant: 8.0),
++                button.trailingAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.trailingAnchor, constant: -12.0)
++            ])
++        }
++
++        // The Android plugin re-applies its script every 600 ms; ad scripts keep arriving.
++        // The timer is invalidated when the game is dismissed.
++        self.injectionTimer = Timer.scheduledTimer(timeInterval: 0.6, target: self, selector: #selector(self.reinjectScript), userInfo: nil, repeats: true)
++    }
++
++    @objc private func reinjectScript() {
++        self.webView?.evaluateJavaScript(AyuArcadeGameController.adBlockScript, completionHandler: nil)
++    }
++
++    public override func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++        if self.releaseAwake == nil { self.releaseAwake = self.keepAwake?() }
++    }
++
++    public override func viewDidDisappear(_ animated: Bool) {
++        super.viewDidDisappear(animated)
++        if self.presentingViewController == nil || self.isBeingDismissed {
++            self.injectionTimer?.invalidate(); self.injectionTimer = nil
++            self.releaseAwake?(); self.releaseAwake = nil
++            self.webView?.stopLoading()
++        }
++    }
++
++    @objc private func closeTapped() {
++        guard self.confirmExit else { self.dismiss(animated: true); return }
++        let alert = UIAlertController(title: self.russian ? "Выйти из игры?" : "Exit the game?", message: nil, preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: self.russian ? "Выйти" : "Exit", style: .destructive, handler: { [weak self] _ in self?.dismiss(animated: true) }))
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        self.present(alert, animated: true)
++    }
++
++    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
++        // Like the Android window.open stub: popups and off-site main-frame jumps stay closed.
++        guard navigationAction.targetFrame?.isMainFrame ?? false else {
++            decisionHandler(navigationAction.targetFrame == nil ? .cancel : .allow)
++            return
++        }
++        let host = navigationAction.request.url?.host?.lowercased() ?? ""
++        let allowed = AyuArcadeGameController.gameHosts.contains(where: { host == $0 || host.hasSuffix("." + $0) })
++        decisionHandler(allowed || navigationAction.request.url?.scheme == "about" ? .allow : .cancel)
++    }
++
++    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
++        webView.evaluateJavaScript(AyuArcadeGameController.adBlockScript, completionHandler: nil)
++    }
++
++    /// Removes the games' stored progress and caches, like the plugin's reset action.
++    public static func resetGameData(completion: @escaping @MainActor () -> Void) {
++        Task { @MainActor in
++            let store = WKWebsiteDataStore.default()
++            let types = WKWebsiteDataStore.allWebsiteDataTypes()
++            let records = await store.dataRecords(ofTypes: types)
++            let games = records.filter { record in AyuArcadeGameController.gameHosts.contains(where: { record.displayName == $0 || record.displayName.hasSuffix("." + $0) }) }
++            await store.removeData(ofTypes: types, for: games)
++            completion()
++        }
++    }
++
++    // Verbatim behavior of the Arcade Games plugin's ADBLOCK_JS.
++    static let adBlockScript = """
++    (function() {
++        try {
++            window.adsbygoogle = [];
++            window.adsbygoogle.push = function() {};
++            window.vm = { init: function(){}, push: function(){}, show: function(cb){ if(cb) cb(); } };
++            window.vmax = {};
++            window.primis = {};
++            window.aip = { show: function(cb){ if(cb) cb(); } };
++            window.open = function() { return null; };
++        } catch(e) {}
++        var adRegex = /(vmg\\.host|venatus|primis|doubleclick|googleads|googlesyndication|vungle|unity3d|adservice|adnxs|taboola|outbrain|criteo|rubicon|pubmatic|scorecard|amazon-adsystem|flashtalking|adcolony|applovin|playwire)/i;
++        try {
++            var sDesc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
++            if (sDesc && sDesc.set) {
++                Object.defineProperty(HTMLScriptElement.prototype, 'src', {
++                    set: function(val) { if (typeof val === 'string' && adRegex.test(val)) return; return sDesc.set.call(this, val); },
++                    get: sDesc.get, configurable: true
++                });
++            }
++            var iDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
++            if (iDesc && iDesc.set) {
++                Object.defineProperty(HTMLIFrameElement.prototype, 'src', {
++                    set: function(val) { if (typeof val === 'string' && adRegex.test(val)) return; return iDesc.set.call(this, val); },
++                    get: iDesc.get, configurable: true
++                });
++            }
++        } catch(e) {}
++        try {
++            if (!Node.prototype.__orig_append) {
++                Node.prototype.__orig_append = Node.prototype.appendChild;
++                Node.prototype.appendChild = function(child) {
++                    if (child && child.tagName) {
++                        var tag = child.tagName.toLowerCase();
++                        if (tag === 'script' || tag === 'iframe') {
++                            var s = child.src || child.getAttribute('src') || '';
++                            if (adRegex.test(s)) return child;
++                        }
++                        var id = (child.id || '').toLowerCase();
++                        var cls = (typeof child.className === 'string' ? child.className : '').toLowerCase();
++                        if (id.includes('vm-') || id.includes('primis') || cls.includes('vm-') || cls.includes('primis')) return child;
++                    }
++                    return Node.prototype.__orig_append.apply(this, arguments);
++                };
++            }
++        } catch(e) {}
++        try {
++            if (!Document.prototype.__orig_ce) {
++                Document.prototype.__orig_ce = Document.prototype.createElement;
++                Document.prototype.createElement = function(tag) {
++                    var t = (tag || '').toLowerCase();
++                    if (t === 'video') {
++                        var dummy = Document.prototype.__orig_ce.call(document, 'div');
++                        dummy.play = function() { return Promise.resolve(); };
++                        dummy.pause = function() {};
++                        dummy.load = function() {};
++                        dummy.style.display = 'none';
++                        return dummy;
++                    }
++                    if (t === 'iframe') {
++                        var fakeFrame = Document.prototype.__orig_ce.call(document, 'div');
++                        fakeFrame.style.display = 'none';
++                        return fakeFrame;
++                    }
++                    return Document.prototype.__orig_ce.apply(this, arguments);
++                };
++            }
++        } catch(e) {}
++        var selector = 'iframe, ins, video, [id*="vm-"], [class*="vm-"], [id*="primis"], [class*="primis"], #bottom-ads, .bottom-ads, #video-ad, .video-ad, [id*="google_ads"], [id*="ad-container"], [class*="ad-container"], [id*="ad_wrapper"], [class*="ad_wrapper"], div[style*="fixed"][style*="bottom"], div[style*="fixed"][style*="z-index"], div[style*="translateY"]';
++        function destroyAdDocks() {
++            try {
++                var bad = document.querySelectorAll(selector);
++                for (var i = 0; i < bad.length; i++) {
++                    var el = bad[i];
++                    if (el.tagName === 'CANVAS' || el.id === 'canvas' || el.id === 'game') continue;
++                    el.style.setProperty('display', 'none', 'important');
++                    el.remove();
++                }
++                var bodyChildren = document.body ? document.body.children : [];
++                for (var j = bodyChildren.length - 1; j >= 0; j--) {
++                    var bChild = bodyChildren[j];
++                    if (bChild.tagName === 'CANVAS' || bChild.id === 'canvas' || bChild.id === 'game') continue;
++                    var comp = window.getComputedStyle(bChild);
++                    if (comp.position === 'fixed' || comp.position === 'sticky') bChild.remove();
++                }
++            } catch(e) {}
++        }
++        try {
++            var head = document.head || document.documentElement;
++            if (head && !document.getElementById('__arcade_nuker_css')) {
++                var s = document.createElement('style');
++                s.id = '__arcade_nuker_css';
++                s.textContent = selector + ', [class*="close-button"] { display: none !important; visibility: hidden !important; height: 0px !important; width: 0px !important; opacity: 0 !important; pointer-events: none !important; position: absolute !important; top: -99999px !important; }';
++                head.appendChild(s);
++            }
++        } catch(e) {}
++        destroyAdDocks();
++        if (!window.__arcade_observer_set) {
++            window.__arcade_observer_set = true;
++            try {
++                new MutationObserver(function() { destroyAdDocks(); }).observe(document.documentElement || document.body, { childList: true, subtree: true });
++            } catch(e) {}
++        }
++    })();
++    """
++}
 diff --git a/submodules/Display/Source/AyuChatColorPickerController.swift b/submodules/Display/Source/AyuChatColorPickerController.swift
 new file mode 100644
 index 00000000..0a78c188
@@ -67641,36 +67901,73 @@ index 00000000..77b19608
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
-index 00000000..acd97d26
+index 00000000..62d73661
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,260 @@
 +import UIKit
 +import Display
 +import TelegramCore
 +
++extension AyuPluginManifest {
++    /// Version as the original plugin states it, without the port's adapter suffix.
++    var displayVersion: String {
++        if let range = self.version.range(of: "-ios.", options: .backwards) { return String(self.version[..<range.lowerBound]) }
++        return self.version
++    }
++    var displayAuthor: String {
++        return self.author.replacingOccurrences(of: " (original)", with: "")
++    }
++}
++
 +final class AyuPluginDetailsController: UITableViewController {
++    private enum Row: Equatable {
++        case enable, cameraGesture, cameraHaptic, chatColors
++        case game(AyuArcadeGame)
++        case arcadeCloseButton, arcadeConfirmExit, arcadeKeepScreenOn, arcadeReset
++        case export, remove
++    }
++
 +    private let store: AyuGhostModeStore
 +    private let pluginID: String
 +    private let russian: Bool
 +    private let palette: AyuPreferencesPalette?
 +    private var preparing = false
 +    private let settingsController: ((String) -> UIViewController?)?
++    private let keepAwake: (() -> (() -> Void))?
 +    private var generation = 0
 +    private var exportDirectory: URL?
-+    init(store: AyuGhostModeStore, pluginID: String, russian: Bool, palette: AyuPreferencesPalette? = nil, settingsController: ((String) -> UIViewController?)? = nil) {
-+        self.store = store; self.pluginID = pluginID; self.russian = russian; self.palette = palette; self.settingsController = settingsController
++    init(store: AyuGhostModeStore, pluginID: String, russian: Bool, palette: AyuPreferencesPalette? = nil, settingsController: ((String) -> UIViewController?)? = nil, keepAwake: (() -> (() -> Void))? = nil) {
++        self.store = store; self.pluginID = pluginID; self.russian = russian; self.palette = palette; self.settingsController = settingsController; self.keepAwake = keepAwake
 +        super.init(style: .grouped)
 +        self.title = russian ? "Плагин" : "Plugin"
 +    }
 +    required init?(coder: NSCoder) { return nil }
 +    deinit { if let directory = self.exportDirectory { try? FileManager.default.removeItem(at: directory) } }
 +    private var plugin: AyuInstalledPlugin? { return self.store.current.plugins.installed.first { $0.manifest.id == self.pluginID } }
-+    private var isCameraPlugin: Bool { return self.plugin?.manifest.actions.contains(where: { $0.kind == .cameraFlip }) == true }
-+    private var isChatColorPlugin: Bool { return self.plugin?.manifest.actions.contains(where: { $0.kind == .chatColors }) == true }
-+    private var colorSettingsRow: Int { return self.isCameraPlugin ? 3 : 1 }
++    private func has(_ kind: AyuPluginAction.Kind) -> Bool { return self.plugin?.manifest.actions.contains(where: { $0.kind == kind }) == true }
 +    private var cameraSettings: AyuCameraFlipSettings { return self.plugin?.cameraFlipSettings ?? AyuCameraFlipSettings() }
++    private var arcadeSettings: AyuArcadeSettings { return self.plugin?.arcadeSettings ?? AyuArcadeSettings() }
 +    private var cameraModes: [String] { return self.russian ? ["Свайп вверх или вниз", "Свайп вверх", "Свайп вниз", "Двойной тап"] : ["Swipe up or down", "Swipe up", "Swipe down", "Double tap"] }
++
++    private var sections: [[Row]] {
++        var settings: [Row] = [.enable]
++        if self.has(.cameraFlip) { settings += [.cameraGesture, .cameraHaptic] }
++        if self.has(.chatColors) { settings.append(.chatColors) }
++        if self.has(.arcadeGame) { settings += [.arcadeCloseButton, .arcadeConfirmExit, .arcadeKeepScreenOn] }
++        var result = [settings]
++        if self.has(.arcadeGame) {
++            result.append(AyuArcadeGame.allCases.filter { game in self.plugin?.manifest.actions.contains(where: { $0.id == game.rawValue }) == true }.map { Row.game($0) } + [Row.arcadeReset])
++        }
++        result.append([.export, .remove])
++        return result
++    }
++    private func row(_ indexPath: IndexPath) -> Row? {
++        let sections = self.sections
++        guard sections.indices.contains(indexPath.section), sections[indexPath.section].indices.contains(indexPath.row) else { return nil }
++        return sections[indexPath.section][indexPath.row]
++    }
++
 +    private func updateCameraSettings(_ update: (inout AyuCameraFlipSettings) -> Void) {
 +        guard !self.preparing else { return }
 +        do {
@@ -67682,14 +67979,32 @@ index 00000000..acd97d26
 +        } catch { self.showError() }
 +        self.tableView.reloadData()
 +    }
++    private func updateArcadeSettings(_ update: (inout AyuArcadeSettings) -> Void) {
++        guard !self.preparing else { return }
++        do {
++            try self.store.update { state in
++                var settings = state.plugins.installed.first(where: { $0.manifest.id == self.pluginID })?.arcadeSettings ?? AyuArcadeSettings()
++                update(&settings)
++                try state.plugins.setArcadeSettings(id: self.pluginID, settings: settings)
++            }
++        } catch { self.showError() }
++        self.tableView.reloadData()
++    }
 +    @objc private func cameraHapticChanged(_ toggle: UISwitch) { self.updateCameraSettings { $0.haptic = toggle.isOn } }
++    @objc private func arcadeToggleChanged(_ toggle: UISwitch) {
++        switch toggle.tag {
++        case 0: self.updateArcadeSettings { $0.showCloseButton = toggle.isOn }
++        case 1: self.updateArcadeSettings { $0.confirmExit = toggle.isOn }
++        default: self.updateArcadeSettings { $0.keepScreenOn = toggle.isOn }
++        }
++    }
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
 +        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
 +        self.tableView.rowHeight = UITableView.automaticDimension; self.tableView.estimatedRowHeight = 56
 +        self.tableView.backgroundColor = self.palette?.background ?? .systemGroupedBackground
 +        if let plugin = self.plugin {
-+            self.tableView.tableHeaderView = AyuPreferencesHeaderView(image: ayuPluginAvatar(size: 88), title: plugin.manifest.name, subtitle: "\(plugin.manifest.version) · \(plugin.manifest.author)", text: plugin.manifest.summary, palette: self.palette)
++            self.tableView.tableHeaderView = AyuPreferencesHeaderView(image: ayuPluginAvatar(size: 88), title: plugin.manifest.name, subtitle: "\(plugin.manifest.displayVersion) · \(plugin.manifest.displayAuthor)", text: plugin.manifest.summary, palette: self.palette)
 +        }
 +    }
 +    override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); ayuFitPreferencesHeader(self.tableView) }
@@ -67698,53 +68013,75 @@ index 00000000..acd97d26
 +        if self.isMovingFromParent || self.isBeingDismissed || self.navigationController?.isBeingDismissed == true { self.generation += 1; self.preparing = false }
 +    }
 +    @objc private func done() { self.generation += 1; self.dismiss(animated: true) }
-+    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? (1 + (self.isCameraPlugin ? 2 : 0) + (self.isChatColorPlugin ? 1 : 0)) : 2 }
-+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { return section == 0 ? (self.russian ? "Настройки плагина" : "Plugin settings") : nil }
++    override func numberOfSections(in tableView: UITableView) -> Int { return self.sections.count }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return self.sections.indices.contains(section) ? self.sections[section].count : 0 }
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        guard let first = self.sections.indices.contains(section) ? self.sections[section].first : nil else { return nil }
++        switch first {
++        case .enable: return self.russian ? "Настройки плагина" : "Plugin settings"
++        case .game: return self.russian ? "Игры" : "Games"
++        default: return nil
++        }
++    }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-+        guard section == 0, let manifest = self.plugin?.manifest else { return nil }
-+        return (self.russian ? "Действия: " : "Actions: ") + manifest.actions.map { $0.ruleSummary(russian: self.russian) }.joined(separator: "\n\n") + "\n\n" + manifest.limitations.joined(separator: "\n\n")
++        guard self.has(.arcadeGame), self.sections.indices.contains(section), case .game = self.sections[section].first else { return nil }
++        return self.russian ? "Игры также запускаются командами .2048, .flappy и .dino в любом чате и из меню «Плагины» в чате." : "Games also start with the .2048, .flappy and .dino commands in any chat and from the chat Plugins menu."
++    }
++    private func switchCell(_ cell: UITableViewCell, title: String, value: Bool, tag: Int = 0, action: Selector) {
++        cell.textLabel?.text = title
++        cell.selectionStyle = .none
++        let toggle = UISwitch(); toggle.isOn = value; toggle.isEnabled = !self.preparing; toggle.tag = tag
++        toggle.accessibilityLabel = title
++        toggle.addTarget(self, action: action, for: .valueChanged)
++        cell.accessoryView = toggle
 +    }
 +    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
 +        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
 +        cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
 +        cell.textLabel?.textColor = self.palette?.text ?? .label
 +        cell.textLabel?.numberOfLines = 0
-+        if indexPath.section == 0, indexPath.row == self.colorSettingsRow, self.isChatColorPlugin {
-+            cell.textLabel?.text = self.russian ? "Цвета чатов" : "Chat colors"
-+            cell.accessoryType = .disclosureIndicator
-+            return cell
-+        }
-+        if indexPath.section == 0, indexPath.row > 0, self.isCameraPlugin {
-+            if indexPath.row == 1 {
-+                cell.textLabel?.text = self.russian ? "Как переключать камеру" : "Switch camera gesture"
-+                cell.detailTextLabel?.text = self.cameraModes.indices.contains(self.cameraSettings.trigger) ? self.cameraModes[self.cameraSettings.trigger] : nil
-+                cell.accessoryType = .disclosureIndicator
-+            } else {
-+                cell.textLabel?.text = self.russian ? "Вибрация" : "Haptic feedback"
-+                cell.selectionStyle = .none
-+                let toggle = UISwitch(); toggle.isOn = self.cameraSettings.haptic; toggle.isEnabled = !self.preparing
-+                toggle.accessibilityLabel = cell.textLabel?.text
-+                toggle.addTarget(self, action: #selector(self.cameraHapticChanged(_:)), for: .valueChanged)
-+                cell.accessoryView = toggle
-+            }
-+            return cell
-+        }
-+        if indexPath.section == 0 {
++        guard let row = self.row(indexPath) else { return cell }
++        switch row {
++        case .enable:
 +            cell.selectionStyle = .none
 +            cell.textLabel?.text = self.russian ? "Включить плагин" : "Enable plugin"
 +            if self.preparing {
 +                let progress = UIActivityIndicatorView(style: .medium); progress.startAnimating(); cell.accessoryView = progress
-+                cell.detailTextLabel?.text = self.russian ? "Проверка совместимости и подготовка…" : "Checking compatibility and preparing…"
 +            } else {
 +                let toggle = UISwitch(); toggle.isOn = self.plugin?.enabled == true
 +                toggle.accessibilityLabel = cell.textLabel?.text
 +                toggle.addTarget(self, action: #selector(self.toggle(_:)), for: .valueChanged); cell.accessoryView = toggle
 +            }
-+        } else {
-+            cell.textLabel?.text = indexPath.row == 0 ? (self.russian ? "Экспортировать .plugin" : "Export .plugin") : (self.russian ? "Удалить плагин" : "Remove plugin")
-+            cell.textLabel?.textColor = indexPath.row == 0 ? .systemBlue : .systemRed
-+            cell.imageView?.image = UIImage(systemName: indexPath.row == 0 ? "square.and.arrow.up" : "trash")
++        case .cameraGesture:
++            cell.textLabel?.text = self.russian ? "Как переключать камеру" : "Switch camera gesture"
++            cell.detailTextLabel?.text = self.cameraModes.indices.contains(self.cameraSettings.trigger) ? self.cameraModes[self.cameraSettings.trigger] : nil
++            cell.accessoryType = .disclosureIndicator
++        case .cameraHaptic:
++            self.switchCell(cell, title: self.russian ? "Вибрация" : "Haptic feedback", value: self.cameraSettings.haptic, action: #selector(self.cameraHapticChanged(_:)))
++        case .chatColors:
++            cell.textLabel?.text = self.russian ? "Цвета чатов" : "Chat colors"
++            cell.accessoryType = .disclosureIndicator
++        case .arcadeCloseButton:
++            self.switchCell(cell, title: self.russian ? "Кнопка закрытия «✕»" : "Close button «✕»", value: self.arcadeSettings.showCloseButton, tag: 0, action: #selector(self.arcadeToggleChanged(_:)))
++        case .arcadeConfirmExit:
++            self.switchCell(cell, title: self.russian ? "Подтверждение выхода" : "Exit confirmation", value: self.arcadeSettings.confirmExit, tag: 1, action: #selector(self.arcadeToggleChanged(_:)))
++        case .arcadeKeepScreenOn:
++            self.switchCell(cell, title: self.russian ? "Не дать экрану погаснуть" : "Prevent screen sleep", value: self.arcadeSettings.keepScreenOn, tag: 2, action: #selector(self.arcadeToggleChanged(_:)))
++        case let .game(game):
++            cell.textLabel?.text = game.title
++            cell.textLabel?.textColor = .systemBlue
++            cell.imageView?.image = UIImage(systemName: "gamecontroller.fill")
++            cell.imageView?.tintColor = .systemBlue
++        case .arcadeReset:
++            cell.textLabel?.text = self.russian ? "Сбросить кэш игр" : "Reset games data"
++            cell.textLabel?.textColor = .systemRed
++            cell.imageView?.image = UIImage(systemName: "trash")
++            cell.imageView?.tintColor = .systemRed
++        case .export, .remove:
++            let export = row == .export
++            cell.textLabel?.text = export ? (self.russian ? "Экспортировать .plugin" : "Export .plugin") : (self.russian ? "Удалить плагин" : "Remove plugin")
++            cell.textLabel?.textColor = export ? .systemBlue : .systemRed
++            cell.imageView?.image = UIImage(systemName: export ? "square.and.arrow.up" : "trash")
 +            cell.imageView?.tintColor = cell.textLabel?.textColor
 +        }
 +        return cell
@@ -67774,13 +68111,22 @@ index 00000000..acd97d26
 +            }
 +        }
 +    }
-+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-+        tableView.deselectRow(at: indexPath, animated: true)
-+        if indexPath.section == 0, indexPath.row == self.colorSettingsRow, self.isChatColorPlugin, !self.preparing {
-+            if let controller = self.settingsController?(self.pluginID) { self.navigationController?.pushViewController(controller, animated: true) }
++    private func launch(_ game: AyuArcadeGame) {
++        guard self.plugin?.enabled == true else {
++            let alert = UIAlertController(title: game.title, message: self.russian ? "Сначала включи плагин." : "Enable the plugin first.", preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
 +            return
 +        }
-+        if indexPath.section == 0, indexPath.row == 1, self.isCameraPlugin, !self.preparing {
++        let settings = self.arcadeSettings
++        self.present(AyuArcadeGameController(url: game.url, showCloseButton: settings.showCloseButton, confirmExit: settings.confirmExit, russian: self.russian, keepAwake: settings.keepScreenOn ? self.keepAwake : nil), animated: true)
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard !self.preparing, let row = self.row(indexPath), let plugin = self.plugin else { return }
++        switch row {
++        case .chatColors:
++            if let controller = self.settingsController?(self.pluginID) { self.navigationController?.pushViewController(controller, animated: true) }
++        case .cameraGesture:
 +            let alert = UIAlertController(title: self.russian ? "Жест" : "Gesture", message: nil, preferredStyle: .actionSheet)
 +            for (index, title) in self.cameraModes.enumerated() {
 +                alert.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in self?.updateCameraSettings { $0.trigger = index } }))
@@ -67789,10 +68135,15 @@ index 00000000..acd97d26
 +            alert.popoverPresentationController?.sourceView = self.tableView
 +            alert.popoverPresentationController?.sourceRect = self.tableView.rectForRow(at: indexPath)
 +            self.present(alert, animated: true)
-+            return
-+        }
-+        guard indexPath.section == 1, !self.preparing, let plugin = self.plugin else { return }
-+        if indexPath.row == 0 {
++        case let .game(game):
++            self.launch(game)
++        case .arcadeReset:
++            AyuArcadeGameController.resetGameData { [weak self] in
++                guard let self else { return }
++                let alert = UIAlertController(title: nil, message: self.russian ? "Кэш игр успешно сброшен!" : "Games data successfully reset!", preferredStyle: .alert)
++                alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
++            }
++        case .export:
 +            do {
 +                if let directory = self.exportDirectory { try? FileManager.default.removeItem(at: directory) }
 +                let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ayu-plugin-export-" + UUID().uuidString, isDirectory: true)
@@ -67801,7 +68152,7 @@ index 00000000..acd97d26
 +                try AyuPluginImporter.export(plugin.manifest).write(to: file, options: .atomic)
 +                self.present(UIDocumentPickerViewController(forExporting: [file], asCopy: true), animated: true)
 +            } catch { self.showError() }
-+        } else {
++        case .remove:
 +            let alert = UIAlertController(title: self.russian ? "Удалить плагин?" : "Remove plugin?", message: plugin.manifest.name, preferredStyle: .alert)
 +            alert.addAction(UIAlertAction(title: self.russian ? "Удалить" : "Remove", style: .destructive, handler: { [weak self] _ in
 +                guard let self else { return }
@@ -67809,12 +68160,14 @@ index 00000000..acd97d26
 +                catch { self.showError() }
 +            }))
 +            alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++        default:
++            break
 +        }
 +    }
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..cc632295
+index 00000000..0cdec5cb
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 @@ -0,0 +1,179 @@
@@ -67832,9 +68185,10 @@ index 00000000..cc632295
 +    private var initialImport: (URL, String)?
 +    private var applying = false
 +    private let settingsController: ((String) -> UIViewController?)?
-+    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil, initialImport: (URL, String)? = nil, settingsController: ((String) -> UIViewController?)? = nil) {
++    private let keepAwake: (() -> (() -> Void))?
++    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil, initialImport: (URL, String)? = nil, settingsController: ((String) -> UIViewController?)? = nil, keepAwake: (() -> (() -> Void))? = nil) {
 +        self.store = store; self.russian = russian; self.palette = palette
-+        self.initialImport = initialImport; self.settingsController = settingsController
++        self.initialImport = initialImport; self.settingsController = settingsController; self.keepAwake = keepAwake
 +        super.init(style: .grouped)
 +        self.title = russian ? "Плагины" : "Plugins"
 +    }
@@ -67866,7 +68220,7 @@ index 00000000..cc632295
 +    }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
 +        guard section == 0 else { return nil }
-+        return self.russian ? "После подтверждения импорта совместимый плагин проверяется и включается автоматически. Поддерживаются нативные адаптеры Search+ 2.6.1, Camera Flip 0.2.0, Chat Colors 1.0 и шаблоны хуков исходящего текста. Ручные действия: меню сообщения → Плагины." : "After import confirmation, compatible plugins are checked and enabled automatically. Native Search+ 2.6.1 and Camera Flip 0.2.0 and Chat Colors 1.0 adapters and outgoing-text hook templates are supported. Manual actions: message menu → Plugins."
++        return self.russian ? "Плагины exteraGram (.plugin). После установки плагин сразу включается. Действия в чате: меню сообщения → Плагины." : "exteraGram plugins (.plugin). Installed plugins are enabled right away. In-chat actions: message menu → Plugins."
 +    }
 +    private func puzzleIcon() -> UIImage {
 +        return ayuPluginAvatar()
@@ -67881,18 +68235,18 @@ index 00000000..cc632295
 +        cell.detailTextLabel?.numberOfLines = 0
 +        if indexPath.section == 0 {
 +            cell.textLabel?.text = self.russian ? "Импортировать .plugin" : "Import .plugin"
-+            cell.detailTextLabel?.text = self.russian ? "Файлы → просмотр возможностей → установка" : "Files → review capabilities → install"
++            cell.detailTextLabel?.text = self.russian ? "Выбрать файл в «Файлах»" : "Choose a file in Files"
 +        } else {
 +            let item = self.store.current.plugins.installed[indexPath.row]
 +            cell.textLabel?.text = item.manifest.name
-+            cell.detailTextLabel?.text = "\(item.manifest.version) · \(item.manifest.author)\n" + (item.enabled ? (self.russian ? "Включён" : "Enabled") : (self.russian ? "Выключен" : "Disabled"))
++            cell.detailTextLabel?.text = "\(item.manifest.displayVersion) · \(item.manifest.displayAuthor)\n" + (item.enabled ? (self.russian ? "Включён" : "Enabled") : (self.russian ? "Выключен" : "Disabled"))
 +            cell.accessoryType = .disclosureIndicator
 +
 +        }
 +        return cell
 +    }
 +    private func error(_ error: Error) {
-+        let message = (self.russian ? "Не удалось импортировать плагин. Существующие плагины сохранены.\n\n" : "Plugin import failed. Existing plugins were retained.\n\n") + ((error as? AyuPluginConversionError)?.errorDescription ?? (self.russian ? "Неподдерживаемый формат, превышение лимита или ошибка сохранения." : "Unsupported format, limit exceeded, or save failure."))
++        let message = self.russian ? "Этот плагин пока не поддерживается в AyuGram для iOS. Установленные плагины не изменились." : "This plugin is not supported by AyuGram for iOS yet. Installed plugins were not changed."
 +        self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: message)
 +    }
 +    private func alert(title: String, message: String) {
@@ -67901,8 +68255,7 @@ index 00000000..cc632295
 +        self.present(alert, animated: true)
 +    }
 +    private func details(_ manifest: AyuPluginManifest) -> String {
-+        let capabilities = manifest.actions.map { "• " + $0.ruleSummary(russian: self.russian) + " (" + $0.permission + ")" }.joined(separator: "\n")
-+        return "\(manifest.version) · \(manifest.author)\n\n\(manifest.summary)\n\n\(capabilities)" + (manifest.limitations.isEmpty ? "" : "\n\n" + manifest.limitations.joined(separator: "\n\n"))
++        return "\(manifest.name)\n\(manifest.displayVersion) · \(manifest.displayAuthor)" + (manifest.summary.isEmpty ? "" : "\n\n" + manifest.summary)
 +    }
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
@@ -67916,7 +68269,7 @@ index 00000000..cc632295
 +        }
 +        guard indexPath.row < self.store.current.plugins.installed.count else { return }
 +        let plugin = self.store.current.plugins.installed[indexPath.row]
-+        self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: plugin.manifest.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController), animated: true)
++        self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: plugin.manifest.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController, keepAwake: self.keepAwake), animated: true)
 +    }
 +    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
 +        guard let url = urls.first, !self.reading else { return }
@@ -67959,8 +68312,8 @@ index 00000000..cc632295
 +    }
 +    private func confirmInstall(_ manifest: AyuPluginManifest) {
 +        let expected = self.store.current.plugins.installed.first(where: { $0.manifest.id == manifest.id })
-+        let alert = UIAlertController(title: self.russian ? "Импортировать плагин?" : "Import plugin?", message: self.details(manifest) + (self.russian ? "\n\nПроверь действия и ограничения. После подтверждения приложение подготовит плагин и включит его. При замене включится новая версия." : "\n\nReview the actions and limitations. Confirming prepares and enables the plugin. Replacement enables the new version."), preferredStyle: .alert)
-+        alert.addAction(UIAlertAction(title: self.russian ? "Импортировать и включить" : "Import and enable", style: .default, handler: { [weak self] _ in
++        let alert = UIAlertController(title: expected == nil ? (self.russian ? "Установить плагин?" : "Install plugin?") : (self.russian ? "Обновить плагин?" : "Update plugin?"), message: self.details(manifest), preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: expected == nil ? (self.russian ? "Установить" : "Install") : (self.russian ? "Обновить" : "Update"), style: .default, handler: { [weak self] _ in
 +            guard let self else { return }
 +            let begin: () -> Void = { [weak self] in self?.apply(manifest, expected: expected) }
 +            if let presented = self.presentedViewController { presented.dismiss(animated: true, completion: begin) }
@@ -67991,7 +68344,7 @@ index 00000000..cc632295
 +                        try $0.plugins.installAndActivate(prepared)
 +                    }
 +                    self.tableView.reloadData()
-+                    self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: prepared.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController), animated: true)
++                    self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: prepared.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController, keepAwake: self.keepAwake), animated: true)
 +                } catch { self.error(error) }
 +            }
 +        }
@@ -68058,10 +68411,10 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..65ce1765
+index 00000000..6e94c860
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,579 @@
+@@ -0,0 +1,582 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -68278,7 +68631,10 @@ index 00000000..65ce1765
 +    let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
 +    let initialImport: (URL, String)?
 +    if let fileURL, let filename { initialImport = (fileURL, filename) } else { initialImport = nil }
-+    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, initialImport: initialImport, settingsController: { id in AyuChatColorsController(context: context, pluginID: id) })
++    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, initialImport: initialImport, settingsController: { id in AyuChatColorsController(context: context, pluginID: id) }, keepAwake: {
++        let disposable = context.sharedContext.applicationBindings.pushIdleTimerExtension()
++        return { disposable.dispose() }
++    })
 +    let navigation = UINavigationController(rootViewController: plugins)
 +    navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
 +    context.sharedContext.applicationBindings.presentNativeController(navigation)
@@ -68641,6 +68997,39 @@ index 00000000..65ce1765
 +    }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift b/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift
+index 588fc00b..e64473ce 100644
+--- a/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift
++++ b/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift
+@@ -215,6 +215,7 @@ public func deleteAccountOptionsController(context: AccountContext, navigationCo
+                 }
+             }
+ 
++            maximumAvailableAccounts = ayuMaximumNumberOfAccounts(context: context, premium: maximumAvailableAccounts == maximumPremiumNumberOfAccounts)
+             if count >= maximumAvailableAccounts {
+                 var replaceImpl: ((ViewController) -> Void)?
+                 let controller = PremiumLimitScreen(context: context, subject: .accounts, count: Int32(count), action: {
+@@ -422,7 +423,7 @@ public func deleteAccountOptionsController(context: AccountContext, navigationCo
+                 break
+         }
+         
+-        let canAddAccounts = accountsAndPeers.1.count + 1 < maximumNumberOfAccounts
++        let canAddAccounts = accountsAndPeers.1.count + 1 < ayuMaximumNumberOfAccounts(context: context, premium: false)
+ 
+         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(presentationData.strings.DeleteAccount_AlternativeOptionsTitle), leftNavigationButton: leftNavigationButton, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: deleteAccountOptionsEntries(presentationData: presentationData, canAddAccounts: canAddAccounts, hasTwoStepAuth: hasTwoStepAuth, hasPasscode: hasPasscode), style: .blocks)
+diff --git a/submodules/SettingsUI/Sources/LogoutOptionsController.swift b/submodules/SettingsUI/Sources/LogoutOptionsController.swift
+index a884524f..b4bd6010 100644
+--- a/submodules/SettingsUI/Sources/LogoutOptionsController.swift
++++ b/submodules/SettingsUI/Sources/LogoutOptionsController.swift
+@@ -156,6 +156,7 @@ public func logoutOptionsController(context: AccountContext, navigationControlle
+                 }
+             }
+             
++            maximumAvailableAccounts = ayuMaximumNumberOfAccounts(context: context, premium: maximumAvailableAccounts == maximumPremiumNumberOfAccounts)
+             if count >= maximumAvailableAccounts {
+                 var replaceImpl: ((ViewController) -> Void)?
+                 let controller = PremiumLimitScreen(context: context, subject: .accounts, count: Int32(count), action: {
 diff --git a/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift b/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift
 index 8c474034..2212f0ad 100644
 --- a/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift	
@@ -68727,6 +69116,19 @@ index 8c474034..2212f0ad 100644
      let webBrowserData = combineLatest(
          context.sharedContext.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.contactSynchronizationSettings, ApplicationSpecificSharedDataKeys.webBrowserSettings]),
          context.engine.data.subscribe(TelegramEngine.EngineData.Item.Configuration.ApplicationSpecificPreference(key: PreferencesKeys.webBrowserSettings))
+diff --git a/submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift b/submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift
+index 5302c7be..19538d65 100644
+--- a/submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift
++++ b/submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift
+@@ -4268,7 +4268,7 @@ func settingsSearchableItems(
+     let canAddAccount = activeAccountsAndPeers(context: context)
+     |> take(1)
+     |> map { accountsAndPeers -> Bool in
+-        return accountsAndPeers.1.count + 1 < maximumNumberOfAccounts
++        return accountsAndPeers.1.count + 1 < ayuMaximumNumberOfAccounts(context: context, premium: false)
+     }
+     
+     let notificationSettings = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Configuration.ApplicationSpecificPreference(key: PreferencesKeys.globalNotifications))
 diff --git a/submodules/TelegramCore/Sources/Account/Account.swift b/submodules/TelegramCore/Sources/Account/Account.swift
 index af6b6078..0b749cb1 100644
 --- a/submodules/TelegramCore/Sources/Account/Account.swift
@@ -70024,10 +70426,10 @@ index 00000000..1d618f7c
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift
 new file mode 100644
-index 00000000..c6485d01
+index 00000000..5c881b38
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,102 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -70063,8 +70465,9 @@ index 00000000..c6485d01
 +        self.states[peerId] = state
 +    }
 +
-+    /// Custom emoji are rewritten only while local Premium hides a missing server subscription.
-+    static func rewritesCustomEmoji(accountPeerId: PeerId) -> Bool {
++    /// True while local Premium hides a missing server subscription: custom emoji are rewritten
++    /// and Premium-only server features (rich messages) must not be offered as available.
++    public static func rewritesCustomEmoji(accountPeerId: PeerId) -> Bool {
 +        self.lock.lock()
 +        defer { self.lock.unlock() }
 +        guard let state = self.states[accountPeerId] else { return false }
@@ -70790,10 +71193,10 @@ index 00000000..35137a2f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..0a790c61
+index 00000000..b31f4992
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,422 @@
 +import Foundation
 +import CryptoKit
 +
@@ -70822,7 +71225,7 @@ index 00000000..0a790c61
 +
 +/// Versioned, declarative plugin ABI. No Android or Python code is executed.
 +public struct AyuPluginAction: Codable, Equatable {
-+    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip, chatColors }
++    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip, chatColors, arcadeGame, unlimitedAccounts }
 +    public var id: String
 +    public var title: String
 +    public var kind: Kind
@@ -70836,6 +71239,8 @@ index 00000000..0a790c61
 +        self.prefix = prefix; self.condition = condition; self.replacementCount = replacementCount
 +    }
 +    public var permission: String {
++        if self.kind == .arcadeGame { return "web.games.open" }
++        if self.kind == .unlimitedAccounts { return "accounts.limit.local" }
 +        if self.kind == .chatColors { return "chatlist.appearance.modify" }
 +        if self.kind == .cameraFlip { return "camera.switch" }
 +        if self.kind == .outgoingReplace { return "messages.outgoing.modify" }
@@ -70894,20 +71299,22 @@ index 00000000..0a790c61
 +    public var limitations: [String]
 +    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = []) {
 +        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
-+        self.apiVersion = actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
++        self.apiVersion = actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
 +        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations
 +    }
 +    public func validate() throws {
 +        let validID: (String) -> Bool = { text in
 +            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
 +        }
-+        guard self.format == "ayugram-ios-plugin", (1...4).contains(self.apiVersion), validID(self.id),
++        guard self.format == "ayugram-ios-plugin", (1...5).contains(self.apiVersion), validID(self.id),
 +              !self.name.isEmpty, self.name.count <= 64, !self.author.isEmpty, self.author.count <= 128,
 +              !self.version.isEmpty, self.version.count <= 32, self.summary.count <= 2048,
 +              !self.actions.isEmpty, self.actions.count <= 8, Set(self.actions.map(\.id)).count == self.actions.count,
 +              self.limitations.count <= 16, self.limitations.allSatisfy({ $0.count <= 512 }),
 +              (self.convertedFrom?.count ?? 0) <= 128, (self.sourceSHA256?.count ?? 0) <= 64 else { throw AyuPluginError.invalidManifest }
 +        for action in self.actions {
++            guard (action.kind != .arcadeGame && action.kind != .unlimitedAccounts) || self.apiVersion >= 5 else { throw AyuPluginError.invalidManifest }
++            guard action.kind != .arcadeGame || AyuArcadeGame(actionID: action.id) != nil else { throw AyuPluginError.invalidManifest }
 +            guard action.kind != .chatColors || self.apiVersion >= 4 else { throw AyuPluginError.invalidManifest }
 +            guard action.kind != .cameraFlip || self.apiVersion >= 3 else { throw AyuPluginError.invalidManifest }
 +            guard self.apiVersion >= 2 || (action.condition == nil && action.replacementCount == nil) else { throw AyuPluginError.invalidManifest }
@@ -70930,13 +71337,63 @@ index 00000000..0a790c61
 +    public var permissions: [String] { return Array(Set(self.actions.map(\.permission))).sorted() }
 +}
 +
++/// Web games of the exteraGram Arcade Games plugin. The action id selects the game.
++public enum AyuArcadeGame: String, CaseIterable {
++    case game2048 = "game_2048"
++    case flappyBird = "game_flappy"
++    case chromeDino = "game_dino"
++
++    public init?(actionID: String) { self.init(rawValue: actionID) }
++
++    /// The plugin's chat commands: `.2048`, `.flappy`, `.dino`, matched after trimming, case-insensitively.
++    public init?(command text: String) {
++        switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
++        case ".2048": self = .game2048
++        case ".flappy": self = .flappyBird
++        case ".dino": self = .chromeDino
++        default: return nil
++        }
++    }
++
++    public var title: String {
++        switch self {
++        case .game2048: return "2048"
++        case .flappyBird: return "Flappy Bird"
++        case .chromeDino: return "Chrome Dino"
++        }
++    }
++
++    public var url: URL {
++        switch self {
++        case .game2048: return URL(string: "https://play2048.co/")!
++        case .flappyBird: return URL(string: "https://flappybird.io/play/")!
++        case .chromeDino: return URL(string: "https://chromedino.com/embed/")!
++        }
++    }
++}
++
++public struct AyuArcadeSettings: Codable, Equatable {
++    public var showCloseButton = true
++    public var confirmExit = true
++    public var keepScreenOn = true
++    public init() {}
++    private enum CodingKeys: String, CodingKey { case showCloseButton, confirmExit, keepScreenOn }
++    public init(from decoder: Decoder) throws {
++        let c = try decoder.container(keyedBy: CodingKeys.self)
++        self.showCloseButton = try c.decodeIfPresent(Bool.self, forKey: .showCloseButton) ?? true
++        self.confirmExit = try c.decodeIfPresent(Bool.self, forKey: .confirmExit) ?? true
++        self.keepScreenOn = try c.decodeIfPresent(Bool.self, forKey: .keepScreenOn) ?? true
++    }
++}
++
 +public struct AyuInstalledPlugin: Codable, Equatable {
 +    public var manifest: AyuPluginManifest
 +    public var enabled: Bool
 +    public var cameraFlipSettings: AyuCameraFlipSettings?
 +    public var chatColorSettings: AyuChatColorSettings?
-+    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil, chatColorSettings: AyuChatColorSettings? = nil) {
-+        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings; self.chatColorSettings = chatColorSettings
++    public var arcadeSettings: AyuArcadeSettings?
++    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil, chatColorSettings: AyuChatColorSettings? = nil, arcadeSettings: AyuArcadeSettings? = nil) {
++        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings; self.chatColorSettings = chatColorSettings; self.arcadeSettings = arcadeSettings
 +    }
 +}
 +
@@ -70955,6 +71412,9 @@ index 00000000..0a790c61
 +                guard plugin.manifest.actions.contains(where: { $0.kind == .cameraFlip }) else { throw AyuPluginError.invalidManifest }
 +                try settings.validate()
 +            }
++            if plugin.arcadeSettings != nil {
++                guard plugin.manifest.actions.contains(where: { $0.kind == .arcadeGame }) else { throw AyuPluginError.invalidManifest }
++            }
 +        }
 +    }
 +    public mutating func install(_ manifest: AyuPluginManifest) throws {
@@ -70963,8 +71423,26 @@ index 00000000..0a790c61
 +        let oldSettings = oldPlugin?.cameraFlipSettings
 +        var updated = self.installed.filter { $0.manifest.id != manifest.id }
 +        guard updated.count < 12 else { throw AyuPluginError.capacity }
-+        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil, chatColorSettings: manifest.actions.contains(where: { $0.kind == .chatColors }) ? oldPlugin?.chatColorSettings : nil))
++        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil, chatColorSettings: manifest.actions.contains(where: { $0.kind == .chatColors }) ? oldPlugin?.chatColorSettings : nil, arcadeSettings: manifest.actions.contains(where: { $0.kind == .arcadeGame }) ? oldPlugin?.arcadeSettings : nil))
 +        self.installed = updated
++    }
++    /// Settings of the first enabled Arcade Games provider.
++    public var activeArcade: AyuArcadeSettings? {
++        guard let plugin = self.installed.first(where: { $0.enabled && $0.manifest.actions.contains(where: { $0.kind == .arcadeGame }) }) else { return nil }
++        return plugin.arcadeSettings ?? AyuArcadeSettings()
++    }
++    /// The game an outgoing plain-text command opens instead of being sent.
++    public func arcadeGame(forOutgoingText text: String) -> AyuArcadeGame? {
++        guard self.activeArcade != nil, let game = AyuArcadeGame(command: text) else { return nil }
++        return game
++    }
++    public mutating func setArcadeSettings(id: String, settings: AyuArcadeSettings) throws {
++        guard let index = self.installed.firstIndex(where: { $0.manifest.id == id }), self.installed[index].manifest.actions.contains(where: { $0.kind == .arcadeGame }) else { throw AyuPluginError.invalidManifest }
++        self.installed[index].arcadeSettings = settings
++    }
++    /// Unlim Accounts: the local add-account limit is lifted while an enabled provider is installed.
++    public var unlimitedAccounts: Bool {
++        return self.installed.contains(where: { $0.enabled && $0.manifest.actions.contains(where: { $0.kind == .unlimitedAccounts }) })
 +    }
 +    public mutating func setEnabled(id: String, enabled: Bool) {
 +        if let index = self.installed.firstIndex(where: { $0.manifest.id == id }) { self.installed[index].enabled = enabled }
@@ -71034,7 +71512,7 @@ index 00000000..0a790c61
 +        try prepared.validate()
 +        guard prepared == expected, let index = self.installed.firstIndex(where: { $0.manifest.id == expected.id }),
 +              self.installed[index].manifest == expected, !self.installed[index].enabled else { throw AyuPluginError.invalidManifest }
-+        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings, chatColorSettings: self.installed[index].chatColorSettings)
++        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings, chatColorSettings: self.installed[index].chatColorSettings, arcadeSettings: self.installed[index].arcadeSettings)
 +    }
 +    public mutating func remove(id: String) { self.installed.removeAll { $0.manifest.id == id } }
 +    public func action(pluginID: String, actionID: String) -> AyuPluginAction? {
@@ -71050,7 +71528,7 @@ index 00000000..0a790c61
 +        guard prepared == manifest else { throw AyuPluginError.invalidManifest }
 +        for action in prepared.actions {
 +            switch action.kind {
-+            case .cameraFlip, .chatColors: break
++            case .cameraFlip, .chatColors, .arcadeGame, .unlimitedAccounts: break
 +            case .search:
 +                guard try action.queries("AyuGram") == ["AyuGram"] else { throw AyuPluginError.invalidInput }
 +            case .searchTerms:
@@ -71081,7 +71559,8 @@ index 00000000..0a790c61
 +}
 +
 +public enum AyuPluginImporter {
-+    public static let maximumFileBytes = 512 * 1024
++    /// Unlim Accounts embeds its Android runtime and is 2.6 MB; only its hash is used.
++    public static let maximumFileBytes = 4 * 1024 * 1024
 +    public static func parse(_ data: Data, filename: String) throws -> AyuPluginManifest {
 +        guard (filename as NSString).pathExtension.lowercased() == "plugin", !data.isEmpty, data.count <= self.maximumFileBytes else { throw AyuPluginError.invalidFile }
 +        if let manifest = try? JSONDecoder().decode(AyuPluginManifest.self, from: data) {
@@ -71094,6 +71573,19 @@ index 00000000..0a790c61
 +        return try AyuAndroidPluginConverter.convert(data, sourceSHA256: hash)
 +    }
 +    static func reviewedAdapter(sourceSHA256 hash: String) throws -> AyuPluginManifest {
++        if hash == "421911448e6fe62b3292b43b8593ebb24056b238278bab002576381d541238bc" {
++            return AyuPluginManifest(id: "game_arcade", name: "Arcade Games", author: "@Art_727 & @lerowplug", version: "1.1", summary: "Легендарные игры 2048, Flappy Bird и Chrome Dino прямо в клиенте. Сделан на основе плагина Flappy Bird, автор @hijut", actions: AyuArcadeGame.allCases.map { AyuPluginAction(id: $0.rawValue, title: $0.title, kind: .arcadeGame) }, convertedFrom: "exteraGram Arcade Games 1.1", sourceSHA256: hash, limitations: [
++                "Games open in a full-screen web view from the plugin page, the chat Plugins menu or the .2048, .flappy and .dino chat commands, which are not sent.",
++                "The original ad-blocking script is injected into each game page. Game progress stays in the web view's local storage until reset."
++            ])
++        }
++        if hash == "6c5e2f697da4d87b0409841d96dd9bf69f224073c44b555c6fd9de782c70d40f" {
++            return AyuPluginManifest(id: "unlim_accounts", name: "Unlim Accounts", author: "@rezolvePlugins", version: "1.0", summary: "Raises the account limit to 999.", actions: [
++                AyuPluginAction(id: "unlim_accounts", title: "Account limit 999", kind: .unlimitedAccounts)
++            ], convertedFrom: "exteraGram Unlim Accounts 1.0", sourceSHA256: hash, limitations: [
++                "Lifts the client's add-account limit to 999 while enabled in the current account. The embedded Android runtime is not used."
++            ])
++        }
 +        if hash == "a7217c0cc672615e3558b8f3391b522f7e031bc0900a84315b4eb4f53ece8de5" {
 +            return AyuPluginManifest(id: "chat_colors", name: "Chat Colors", author: "@lerowc & @lerowplug (original)", version: "1.0-ios.1", summary: "Per-chat colors in the chat list, nine presets, custom HEX, brightness, colored-chat management and reset.", actions: [
 +                AyuPluginAction(id: "chat_color", title: "Choose chat list color", kind: .chatColors)
@@ -72719,7 +73211,7 @@ index 63293572..96d3fb3e 100644
                  let headerButtons = Set(peerInfoHeaderButtons(peer: peer, cachedData: data.cachedData, isOpenedFromChat: strongSelf.isOpenedFromChat, isExpanded: true, videoCallsEnabled: strongSelf.videoCallsEnabled, isSecretChat: strongSelf.peerId.namespace == Namespaces.Peer.SecretChat, isContact: strongSelf.data?.isContact ?? false, threadInfo: strongSelf.data?.threadData?.info))
                  
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
-index f1c1917b..c2e73081 100644
+index f1c1917b..7da00905 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
 @@ -51,6 +51,8 @@ extension PeerInfoScreenNode {
@@ -72731,6 +73223,14 @@ index f1c1917b..c2e73081 100644
          case .avatar:
              self.controller?.openAvatarForEditing()
          case .edit:
+@@ -238,6 +240,7 @@ extension PeerInfoScreenNode {
+                     }
+                 }
+                 
++                maximumAvailableAccounts = ayuMaximumNumberOfAccounts(context: strongSelf.context, premium: maximumAvailableAccounts == maximumPremiumNumberOfAccounts)
+                 if count >= maximumAvailableAccounts {
+                     var replaceImpl: ((ViewController) -> Void)?
+                     let controller = PremiumLimitScreen(context: strongSelf.context, subject: .accounts, count: Int32(count), action: {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 index a4873696..ca3a1aba 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
@@ -138880,10 +139380,10 @@ index 00000000..2c07baa7
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
 new file mode 100644
-index 00000000..a149ea52
+index 00000000..638e830c
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,179 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -138912,7 +139412,7 @@ index 00000000..a149ea52
 +        super.init(style: .insetGrouped)
 +        self.title = russian ? "Плагины" : "Plugins"
 +        for plugin in context.account.network.ayuGhostMode.current.plugins.installed where plugin.enabled {
-+            for action in plugin.manifest.actions where action.kind == .search || action.kind == .searchTerms || action.kind == .replaceText || action.kind == .chatColors { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
++            for action in plugin.manifest.actions where action.kind == .search || action.kind == .searchTerms || action.kind == .replaceText || action.kind == .chatColors || action.kind == .arcadeGame { self.commands.append((plugin.manifest.id, action, plugin.manifest.name)) }
 +        }
 +        if self.commands.isEmpty { self.status = russian ? "Здесь нет ручных действий. Автоматические функции включённых плагинов работают в соответствующих разделах приложения." : "There are no manual actions here. Enabled plugins run automatic features in their corresponding app screens." }
 +    }
@@ -138965,6 +139465,13 @@ index 00000000..a149ea52
 +        let prompt = command.1.kind == .searchTerms
 +            ? (self.russian ? "Фразы через |, максимум 6. Результаты объединяются без повторов. Поиск в текущем чате/теме, без автоматической загрузки следующих страниц." : "Up to 6 phrases separated by |. Results are merged without duplicates. Current chat/topic only; no automatic pagination.")
 +            : (self.russian ? "Введи текст. Отправка сообщений автоматически не выполняется." : "Enter text. Messages are never sent automatically.")
++        if command.1.kind == .arcadeGame, let game = AyuArcadeGame(actionID: command.1.id) {
++            let context = self.context
++            self.dismiss(animated: true, completion: {
++                ayuPresentArcadeGame(context: context, game: game)
++            })
++            return
++        }
 +        if command.1.kind == .chatColors {
 +            let context = self.context
 +            let peerId = self.peerId
@@ -139023,6 +139530,17 @@ index 00000000..a149ea52
 +            self.tableView.reloadData()
 +        }))
 +    }
++}
++
++/// Opens an Arcade Games web game with the enabled provider's settings.
++func ayuPresentArcadeGame(context: AccountContext, game: AyuArcadeGame) {
++    guard let settings = context.account.network.ayuGhostMode.current.plugins.activeArcade else { return }
++    let russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++    let keepAwake: (() -> (() -> Void))? = settings.keepScreenOn ? {
++        let disposable = context.sharedContext.applicationBindings.pushIdleTimerExtension()
++        return { disposable.dispose() }
++    } : nil
++    context.sharedContext.applicationBindings.presentNativeController(AyuArcadeGameController(url: game.url, showCloseButton: settings.showCloseButton, confirmExit: settings.confirmExit, russian: russian, keepAwake: keepAwake))
 +}
 +
 +extension ChatControllerImpl {
@@ -139510,6 +140028,36 @@ index 5fe58bbf..7faf9cfb 100644
      
      @objc func moreButtonPressed() {
          self.moreBarButton.play()
+diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+index ee583844..6303f91a 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+@@ -5086,8 +5086,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+             let effectiveInputText: NSAttributedString
+             let composeContent = effectivePresentationInterfaceState.interfaceState.composeInputState.content
+             let isNewMessage = effectivePresentationInterfaceState.interfaceState.editMessage == nil
++            // Local Premium is presentation only; rich messages need the real subscription.
++            let hasServerPremium = self.context.isPremium && !AyuLocalPremium.rewritesCustomEmoji(accountPeerId: self.context.account.peerId)
+             let requiresPremiumRichContent = isNewMessage
+-                && !self.context.isPremium
++                && !hasServerPremium
+                 && !composeContent.isEmpty
+                 && !composeContent.isEntityExpressible(options: [])
+             let peerSpecificEmojiPack = (self.controller?.contentData?.state.peerView?.cachedData as? CachedChannelData)?.emojiPack
+@@ -5265,6 +5267,13 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+             
+             let trimmedInputText = effectiveInputText.string.trimmingCharacters(in: .whitespacesAndNewlines)
+             let peerId = effectivePresentationInterfaceState.chatLocation.peerId
++            // AyuGram Arcade Games: the plugin's .2048/.flappy/.dino commands open a game and are not sent.
++            if scheduleTime == nil, trimmedInputText.count <= 16, let game = self.context.account.network.ayuGhostMode.current.plugins.arcadeGame(forOutgoingText: trimmedInputText) {
++                self.controller?.updateChatPresentationInterfaceState(animated: true, interactive: true, { $0.updatedInterfaceState { $0.withUpdatedComposeInputState(ChatTextInputState()) } })
++                ayuPresentArcadeGame(context: self.context, game: game)
++                completion()
++                return
++            }
+             if peerId?.namespace != Namespaces.Peer.SecretChat, let interactiveEmojis = self.interactiveEmojis, interactiveEmojis.emojis.contains(trimmedInputText), effectiveInputText.attribute(ChatTextInputAttributes.customEmoji, at: 0, effectiveRange: nil) == nil {
+                 messages.append(.message(text: "", attributes: [], inlineStickers: [:], mediaReference: AnyMediaReference.standalone(media: TelegramMediaDice(emoji: trimmedInputText)), threadId: self.chatLocation.threadId, replyToMessageId: self.chatPresentationInterfaceState.interfaceState.replyMessageSubject?.subjectModel, replyToStoryId: nil, localGroupingKey: nil, correlationId: nil, bubbleUpEmojiOrStickersets: []))
+             } else {
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift b/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
 index b32f929d..70c867fa 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
@@ -139848,10 +140396,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..79078ec6
+index 00000000..63303038
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,824 @@
+@@ -0,0 +1,845 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -140328,7 +140876,7 @@ index 00000000..79078ec6
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data(repeating: 0, count: AyuPluginImporter.maximumFileBytes + 1), filename: "test.plugin") }, "File size checked before parsing")
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data("__id__ = 'search_plus'\nraise Exception()".utf8), filename: "test.plugin") }, "Spoofed Android metadata must not select the reviewed adapter or execute code")
 +var invalidPlugin = plugin
-+invalidPlugin.apiVersion = 5
++invalidPlugin.apiVersion = 6
 +check(pluginThrows { try invalidPlugin.validate() }, "Unknown plugin ABI rejected")
 +invalidPlugin = plugin; invalidPlugin.id = "../escape"
 +check(pluginThrows { try invalidPlugin.validate() }, "Path-like IDs rejected")
@@ -140545,6 +141093,27 @@ index 00000000..79078ec6
 +_ = tapPolicy.handle(.began, x: 0, y: 0, time: 13, settings: swipeSettings)
 +check(!tapPolicy.handle(.moved, x: Double.nan, y: 80, time: 13.1, settings: swipeSettings), "Invalid coordinates must not trigger camera operations")
 +print("PASS: \(checks) model checks including the reviewed Camera Flip bridge, persistence and gesture thresholds")
++
++let arcadeManifest = try AyuPluginImporter.reviewedAdapter(sourceSHA256: "421911448e6fe62b3292b43b8593ebb24056b238278bab002576381d541238bc")
++check(arcadeManifest.apiVersion == 5 && arcadeManifest.actions.map(\.id) == AyuArcadeGame.allCases.map(\.rawValue), "Arcade Games adapter declares API 5 and its three games")
++check(AyuArcadeGame(command: " .FLAPPY\n") == .flappyBird && AyuArcadeGame(command: ".flappy bird") == nil && AyuArcadeGame(command: "2048") == nil, "Arcade commands match exactly after trimming")
++var arcadeRegistry = AyuPluginRegistry()
++try arcadeRegistry.installAndActivate(try AyuPluginActivation.prepare(arcadeManifest))
++check(arcadeRegistry.arcadeGame(forOutgoingText: ".dino") == .chromeDino && arcadeRegistry.activeArcade == AyuArcadeSettings(), "Enabled arcade provider opens its games with default settings")
++var arcadeSettings = AyuArcadeSettings(); arcadeSettings.confirmExit = false
++try arcadeRegistry.setArcadeSettings(id: "game_arcade", settings: arcadeSettings)
++try arcadeRegistry.install(arcadeManifest)
++check(arcadeRegistry.installed.first?.arcadeSettings == arcadeSettings, "Arcade settings survive replacement")
++arcadeRegistry.setEnabled(id: "game_arcade", enabled: false)
++check(arcadeRegistry.arcadeGame(forOutgoingText: ".dino") == nil, "A disabled arcade provider leaves commands as text")
++let unlimManifest = try AyuPluginImporter.reviewedAdapter(sourceSHA256: "6c5e2f697da4d87b0409841d96dd9bf69f224073c44b555c6fd9de782c70d40f")
++var unlimRegistry = AyuPluginRegistry()
++check(!unlimRegistry.unlimitedAccounts, "Account limit is unchanged without the plugin")
++try unlimRegistry.installAndActivate(try AyuPluginActivation.prepare(unlimManifest))
++check(unlimRegistry.unlimitedAccounts && unlimManifest.apiVersion == 5, "Unlim Accounts lifts the account limit while enabled")
++var futurePlugin = arcadeManifest; futurePlugin.apiVersion = 4
++check(pluginThrows { try futurePlugin.validate() }, "API 5 actions are rejected by older ABI versions")
++print("PASS: \(checks) model checks including the Arcade Games and Unlim Accounts adapters")
 +
 +let chatColorFixture = try Data(contentsOf: pluginFixtures.appendingPathComponent("chat_colors_ios.plugin"))
 +let chatColorManifest = try AyuPluginImporter.parse(chatColorFixture, filename: "chat_colors.plugin")

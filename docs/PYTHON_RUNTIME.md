@@ -7,10 +7,11 @@ not replace — the existing declarative plugin ABI and the reviewed native
 adapters (Search+, Camera Flip, Chat Colors, Arcade Games, Unlim Accounts),
 which keep running unchanged and take precedence by SHA-256 on import.
 
-**Status: prototype. The Python runtime is implemented and tested on desktop
-Python. The Swift/Objective-C host integration is present in source.
-`Python.xcframework` is not embedded, so interpreter-backed execution remains
-inactive in the IPA; existing native adapters keep handling supported plugins.**
+**The wider Python SDK is a desktop-tested prototype. Source builds now embed
+CPython for the [on-device AST converter](AST_CONVERTER.md), which translates
+supported hooks to persisted native programs. The app does not load arbitrary
+Python plugins. Existing native adapters keep priority. Release 4 remains the
+previous artifact without this new interpreter/converter block.**
 
 ## What runs today (verified on desktop CPython 3.12)
 
@@ -81,27 +82,19 @@ python tools/plugin_compat_report.py plugins/*.plugin \
 plugin code — only for trusted files). Current output is in
 [PYTHON_RUNTIME_COMPAT.md](PYTHON_RUNTIME_COMPAT.md).
 
-## Next steps (require macOS / Xcode; none verifiable on Windows)
+## Native converter integration
 
-1. Embed `Python.xcframework` from BeeWare Python-Apple-support
-   **3.13-b15** (Python 3.13.15, iOS asset
-   `Python-3.13-iOS-support.b15.tar.gz`, sha256
-   `80175765a31babe43b0910395cf86ba4e8412adf1902b069d55b74d523ecc5d1`). b15 is
-   chosen over the newer b17/b18 as it has been out since 4 Sep. Bundle
-   `runtime/python` as `ayu-python-runtime/` and process `.so` modules into
-   `Frameworks/*.framework` with `.fwork` markers (App Store rule; see the
-   CPython iOS guide).
-2. Add a Bazel target for `AyuPythonBridgeObjC` + the `Python` framework dep,
-   put `AyuPython/` Swift on the TelegramUI graph, and call
-   `AyuPythonBootstrap.shared.install(context:)` from
-   `AuthorizedApplicationContext`.
-3. Wire the outgoing seam: call `AyuPythonRuntime.shared.transformOutgoing(...)`
-   in `enqueueMessages` next to the existing `plugins.outgoingText(text)`,
-   guarded by `isAvailable` (inert until the framework is embedded).
-4. Surface Python plugins in the existing **Settings → AyuGram → Plugins**
-   manager (import stores the `.plugin` under the data dir's `sources/`, shows
-   the compatibility verdict before enabling) and render menu items / settings
-   schema / bulletins / alerts from the host handler.
-5. Measure IPA size impact (support package ≈ 30 MB compressed) and confirm the
-   runtime starts on device. Sideload only: App Store forbids downloaded
-   executable code, so this stays an unsigned/sideload feature.
+The build downloads and verifies BeeWare Python 3.13-b15, links its framework,
+and packages the standard library with framework-wrapped binary modules.
+The native bridge now acquires the GIL for each queue call and releases it after
+initialization, so serial GCD queue thread changes do not reuse a foreign Python
+thread state. CPython startup/configuration failures are returned to the importer.
+
+The converter uses only the `convert` host operation. It reads the complete AST,
+emits a native API 6 manifest and leaves activation/persistence to the existing
+plugin manager. No downloaded source is executed. Native program execution does
+not need Python on the message-send path. The other host APIs and Java-hook shims
+remain a separate prototype rather than general Android compatibility.
+
+See [AST converter details](AST_CONVERTER.md) for supported statements, bounds,
+packaging checks and signing requirements.

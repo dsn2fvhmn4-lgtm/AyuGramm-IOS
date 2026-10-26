@@ -288,7 +288,21 @@ def callback(args):
 
 # ------------------------------------------------------------------ dispatch
 
+def convert(args):
+    from _ayu_converter import compile_source
+    if "sourceData" in args:
+        import base64
+        encoded = args["sourceData"]
+        if not isinstance(encoded, str) or len(encoded) > 90000:
+            raise ValueError("Plugin source limit is 64 KB")
+        source = base64.b64decode(encoded, validate=True).decode("utf-8")
+    else:
+        source = args["source"]
+    return compile_source(source)
+
+
 OPERATIONS = {
+    "convert": convert,
     "configure": configure,
     "load": load,
     "unload": unload,

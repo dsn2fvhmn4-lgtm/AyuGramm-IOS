@@ -1,8 +1,8 @@
 # AyuGram iOS Python plugin runtime
 
-Embeds CPython to run exteraGram `.plugin` files on iOS. See
+Embeds CPython to parse supported exteraGram `.plugin` sources into native text programs on iOS. See
 [../docs/PYTHON_RUNTIME.md](../docs/PYTHON_RUNTIME.md) for the full design and
-status (prototype: Python side tested, native host unbuilt).
+integration details. The broader Python SDK remains a prototype; the app import path uses the [AST converter](../docs/AST_CONVERTER.md).
 
 ## Layout
 

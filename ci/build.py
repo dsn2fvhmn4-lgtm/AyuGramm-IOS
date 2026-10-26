@@ -12,6 +12,7 @@ import subprocess
 import sys
 import zipfile
 from build_logging import run_logged_build
+import python_support
 
 parser = argparse.ArgumentParser()
 parser.add_argument("source", type=Path)
@@ -87,6 +88,10 @@ if args.phase == "port":
     # --skipDsym exists only in the patched Make.py. dSYMs are not needed for unsigned test IPAs.
     if os.environ.get("AYU_SKIP_DSYM", "").strip() == "1":
         command.append("--skipDsym")
+python_archive = None
+if args.phase == "port":
+    python_archive = python_support.prepare(source, temp / "ayu-python-support", args.configuration)
+
 command.append("--continueOnError")
 try:
     # Persist useful diagnostics without writing API values into the artifact log.
@@ -98,6 +103,10 @@ finally:
 ipa = artifacts / "Telegram.ipa"
 if not ipa.is_file():
     raise SystemExit("Build command returned without an IPA artifact")
+python_manifest = None
+if python_archive is not None:
+    python_manifest = python_support.package(ipa, python_archive, port_root / "runtime", args.configuration)
+
 with zipfile.ZipFile(ipa) as archive:
     info = plistlib.loads(archive.read("Payload/Telegram.app/Info.plist"))
     if args.phase == "port" and (source / "Telegram/Telegram-iOS/AyuBlue.icon").exists():
@@ -129,7 +138,7 @@ with zipfile.ZipFile(ipa) as archive:
 manifest = dict(phase=args.phase, configuration=args.configuration, xcode=actual_xcode, macos=macos,
                 native_arm64=True, macho_platform=platform_id,
                 signing="unsigned or ad-hoc / no provisioning", install_verified=False,
-                telegram_credentials_configured=has_credentials,
+                telegram_credentials_configured=has_credentials, python_runtime=python_manifest,
                 sha256=hashlib.sha256(ipa.read_bytes()).hexdigest())
 (artifacts / "manifest.json").write_text(json.dumps(manifest, indent=2))
 print(json.dumps(manifest, indent=2))

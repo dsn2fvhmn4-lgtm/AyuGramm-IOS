@@ -4,6 +4,8 @@ This source revision adds **tap .plugin -> review -> Import and enable -> prepar
 -> atomic commit**. It is not a universal Android runtime. Release 3's published
 IPA is unchanged; these additions are included in Release 4.
 
+A second source conversion path adds complete AST parsing and native text programs (API 6). See [supported operations and integration](AST_CONVERTER.md). The literal template described below remains the first fallback after reviewed adapters.
+
 ## Opening and applying
 
 - Tap a downloaded, ordinary cloud-chat `.plugin` attachment. The native file

@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import sys
 from plugin_patterns import compile_source
 from pathlib import Path
 
@@ -12,7 +13,7 @@ CAMERA_FLIP_SHA256 = '61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be00355
 SEARCH_PLUS_SHA256 = '802dd326787e3640f55f20ac5462539c03202184e540578a4531c693c2c3458a'
 
 
-def convert(source: Path, output: Path):
+def convert(source: Path, output: Path, ast_converter=False):
     if source.suffix.lower() != '.plugin' or output.suffix.lower() != '.plugin':
         raise ValueError('Both input and output must use the .plugin extension')
     if source.resolve() == output.resolve():
@@ -27,7 +28,13 @@ def convert(source: Path, output: Path):
     elif hashlib.sha256(data).hexdigest() == CHAT_COLORS_SHA256:
         output_data = (Path(__file__).resolve().parents[1] / 'plugins/chat_colors_ios.plugin').read_bytes()
     else:
-        output_data = (json.dumps(compile_source(data), ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+        if ast_converter:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'runtime/python'))
+            from _ayu_converter import compile_source as compile_ast
+            manifest = compile_ast(data.decode('utf-8'))
+        else:
+            manifest = compile_source(data)
+        output_data = (json.dumps(manifest, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     # Exclusive create protects an existing plugin from accidental replacement.
     with output.open('xb') as destination:
         destination.write(output_data)
@@ -38,8 +45,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--ast', action='store_true', help='Use the same API 6 AST converter as the iOS app')
     args = parser.parse_args()
     try:
-        print(convert(args.source, args.output))
+        print(convert(args.source, args.output, ast_converter=args.ast))
     except (ValueError, OSError) as error:
         raise SystemExit(str(error))

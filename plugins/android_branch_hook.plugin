@@ -1,0 +1,21 @@
+from base_plugin import BasePlugin, HookResult, HookStrategy
+
+__id__ = "branch_hook_demo"
+__name__ = "Branch hook demo"
+__author__ = "AyuGramm-IOS"
+__version__ = "1.0"
+__description__ = "Strip text; !text becomes uppercase, other text becomes a lowercase note."
+
+class BranchHookDemo(BasePlugin):
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+
+    def on_send_message_hook(self, account, params):
+        text = params.message
+        text = text.strip()
+        if text.startswith("!"):
+            text = text.removeprefix("!").upper()
+        else:
+            text = "[note] " + text.lower()
+        params.message = text
+        return HookResult(strategy=HookStrategy.MODIFY, params=params)

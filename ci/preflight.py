@@ -6,6 +6,9 @@ import re
 import subprocess
 import tempfile
 import plistlib
+import os
+import python_support
+import python_support_smoke
 
 
 def contract_errors(source, path=''):
@@ -62,6 +65,20 @@ def main():
         for path, (code, output) in zip(sorted(paths), executor.map(parse, sorted(paths))):
             if code:
                 errors.append(f'{path}:\n{output}')
+    bridge = source / 'submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m'
+    if bridge.exists():
+        cache = Path(os.environ.get('RUNNER_TEMP', '/tmp')) / 'ayu-python-support'
+        python_support.prepare(source, cache, 'debug_sim_arm64')
+        python_sdk = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], text=True).strip()
+        result = subprocess.run(['xcrun', 'clang', '-fsyntax-only', '-fobjc-arc', '-fmodules', '-Werror',
+                                 '-isysroot', python_sdk, '-target', 'arm64-apple-ios15.0-simulator',
+                                 '-F', str(source / 'third-party/ayu-python'), str(bridge)], capture_output=True, text=True)
+        if result.returncode:
+            errors.append(f'Actual CPython Objective-C SDK check:\n{result.stdout}{result.stderr}')
+        else:
+            print('PASS: real CPython bridge checked against the pinned Python and iOS Simulator headers')
+            python_support_smoke.run(source, cache, Path(__file__).resolve().parents[1] / 'runtime')
+
     # These standalone sources use SDK frameworks only. Type-check their actual
     # implementations before the expensive full Telegram build.
     sdk_sources = [source / 'submodules/TelegramUI/Sources' / name for name in (
@@ -89,7 +106,7 @@ def main():
         if manager.exists():
             ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
             models = [ayu / name for name in (
-                'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
+                'AyuPythonRuntime.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
                 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotSettings.swift',
                 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuRegexSettings.swift')]
             with tempfile.TemporaryDirectory(prefix='ayu-plugin-sdk-') as directory:

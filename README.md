@@ -112,3 +112,5 @@ The authors are not responsible for any crashes, errors, or other issues. By ins
 Camera Flip native adapter and the supplied five-plugin dependency inventory: [bridge status](docs/ANDROID_PLUGIN_BRIDGES.md). Source changes require a new native build; the published IPA is unchanged.
 
 Chat Colors 1.0 now has a reviewed native adapter in development source: presets/HEX, brightness, profile/list menus and account-local color settings.
+
+The next source revision embeds CPython for an on-device AST converter: supported outgoing hooks become persisted native text programs, with if/else, chained replacements, case changes, strip and prefix/suffix operations. Original plugin code is not executed. See [conversion scope and build integration](docs/AST_CONVERTER.md). This block is separate from the existing Release 4 IPA.

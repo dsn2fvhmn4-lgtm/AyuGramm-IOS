@@ -66585,10 +66585,10 @@ index 44d09f56..88c3899d 100644
      let sharedContext = context.sharedContext
 diff --git a/submodules/AyuPythonBridge/BUILD b/submodules/AyuPythonBridge/BUILD
 new file mode 100644
-index 00000000..62a854cd
+index 00000000..54f2f4a1
 --- /dev/null
 +++ b/submodules/AyuPythonBridge/BUILD
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,24 @@
 +load("@rules_cc//cc:objc_library.bzl", "objc_library")
 +
 +# Objective-C wrapper over the embedded CPython C API. It compiles with no
@@ -66599,6 +66599,7 @@ index 00000000..62a854cd
 +    name = "AyuPythonBridge",
 +    enable_modules = True,
 +    module_name = "AyuPythonBridge",
++    deps = ["//third-party/ayu-python:Python"],
 +    srcs = glob([
 +        "Sources/**/*.m",
 +    ]),
@@ -66614,7 +66615,7 @@ index 00000000..62a854cd
 +)
 diff --git a/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h
 new file mode 100644
-index 00000000..c8733b04
+index 00000000..82b6fa1c
 --- /dev/null
 +++ b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h
 @@ -0,0 +1,42 @@
@@ -66630,9 +66631,9 @@ index 00000000..c8733b04
 +/// (AyuPythonRuntime's serial queue); the wrapper holds the GIL only for the
 +/// duration of each call.
 +///
-+/// When the build does not embed `Python.xcframework` (every current build),
++/// When a build does not embed the Python framework,
 +/// `<Python/Python.h>` is absent and this compiles to a stub whose -start
-+/// returns NO, so the runtime reports itself unavailable and the declarative
++/// returns an error string, so the runtime reports itself unavailable and the declarative
 +/// plugin ABI keeps handling everything. The real implementation is selected
 +/// automatically once the framework is on the header search path.
 +@interface AyuPythonBridgeObjC : NSObject
@@ -66662,16 +66663,15 @@ index 00000000..c8733b04
 +#endif /* AyuPythonBridgeObjC_h */
 diff --git a/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m
 new file mode 100644
-index 00000000..17a432ad
+index 00000000..e7d2a715
 --- /dev/null
 +++ b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,208 @@
 +#import "AyuPythonBridgeObjC.h"
 +
 +// The real implementation is selected only when the Python support framework is
 +// embedded in the build. Until then every build takes the stub below, which
-+// keeps the host code on the app graph and compiling without the ~30 MB
-+// framework. Do not gate this on a custom define: __has_include tracks the
++// supports builds without the framework. Do not gate this on a custom define: __has_include tracks the
 +// actual availability of the SDK headers.
 +#if __has_include(<Python/Python.h>)
 +#define AYU_PYTHON_AVAILABLE 1
@@ -66754,38 +66754,56 @@ index 00000000..17a432ad
 +    config.install_signal_handlers = 0;
 +    config.module_search_paths_set = 1;
 +
-+    PyConfig_SetBytesString(&config, &config.home, [pythonHome UTF8String]);
++    status = PyConfig_SetBytesString(&config, &config.home, [pythonHome UTF8String]);
++    if (PyStatus_Exception(status)) { PyConfig_Clear(&config); return @"Python home configuration failed"; }
 +    for (NSString *path in @[stdlibPath, dynloadPath, runtimePath]) {
-+        PyWideStringList_Append(&config.module_search_paths, Py_DecodeLocale([path UTF8String], NULL));
++        wchar_t *decoded = Py_DecodeLocale([path UTF8String], NULL);
++        if (decoded == NULL) { PyConfig_Clear(&config); return @"Python path decoding failed"; }
++        status = PyWideStringList_Append(&config.module_search_paths, decoded);
++        PyMem_RawFree(decoded);
++        if (PyStatus_Exception(status)) { PyConfig_Clear(&config); return @"Python search path configuration failed"; }
 +    }
 +
 +    status = Py_InitializeFromConfig(&config);
++    NSString *initializationError = PyStatus_Exception(status) ? [NSString stringWithFormat:@"init: %s", status.err_msg ?: "unknown"] : nil;
 +    PyConfig_Clear(&config);
-+    if (PyStatus_Exception(status)) {
-+        return [NSString stringWithFormat:@"init: %s", status.err_msg ?: "unknown"];
-+    }
++    if (initializationError != nil) { return initializationError; }
 +
 +    PyObject *host = PyImport_ImportModule("_ayu_host");
 +    if (host == NULL) {
-+        return [self pythonErrorWithContext:@"import _ayu_host"];
++        NSString *error = [self pythonErrorWithContext:@"import _ayu_host"];
++        PyEval_SaveThread();
++        return error;
 +    }
 +    PyObject *bridge = PyImport_ImportModule("_ayu_native_bridge");
 +    PyObject *installResult = NULL;
 +    if (bridge != NULL) {
 +        PyObject *nativeFn = PyObject_GetAttrString(bridge, "native");
-+        installResult = PyObject_CallMethod(host, "install_native", "O", nativeFn);
++        if (nativeFn != NULL) { installResult = PyObject_CallMethod(host, "install_native", "O", nativeFn); }
 +        Py_XDECREF(nativeFn);
 +        Py_DECREF(bridge);
 +    }
-+    Py_XDECREF(installResult);
++    if (installResult == NULL) {
++        NSString *error = [self pythonErrorWithContext:@"install native handler"];
++        Py_DECREF(host);
++        PyEval_SaveThread();
++        return error;
++    }
++    Py_DECREF(installResult);
 +
 +    _hostCall = PyObject_GetAttrString(host, "call");
 +    Py_DECREF(host);
-+    if (_hostCall == NULL) {
-+        return [self pythonErrorWithContext:@"_ayu_host.call"];
++    if (_hostCall == NULL || !PyCallable_Check(_hostCall)) {
++        NSString *error = [self pythonErrorWithContext:@"_ayu_host.call"];
++        Py_XDECREF(_hostCall); _hostCall = NULL;
++        PyEval_SaveThread();
++        return error;
 +    }
 +
 +    _started = YES;
++    // A serial GCD queue can hop between OS threads. Release the initialization
++    // GIL and acquire it separately for every subsequent call.
++    PyEval_SaveThread();
 +    (void)dataDir;
 +    return nil;
 +}
@@ -66795,16 +66813,21 @@ index 00000000..17a432ad
 +        return @"{\"ok\":false,\"error\":\"not started\"}";
 +    }
 +    @autoreleasepool {
++        PyGILState_STATE gil = PyGILState_Ensure();
 +        PyObject *arg = PyUnicode_FromString([requestJSON UTF8String]);
++        if (arg == NULL) { PyErr_Clear(); PyGILState_Release(gil); return @"{\"ok\":false,\"error\":\"request allocation failed\"}"; }
 +        PyObject *result = PyObject_CallFunctionObjArgs(_hostCall, arg, NULL);
 +        Py_XDECREF(arg);
 +        if (result == NULL) {
 +            PyErr_Clear();
++            PyGILState_Release(gil);
 +            return @"{\"ok\":false,\"error\":\"python exception in call\"}";
 +        }
 +        const char *utf8 = PyUnicode_AsUTF8(result);
 +        NSString *response = utf8 ? [NSString stringWithUTF8String:utf8] : @"{\"ok\":false,\"error\":\"non-string result\"}";
 +        Py_DECREF(result);
++        if (PyErr_Occurred()) { PyErr_Clear(); }
++        PyGILState_Release(gil);
 +        return response;
 +    }
 +}
@@ -66812,17 +66835,14 @@ index 00000000..17a432ad
 +- (NSString *)pythonErrorWithContext:(NSString *)context {
 +    NSString *detail = context;
 +    if (PyErr_Occurred()) {
-+        PyObject *type, *value, *traceback;
-+        PyErr_Fetch(&type, &value, &traceback);
-+        if (value) {
++        PyObject *value = PyErr_GetRaisedException();
++        if (value != NULL) {
 +            PyObject *string = PyObject_Str(value);
 +            const char *utf8 = string ? PyUnicode_AsUTF8(string) : NULL;
-+            if (utf8) {
-+                detail = [NSString stringWithFormat:@"%@: %s", context, utf8];
-+            }
++            if (utf8) { detail = [NSString stringWithFormat:@"%@: %s", context, utf8]; }
 +            Py_XDECREF(string);
++            Py_DECREF(value);
 +        }
-+        Py_XDECREF(type); Py_XDECREF(value); Py_XDECREF(traceback);
 +        PyErr_Clear();
 +    }
 +    return detail;
@@ -68439,10 +68459,10 @@ index 00000000..62d73661
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..0cdec5cb
+index 00000000..303a0144
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,183 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -68519,7 +68539,8 @@ index 00000000..0cdec5cb
 +    }
 +    private func error(_ error: Error) {
 +        let message = self.russian ? "Этот плагин пока не поддерживается в AyuGram для iOS. Установленные плагины не изменились." : "This plugin is not supported by AyuGram for iOS yet. Installed plugins were not changed."
-+        self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: message)
++        let detail = (error as? LocalizedError)?.errorDescription
++        self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: message + (detail.map { "\n\n" + String($0.prefix(512)) } ?? ""))
 +    }
 +    private func alert(title: String, message: String) {
 +        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
@@ -68550,6 +68571,8 @@ index 00000000..0cdec5cb
 +    private func readImport(_ url: URL, filename: String, picker: UIViewController? = nil) {
 +        guard url.isFileURL, !self.reading, !self.applying else { return }
 +        self.reading = true
++        let spinner = UIActivityIndicatorView(style: .medium); spinner.startAnimating()
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(customView: spinner)
 +        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
 +            let scoped = url.startAccessingSecurityScopedResource()
 +            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -68570,6 +68593,7 @@ index 00000000..0cdec5cb
 +            DispatchQueue.main.async { [weak self] in
 +                guard let self else { return }
 +                self.reading = false
++                self.navigationItem.leftBarButtonItem = nil
 +                let complete: () -> Void = { [weak self] in
 +                    guard let self else { return }
 +                    switch result {
@@ -71465,10 +71489,10 @@ index 00000000..35137a2f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..b31f4992
+index 00000000..6c4fda2d
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,442 @@
 +import Foundation
 +import CryptoKit
 +
@@ -71506,9 +71530,10 @@ index 00000000..b31f4992
 +    public var prefix: String?
 +    public var condition: AyuPluginTextCondition?
 +    public var replacementCount: Int?
-+    public init(id: String, title: String, kind: Kind, find: String? = nil, replacement: String? = nil, prefix: String? = nil, condition: AyuPluginTextCondition? = nil, replacementCount: Int? = nil) {
++    public var program: AyuTextProgram?
++    public init(id: String, title: String, kind: Kind, find: String? = nil, replacement: String? = nil, prefix: String? = nil, condition: AyuPluginTextCondition? = nil, replacementCount: Int? = nil, program: AyuTextProgram? = nil) {
 +        self.id = id; self.title = title; self.kind = kind; self.find = find; self.replacement = replacement
-+        self.prefix = prefix; self.condition = condition; self.replacementCount = replacementCount
++        self.prefix = prefix; self.condition = condition; self.replacementCount = replacementCount; self.program = program
 +    }
 +    public var permission: String {
 +        if self.kind == .arcadeGame { return "web.games.open" }
@@ -71520,6 +71545,7 @@ index 00000000..b31f4992
 +    }
 +    public func ruleSummary(russian: Bool) -> String {
 +        guard self.kind == .outgoingReplace else { return self.title }
++        if self.program != nil { return russian ? "Преобразованная программа обработки текста" : "Converted native text program" }
 +        var parts = [String(reflecting: self.find ?? "") + " → " + String(reflecting: self.replacement ?? "")]
 +        if let prefix = self.prefix { parts.append((russian ? "Начало: " : "Starts with: ") + String(reflecting: prefix)) }
 +        if let condition = self.condition {
@@ -71571,20 +71597,28 @@ index 00000000..b31f4992
 +    public var limitations: [String]
 +    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = []) {
 +        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
-+        self.apiVersion = actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
++        self.apiVersion = actions.contains(where: { $0.program != nil }) ? 6 : actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
 +        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations
 +    }
 +    public func validate() throws {
 +        let validID: (String) -> Bool = { text in
 +            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
 +        }
-+        guard self.format == "ayugram-ios-plugin", (1...5).contains(self.apiVersion), validID(self.id),
++        guard self.format == "ayugram-ios-plugin", (1...6).contains(self.apiVersion), validID(self.id),
 +              !self.name.isEmpty, self.name.count <= 64, !self.author.isEmpty, self.author.count <= 128,
 +              !self.version.isEmpty, self.version.count <= 32, self.summary.count <= 2048,
 +              !self.actions.isEmpty, self.actions.count <= 8, Set(self.actions.map(\.id)).count == self.actions.count,
 +              self.limitations.count <= 16, self.limitations.allSatisfy({ $0.count <= 512 }),
 +              (self.convertedFrom?.count ?? 0) <= 128, (self.sourceSHA256?.count ?? 0) <= 64 else { throw AyuPluginError.invalidManifest }
 +        for action in self.actions {
++            if let program = action.program {
++                guard self.apiVersion >= 6, action.kind == .outgoingReplace, validID(action.id),
++                      !action.title.isEmpty, action.title.count <= 80,
++                      action.find == nil, action.replacement == nil, action.prefix == nil,
++                      action.condition == nil, action.replacementCount == nil else { throw AyuPluginError.invalidManifest }
++                try program.validate()
++                continue
++            }
 +            guard (action.kind != .arcadeGame && action.kind != .unlimitedAccounts) || self.apiVersion >= 5 else { throw AyuPluginError.invalidManifest }
 +            guard action.kind != .arcadeGame || AyuArcadeGame(actionID: action.id) != nil else { throw AyuPluginError.invalidManifest }
 +            guard action.kind != .chatColors || self.apiVersion >= 4 else { throw AyuPluginError.invalidManifest }
@@ -71759,6 +71793,10 @@ index 00000000..b31f4992
 +        var result = text
 +        for plugin in self.installed where plugin.enabled {
 +            for action in plugin.manifest.actions where action.kind == .outgoingReplace {
++                if let program = action.program {
++                    if let transformed = try? program.apply(result) { result = transformed }
++                    continue
++                }
 +                if let prefix = action.prefix, !prefix.isEmpty, (result as NSString).range(of: prefix, options: [.anchored, .literal]).location == NSNotFound { continue }
 +                if let condition = action.condition, !condition.matches(result) { continue }
 +                guard let find = action.find, !find.isEmpty, let replacement = action.replacement, !replacement.isEmpty,
@@ -71810,13 +71848,14 @@ index 00000000..b31f4992
 +                let marker = find.contains("A") ? "B" : "A"
 +                _ = try action.transformed(find + "\n" + marker)
 +            case .outgoingReplace:
++                if let program = action.program { try program.validate(); continue }
 +                guard let find = action.find, let replacement = action.replacement else { throw AyuPluginError.invalidManifest }
 +                let sample = action.prefix ?? find
 +                guard sample.replacingOccurrences(of: find, with: replacement, options: .literal).utf8.count <= sample.utf8.count else { throw AyuPluginError.invalidInput }
 +            }
 +        }
 +        if manifest.convertedFrom != nil {
-+            if manifest.convertedFrom == AyuAndroidPluginConverter.templateID {
++            if manifest.convertedFrom == AyuAndroidPluginConverter.templateID || manifest.convertedFrom == AyuTextProgram.converterID {
 +                guard let hash = manifest.sourceSHA256, hash.count == 64, hash.allSatisfy({ $0.isHexDigit }),
 +                      manifest.actions.allSatisfy({ $0.kind == .outgoingReplace }) else { throw AyuPluginError.invalidManifest }
 +                return prepared
@@ -71842,7 +71881,12 @@ index 00000000..b31f4992
 +        // Conversion is a reviewed native adapter, never a metadata-based execution shortcut.
 +        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 +        if let reviewed = try? self.reviewedAdapter(sourceSHA256: hash) { return reviewed }
-+        return try AyuAndroidPluginConverter.convert(data, sourceSHA256: hash)
++        if let converted = try? AyuAndroidPluginConverter.convert(data, sourceSHA256: hash) { return converted }
++        #if !AYU_POSTBOX_TESTS
++        return try AyuPythonRuntime.shared.convertSource(data, sourceSHA256: hash)
++        #else
++        throw AyuPluginError.unsupportedAndroidPlugin
++        #endif
 +    }
 +    static func reviewedAdapter(sourceSHA256 hash: String) throws -> AyuPluginManifest {
 +        if hash == "421911448e6fe62b3292b43b8593ebb24056b238278bab002576381d541238bc" {
@@ -71893,10 +71937,10 @@ index 00000000..b31f4992
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 new file mode 100644
-index 00000000..a5d1d02d
+index 00000000..1fb0da13
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,257 @@
 +import Foundation
 +
 +/// Bridge to the embedded CPython plugin runtime (`runtime/python/_ayu_host.py`).
@@ -71922,12 +71966,19 @@ index 00000000..a5d1d02d
 +
 +public enum AyuPythonRuntimeError: Error { case unavailable, notStarted, decoding }
 +
++public struct AyuPluginConversionError: LocalizedError {
++    public let detail: String
++    public var errorDescription: String? { return self.detail }
++}
++
 +public final class AyuPythonRuntime {
 +    public static let shared = AyuPythonRuntime()
 +
 +    private let queue = DispatchQueue(label: "org.ayugram.python", qos: .utility)
 +    private var interpreter: AyuPythonInterpreter?
 +    private var started = false
++    private var startupError: String?
++    private var lastCallError: String?
 +    private var nativeHandler: ((AyuPythonNativeRequest) -> AyuPythonNativeResult)?
 +
 +    private init() {}
@@ -71957,7 +72008,23 @@ index 00000000..a5d1d02d
 +                _ = self.callLocked(op: "configure", args: ["dataDir": dataDir.path])
 +            } catch {
 +                self.started = false
++                self.startupError = String(describing: error)
 +            }
++        }
++    }
++
++    /// Parse the entire source into a persisted native program. This operation never executes plugin code.
++    public func convertSource(_ data: Data, sourceSHA256: String) throws -> AyuPluginManifest {
++        guard data.count <= 65536, String(data: data, encoding: .utf8) != nil else { throw AyuPluginError.invalidFile }
++        return try self.queue.sync {
++            guard self.started else { throw AyuPluginConversionError(detail: self.startupError ?? "Python converter is not ready. Reopen the app and try importing again.") }
++            guard let result = self.callLocked(op: "convert", args: ["sourceData": data.base64EncodedString()]),
++                  JSONSerialization.isValidJSONObject(result) else { throw AyuPluginConversionError(detail: String((self.lastCallError ?? "No native mapping for this plugin").prefix(512))) }
++            let encoded = try JSONSerialization.data(withJSONObject: result)
++            let manifest = try JSONDecoder().decode(AyuPluginManifest.self, from: encoded)
++            guard manifest.convertedFrom == AyuTextProgram.converterID, manifest.sourceSHA256 == sourceSHA256 else { throw AyuPluginError.invalidManifest }
++            try manifest.validate()
++            return manifest
 +        }
 +    }
 +
@@ -72043,7 +72110,8 @@ index 00000000..a5d1d02d
 +        let responseJSON = interpreter.call(requestJSON)
 +        guard let data = responseJSON.data(using: .utf8),
 +              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-+        if (object["ok"] as? Bool) == true { return object["result"] }
++        if (object["ok"] as? Bool) == true { self.lastCallError = nil; return object["result"] }
++        self.lastCallError = object["error"] as? String
 +        return nil
 +    }
 +
@@ -72256,6 +72324,102 @@ index 00000000..93e17f4b
 +        }
 +        return false
 +    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuTextProgram.swift b/submodules/TelegramCore/Sources/AyuGram/AyuTextProgram.swift
+new file mode 100644
+index 00000000..53d3f252
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuTextProgram.swift
+@@ -0,0 +1,90 @@
++import Foundation
++
++/// A bounded, persisted text program. No Python or Android code runs while sending.
++public struct AyuTextProgram: Codable, Equatable {
++    public static let converterID = "exteraGram/ast-send-hook-v2"
++    public var instructions: [AyuTextInstruction]
++    public func validate() throws {
++        var remaining = 64
++        try self.validate(self.instructions, depth: 0, remaining: &remaining)
++    }
++    private func validate(_ instructions: [AyuTextInstruction], depth: Int, remaining: inout Int) throws {
++        guard depth <= 4, !instructions.isEmpty else { throw AyuPluginError.invalidManifest }
++        for item in instructions {
++            remaining -= 1
++            guard remaining >= 0 else { throw AyuPluginError.invalidManifest }
++            switch item.op {
++            case "branch":
++                guard let condition = item.condition, condition.value.utf8.count <= 128,
++                      let body = item.body, item.value == nil, item.find == nil, item.count == nil else { throw AyuPluginError.invalidManifest }
++                try self.validate(body, depth: depth + 1, remaining: &remaining)
++                if let other = item.otherwise, !other.isEmpty { try self.validate(other, depth: depth + 1, remaining: &remaining) }
++            case "replace":
++                guard let find = item.find, !find.isEmpty, find.utf8.count <= 128,
++                      let value = item.value, value.utf8.count <= 128,
++                      item.count == nil || (0...4096).contains(item.count!),
++                      item.condition == nil, item.body == nil, item.otherwise == nil else { throw AyuPluginError.invalidManifest }
++            case "lower", "upper", "strip":
++                guard item.value == nil, item.find == nil, item.count == nil,
++                      item.condition == nil, item.body == nil, item.otherwise == nil else { throw AyuPluginError.invalidManifest }
++            case "prepend", "append", "removePrefix", "removeSuffix":
++                guard let value = item.value, !value.isEmpty, value.utf8.count <= 128,
++                      item.find == nil, item.count == nil, item.condition == nil, item.body == nil, item.otherwise == nil else { throw AyuPluginError.invalidManifest }
++            default: throw AyuPluginError.invalidManifest
++            }
++        }
++    }
++    public func apply(_ input: String) throws -> String {
++        try self.validate()
++        guard input.utf8.count <= 8192, input.utf16.count <= 4096 else { throw AyuPluginError.invalidInput }
++        var text = input
++        try self.run(self.instructions, text: &text)
++        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AyuPluginError.invalidInput }
++        return text
++    }
++    private func run(_ instructions: [AyuTextInstruction], text: inout String) throws {
++        for item in instructions {
++            switch item.op {
++            case "branch":
++                let body = item.condition!.matches(text) ? item.body! : (item.otherwise ?? [])
++                try self.run(body, text: &text)
++            case "replace":
++                let input = text as NSString, find = item.find!, value = item.value!
++                var cursor = 0, applied = 0, output = ""
++                let limit = item.count ?? 4096
++                while applied < limit && cursor < input.length {
++                    let range = input.range(of: find, options: .literal, range: NSRange(location: cursor, length: input.length - cursor))
++                    if range.location == NSNotFound { break }
++                    output += input.substring(with: NSRange(location: cursor, length: range.location - cursor)) + value
++                    guard output.utf8.count <= 8192 else { throw AyuPluginError.invalidInput }
++                    cursor = NSMaxRange(range); applied += 1
++                }
++                text = output + input.substring(from: cursor)
++            case "lower": text = text.lowercased()
++            case "upper": text = text.uppercased()
++            case "strip":
++                var whitespace = CharacterSet.whitespacesAndNewlines
++                whitespace.insert(charactersIn: "\u{001c}\u{001d}\u{001e}\u{001f}")
++                text = text.trimmingCharacters(in: whitespace)
++            case "prepend": text = item.value! + text
++            case "append": text += item.value!
++            case "removePrefix":
++                if text.utf8.starts(with: item.value!.utf8) { text = String(decoding: text.utf8.dropFirst(item.value!.utf8.count), as: UTF8.self) }
++            case "removeSuffix":
++                if text.utf8.reversed().starts(with: item.value!.utf8.reversed()) { text = String(decoding: text.utf8.dropLast(item.value!.utf8.count), as: UTF8.self) }
++            default: throw AyuPluginError.invalidManifest
++            }
++            guard text.utf8.count <= 8192, text.utf16.count <= 4096 else { throw AyuPluginError.invalidInput }
++        }
++    }
++}
++
++public struct AyuTextInstruction: Codable, Equatable {
++    public var op: String
++    public var value: String?
++    public var find: String?
++    public var count: Int?
++    public var condition: AyuPluginTextCondition?
++    public var body: [AyuTextInstruction]?
++    public var otherwise: [AyuTextInstruction]?
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuTextToolsPolicy.swift b/submodules/TelegramCore/Sources/AyuGram/AyuTextToolsPolicy.swift
 new file mode 100644
@@ -139506,7 +139670,7 @@ index fe34b998..3073f36b 100644
          
 diff --git a/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift b/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift
 new file mode 100644
-index 00000000..7fd9b107
+index 00000000..11a8eeca
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift
 @@ -0,0 +1,138 @@
@@ -139566,7 +139730,7 @@ index 00000000..7fd9b107
 +        }
 +        let dataDir = AyuPythonBootstrap.dataDirectory()
 +        AyuPythonRuntime.shared.startIfNeeded(runtimeURL: runtime, dataDir: dataDir)
-+        self.loadInstalledPlugins()
++        // Imports are converted to native programs; downloaded Python is not executed.
 +    }
 +
 +    public static func dataDirectory() -> URL {
@@ -141079,10 +141243,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..63303038
+index 00000000..4856ad0a
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,845 @@
+@@ -0,0 +1,867 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -141928,6 +142092,28 @@ index 00000000..63303038
 +exportWriter.discard()
 +check(!FileManager.default.fileExists(atPath: exportedFolder.path), "Discard removes only the owned temporary export")
 +print("PASS: \(checks) model checks including advanced sending, local cosmetics, translation requests, archive limits and HTML/JSON export")
++
++let programData = try Data(contentsOf: pluginFixtures.appendingPathComponent("android_branch_hook_ios.plugin"))
++let programManifest = try AyuPluginImporter.parse(programData, filename: "branch.plugin")
++check(programManifest.apiVersion == 6 && programManifest.actions[0].program != nil, "AST program fixture decodes through the real native importer")
++let preparedProgram = try AyuPluginActivation.prepare(programManifest)
++var programRegistry = AyuPluginRegistry()
++try programRegistry.installAndActivate(preparedProgram)
++check(programRegistry.outgoingText("  !hello  ") == "HELLO", "Native program applies strip, checks the branch once, removes prefix and uppercases")
++check(programRegistry.outgoingText(" World ") == "[note] world", "Native else branch composes prepend and lower case")
++let restoredPrograms = try JSONDecoder().decode(AyuPluginRegistry.self, from: JSONEncoder().encode(programRegistry))
++check(restoredPrograms.outgoingText("!again") == "AGAIN", "Converted programs remain active after native JSON persistence")
++let directProgram = try JSONDecoder().decode(AyuTextProgram.self, from: Data(#"{"instructions":[{"op":"replace","find":"a","value":"aa","count":1},{"op":"replace","find":"x","value":""}]}"#.utf8))
++let directProgramOutput = try directProgram.apply("axax")
++check(directProgramOutput == "aaa", "Counted expanding replacement searches the original input; deletion is supported")
++check(pluginThrows { _ = try directProgram.apply(String(repeating: "a", count: 4096)) }, "Expanding output over the UTF-16 limit rejects instead of truncating")
++let emptyProgram = try JSONDecoder().decode(AyuTextProgram.self, from: Data(#"{"instructions":[{"op":"replace","find":"x","value":""}]}"#.utf8))
++check(pluginThrows { _ = try emptyProgram.apply("x") }, "Empty transformed messages reject")
++var downgradedProgram = programManifest; downgradedProgram.apiVersion = 5
++check(pluginThrows { try downgradedProgram.validate() }, "Old ABI versions reject text programs")
++let unknownProgram = try JSONDecoder().decode(AyuTextProgram.self, from: Data(#"{"instructions":[{"op":"executePython"}]}"#.utf8))
++check(pluginThrows { try unknownProgram.validate() }, "Native evaluator rejects unmapped instructions")
++print("PASS: \(checks) model checks including persisted AST-converted text programs")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

@@ -10,4 +10,4 @@ Preflight does not type-check UIKit/Postbox integration against all Telegram dep
 
 The native wrapper uses --continueOnError to collect independent compilation failures in one pass. Artifacts include a redacted build.log, the IPA/manifest when packaging succeeds, and model-test output. No API values are intentionally printed into the build log. The existing personal-tier cache is bounded at 2.5 GB and is populated by successful Codemagic builds; speed gains are not guaranteed.
 
-The Release 4 artifact passed the full native Actions build. Current local CI checks pass 35 Python tests.
+The Release 4 artifact passed the full native Actions build. Current local CI checks pass 47 Python tests.

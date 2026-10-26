@@ -113,3 +113,5 @@ Before shipping, check import/cancel/replace/export, account switching, all acti
 network timeout/cancel, topic navigation, draft/recording interactions, file-icon
 reuse, light/dark layouts, large fonts and VoiceOver. Inspect recorded simulator
 frames before claiming visual verification.
+
+API 6 adds persisted native text programs on `outgoingReplace` actions through the on-device AST converter. Older action formats remain valid. See [program scope and limits](AST_CONVERTER.md).

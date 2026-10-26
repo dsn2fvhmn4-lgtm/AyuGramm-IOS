@@ -1,0 +1,52 @@
+name: Converter preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Separate from the full native build: running these checks never cancels it.
+concurrency:
+  group: ayu-converter-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Select pinned SDK
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_27.1.app/Contents/Developer
+          xcodebuild -version
+      - name: Fetch pinned source
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          pin = json.load(open('upstream.json'))
+          subprocess.run(['git', 'init', 'telegram'], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'remote', 'add', 'origin', pin['repository']], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'fetch', '--depth=1', 'origin', pin['commit']], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'checkout', '--detach', 'FETCH_HEAD'], check=True)
+          PY
+      - name: Compile converter SDK and run real model tests
+        run: |
+          set -euo pipefail
+          {
+            python3 ci/prepare.py telegram
+            git -C telegram diff --check
+            python3 -m unittest discover -s ci/tests -p 'test_*.py'
+            python3 ci/preflight.py telegram
+            python3 ci/test_models.py telegram
+          } 2>&1 | tee "$RUNNER_TEMP/converter-checks.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: converter-checks-${{ github.run_number }}
+          path: ${{ runner.temp }}/converter-checks.log
+          if-no-files-found: ignore
+          retention-days: 7

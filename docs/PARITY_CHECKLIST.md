@@ -69,6 +69,11 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | streamerMode (Desktop) | Streamer mode: the app window is left out of screenshots, screen recordings and screen sharing through Telegram's secret-chat secure layer; the system keyboard stays visible |
 | hideAllChatsFolder (Desktop) | Hide All Chats folder: while at least one folder exists the tab is hidden and the first folder opens; the All Chats page stays last in the container |
 | semiTransparentDeletedMessages (Desktop) | Semi-transparent deleted messages: bubble messages kept after deletion are drawn at 50% opacity |
+| exteraGram General page | Same sections and order as Android (General, Profile, Archived Chats), rows with SF Symbol icons; AyuGram's own General pages listed under More |
+| disableNumberRounding (exteraGram) | Counters show 1,234 instead of 1.2K (compactNumericCountString and countString) |
+| formatTimeWithSeconds (exteraGram) | Shares the existing seconds-in-timestamps setting |
+| hidePhoneNumber (exteraGram) | Own number hidden in the Settings header (username or placeholder instead), the Phone Number row and the own profile |
+| disableUnarchiveSwipe (exteraGram) | A full swipe on an archived chat does not unarchive it; the Unarchive button still does |
 | backgroundNotifications (iOS) | Background notifications (on by default): remote push cannot reach a sideloaded build, so new messages received while the app is in the background (right after closing it, during iOS background refresh) are shown as local notifications, honouring mute, category and preview settings |
 Additional Desktop-only scope (not implemented by these flags): shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata, conditional/always silent-send modes, translation providers (Telegram/LibreTranslate/DeepL), chat export (HTML+JSON, forward to Saved Messages) and the media archive manager already have source implementations.
 

@@ -67019,7 +67019,7 @@ index 5bdff8a6..fbd8ff65 100644
              }
              strongSelf.chatListDisplayNode.mainContainerNode.updateAvailableFilters(availableFilters, limit: filtersLimit)
 diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
-index e41738b1..bc54a27b 100644
+index e41738b1..8e2e4a66 100644
 --- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 +++ b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 @@ -1384,6 +1384,22 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
@@ -67151,6 +67151,18 @@ index e41738b1..bc54a27b 100644
                      }
                      
                      strongSelf.highlightedBackgroundNode.backgroundColor = highlightedBackgroundColor
+@@ -5717,6 +5753,11 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                     self.customAnimationInProgress = false
+                 }
+             case RevealOptionKey.unarchive.rawValue:
++                // exteraGram "Disable unarchive swipe": a full swipe (animated) does not unarchive;
++                // the Unarchive button still does.
++                if animated && item.context.account.network.ayuGhostMode.current.interface.disableUnarchiveSwipe {
++                    break
++                }
+                 item.interaction.updatePeerGrouping(index.messageIndex.id.peerId, false)
+                 close = false
+                 self.skipFadeout = true
 diff --git a/submodules/Display/Source/AyuArcadeGameController.swift b/submodules/Display/Source/AyuArcadeGameController.swift
 new file mode 100644
 index 00000000..40ce1257
@@ -68860,10 +68872,10 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..d4e6061b
+index 00000000..e9f6b11f
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,612 @@
+@@ -0,0 +1,740 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -69033,7 +69045,7 @@ index 00000000..d4e6061b
 +        switch categories[index] {
 +        case .ayuGram: push?(ayuSettingsCategoryController(context: context, category: 0))
 +        case .filters: push?(ayuChatOptionsController(context: context, regex: true))
-+        case .general: push?(ayuSettingsCategoryController(context: context, category: 2))
++        case .general: push?(ayuGeneralSettingsController(context: context))
 +        case .appearance: push?(ayuSettingsCategoryController(context: context, category: 3))
 +        case .chats: push?(ayuSettingsCategoryController(context: context, category: 4))
 +        case .plugins: ayuPresentPlugins(context: context)
@@ -69153,6 +69165,134 @@ index 00000000..d4e6061b
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
++    return controller
++}
++
++private struct AyuSectionedArguments {
++    let open: (Int32) -> Void
++    let toggle: (Int32, Bool) -> Void
++}
++
++/// Rows of an exteraGram-style page: headed sections of rows with icons. Stable ids must
++/// ascend in display order (ItemListController requirement).
++private enum AyuSectionedEntry: ItemListNodeEntry {
++    case header(Int32, Int32, String)
++    case link(Int32, Int32, UIImage?, String, String)
++    case toggle(Int32, Int32, UIImage?, String, String?, Bool)
++    case info(Int32, Int32, String)
++
++    var section: ItemListSectionId {
++        switch self {
++        case let .header(section, _, _), let .link(section, _, _, _, _), let .toggle(section, _, _, _, _, _), let .info(section, _, _):
++            return section
++        }
++    }
++
++    var stableId: Int32 {
++        switch self {
++        case let .header(_, id, _), let .link(_, id, _, _, _), let .toggle(_, id, _, _, _, _), let .info(_, id, _):
++            return id
++        }
++    }
++
++    static func < (lhs: AyuSectionedEntry, rhs: AyuSectionedEntry) -> Bool { return lhs.stableId < rhs.stableId }
++
++    static func == (lhs: AyuSectionedEntry, rhs: AyuSectionedEntry) -> Bool {
++        switch (lhs, rhs) {
++        case let (.header(ls, li, lt), .header(rs, ri, rt)): return ls == rs && li == ri && lt == rt
++        case let (.link(ls, li, _, lt, ll), .link(rs, ri, _, rt, rl)): return ls == rs && li == ri && lt == rt && ll == rl
++        case let (.toggle(ls, li, _, lt, lx, lv), .toggle(rs, ri, _, rt, rx, rv)): return ls == rs && li == ri && lt == rt && lx == rx && lv == rv
++        case let (.info(ls, li, lt), .info(rs, ri, rt)): return ls == rs && li == ri && lt == rt
++        default: return false
++        }
++    }
++
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! AyuSectionedArguments
++        switch self {
++        case let .header(_, _, text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .link(_, id, icon, title, label):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.open(id) })
++        case let .toggle(_, id, icon, title, text, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, text: text, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
++        case let .info(_, _, text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        }
++    }
++}
++
++/// exteraGram "General" page: same sections and order as the Android app, with the
++/// iOS-only AyuGram pages that belong here listed last.
++private func ayuGeneralSettingsController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var push: ((ViewController) -> Void)?
++    var presentError: (() -> Void)?
++    let arguments = AyuSectionedArguments(open: { id in
++        switch id {
++        case 31: ayuPresentAdvancedSettings(context: context, page: .translation)
++        case 32: push?(ayuChatOptionsController(context: context, regex: false))
++        case 33: push?(ayuInterfaceSettingsController(context: context))
++        case 34: push?(ayuInterfaceSettingsController(context: context, contextMenu: true))
++        default: break
++        }
++    }, toggle: { id, value in
++        do {
++            try store.update {
++                switch id {
++                case 1: $0.interface.disableNumberRounding = value
++                case 2: $0.appearance.showMessageSeconds = value
++                case 11: $0.interface.hidePhoneNumber = value
++                case 12: $0.interface.showPeerIds = value
++                case 21: $0.interface.disableUnarchiveSwipe = value
++                default: break
++                }
++            }
++        } catch { presentError?() }
++    })
++    let icons: [Int32: UIImage?] = [
++        1: AyuSettingsIcons.symbol("number", color: UIColor(rgb: 0x007AFF)),
++        2: AyuSettingsIcons.symbol("clock.fill", color: UIColor(rgb: 0xFF9500)),
++        11: AyuSettingsIcons.symbol("phone.fill", color: UIColor(rgb: 0x34C759)),
++        12: AyuSettingsIcons.symbol("person.text.rectangle.fill", color: UIColor(rgb: 0x5856D6)),
++        21: AyuSettingsIcons.symbol("archivebox.fill", color: UIColor(rgb: 0x8E8E93)),
++        31: AyuSettingsIcons.symbol("globe", color: UIColor(rgb: 0x32ADE6)),
++        32: AyuSettingsIcons.symbol("paperplane.fill", color: UIColor(rgb: 0x007AFF)),
++        33: AyuSettingsIcons.symbol("slider.horizontal.3", color: UIColor(rgb: 0xFF2D55)),
++        34: AyuSettingsIcons.symbol("text.bubble.fill", color: UIColor(rgb: 0x34C759))
++    ]
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let interface = settings.interface
++        let entries: [AyuSectionedEntry] = [
++            .header(0, 0, ru ? "ОСНОВНЫЕ" : "GENERAL"),
++            .toggle(0, 1, icons[1] ?? nil, ru ? "Не округлять числа" : "Disable number rounding", "1.23K → 1,234", interface.disableNumberRounding),
++            .toggle(0, 2, icons[2] ?? nil, ru ? "Время с секундами" : "Format time with seconds", "12:34 → 12:34:56", settings.appearance.showMessageSeconds),
++            .header(1, 10, ru ? "ПРОФИЛЬ" : "PROFILE"),
++            .toggle(1, 11, icons[11] ?? nil, ru ? "Скрыть номер телефона" : "Hide phone number", nil, interface.hidePhoneNumber),
++            .toggle(1, 12, icons[12] ?? nil, ru ? "Показывать ID" : "Show ID", nil, interface.showPeerIds),
++            .info(1, 13, ru ? "Номер скрывается в шапке настроек, в строке «Номер телефона» и в вашем профиле. ID показывается в профилях, нажатие копирует его." : "The number is hidden in the Settings header, the Phone Number row and your own profile. IDs appear in profiles; tap one to copy it."),
++            .header(2, 20, ru ? "АРХИВ" : "ARCHIVED CHATS"),
++            .toggle(2, 21, icons[21] ?? nil, ru ? "Не разархивировать свайпом" : "Disable unarchive swipe", nil, interface.disableUnarchiveSwipe),
++            .info(2, 22, ru ? "Полный свайп по чату в архиве больше не возвращает его из архива; кнопка «Вернуть» по-прежнему работает." : "A full swipe on an archived chat no longer unarchives it; the Unarchive button still works."),
++            .header(3, 30, ru ? "ДОПОЛНИТЕЛЬНО" : "MORE"),
++            .link(3, 31, icons[31] ?? nil, ru ? "Переводчики" : "Translation providers", ""),
++            .link(3, 32, icons[32] ?? nil, ru ? "Отправка сообщений" : "Sending Options", ""),
++            .link(3, 33, icons[33] ?? nil, ru ? "Интерфейс" : "Interface", ""),
++            .link(3, 34, icons[34] ?? nil, ru ? "Меню сообщения" : "Message Menu", ""),
++            .info(3, 35, ru ? "Числа применяются при следующем показе счётчиков (надёжнее всего — после перезапуска)." : "Number formatting applies the next time counters are drawn (most reliably after a restart).")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        return (ItemListControllerState(presentationData: data, title: .text(ru ? "Основные" : "General"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    push = { [weak controller] in controller?.push($0) }
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
 +    return controller
 +}
 +
@@ -70504,10 +70644,10 @@ index 00000000..130e741d
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuDisplayOptions.swift b/submodules/TelegramCore/Sources/AyuGram/AyuDisplayOptions.swift
 new file mode 100644
-index 00000000..39fe850b
+index 00000000..133882f2
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuDisplayOptions.swift
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,117 @@
 +import Foundation
 +
 +/// Process-wide AyuGram display options for code that renders without an account context
@@ -70519,6 +70659,7 @@ index 00000000..39fe850b
 +        public var filterZalgo = false
 +        public var spoofWebAppAsAndroid = false
 +        public var unlimitedRecentStickers = false
++        public var disableNumberRounding = false
 +        public init() {}
 +    }
 +
@@ -70543,6 +70684,22 @@ index 00000000..39fe850b
 +
 +    /// Local cap for the recent stickers list; the server keeps its own list.
 +    public static var recentStickersLimit: Int { return self.any { $0.unlimitedRecentStickers } ? 200 : 20 }
++
++    /// exteraGram "Disable number rounding": counters show 1,234 instead of 1.2K.
++    public static var disableNumberRounding: Bool { return self.any { $0.disableNumberRounding } }
++
++    /// The full count with thousands grouped by commas, as exteraGram shows it.
++    public static func fullCountString(_ count: Int64) -> String {
++        let digits = String(count.magnitude)
++        var result = ""
++        for (index, character) in digits.enumerated() {
++            if index != 0 && (digits.count - index) % 3 == 0 {
++                result.append(",")
++            }
++            result.append(character)
++        }
++        return count < 0 ? "-" + result : result
++    }
 +
 +    /// Combining marks kept after each base character; more are removed as "zalgo" text.
 +    public static let maximumCombiningMarks = 2
@@ -70949,10 +71106,10 @@ index 00000000..ae6b26ad
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..30127863
+index 00000000..109b6b3d
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,97 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -70986,6 +71143,10 @@ index 00000000..30127863
 +    public var semiTransparentDeletedMessages = false
 +    /// Local notifications while the app runs in the background (no remote push in sideloaded builds).
 +    public var backgroundNotifications = true
++    // exteraGram General
++    public var disableNumberRounding = false
++    public var hidePhoneNumber = false
++    public var disableUnarchiveSwipe = false
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
@@ -70996,6 +71157,7 @@ index 00000000..30127863
 +        case showHideMessage
 +        case hideStories, hideSimilarChannels, hidePremiumStatuses, hideUnreadCounters, revealSpoilers
 +        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers, streamerMode, hideAllChatsFolder, semiTransparentDeletedMessages, backgroundNotifications
++        case disableNumberRounding, hidePhoneNumber, disableUnarchiveSwipe
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -71027,6 +71189,9 @@ index 00000000..30127863
 +        self.hideAllChatsFolder = try values.decodeIfPresent(Bool.self, forKey: .hideAllChatsFolder) ?? false
 +        self.semiTransparentDeletedMessages = try values.decodeIfPresent(Bool.self, forKey: .semiTransparentDeletedMessages) ?? false
 +        self.backgroundNotifications = try values.decodeIfPresent(Bool.self, forKey: .backgroundNotifications) ?? true
++        self.disableNumberRounding = try values.decodeIfPresent(Bool.self, forKey: .disableNumberRounding) ?? false
++        self.hidePhoneNumber = try values.decodeIfPresent(Bool.self, forKey: .hidePhoneNumber) ?? false
++        self.disableUnarchiveSwipe = try values.decodeIfPresent(Bool.self, forKey: .disableUnarchiveSwipe) ?? false
 +    }
 +}
 +
@@ -71044,10 +71209,10 @@ index 00000000..30127863
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift
 new file mode 100644
-index 00000000..2131c179
+index 00000000..34f006ec
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,120 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -71159,6 +71324,7 @@ index 00000000..2131c179
 +        flags.filterZalgo = interface.filterZalgo
 +        flags.spoofWebAppAsAndroid = interface.spoofWebAppAsAndroid
 +        flags.unlimitedRecentStickers = interface.unlimitedRecentStickers
++        flags.disableNumberRounding = interface.disableNumberRounding
 +        return flags
 +    }
 +    AyuDisplayOptions.update(accountPeerId: peerId.toInt64(), flags: flags(network.ayuGhostMode.current.interface))
@@ -73657,6 +73823,42 @@ index 00000000..330f6655
 +        })
 +    }
 +}
+diff --git a/submodules/TelegramPresentationData/Sources/DefaultPresentationStrings.swift b/submodules/TelegramPresentationData/Sources/DefaultPresentationStrings.swift
+index 53da3d21..c2d176d9 100644
+--- a/submodules/TelegramPresentationData/Sources/DefaultPresentationStrings.swift
++++ b/submodules/TelegramPresentationData/Sources/DefaultPresentationStrings.swift
+@@ -1,6 +1,7 @@
+ import Foundation
+ import AppBundle
+ import PresentationStrings
++import TelegramCore
+ 
+ public typealias PresentationStrings = _PresentationStrings
+ 
+@@ -97,6 +98,9 @@ public func dataSizeString(_ size: Int64, forceDecimal: Bool = false, formatting
+ }
+ 
+ public func countString(_ count: Int64, forceDecimal: Bool = false) -> String {
++    if AyuDisplayOptions.disableNumberRounding {
++        return AyuDisplayOptions.fullCountString(count)
++    }
+     let decimalSeparator = "."
+     if count >= 1000 * 1000 * 1000 {
+         let remainder = Int64((Double(count % (1000 * 1000 * 1000)) / (1000 * 1000 * 100.0)).rounded(.down))
+diff --git a/submodules/TelegramPresentationData/Sources/NumericFormat.swift b/submodules/TelegramPresentationData/Sources/NumericFormat.swift
+index 702bf96d..f3c0fe43 100644
+--- a/submodules/TelegramPresentationData/Sources/NumericFormat.swift
++++ b/submodules/TelegramPresentationData/Sources/NumericFormat.swift
+@@ -3,6 +3,9 @@ import PresentationStrings
+ import TelegramCore
+ 
+ public func compactNumericCountString(_ count: Int, decimalSeparator: String = ".", showDecimalPart: Bool = true) -> String {
++    if AyuDisplayOptions.disableNumberRounding {
++        return AyuDisplayOptions.fullCountString(Int64(count))
++    }
+     if count >= 1000 * 1000 {
+         let remainder = (count % (1000 * 1000)) / (1000 * 100)
+         if remainder != 0 && showDecimalPart {
 diff --git a/submodules/TelegramUI/BUILD b/submodules/TelegramUI/BUILD
 index 75245702..ceb5318b 100644
 --- a/submodules/TelegramUI/BUILD
@@ -74162,7 +74364,7 @@ index 5fe1e292..244b396d 100644
          // a link as well, so accepting it here tells the opener it has been confirmed.
          let displayUrl = loginPartUrl.map { urlRemovingLoginPart($0).absoluteString } ?? parsedString
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
-index fdc996cb..1e2caf51 100644
+index fdc996cb..0e6ead75 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
 @@ -683,6 +683,14 @@ final class PeerInfoHeaderNode: ASDisplayNode {
@@ -74204,8 +74406,26 @@ index fdc996cb..1e2caf51 100644
                  if case let .starGift(_, _, _, slug, _, _, _, _, _) = emojiStatus.content {
                      particleColor = UIColor.white
                      uniqueGiftSlug = slug
+@@ -1271,8 +1281,15 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+             
+             if self.isSettings, case let .user(user) = peer {
+                 var subtitle = formatPhoneNumber(context: self.context, number: user.phone ?? "")
+-                
+-                if let mainUsername = user.addressName, !mainUsername.isEmpty {
++
++                if self.context.account.network.ayuGhostMode.current.interface.hidePhoneNumber {
++                    // exteraGram "Hide phone number": the header shows the username, or a placeholder.
++                    if let mainUsername = user.addressName, !mainUsername.isEmpty {
++                        subtitle = "@\(mainUsername)"
++                    } else {
++                        subtitle = presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Номер скрыт" : "Phone hidden"
++                    }
++                } else if let mainUsername = user.addressName, !mainUsername.isEmpty {
+                     subtitle = "\(subtitle) • @\(mainUsername)"
+                 }
+                 subtitleStringText = subtitle
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-index 34f23770..c50a60b1 100644
+index 34f23770..6680052d 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 @@ -16,6 +16,7 @@ import WebUI
@@ -74216,6 +74436,15 @@ index 34f23770..c50a60b1 100644
  
  private let enabledPublicBioEntities: EnabledEntityTypes = [.allUrl, .mention, .hashtag]
  private let enabledPrivateBioEntities: EnabledEntityTypes = [.internalUrl, .mention, .hashtag]
+@@ -173,7 +174,7 @@ func infoItems(
+             ))
+         }
+         
+-        if let phone = user.phone {
++        if let phone = user.phone, !(user.id == context.account.peerId && context.account.network.ayuGhostMode.current.interface.hidePhoneNumber) {
+             let formattedPhone = formatPhoneNumber(context: context, number: phone)
+             let label: String
+             if formattedPhone.hasPrefix("+888 ") {
 @@ -900,6 +901,23 @@ func infoItems(
          }
      }
@@ -74363,7 +74592,7 @@ index f1c1917b..7da00905 100644
                      var replaceImpl: ((ViewController) -> Void)?
                      let controller = PremiumLimitScreen(context: strongSelf.context, subject: .accounts, count: Int32(count), action: {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
-index a4873696..ca3a1aba 100644
+index a4873696..30dd8da0 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 @@ -222,6 +222,9 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
@@ -74376,6 +74605,16 @@ index a4873696..ca3a1aba 100644
      items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 1, text: presentationData.strings.Settings_SavedMessages, icon: PresentationResourcesSettings.savedMessages, action: {
          interaction.openSettings(.savedMessages)
      }))
+@@ -470,7 +473,8 @@ func settingsEditingItems(data: PeerInfoScreenData?, state: PeerInfoState, conte
+     }
+     
+     if case let .user(user) = data.peer {
+-        items[.info]!.append(PeerInfoScreenDisclosureItem(id: ItemPhoneNumber, label: .text(user.phone.flatMap({ formatPhoneNumber(context: context, number: $0) }) ?? ""), text: presentationData.strings.Settings_PhoneNumber, icon: PresentationResourcesSettings.recentCalls, action: {
++        let ayuHidePhone = context.account.network.ayuGhostMode.current.interface.hidePhoneNumber
++        items[.info]!.append(PeerInfoScreenDisclosureItem(id: ItemPhoneNumber, label: .text(ayuHidePhone ? "" : (user.phone.flatMap({ formatPhoneNumber(context: context, number: $0) }) ?? "")), text: presentationData.strings.Settings_PhoneNumber, icon: PresentationResourcesSettings.recentCalls, action: {
+             interaction.openSettings(.phoneNumber)
+         }))
+     }
 diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/AyuCameraFlipGestureRecognizer.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/AyuCameraFlipGestureRecognizer.swift
 new file mode 100644
 index 00000000..ffb3af06

@@ -68624,23 +68624,28 @@ index 00000000..62d73661
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..d0ffb276
+index 00000000..47787b4f
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,271 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
 +import TelegramCore
 +import Display
 +
-+final class AyuPluginManagerController: UITableViewController, UIDocumentPickerDelegate {
++/// The plugin list, laid out like exteraGram's PluginsActivity: a searchable list where each
++/// plugin shows its name, version, author and description with an on/off switch, and "+"
++/// installs a .plugin file.
++final class AyuPluginManagerController: UITableViewController, UIDocumentPickerDelegate, UISearchResultsUpdating {
 +    private let store: AyuGhostModeStore
 +    private let russian: Bool
 +    private let palette: AyuPreferencesPalette?
 +    private var reading = false
 +    private var initialImport: (URL, String)?
 +    private var applying = false
++    private var query = ""
++    private var preparingIDs = Set<String>()
 +    private let settingsController: ((String) -> UIViewController?)?
 +    private let keepAwake: (() -> (() -> Void))?
 +    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil, initialImport: (URL, String)? = nil, settingsController: ((String) -> UIViewController?)? = nil, keepAwake: (() -> (() -> Void))? = nil) {
@@ -68652,55 +68657,144 @@ index 00000000..d0ffb276
 +    required init?(coder: NSCoder) { return nil }
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
-+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        let install = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(self.installTapped))
++        install.accessibilityLabel = self.russian ? "Установить плагин" : "Install plugin"
++        self.navigationItem.rightBarButtonItem = install
++        let search = UISearchController(searchResultsController: nil)
++        search.searchResultsUpdater = self
++        search.obscuresBackgroundDuringPresentation = false
++        search.searchBar.placeholder = self.russian ? "Поиск" : "Search"
++        self.navigationItem.searchController = search
++        self.navigationItem.hidesSearchBarWhenScrolling = false
++        self.definesPresentationContext = true
 +        self.tableView.rowHeight = UITableView.automaticDimension
 +        self.tableView.estimatedRowHeight = 88
 +        self.tableView.backgroundColor = self.palette?.background ?? .systemGroupedBackground
-+        self.tableView.tableHeaderView = AyuPreferencesHeaderView(image: ayuPluginAvatar(size: 88), title: self.russian ? "Плагины" : "Plugins", subtitle: "AyuGram", text: self.russian ? "Устанавливай .plugin, проверяй возможности и включай нужные плагины." : "Install .plugin files, review capabilities and enable the plugins you need.", palette: self.palette)
 +    }
 +    override func viewWillAppear(_ animated: Bool) {
 +        super.viewWillAppear(animated)
++        self.reload()
++    }
++    func updateSearchResults(for searchController: UISearchController) {
++        self.query = searchController.searchBar.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++        self.reload()
++    }
++    /// Installed plugins matching the search text (name, author or description).
++    private var items: [AyuInstalledPlugin] {
++        let all = self.store.current.plugins.installed
++        guard !self.query.isEmpty else { return all }
++        return all.filter { item in
++            [item.manifest.name, item.manifest.displayAuthor, item.manifest.summary].contains { $0.localizedCaseInsensitiveContains(self.query) }
++        }
++    }
++    private func reload() {
 +        self.tableView.reloadData()
++        guard self.items.isEmpty else {
++            self.tableView.backgroundView = nil
++            return
++        }
++        let label = UILabel()
++        label.numberOfLines = 0
++        label.textAlignment = .center
++        label.textColor = self.palette?.secondary ?? .secondaryLabel
++        label.font = .preferredFont(forTextStyle: .subheadline)
++        if self.query.isEmpty {
++            label.text = self.russian ? "Плагины не найдены.\n\nНажмите «+», чтобы установить файл .plugin." : "No plugins found.\n\nTap + to install a .plugin file."
++        } else {
++            label.text = self.russian ? "Ничего не найдено." : "Nothing found."
++        }
++        let container = UIView()
++        label.translatesAutoresizingMaskIntoConstraints = false
++        container.addSubview(label)
++        NSLayoutConstraint.activate([
++            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
++            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32.0),
++            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32.0)
++        ])
++        self.tableView.backgroundView = container
++    }
++    @objc private func installTapped() {
++        guard !self.reading, !self.applying else { return }
++        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
++        picker.delegate = self
++        self.present(picker, animated: true)
 +    }
 +    override func viewDidAppear(_ animated: Bool) {
 +        super.viewDidAppear(animated)
 +        if let initial = self.initialImport { self.initialImport = nil; self.readImport(initial.0, filename: initial.1) }
 +    }
 +    @objc private func done() { self.dismiss(animated: true) }
-+    override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); ayuFitPreferencesHeader(self.tableView) }
-+    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 1 }
 +    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-+        return section == 0 ? 1 : self.store.current.plugins.installed.count
-+    }
-+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-+        return section == 0 ? nil : (self.russian ? "Установленные" : "Installed")
++        return self.items.count
 +    }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-+        guard section == 0 else { return nil }
-+        return self.russian ? "Плагины exteraGram (.plugin). После установки плагин сразу включается. Действия в чате: меню сообщения → Плагины." : "exteraGram plugins (.plugin). Installed plugins are enabled right away. In-chat actions: message menu → Plugins."
-+    }
-+    private func puzzleIcon() -> UIImage {
-+        return ayuPluginAvatar()
++        guard !self.items.isEmpty else { return nil }
++        return self.russian ? "Нажмите на плагин, чтобы открыть его настройки. Действия в чате: меню сообщения → Плагины." : "Tap a plugin to open its settings. In-chat actions: message menu → Plugins."
 +    }
 +    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
 +        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
 +        cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
-+        cell.textLabel?.textColor = self.palette?.text ?? .label
-+        cell.detailTextLabel?.textColor = self.palette?.secondary ?? .secondaryLabel
-+        cell.imageView?.image = self.puzzleIcon()
-+        cell.textLabel?.numberOfLines = 0
-+        cell.detailTextLabel?.numberOfLines = 0
-+        if indexPath.section == 0 {
-+            cell.textLabel?.text = self.russian ? "Импортировать .plugin" : "Import .plugin"
-+            cell.detailTextLabel?.text = self.russian ? "Выбрать файл в «Файлах»" : "Choose a file in Files"
++        cell.imageView?.image = ayuPluginAvatar()
++        cell.textLabel?.numberOfLines = 1
++        cell.detailTextLabel?.numberOfLines = 4
++        let item = self.items[indexPath.row]
++        let primary = self.palette?.text ?? .label
++        let secondary = self.palette?.secondary ?? .secondaryLabel
++        // Name with its version beside it, then the author and the description, as on Android.
++        let title = NSMutableAttributedString(string: item.manifest.name, attributes: [.font: UIFont.systemFont(ofSize: 17.0, weight: .semibold), .foregroundColor: primary])
++        title.append(NSAttributedString(string: "  " + item.manifest.displayVersion, attributes: [.font: UIFont.systemFont(ofSize: 13.0), .foregroundColor: secondary]))
++        cell.textLabel?.attributedText = title
++        let summary = item.manifest.summary.isEmpty ? (self.russian ? "Нет описания." : "No description provided.") : item.manifest.summary
++        let detail = NSMutableAttributedString(string: item.manifest.displayAuthor, attributes: [.font: UIFont.systemFont(ofSize: 14.0, weight: .medium), .foregroundColor: self.palette?.accent ?? .systemBlue])
++        detail.append(NSAttributedString(string: "\n" + summary, attributes: [.font: UIFont.systemFont(ofSize: 14.0), .foregroundColor: secondary]))
++        cell.detailTextLabel?.attributedText = detail
++        if self.preparingIDs.contains(item.manifest.id) {
++            let progress = UIActivityIndicatorView(style: .medium)
++            progress.startAnimating()
++            cell.accessoryView = progress
 +        } else {
-+            let item = self.store.current.plugins.installed[indexPath.row]
-+            cell.textLabel?.text = item.manifest.name
-+            cell.detailTextLabel?.text = "\(item.manifest.displayVersion) · \(item.manifest.displayAuthor)\n" + (item.enabled ? (self.russian ? "Включён" : "Enabled") : (self.russian ? "Выключен" : "Disabled"))
-+            cell.accessoryType = .disclosureIndicator
-+
++            let toggle = UISwitch()
++            toggle.isOn = item.enabled
++            toggle.isEnabled = !self.applying
++            toggle.accessibilityLabel = item.manifest.name
++            toggle.accessibilityIdentifier = item.manifest.id
++            toggle.addTarget(self, action: #selector(self.toggleChanged(_:)), for: .valueChanged)
++            cell.accessoryView = toggle
 +        }
 +        return cell
++    }
++    @objc private func toggleChanged(_ toggle: UISwitch) {
++        guard let id = toggle.accessibilityIdentifier, let plugin = self.store.current.plugins.installed.first(where: { $0.manifest.id == id }) else {
++            self.reload()
++            return
++        }
++        self.setEnabled(plugin.manifest, enabled: toggle.isOn)
++    }
++    /// Turns a plugin on or off from the list; turning on prepares it like the details screen does.
++    private func setEnabled(_ manifest: AyuPluginManifest, enabled: Bool) {
++        guard !self.preparingIDs.contains(manifest.id) else { return }
++        if !enabled {
++            do { try self.store.update { $0.plugins.setEnabled(id: manifest.id, enabled: false) } }
++            catch { self.error(error) }
++            self.reload()
++            return
++        }
++        self.preparingIDs.insert(manifest.id)
++        self.reload()
++        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++            let result = Result { try AyuPluginActivation.prepare(manifest) }
++            DispatchQueue.main.async { [weak self] in
++                guard let self else { return }
++                self.preparingIDs.remove(manifest.id)
++                do {
++                    let prepared = try result.get()
++                    try self.store.update { try $0.plugins.activate(prepared, expected: manifest) }
++                } catch { self.error(error) }
++                self.reload()
++            }
++        }
 +    }
 +    private func error(_ error: Error) {
 +        let message = self.russian ? "Этот плагин пока не поддерживается в AyuGram для iOS. Установленные плагины не изменились." : "This plugin is not supported by AyuGram for iOS yet. Installed plugins were not changed."
@@ -68718,15 +68812,9 @@ index 00000000..d0ffb276
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
 +        guard !self.reading, !self.applying else { return }
-+        if indexPath.section == 0 {
-+            guard !self.reading else { return }
-+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
-+            picker.delegate = self
-+            self.present(picker, animated: true)
-+            return
-+        }
-+        guard indexPath.row < self.store.current.plugins.installed.count else { return }
-+        let plugin = self.store.current.plugins.installed[indexPath.row]
++        let items = self.items
++        guard indexPath.row < items.count else { return }
++        let plugin = items[indexPath.row]
 +        self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: plugin.manifest.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController, keepAwake: self.keepAwake), animated: true)
 +    }
 +    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
@@ -68804,7 +68892,7 @@ index 00000000..d0ffb276
 +                        guard $0.plugins.installed.first(where: { $0.manifest.id == prepared.id }) == expected else { throw AyuPluginError.invalidManifest }
 +                        try $0.plugins.installAndActivate(prepared)
 +                    }
-+                    self.tableView.reloadData()
++                    self.reload()
 +                    self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: prepared.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController, keepAwake: self.keepAwake), animated: true)
 +                } catch { self.error(error) }
 +            }
@@ -68872,10 +68960,10 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..4a38a578
+index 00000000..b622c0aa
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,793 @@
+@@ -0,0 +1,796 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -68969,7 +69057,7 @@ index 00000000..4a38a578
 +}
 +
 +/// exteraGram preferences (MainPreferencesActivity): the logo header, then Categories
-+/// (General, Appearance, Chats, Other) and Links, in the Android order.
++/// (General, Appearance, Chats, Plugins, Other), in the Android order.
 +public func ayuSettingsController(context: AccountContext) -> ViewController {
 +    var push: ((ViewController) -> Void)?
 +    var navigation: (() -> NavigationController?)?
@@ -68978,9 +69066,8 @@ index 00000000..4a38a578
 +        case 11: push?(ayuGeneralSettingsController(context: context))
 +        case 12: push?(ayuSettingsCategoryController(context: context, category: 3))
 +        case 13: push?(ayuSettingsCategoryController(context: context, category: 4))
-+        case 14: push?(ayuOtherSettingsController(context: context, navigation: navigation?()))
-+        case 21: ayuOpenChannel(context: context, navigation: navigation?())
-+        case 22: context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
++        case 14: ayuPresentPlugins(context: context)
++        case 15: push?(ayuOtherSettingsController(context: context, navigation: navigation?()))
 +        default: break
 +        }
 +    }, toggle: { _, _ in })
@@ -68988,9 +69075,8 @@ index 00000000..4a38a578
 +        11: AyuSettingsIcons.symbol("gearshape.fill", color: UIColor(rgb: 0x8E8E93)),
 +        12: AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0x32ADE6)),
 +        13: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x34C759)),
-+        14: AyuSettingsIcons.symbol("star.fill", color: UIColor(rgb: 0xFF9500)),
-+        21: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
-+        22: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
++        14: AyuSettingsIcons.symbol("puzzlepiece.extension.fill", color: UIColor(rgb: 0x007AFF)),
++        15: AyuSettingsIcons.symbol("star.fill", color: UIColor(rgb: 0xFF9500))
 +    ]
 +    let signal = context.sharedContext.presentationData
 +    |> deliverOnMainQueue
@@ -69002,10 +69088,8 @@ index 00000000..4a38a578
 +            .link(1, 11, icons[11] ?? nil, ru ? "Основные" : "General", ""),
 +            .link(1, 12, icons[12] ?? nil, ru ? "Оформление" : "Appearance", ""),
 +            .link(1, 13, icons[13] ?? nil, ru ? "Чаты" : "Chats", ""),
-+            .link(1, 14, icons[14] ?? nil, ru ? "Другое" : "Other", ""),
-+            .header(2, 20, ru ? "ССЫЛКИ" : "LINKS"),
-+            .link(2, 21, icons[21] ?? nil, ru ? "Канал" : "Channel", "@neosay1337"),
-+            .link(2, 22, icons[22] ?? nil, ru ? "Исходный код" : "Source Code", "GitHub")
++            .link(1, 14, icons[14] ?? nil, ru ? "Плагины" : "Plugins", ""),
++            .link(1, 15, icons[15] ?? nil, ru ? "Другое" : "Other", "")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
@@ -69017,9 +69101,11 @@ index 00000000..4a38a578
 +    return controller
 +}
 +
-+/// AyuGram preferences (AyuGramPreferencesActivity), opened from its own Settings row.
++/// AyuGram preferences (AyuGramPreferencesActivity), opened from its own Settings row,
++/// with the port's channel and source links at the end.
 +public func ayuGramPreferencesController(context: AccountContext) -> ViewController {
 +    var push: ((ViewController) -> Void)?
++    var navigation: (() -> NavigationController?)?
 +    let arguments = AyuSectionedArguments(open: { id in
 +        switch id {
 +        case 1: push?(ayuGhostModeController(context: context))
@@ -69028,7 +69114,8 @@ index 00000000..4a38a578
 +        case 12: ayuPresentMediaArchive(context: context)
 +        case 21: ayuPresentAdvancedSettings(context: context, page: .cosmetics)
 +        case 22: push?(ayuChatOptionsController(context: context, regex: true))
-+        case 23: ayuPresentPlugins(context: context)
++        case 31: ayuOpenChannel(context: context, navigation: navigation?())
++        case 32: context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
 +        default: break
 +        }
 +    }, toggle: { _, _ in })
@@ -69039,7 +69126,8 @@ index 00000000..4a38a578
 +        12: AyuSettingsIcons.symbol("photo.on.rectangle.angled", color: UIColor(rgb: 0x34C759)),
 +        21: AyuSettingsIcons.symbol("star.circle.fill", color: UIColor(rgb: 0xAF52DE)),
 +        22: AyuSettingsIcons.symbol("line.3.horizontal.decrease", color: UIColor(rgb: 0xFF3B30)),
-+        23: AyuSettingsIcons.symbol("puzzlepiece.extension.fill", color: UIColor(rgb: 0x007AFF))
++        31: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
++        32: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
 +    ]
 +    let signal = context.sharedContext.presentationData
 +    |> deliverOnMainQueue
@@ -69056,7 +69144,9 @@ index 00000000..4a38a578
 +            .header(3, 20, ru ? "ПОЛЕЗНОЕ" : "QOL TOGGLES"),
 +            .link(3, 21, icons[21] ?? nil, ru ? "Локальный Premium и статус" : "Local Premium and status", ""),
 +            .link(3, 22, icons[22] ?? nil, ru ? "Фильтры" : "Filters", ""),
-+            .link(3, 23, icons[23] ?? nil, ru ? "Плагины" : "Plugins", "")
++            .header(4, 30, ru ? "ССЫЛКИ" : "LINKS"),
++            .link(4, 31, icons[31] ?? nil, ru ? "Канал" : "Channel", "@neosay1337"),
++            .link(4, 32, icons[32] ?? nil, ru ? "Исходный код" : "Source Code", "GitHub")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
@@ -69064,6 +69154,7 @@ index 00000000..4a38a578
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
++    navigation = { [weak controller] in controller?.navigationController as? NavigationController }
 +    return controller
 +}
 +

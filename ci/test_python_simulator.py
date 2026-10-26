@@ -32,14 +32,17 @@ MAIN = r'''
     NSString *runtime = [root stringByAppendingPathComponent:@"ayu-python-runtime/python"];
     NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     [NSFileManager.defaultManager createDirectoryAtURL:documents withIntermediateDirectories:YES attributes:nil error:nil];
+    [@"starting interpreter" writeToURL:[documents URLByAppendingPathComponent:@"stage.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
     AyuPythonBridgeObjC *bridge = [AyuPythonBridgeObjC new];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSString *failure = [bridge startWithPythonHome:home stdlibPath:stdlib
             dynloadPath:[stdlib stringByAppendingPathComponent:@"lib-dynload"]
             runtimePath:runtime dataDir:documents.path
             handler:^NSString *(NSString *request) { (void)request; return @"{\"ok\":false,\"error\":\"control has no native actions\"}"; }];
+        [@"interpreter startup returned" writeToURL:[documents URLByAppendingPathComponent:@"stage.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
         // A different thread exercises GIL ownership across calls.
         dispatch_async(dispatch_get_main_queue(), ^{
+            [@"converting on second thread" writeToURL:[documents URLByAppendingPathComponent:@"stage.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
             NSString *response;
             if (failure != nil) {
                 NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"ok": @NO, @"error": failure} options:0 error:nil];
@@ -63,7 +66,8 @@ int main(int argc, char **argv) {
 
 
 def command(*args):
-    return subprocess.check_output(list(args), text=True).strip()
+    print('Control command: ' + ' '.join(args), flush=True)
+    return subprocess.check_output(list(args), text=True, timeout=60).strip()
 
 
 def run(source, runtime):
@@ -83,18 +87,20 @@ def run(source, runtime):
         return (phone['identifier'] in paired, int(numbers[0]) if numbers else 0)
     device = None
     for phone in sorted(phones, key=rank, reverse=True):
-        created = subprocess.run(['xcrun', 'simctl', 'create', 'AyuPython-converter-control', phone['identifier'], selected_runtime['identifier']], capture_output=True, text=True)
+        created = subprocess.run(['xcrun', 'simctl', 'create', 'AyuPython-converter-control', phone['identifier'], selected_runtime['identifier']], capture_output=True, text=True, timeout=30)
         if created.returncode == 0:
             device = created.stdout.strip()
-            print('Interpreter control device: ' + phone['name'] + ' / ' + selected_runtime['version'])
+            print('Interpreter control device: ' + phone['name'] + ' / ' + selected_runtime['version'], flush=True)
             break
         if 'Incompatible device' not in created.stderr:
             raise RuntimeError('Simulator creation failed: ' + created.stderr)
     if device is None:
         raise RuntimeError('No compatible iPhone type for the available iOS Simulator runtime')
     try:
-        subprocess.run(['xcrun', 'simctl', 'boot', device], check=True)
-        subprocess.run(['xcrun', 'simctl', 'bootstatus', device, '-b'], check=True, timeout=180)
+        print('Booting interpreter control device', flush=True)
+        subprocess.run(['xcrun', 'simctl', 'boot', device], check=True, timeout=150)
+        subprocess.run(['xcrun', 'simctl', 'bootstatus', device, '-b'], check=True, timeout=60)
+        print('Compiling interpreter control application', flush=True)
         source = Path(source)
         with tempfile.TemporaryDirectory(prefix='ayu-python-simulator-') as folder:
             folder = Path(folder)
@@ -115,7 +121,7 @@ def run(source, runtime):
                             '-target', 'arm64-apple-ios15.0-simulator', '-I', str(bridge), '-F', str(framework),
                             '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'Python',
                             '-Wl,-rpath,@executable_path/Frameworks', str(main), str(bridge / 'AyuPythonBridgeObjC.m'),
-                            '-o', str(app / 'Control')], check=True)
+                            '-o', str(app / 'Control')], check=True, timeout=180)
             shutil.copytree(framework / 'Python.framework', app / 'Frameworks/Python.framework')
             archive = folder / 'Control.ipa'
             with zipfile.ZipFile(archive, 'w') as output:
@@ -131,15 +137,30 @@ def run(source, runtime):
                     target.write_bytes(bundle.read(item))
                     target.chmod((item.external_attr >> 16) & 0o777 or 0o644)
             (app / 'Control').chmod(0o755)
-            subprocess.run(['codesign', '--force', '--deep', '--sign', '-', str(app)], check=True)
-            subprocess.run(['xcrun', 'simctl', 'install', device, str(app)], check=True)
+            subprocess.run(['codesign', '--force', '--deep', '--sign', '-', str(app)], check=True, timeout=60)
+            print('Installing interpreter control application', flush=True)
+            subprocess.run(['xcrun', 'simctl', 'install', device, str(app)], check=True, timeout=60)
             container = Path(command('xcrun', 'simctl', 'get_app_container', device, 'one.ayugram.converter.control', 'data'))
-            subprocess.run(['xcrun', 'simctl', 'launch', device, 'one.ayugram.converter.control'], check=True)
+            print('Launching interpreter control application', flush=True)
+            console = folder / 'control-console.log'
+            with console.open('wb') as output:
+                launch = subprocess.Popen(['xcrun', 'simctl', 'launch', '--console', device, 'one.ayugram.converter.control'], stdout=output, stderr=subprocess.STDOUT)
             result_path = container / 'Documents/result.json'
             deadline = time.monotonic() + 60
             while not result_path.exists() and time.monotonic() < deadline:
+                if launch.poll() is not None: break
                 time.sleep(1)
-            if not result_path.exists(): raise RuntimeError('Python interpreter control produced no result within 60 seconds')
+            try:
+                subprocess.run(['xcrun', 'simctl', 'terminate', device, 'one.ayugram.converter.control'], check=False, timeout=15)
+            except subprocess.TimeoutExpired:
+                pass
+            if launch.poll() is None:
+                launch.terminate()
+            if not result_path.exists():
+                stage = container / 'Documents/stage.txt'
+                print('Control startup stage: ' + (stage.read_text(encoding='utf-8') if stage.exists() else 'application delegate not reached'), flush=True)
+                print(console.read_text(encoding='utf-8', errors='replace')[-16000:], flush=True)
+                raise RuntimeError('Python interpreter control did not return a conversion result')
             result = json.loads(result_path.read_text(encoding='utf-8'))
             if not result.get('ok'): raise RuntimeError('Real iOS Python startup/conversion failed: ' + str(result.get('error')))
             manifest = result['result']
@@ -147,8 +168,11 @@ def run(source, runtime):
                 raise RuntimeError('Real iOS converter returned an unexpected native program')
             print('PASS: actual embedded CPython starts and converts source to API 6 inside the iOS Simulator; GIL thread transition checked')
     finally:
-        subprocess.run(['xcrun', 'simctl', 'shutdown', device], check=False)
-        subprocess.run(['xcrun', 'simctl', 'delete', device], check=False)
+        for operation in ('shutdown', 'delete'):
+            try:
+                subprocess.run(['xcrun', 'simctl', operation, device], check=False, timeout=15)
+            except subprocess.TimeoutExpired:
+                print('::warning::Simulator control cleanup timed out: ' + operation, flush=True)
 
 
 if __name__ == '__main__':

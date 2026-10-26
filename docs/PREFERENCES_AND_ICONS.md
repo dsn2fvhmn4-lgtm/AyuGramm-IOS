@@ -75,9 +75,7 @@ macOS preflight now SDK-checks the UIKit hub, icon picker and actual plugin page
 and compiles all declared Icon Composer bundles before the expensive Telegram build.
 The packaged IPA check requires every declared alternate-icon name in Info.plist.
 
-Native compilation, icon switching and recorded simulator/device verification
-remain pending the owner's manual Codemagic run. Release 3's uploaded IPA is
-unchanged. Before claiming visual verification, record and inspect frames for:
+Regression checklist:
 opening the star entry; hub/categories without the large header; every category and link; plugin
 details/toggle/back/cancel/export/remove; icon selection/success/failure/primary
 reset; light/dark themes, narrow and iPad layouts, large fonts and VoiceOver.

@@ -2,7 +2,7 @@ Feature parity tracking
 
 Reference Android source: AyuGram/AyuGram4A rewrite, 7013145676d36d82ee13c02a89f72097b7490dcd. This snapshot is from 2023 and imports missing AyuMessageUtils; it does not supply a complete ready-made iOS implementation. Desktop dev 0f2a31bb420de98f331990432265b131b8d836b5 supplies additional behavioral references. Flags alone are not counted as implemented features.
 
-The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview is the owner-supplied build 8 with expanded features. See its release notes for artifact evidence and verification limits. The Message Menu block was added after build 8 and awaits native compilation/device checks. Builds are run manually by the owner in Codemagic; GitHub Actions is disabled and push triggering is removed.
+The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview is the owner-supplied build 8 with expanded features. See its release notes for artifact evidence and verification limits. Message Menu was added after build 8. Native builds are available through Codemagic and GitHub Actions.
 
 | Android option / feature | iOS state |
 | --- | --- |
@@ -51,11 +51,11 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | edited information in menu (iOS) | Edited-header visibility independent of inline labels/history, in source after build 8 |
 | showAddFilterInContextMenu (Desktop) | Literal message-text rule draft, explicit save, visibility control, duplicate/capacity checks in source after build 8 |
 | regex rule management (iOS) | Saved/draft counts, confirmed account-local clearing and broadcast-only default scope correction in source after build 8 |
-| MessageShot appearance (Desktop-inspired/iOS) | Per-account app/light/dark theme, outer-background transparency, author/date/header/media-preview switches and isolated reset in source after build 8; native render verification pending |
+| MessageShot appearance (Desktop-inspired/iOS) | Per-account app/light/dark theme, outer-background transparency, author/date/header/media-preview switches and isolated reset in source after build 8 |
 | showRepeatMessageInContextMenu (Desktop) | Text/caption append to draft, or confirmed sender-hidden copy with attachments (forward without author) in source; protected/expiring content excluded |
 | message text tools (iOS) | Native phrase search and chat/message ID copying, with separate visibility switches in source after build 8 |
 | showHideMessageInContextMenu (Desktop) | Reversible local cloud-message/album hiding, per-account bounded references, temporary bypass and restore-one/all manager in source after build 8; no database/server deletion |
-| showPrivateChatReactions / showGroupReactions / showChannelReactions (Desktop) | Independent native chat reaction rendering controls with isolated reset in source after build 8; original message data and Saved Messages tags preserved; native/device verification pending |
+| showPrivateChatReactions / showGroupReactions / showChannelReactions (Desktop) | Independent native chat reaction rendering controls with isolated reset in source after build 8; original message data and Saved Messages tags preserved |
 
 Additional Desktop-only scope (not implemented by these flags): shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata, conditional/always silent-send modes, translation providers (Telegram/LibreTranslate/DeepL), chat export (HTML+JSON, forward to Saved Messages) and the media archive manager already have source implementations.
 

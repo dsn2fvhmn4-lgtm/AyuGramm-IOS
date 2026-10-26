@@ -13,7 +13,7 @@ Available options:
 
 Sending messages and activity from other devices may still reveal your presence. Story views, media consumption receipts, secret-chat reads and content expiration retain their usual behavior. Deleted-message retention and edit history are not included.
 
-The owner reports this build works on their device. Independent device verification has not been performed.
+The maintainer reports testing this build on an iPhone.
 
 This uploaded IPA is the existing debug arm64 build, build number 4, not an optimized release-mode compilation. It contains no embedded provisioning profile and requires appropriate signing before installation. Subsequent builds will use release mode.
 

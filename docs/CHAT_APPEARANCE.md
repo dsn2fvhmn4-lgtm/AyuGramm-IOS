@@ -13,7 +13,7 @@ Defaults: header ghost shown, seconds off, standard localized labels. Old accoun
 
 Verification status: source/API and patch checks only on Windows. Swift model and actual Postbox tests are configured in the pre-build Codemagic step; this revision has not executed those tests or a full native build here. GitHub Actions stays disabled and Codemagic has no push trigger.
 
-Native/device checks required:
+Regression checklist:
 1. Open the screen from AyuGram, toggle seconds, return to an already open chat: all visible ordinary bubble timestamps should update once, preserving scroll position and date format (12/24-hour, full/imported date).
 2. Hide and show the ghost button: avatar/header stay usable and the current Ghost Mode policy survives hiding, reopening and restarting.
 3. Edit both labels, leave without saving, reopen: old saved labels remain. Save new Unicode labels, reopen/restart: saved labels persist. Clear/save restores the current language's defaults.

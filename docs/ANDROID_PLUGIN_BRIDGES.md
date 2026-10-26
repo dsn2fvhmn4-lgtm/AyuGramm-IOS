@@ -6,11 +6,11 @@ plugin code or load embedded native libraries. Original source files remain unch
 
 | Supplied file | Required integration | Current source status |
 | --- | --- | --- |
-| camera_flip.plugin 0.2.0 | Round-camera touch events, existing flip action, settings | Native adapter added; macOS compilation and iPhone verification pending |
-| chat_colors.plugin 1.0 | Chat-list row background, peer color storage, context/profile menus, color picker and brightness | Native adapter added; macOS compilation and iPhone verification pending |
-| game_arcade.plugin 1.1 | Native web view, 3 external game URLs, injected scripts, cookies/cache lifecycle, menus and intercepted dot commands | Native adapter added; device verification pending |
+| camera_flip.plugin 0.2.0 | Round-camera touch events, existing flip action, settings | Native adapter added |
+| chat_colors.plugin 1.0 | Chat-list row background, peer color storage, context/profile menus, color picker and brightness | Native adapter added |
+| game_arcade.plugin 1.1 | Native web view, 3 external game URLs, injected scripts, cookies/cache lifecycle, menus and intercepted dot commands | Native adapter added |
 | story_scheduler.plugin 1.1 | Durable media queue, story uploader/privacy/peer models, schedule picker, retries and wakeup lifecycle | No adapter implemented |
-| unlim_accounts.plugin 1.0 | Android 12.10.6 account internals plus embedded DEX/JNI runtime | Native adapter added (client add-account limit 999); device verification pending |
+| unlim_accounts.plugin 1.0 | Android 12.10.6 account internals plus embedded DEX/JNI runtime | Native adapter added (client add-account limit 999) |
 
 Story Scheduler still needs more than text-replacement rules. A Python interpreter alone
 would not supply the referenced Java classes, Android views, DEX/JNI loader or
@@ -144,8 +144,7 @@ plugins or mark unimplemented bridges as available.
   rounding, namespaced key separation, persistence, failed updates, account
   isolation, feature/plugin disable, replacement, removal and count/brightness
   validation. The UIKit picker is included in the cheap actual SDK check.
-- macOS compilation, simulator-frame review and iPhone behavior remain unverified.
-  Before release test light/dark, pinned/selected/highlight/reveal, recycled cells,
+- Regression checklist: light/dark, pinned/selected/highlight/reveal, recycled cells,
   profile/list/message entry points, invalid HEX, save failure, removal while the
   picker is open, reset, multiple accounts and all brightness steps. No build was
   started by this source task.

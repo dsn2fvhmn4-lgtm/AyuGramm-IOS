@@ -1,6 +1,6 @@
 # Ghost Mode+, translation, export and archive tools (development source)
 
-These blocks were added after the Chat Colors plugin and are not in any published IPA. Native compilation and device checks are pending; see `docs/CODEMAGIC_PREFLIGHT.md`.
+These blocks are included in Release 4. Build checks are described in `docs/CODEMAGIC_PREFLIGHT.md`.
 
 ## Ghost Mode+ (Settings → AyuGram → Ghost Mode+)
 

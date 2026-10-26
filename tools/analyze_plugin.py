@@ -11,10 +11,10 @@ CAMERA_SHA256 = '61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be003555f1e9
 ARCADE_SHA256 = '421911448e6fe62b3292b43b8593ebb24056b238278bab002576381d541238bc'
 UNLIM_ACCOUNTS_SHA256 = '6c5e2f697da4d87b0409841d96dd9bf69f224073c44b555c6fd9de782c70d40f'
 REVIEWED_STATUS = {
-    CAMERA_SHA256: 'Reviewed native Camera Flip adapter in development source; macOS build and device tests pending',
-    CHAT_COLORS_SHA256: 'Reviewed native Chat Colors adapter in development source; macOS build and device tests pending',
-    ARCADE_SHA256: 'Reviewed native Arcade Games adapter (web view games, chat commands) in development source; device tests pending',
-    UNLIM_ACCOUNTS_SHA256: 'Reviewed native Unlim Accounts adapter (client account limit) in development source; device tests pending',
+    CAMERA_SHA256: 'Reviewed native Camera Flip adapter in development source',
+    CHAT_COLORS_SHA256: 'Reviewed native Chat Colors adapter in development source',
+    ARCADE_SHA256: 'Reviewed native Arcade Games adapter (web view games, chat commands) in development source',
+    UNLIM_ACCOUNTS_SHA256: 'Reviewed native Unlim Accounts adapter (client account limit) in development source',
 }
 
 

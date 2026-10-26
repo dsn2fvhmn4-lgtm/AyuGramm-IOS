@@ -26,7 +26,7 @@ Verification required before release:
 
 Foundation model tests cover opt-ins, Codable round trip, duplicate events, record identifiers, account/state value isolation, capacity eviction, expiry, targeted purge, Unicode byte limit and clear. They do not establish Postbox or device integration correctness.
 
-Device-crash fixes in the current source (native/device verification pending):
+Device-crash fixes:
 - History records encode/decode their event kind as a keyed primitive String. The pinned AdaptedPostboxEncoder and decoder trap in singleValueContainer, which synthesized raw-value enum Codable uses. JSON-only tests missed this path.
 - Eligible deleted text now remains in the chat with a registered local AyuDeletedMessageAttribute and a Deleted label beside the time. Secret/expiring/protected content remains excluded. Inline tombstones strip original media and keyboards; captured media stays in the separate bounded archive.
 - Repeated deletion replay does not recapture tombstones. Clear, record eviction, expiry and loss of chat eligibility remove retained text. Channel thread counts are decremented once; deleting a tombstone locally does not decrement them again.

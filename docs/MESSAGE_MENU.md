@@ -29,4 +29,4 @@ Device/simulator checks before reporting runtime or visual verification:
 3. Hide the reaction picker; check ordinary long-press menus, existing reaction taps and Saved Messages tags separately. Toggle the read summary while Ghost Mode is off/on; receipt policy must remain unchanged.
 4. Select Messages from Author in a legacy group, supergroup and forum topic, including a bot author. Native search must show the author filter, return the matching messages and exit normally. Confirm absent actions for private, broadcast, anonymous, unknown-author and sponsored cases.
 5. Start author search while recording to exercise the upstream discard prompt. Test menu reopening after changing settings, navigation away and rapid taps.
-6. Record and inspect simulator frames per upstream AGENTS.md, including light/dark themes, narrow screens, large fonts and VoiceOver. No simulator/device verification was performed on this Windows host.
+6. Record and inspect simulator frames per upstream AGENTS.md, including light/dark themes, narrow screens, large fonts and VoiceOver.

@@ -2,7 +2,7 @@
 
 This source revision adds **tap .plugin -> review -> Import and enable -> prepare
 -> atomic commit**. It is not a universal Android runtime. Release 3's published
-IPA is unchanged; native compilation and iPhone testing remain pending.
+IPA is unchanged; these additions are included in Release 4.
 
 ## Opening and applying
 

@@ -13,12 +13,12 @@ Recording preview
 - A normal live voice/video-note .send action becomes native .preview when its corresponding option is enabled. The existing draft/playback/trim/delete/send UI handles the recorded data.
 - Disable the paid-chat sendImmediately path for these previews, so it cannot immediately transmit a recording before review. Sending explicitly from the preview uses the original flow and does not loop back into another preview.
 - Explicit view-once sends keep their native flow. An ordinary preview draft does not store that intent, so this feature never converts view-once into an ordinary draft.
-- Pause, resume, dismissal, short-recording rejection, restrictions and file conversion remain native. These runtime interactions require device checks.
+- Pause, resume, dismissal, short-recording rejection, restrictions and file conversion remain native.
 
 Pre-build checks
-The actual Foundation model harness covers default-off behavior, independent media-type policies, migration, JSON persistence and preservation of unrelated ghost/silent settings. It also tests one-shot approval, duplicate approval and cancellation invalidation. The updated sources/harness still require execution on the owner's manual Codemagic build; Windows grammar checks do not establish runtime correctness.
+The actual Foundation model harness covers default-off behavior, independent media-type policies, migration, JSON persistence and preservation of unrelated ghost/silent settings. It also tests one-shot approval, duplicate approval and cancellation invalidation. The model harness runs in the native build pipeline.
 
-Device/simulator regression before release
+Device/simulator regression checklist
 1. Every switch off: sticker/GIF and ordinary recorder send behavior matches upstream.
 2. Sticker/GIF on: test Cancel, Send, outside dismissal, rapid repeated taps, another media type after dismissal, silent send, schedule, reply and premium/paid/restricted/slowmode chats. Cancel enqueues nothing and keeps text/reply drafts. Approve enqueues exactly once.
 3. Test saved and inline GIFs, keyboard stickers and sticker-pack screen sends. Closing the picker after approval is not forced by the deferred Boolean send result.

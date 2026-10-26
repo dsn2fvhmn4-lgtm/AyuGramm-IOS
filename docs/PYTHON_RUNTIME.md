@@ -8,9 +8,9 @@ adapters (Search+, Camera Flip, Chat Colors, Arcade Games, Unlim Accounts),
 which keep running unchanged and take precedence by SHA-256 on import.
 
 **Status: prototype. The Python runtime is implemented and tested on desktop
-Python. The Swift/Objective-C host is written but has not been compiled —
-there is no Xcode on the current Windows machine, and the `Python.xcframework`
-is not embedded in any build yet. No IPA contains this.**
+Python. The Swift/Objective-C host integration is present in source.
+`Python.xcframework` is not embedded, so interpreter-backed execution remains
+inactive in the IPA; existing native adapters keep handling supported plugins.**
 
 ## What runs today (verified on desktop CPython 3.12)
 

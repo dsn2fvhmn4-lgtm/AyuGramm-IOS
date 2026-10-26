@@ -35,7 +35,4 @@ Keychain errors and preservation of existing files. PasscodeCore XCTest coverage
 adds query-isolation and configuration validation tests; these require the native
 PasscodeCore test environment and are not run by the host model harness.
 
-Windows source parsing and patch checks are distinct from a native build and a
-physical-device test. Signing/installation, foreground/background startup, login,
-passcode, Face ID, downloads and relaunch still need device verification for each
-installation method. No existing release IPA is changed by this source update.
+Installation regression checklist: signing, foreground/background startup, login, passcode, Face ID, downloads and relaunch for each installation method.

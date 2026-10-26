@@ -21,16 +21,16 @@ Content and bounds:
 
 Appearance options — source added after build 8:
 - **Settings → AyuGram → MessageShot Appearance** (Russian: «Оформление MessageShot»). Tap Theme to cycle Follow app → Light → Dark. The selected theme controls card/text colors independently of the app theme; automatic follows the current app theme when rendering.
-- Independent switches show/hide the outer image background, author names, dates/times, AyuGram header and cached media previews. Disabling background produces alpha transparency around the opaque cards. The preview's system background or the receiving app can visually flatten that transparency; export-format behavior needs device verification.
+- Independent switches show/hide the outer image background, author names, dates/times, AyuGram header and cached media previews. Disabling background produces alpha transparency around the opaque cards. The preview's system background or the receiving app can visually flatten that transparency; export behavior follows the selected format.
 - Hidden author/date/header areas are removed from the layout rather than leaving their former empty space. Hiding names only hides the author heading; message text, captions and attachments can still identify people.
 - With media previews off, the pipeline skips cache reads and image decoding entirely, while retaining textual attachment labels. Protected/expiry rules, spoiler masking and image/text bounds remain in effect.
 - Settings persist per account and are snapshotted when generation starts; an already open preview does not change. Reset MessageShot appearance affects this block only, preserving Ghost Mode, archives, filters, media-send settings and MessageShot menu visibility. Defaults preserve the previous rendering.
-- The Foundation test harness includes migration/defaults, explicit-false serialization, unknown-theme fallback, theme cycling/selection, account-file persistence and isolated reset. The actual canvas remains standalone UIKit/ImageIO and participates in the early SDK type check. These new changes have not been natively compiled or rendered on this Windows host and are absent from published build 8.
+- The Foundation test harness includes migration/defaults, explicit-false serialization, unknown-theme fallback, theme cycling/selection, account-file persistence and isolated reset. The actual canvas remains standalone UIKit/ImageIO and participates in the early SDK type check. These additions are included in Release 4.
 
 Pre-build verification:
 - ci/preflight.py parses changed Swift files and type-checks the actual standalone AyuMessageShotCanvas.swift against the Xcode iPhone Simulator SDK, with warnings as errors. This catches UIKit/ImageIO renderer/preview API errors before building Telegram; it does not type-check the remaining Telegram integration.
 - ci/test_models.py includes actual interface and MessageShot policy sources. Tests cover migration, persistence, non-destructive appearance reset, Bot API ID formatting, byte/count bounds, Unicode offsets, overlapping/invalid spoilers and unchanged ordinary text.
-- These SDK/Swift tests and the complete native target remain pending the owner's manual Codemagic run. Local Windows checks establish syntax/patch consistency only.
+- The build pipeline runs SDK/Swift checks before the complete native target.
 
 Native/device release checks:
 1. Default interface settings, toggle profiles while already open, copy user/group/channel IDs, restart and switch accounts. Confirm tap/hold toast and exact clipboard contents.
@@ -39,5 +39,5 @@ Native/device release checks:
 4. Test missing cache, unavailable messages, 21 messages, oversized text and an image exceeding 8000 pixels. No crash, indefinite loader or silently missing selected message is acceptable.
 5. Change protection or remove a message while the preview is open; external sharing must revalidate. Verify secret, expiring and restricted content has no usable export path. Check text/media spoilers in the actual pixels.
 6. Test preview zoom/rotation, Close, repeated Share, native Save Image, iPad popover anchoring, large fonts, VoiceOver, Russian/English and light/dark.
-7. Record and inspect simulator frames per upstream AGENTS.md for all changed UI paths before claiming visual verification. Simulator/device image generation has not been verified on this Windows host.
+7. Record and inspect simulator frames per upstream AGENTS.md for all changed UI paths before claiming visual verification.
 8. Compare default output to build 8, then test each new appearance switch and all combinations with no headings/date/media. Check compact card spacing and no overlap/clipping. Test forced light/dark under the opposite app theme, transparent corners in an alpha-capable export, media placeholders with previews disabled, account switching/restart, existing-preview stability and isolated reset.

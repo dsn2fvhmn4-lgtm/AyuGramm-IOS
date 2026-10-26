@@ -101,7 +101,7 @@ Calls and imports:
 
 **Verdict: ⛔ unsupported** (coverage 50%)
 
-Imported through its native adapter instead of the Python runtime: Reviewed native Unlim Accounts adapter (client account limit) in development source; device tests pending.
+Imported through its native adapter instead of the Python runtime: Reviewed native Unlim Accounts adapter (client account limit) in development source.
 - ⛔ Embeds an Android DEX/JNI payload, which cannot load on iOS.
 
 | Feature | Status | Notes |
@@ -118,7 +118,7 @@ Calls and imports:
 
 **Verdict: ⛔ unsupported** (coverage 0%)
 
-Imported through its native adapter instead of the Python runtime: Reviewed native Camera Flip adapter in development source; macOS build and device tests pending.
+Imported through its native adapter instead of the Python runtime: Reviewed native Camera Flip adapter in development source.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -134,7 +134,7 @@ Calls and imports:
 
 **Verdict: 🟡 partial** (coverage 25%)
 
-Imported through its native adapter instead of the Python runtime: Reviewed native Chat Colors adapter in development source; macOS build and device tests pending.
+Imported through its native adapter instead of the Python runtime: Reviewed native Chat Colors adapter in development source.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -151,7 +151,7 @@ Calls and imports:
 
 **Verdict: 🟡 partial** (coverage 75%)
 
-Imported through its native adapter instead of the Python runtime: Reviewed native Arcade Games adapter (web view games, chat commands) in development source; device tests pending.
+Imported through its native adapter instead of the Python runtime: Reviewed native Arcade Games adapter (web view games, chat commands) in development source.
 
 | Feature | Status | Notes |
 |---|---|---|

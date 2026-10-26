@@ -68624,10 +68624,10 @@ index 00000000..62d73661
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..cf0d1946
+index 00000000..e8d248a7
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,342 @@
+@@ -0,0 +1,309 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -68643,8 +68643,7 @@ index 00000000..cf0d1946
 +    private let palette: AyuPreferencesPalette?
 +    private var reading = false
 +    private var updatingCatalog = false
-+    private let catalogButton = UIButton(type: .system)
-+    private let catalogStatus = UILabel()
++    private var catalogRefresh: UIBarButtonItem?
 +    private var initialImport: (URL, String)?
 +    private var applying = false
 +    private var query = ""
@@ -68663,7 +68662,10 @@ index 00000000..cf0d1946
 +        self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
 +        let install = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(self.installTapped))
 +        install.accessibilityLabel = self.russian ? "Установить плагин" : "Install plugin"
-+        self.navigationItem.rightBarButtonItem = install
++        let refresh = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(self.updateCatalogTapped))
++        refresh.accessibilityLabel = self.russian ? "Обновить список поддержки плагинов" : "Refresh plugin support list"
++        self.catalogRefresh = refresh
++        self.navigationItem.rightBarButtonItems = [install, refresh]
 +        let search = UISearchController(searchResultsController: nil)
 +        search.searchResultsUpdater = self
 +        search.obscuresBackgroundDuringPresentation = false
@@ -68674,63 +68676,29 @@ index 00000000..cf0d1946
 +        self.tableView.rowHeight = UITableView.automaticDimension
 +        self.tableView.estimatedRowHeight = 88
 +        self.tableView.backgroundColor = self.palette?.background ?? .systemGroupedBackground
-+        self.setupCatalogHeader()
++        self.updateCatalogControls()
 +    }
 +    override func viewWillAppear(_ animated: Bool) {
 +        super.viewWillAppear(animated)
-+        self.updateCatalogHeader()
++        self.updateCatalogControls()
 +        self.reload()
 +    }
-+    override func viewDidLayoutSubviews() {
-+        super.viewDidLayoutSubviews()
-+        ayuFitPreferencesHeader(self.tableView)
-+    }
-+    private func setupCatalogHeader() {
-+        let header = UIView(frame: CGRect(x: 0, y: 0, width: self.tableView.bounds.width, height: 90))
-+        self.catalogButton.translatesAutoresizingMaskIntoConstraints = false
-+        self.catalogButton.contentHorizontalAlignment = .leading
-+        self.catalogButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
-+        self.catalogButton.titleLabel?.adjustsFontForContentSizeCategory = true
-+        self.catalogButton.titleLabel?.numberOfLines = 0
-+        self.catalogButton.tintColor = self.palette?.accent ?? .systemBlue
-+        self.catalogButton.addTarget(self, action: #selector(self.updateCatalogTapped), for: .touchUpInside)
-+        self.catalogStatus.translatesAutoresizingMaskIntoConstraints = false
-+        self.catalogStatus.font = .preferredFont(forTextStyle: .footnote)
-+        self.catalogStatus.adjustsFontForContentSizeCategory = true
-+        self.catalogStatus.textColor = self.palette?.secondary ?? .secondaryLabel
-+        self.catalogStatus.numberOfLines = 0
-+        header.addSubview(self.catalogButton); header.addSubview(self.catalogStatus)
-+        NSLayoutConstraint.activate([
-+            self.catalogButton.topAnchor.constraint(equalTo: header.topAnchor, constant: 8),
-+            self.catalogButton.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 20),
-+            self.catalogButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -20),
-+            self.catalogButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-+            self.catalogStatus.topAnchor.constraint(equalTo: self.catalogButton.bottomAnchor, constant: 2),
-+            self.catalogStatus.leadingAnchor.constraint(equalTo: self.catalogButton.leadingAnchor),
-+            self.catalogStatus.trailingAnchor.constraint(equalTo: self.catalogButton.trailingAnchor),
-+            self.catalogStatus.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -12)
-+        ])
-+        self.tableView.tableHeaderView = header
-+        self.updateCatalogHeader()
-+    }
-+    private func updateCatalogHeader() {
++    private func updateCatalogControls() {
++        let enabled = !self.updatingCatalog && !self.reading && !self.applying
++        self.navigationItem.rightBarButtonItems?.forEach { $0.isEnabled = enabled }
 +        let summary = AyuPluginCatalogStore.shared.summary
-+        self.catalogButton.isEnabled = !self.updatingCatalog && !self.reading && !self.applying
-+        self.navigationItem.rightBarButtonItem?.isEnabled = !self.updatingCatalog && !self.reading && !self.applying
-+        self.catalogButton.setTitle(self.updatingCatalog ? (self.russian ? "Обновление списка…" : "Updating plugin list…") : (self.russian ? "Обновить список плагинов" : "Update plugin list"), for: .normal)
-+        self.catalogStatus.text = summary.revision == 0
-+            ? (self.russian ? "Загрузить новые адаптеры перед импортом .plugin." : "Download new adapters before importing a .plugin.")
-+            : (self.russian ? "Список \(summary.revision) · адаптеров: \(summary.adapterCount)" : "Catalog \(summary.revision) · adapters: \(summary.adapterCount)")
-+        self.tableView.setNeedsLayout()
++        self.catalogRefresh?.accessibilityValue = self.updatingCatalog
++            ? (self.russian ? "Обновление…" : "Updating…")
++            : (self.russian ? "Список \(summary.revision), адаптеров: \(summary.adapterCount)" : "Catalog \(summary.revision), adapters: \(summary.adapterCount)")
 +    }
 +    @objc private func updateCatalogTapped() {
 +        guard !self.updatingCatalog, !self.reading, !self.applying else { return }
 +        self.updatingCatalog = true
-+        self.updateCatalogHeader()
++        self.updateCatalogControls()
 +        AyuPluginCatalogStore.shared.update { [weak self] result in
 +            guard let self else { return }
 +            self.updatingCatalog = false
-+            self.updateCatalogHeader()
++            self.updateCatalogControls()
 +            guard self.viewIfLoaded?.window != nil, self.navigationController?.topViewController === self, self.presentedViewController == nil else { return }
 +            switch result {
 +            case let .success(summary):
@@ -68890,7 +68858,7 @@ index 00000000..cf0d1946
 +    private func readImport(_ url: URL, filename: String, picker: UIViewController? = nil) {
 +        guard url.isFileURL, !self.reading, !self.applying else { return }
 +        self.reading = true
-+        self.updateCatalogHeader()
++        self.updateCatalogControls()
 +        let spinner = UIActivityIndicatorView(style: .medium); spinner.startAnimating()
 +        self.navigationItem.leftBarButtonItem = UIBarButtonItem(customView: spinner)
 +        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -68913,7 +68881,7 @@ index 00000000..cf0d1946
 +            DispatchQueue.main.async { [weak self] in
 +                guard let self else { return }
 +                self.reading = false
-+                self.updateCatalogHeader()
++                self.updateCatalogControls()
 +                self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
 +                let complete: () -> Void = { [weak self] in
 +                    guard let self else { return }
@@ -68942,10 +68910,9 @@ index 00000000..cf0d1946
 +    private func apply(_ manifest: AyuPluginManifest, expected: AyuInstalledPlugin?) {
 +        guard !self.applying else { return }
 +        self.applying = true
-+        self.updateCatalogHeader()
++        self.updateCatalogControls()
 +        let progress = UIActivityIndicatorView(style: .medium); progress.startAnimating()
 +        self.navigationItem.leftBarButtonItem = UIBarButtonItem(customView: progress)
-+        self.navigationItem.rightBarButtonItem?.isEnabled = false
 +        self.isModalInPresentation = true
 +        self.navigationController?.isModalInPresentation = true
 +        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -68953,9 +68920,9 @@ index 00000000..cf0d1946
 +            DispatchQueue.main.async { [weak self] in
 +                guard let self else { return }
 +                self.applying = false
-+                self.updateCatalogHeader()
++                self.updateCatalogControls()
 +                self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
-+                self.navigationItem.rightBarButtonItem?.isEnabled = true; self.isModalInPresentation = false
++                self.isModalInPresentation = false
 +                self.navigationController?.isModalInPresentation = false
 +                do {
 +                    let prepared = try result.get()

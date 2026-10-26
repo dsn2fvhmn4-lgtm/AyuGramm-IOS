@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+from port_sources import missing_port_sources
 
 parser = argparse.ArgumentParser()
 parser.add_argument("source", type=Path)
@@ -17,4 +18,7 @@ if actual != pin["commit"]:
 patch = root / "patches" / "ayugram-ghost-mode.patch"
 subprocess.run(["git", "apply", "--check", str(patch)], cwd=source, check=True)
 subprocess.run(["git", "apply", str(patch)], cwd=source, check=True)
+missing = missing_port_sources(source)
+if missing:
+    raise SystemExit("Port patch is missing required native source files:\n" + "\n".join(missing))
 print("Applied native AyuGram changes to " + actual)

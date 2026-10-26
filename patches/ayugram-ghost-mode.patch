@@ -71937,7 +71937,7 @@ index 00000000..6c4fda2d
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 new file mode 100644
-index 00000000..1fb0da13
+index 00000000..bdb6d23e
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 @@ -0,0 +1,257 @@
@@ -71966,7 +71966,7 @@ index 00000000..1fb0da13
 +
 +public enum AyuPythonRuntimeError: Error { case unavailable, notStarted, decoding }
 +
-+public struct AyuPluginConversionError: LocalizedError {
++public struct AyuPythonConversionError: LocalizedError {
 +    public let detail: String
 +    public var errorDescription: String? { return self.detail }
 +}
@@ -72017,9 +72017,9 @@ index 00000000..1fb0da13
 +    public func convertSource(_ data: Data, sourceSHA256: String) throws -> AyuPluginManifest {
 +        guard data.count <= 65536, String(data: data, encoding: .utf8) != nil else { throw AyuPluginError.invalidFile }
 +        return try self.queue.sync {
-+            guard self.started else { throw AyuPluginConversionError(detail: self.startupError ?? "Python converter is not ready. Reopen the app and try importing again.") }
++            guard self.started else { throw AyuPythonConversionError(detail: self.startupError ?? "Python converter is not ready. Reopen the app and try importing again.") }
 +            guard let result = self.callLocked(op: "convert", args: ["sourceData": data.base64EncodedString()]),
-+                  JSONSerialization.isValidJSONObject(result) else { throw AyuPluginConversionError(detail: String((self.lastCallError ?? "No native mapping for this plugin").prefix(512))) }
++                  JSONSerialization.isValidJSONObject(result) else { throw AyuPythonConversionError(detail: String((self.lastCallError ?? "No native mapping for this plugin").prefix(512))) }
 +            let encoded = try JSONSerialization.data(withJSONObject: result)
 +            let manifest = try JSONDecoder().decode(AyuPluginManifest.self, from: encoded)
 +            guard manifest.convertedFrom == AyuTextProgram.converterID, manifest.sourceSHA256 == sourceSHA256 else { throw AyuPluginError.invalidManifest }

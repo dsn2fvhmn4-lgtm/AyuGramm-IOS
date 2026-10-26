@@ -68960,7 +68960,7 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..7b675c0f
+index 00000000..d5fc4591
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 @@ -0,0 +1,868 @@
@@ -69075,7 +69075,7 @@ index 00000000..7b675c0f
 +        11: AyuSettingsIcons.symbol("gearshape.fill", color: UIColor(rgb: 0x8E8E93)),
 +        12: AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0x32ADE6)),
 +        13: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x34C759)),
-+        14: AyuSettingsIcons.symbol("puzzlepiece.extension.fill", color: UIColor(rgb: 0x007AFF)),
++        14: AyuSettingsIcons.glyph("AyuGram/Plugins", color: UIColor(rgb: 0x007AFF), side: 20.0),
 +        15: AyuSettingsIcons.symbol("star.fill", color: UIColor(rgb: 0xFF9500))
 +    ]
 +    let signal = context.sharedContext.presentationData
@@ -69122,10 +69122,10 @@ index 00000000..7b675c0f
 +    let icons: [Int32: UIImage?] = [
 +        1: AyuSettingsIcons.ghost(color: UIColor(rgb: 0x8E5CF7)),
 +        2: AyuSettingsIcons.ghost(color: UIColor(rgb: 0x5856D6), plus: true),
-+        11: AyuSettingsIcons.symbol("clock.arrow.circlepath", color: UIColor(rgb: 0xFF9500)),
-+        12: AyuSettingsIcons.symbol("photo.on.rectangle.angled", color: UIColor(rgb: 0x34C759)),
-+        21: AyuSettingsIcons.symbol("star.circle.fill", color: UIColor(rgb: 0xAF52DE)),
-+        22: AyuSettingsIcons.symbol("line.3.horizontal.decrease", color: UIColor(rgb: 0xFF3B30)),
++        11: AyuSettingsIcons.glyph("Item List/Icons/Clock", color: UIColor(rgb: 0xFF9500)),
++        12: AyuSettingsIcons.glyph("AyuGram/MediaArchive", color: UIColor(rgb: 0x34C759), side: 19.0),
++        21: AyuSettingsIcons.glyph("Item List/Icons/Premium", color: UIColor(rgb: 0xAF52DE)),
++        22: AyuSettingsIcons.glyph("AyuGram/Filter", color: UIColor(rgb: 0xFF3B30), side: 19.0),
 +        31: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
 +        32: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
 +    ]
@@ -74162,10 +74162,10 @@ index 00000000..73b546fa
 +}
 diff --git a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
 new file mode 100644
-index 00000000..367e3143
+index 00000000..9adcfa80
 --- /dev/null
 +++ b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,105 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -74180,6 +74180,26 @@ index 00000000..367e3143
 +
 +    /// exteraGram's logo (white plane on red), for the exteraGram preferences row.
 +    public static let exteraLogo: UIImage? = AyuSettingsIcons.bundleLogo("AyuGram/OriginalExtera2", fallbackColor: UIColor(rgb: 0xE83030))
++
++    /// A white glyph from the app bundle on a colored rounded square. Telegram's own settings
++    /// glyphs ("Item List/Icons/…") are drawn at their full 30 pt canvas; the AyuGram ones, 24 pt
++    /// Solar-style artwork, are drawn into a centered square of `side` points.
++    public static func glyph(_ name: String, color: UIColor, side: CGFloat? = nil) -> UIImage? {
++        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            context.clear(bounds)
++            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++            context.setFillColor(color.cgColor)
++            context.fillPath()
++            guard let image = UIImage(bundleImageName: name)?.withTintColor(.white, renderingMode: .alwaysOriginal), image.size.width > 0.0, image.size.height > 0.0 else {
++                return
++            }
++            let imageSize = side.map { CGSize(width: $0, height: $0) } ?? image.size
++            UIGraphicsPushContext(context)
++            image.draw(in: CGRect(origin: CGPoint(x: (size.width - imageSize.width) / 2.0, y: (size.height - imageSize.height) / 2.0), size: imageSize))
++            UIGraphicsPopContext()
++        })
++    }
 +
 +    /// AyuGram's ghost (the Solar ghost from AyuGram for Android) on a colored rounded square.
 +    /// With `plus`, the ghost is a little smaller and a "+" badge sits at the bottom right, as
@@ -117248,6 +117268,37 @@ index 00000000..787495bd
 +    "provides-namespace": true
 +  }
 +}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/Contents.json
+new file mode 100644
+index 00000000..7d873fdb
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/Contents.json
+@@ -0,0 +1,16 @@
++{
++  "images" : [
++    {
++      "filename" : "filter.svg",
++      "idiom" : "universal"
++    }
++  ],
++  "info" : {
++    "author" : "xcode",
++    "version" : 1
++  },
++  "properties" : {
++    "preserves-vector-representation" : true,
++    "template-rendering-intent" : "template"
++  }
++}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/filter.svg b/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/filter.svg
+new file mode 100644
+index 00000000..ea4790ee
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/filter.svg
+@@ -0,0 +1,3 @@
++<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill="#FFFFFF" d="M4.6 3.5h14.8c0.88 0 1.6 0.72 1.6 1.6v1.15c0 0.47-0.2 0.91-0.55 1.21L14.6 12.3v6.05c0 0.53-0.3 1.01-0.77 1.25l-2.5 1.27c-0.66 0.34-1.43-0.14-1.43-0.88V12.3L4.05 7.46A1.6 1.6 0 0 1 3 6.25V5.1c0-0.88 0.72-1.6 1.6-1.6Z"/>
++</svg>
 diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/Contents.json
 new file mode 100644
 index 00000000..1abb7deb
@@ -139479,6 +139530,37 @@ index 00000000..43e2623d
 +    "version": 1
 +  }
 +}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/MediaArchive.imageset/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/MediaArchive.imageset/Contents.json
+new file mode 100644
+index 00000000..eec5692c
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/MediaArchive.imageset/Contents.json
+@@ -0,0 +1,16 @@
++{
++  "images" : [
++    {
++      "filename" : "media_archive.svg",
++      "idiom" : "universal"
++    }
++  ],
++  "info" : {
++    "author" : "xcode",
++    "version" : 1
++  },
++  "properties" : {
++    "preserves-vector-representation" : true,
++    "template-rendering-intent" : "template"
++  }
++}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/MediaArchive.imageset/media_archive.svg b/submodules/TelegramUI/Images.xcassets/AyuGram/MediaArchive.imageset/media_archive.svg
+new file mode 100644
+index 00000000..fc5ef107
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/MediaArchive.imageset/media_archive.svg
+@@ -0,0 +1,3 @@
++<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill="#FFFFFF" fill-rule="evenodd" clip-rule="evenodd" d="M3.46 3.46C2 4.93 2 7.3 2 12c0 4.71 0 7.07 1.46 8.54C4.93 22 7.3 22 12 22c4.71 0 7.07 0 8.54-1.46C22 19.07 22 16.7 22 12c0-4.71 0-7.07-1.46-8.54C19.07 2 16.7 2 12 2 7.29 2 4.93 2 3.46 3.46ZM16 10c1.1 0 2-0.9 2-2s-0.9-2-2-2-2 0.9-2 2 0.9 2 2 2Zm-9.68 3.1c0.63-0.58 1.6-0.54 2.18 0.08l2.65 2.8c0.8 0.86 2.11 0.97 3.04 0.27 0.62-0.45 1.47-0.4 2.02 0.13l2.27 2.16c0.3 0.29 0.78 0.28 1.06-0.02 0.29-0.3 0.28-0.78-0.02-1.06l-2.27-2.17c-1.08-1.03-2.75-1.13-3.95-0.24-0.33 0.24-0.78 0.2-1.06-0.1l-2.64-2.8C8.45 10.93 6.53 10.86 5.3 12l-0.81 0.76c-0.3 0.28-0.32 0.75-0.04 1.06 0.28 0.3 0.76 0.32 1.06 0.04l0.81-0.76Z"/>
++</svg>
 diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/OriginalAlt.imageset/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/OriginalAlt.imageset/Contents.json
 new file mode 100644
 index 00000000..41438185
@@ -140640,6 +140722,37 @@ index 00000000..e8586698
 +<rect width="1200" height="1200" rx="600" fill="white"/>
 +</clipPath>
 +</defs>
++</svg>
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Plugins.imageset/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/Plugins.imageset/Contents.json
+new file mode 100644
+index 00000000..95d2ec8a
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Plugins.imageset/Contents.json
+@@ -0,0 +1,16 @@
++{
++  "images" : [
++    {
++      "filename" : "plugins.svg",
++      "idiom" : "universal"
++    }
++  ],
++  "info" : {
++    "author" : "xcode",
++    "version" : 1
++  },
++  "properties" : {
++    "preserves-vector-representation" : true,
++    "template-rendering-intent" : "template"
++  }
++}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Plugins.imageset/plugins.svg b/submodules/TelegramUI/Images.xcassets/AyuGram/Plugins.imageset/plugins.svg
+new file mode 100644
+index 00000000..2cbc9120
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Plugins.imageset/plugins.svg
+@@ -0,0 +1,3 @@
++<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill="#FFFFFF" d="M16.31 13.12c0 3.68 4.26 3.15 4.26 3.15v0.16c0 2.15 0 3.24-0.67 3.9C19.24 21 18.15 21 16 21H8c-2.15 0-3.24 0-3.9-0.67-0.67-0.66-0.67-1.75-0.67-3.9V9.8c0-2.15 0-3.24 0.66-3.9C4.76 5.23 5.85 5.23 8 5.23h0.8S8.27 1 12.03 1s3.22 4.24 3.22 4.24H16c2.15 0 3.24 0 3.9 0.66 0.67 0.67 0.67 1.76 0.67 3.91v0.16s-4.26-0.53-4.26 3.14v0.01Z"/>
 +</svg>
 diff --git a/submodules/TelegramUI/Sources/AccountContext.swift b/submodules/TelegramUI/Sources/AccountContext.swift
 index b264bc03..ad077f5c 100644

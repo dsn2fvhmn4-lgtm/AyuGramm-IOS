@@ -66241,10 +66241,10 @@ index 00000000..62a854cd
 +)
 diff --git a/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h
 new file mode 100644
-index 00000000..7602644e
+index 00000000..c8733b04
 --- /dev/null
 +++ b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,42 @@
 +#ifndef AyuPythonBridgeObjC_h
 +#define AyuPythonBridgeObjC_h
 +
@@ -66264,13 +66264,15 @@ index 00000000..7602644e
 +/// automatically once the framework is on the header search path.
 +@interface AyuPythonBridgeObjC : NSObject
 +
-+- (BOOL)startWithPythonHome:(NSString *)pythonHome
-+                 stdlibPath:(NSString *)stdlibPath
-+                dynloadPath:(NSString *)dynloadPath
-+                runtimePath:(NSString *)runtimePath
-+                    dataDir:(NSString *)dataDir
-+                    handler:(NSString * _Nonnull (^)(NSString *payload))handler
-+                      error:(NSError * _Nullable * _Nullable)error;
++/// Returns nil on success, or an error message. Returning a string (rather than
++/// BOOL + NSError**) keeps the Swift import a plain `-> String?` instead of a
++/// throwing Void, so the caller can branch on the message explicitly.
++- (nullable NSString *)startWithPythonHome:(NSString *)pythonHome
++                                stdlibPath:(NSString *)stdlibPath
++                               dynloadPath:(NSString *)dynloadPath
++                               runtimePath:(NSString *)runtimePath
++                                   dataDir:(NSString *)dataDir
++                                   handler:(NSString * _Nonnull (^)(NSString *payload))handler;
 +
 +- (NSString *)call:(NSString *)requestJSON;
 +
@@ -66287,10 +66289,10 @@ index 00000000..7602644e
 +#endif /* AyuPythonBridgeObjC_h */
 diff --git a/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m
 new file mode 100644
-index 00000000..09afebd3
+index 00000000..17a432ad
 --- /dev/null
 +++ b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,189 @@
 +#import "AyuPythonBridgeObjC.h"
 +
 +// The real implementation is selected only when the Python support framework is
@@ -66349,21 +66351,19 @@ index 00000000..09afebd3
 ++ (BOOL)isSupported { return YES; }
 +- (BOOL)isStarted { return _started; }
 +
-+- (BOOL)startWithPythonHome:(NSString *)pythonHome
-+                 stdlibPath:(NSString *)stdlibPath
-+                dynloadPath:(NSString *)dynloadPath
-+                runtimePath:(NSString *)runtimePath
-+                    dataDir:(NSString *)dataDir
-+                    handler:(NSString * _Nonnull (^)(NSString *))handler
-+                      error:(NSError * _Nullable * _Nullable)error {
++- (nullable NSString *)startWithPythonHome:(NSString *)pythonHome
++                                stdlibPath:(NSString *)stdlibPath
++                               dynloadPath:(NSString *)dynloadPath
++                               runtimePath:(NSString *)runtimePath
++                                   dataDir:(NSString *)dataDir
++                                   handler:(NSString * _Nonnull (^)(NSString *))handler {
 +    if (_started) {
-+        return YES;
++        return nil;
 +    }
 +    gAyuNativeHandler = [handler copy];
 +
 +    if (PyImport_AppendInittab("_ayu_native_bridge", ayu_init_module) != 0) {
-+        [self failWith:error message:@"inittab"];
-+        return NO;
++        return @"inittab";
 +    }
 +
 +    PyPreConfig preConfig;
@@ -66371,8 +66371,7 @@ index 00000000..09afebd3
 +    preConfig.utf8_mode = 1;
 +    PyStatus status = Py_PreInitialize(&preConfig);
 +    if (PyStatus_Exception(status)) {
-+        [self failWith:error message:@"preinit"];
-+        return NO;
++        return @"preinit";
 +    }
 +
 +    PyConfig config;
@@ -66390,14 +66389,12 @@ index 00000000..09afebd3
 +    status = Py_InitializeFromConfig(&config);
 +    PyConfig_Clear(&config);
 +    if (PyStatus_Exception(status)) {
-+        [self failWith:error message:[NSString stringWithFormat:@"init: %s", status.err_msg ?: "unknown"]];
-+        return NO;
++        return [NSString stringWithFormat:@"init: %s", status.err_msg ?: "unknown"];
 +    }
 +
 +    PyObject *host = PyImport_ImportModule("_ayu_host");
 +    if (host == NULL) {
-+        [self reportPythonError:error context:@"import _ayu_host"];
-+        return NO;
++        return [self pythonErrorWithContext:@"import _ayu_host"];
 +    }
 +    PyObject *bridge = PyImport_ImportModule("_ayu_native_bridge");
 +    PyObject *installResult = NULL;
@@ -66412,13 +66409,12 @@ index 00000000..09afebd3
 +    _hostCall = PyObject_GetAttrString(host, "call");
 +    Py_DECREF(host);
 +    if (_hostCall == NULL) {
-+        [self reportPythonError:error context:@"_ayu_host.call"];
-+        return NO;
++        return [self pythonErrorWithContext:@"_ayu_host.call"];
 +    }
 +
 +    _started = YES;
 +    (void)dataDir;
-+    return YES;
++    return nil;
 +}
 +
 +- (NSString *)call:(NSString *)requestJSON {
@@ -66440,13 +66436,7 @@ index 00000000..09afebd3
 +    }
 +}
 +
-+- (void)failWith:(NSError * _Nullable * _Nullable)error message:(NSString *)message {
-+    if (error) {
-+        *error = [NSError errorWithDomain:@"AyuPython" code:1 userInfo:@{NSLocalizedDescriptionKey: message}];
-+    }
-+}
-+
-+- (void)reportPythonError:(NSError * _Nullable * _Nullable)error context:(NSString *)context {
++- (NSString *)pythonErrorWithContext:(NSString *)context {
 +    NSString *detail = context;
 +    if (PyErr_Occurred()) {
 +        PyObject *type, *value, *traceback;
@@ -66462,7 +66452,7 @@ index 00000000..09afebd3
 +        Py_XDECREF(type); Py_XDECREF(value); Py_XDECREF(traceback);
 +        PyErr_Clear();
 +    }
-+    [self failWith:error message:detail];
++    return detail;
 +}
 +
 +@end
@@ -66474,18 +66464,14 @@ index 00000000..09afebd3
 ++ (BOOL)isSupported { return NO; }
 +- (BOOL)isStarted { return NO; }
 +
-+- (BOOL)startWithPythonHome:(NSString *)pythonHome
-+                 stdlibPath:(NSString *)stdlibPath
-+                dynloadPath:(NSString *)dynloadPath
-+                runtimePath:(NSString *)runtimePath
-+                    dataDir:(NSString *)dataDir
-+                    handler:(NSString * _Nonnull (^)(NSString *))handler
-+                      error:(NSError * _Nullable * _Nullable)error {
++- (nullable NSString *)startWithPythonHome:(NSString *)pythonHome
++                                stdlibPath:(NSString *)stdlibPath
++                               dynloadPath:(NSString *)dynloadPath
++                               runtimePath:(NSString *)runtimePath
++                                   dataDir:(NSString *)dataDir
++                                   handler:(NSString * _Nonnull (^)(NSString *))handler {
 +    (void)pythonHome; (void)stdlibPath; (void)dynloadPath; (void)runtimePath; (void)dataDir; (void)handler;
-+    if (error) {
-+        *error = [NSError errorWithDomain:@"AyuPython" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Python framework not embedded in this build"}];
-+    }
-+    return NO;
++    return @"Python framework not embedded in this build";
 +}
 +
 +- (NSString *)call:(NSString *)requestJSON {
@@ -70791,7 +70777,7 @@ index 00000000..b31f4992
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 new file mode 100644
-index 00000000..6df7993c
+index 00000000..a5d1d02d
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 @@ -0,0 +1,233 @@
@@ -70862,7 +70848,7 @@ index 00000000..6df7993c
 +    // MARK: - Operations (async, off the caller's thread)
 +
 +    public func load(path: String, sha256: String?, completion: ((Result<AyuPythonPluginInfo, Error>) -> Void)? = nil) {
-+        self.perform(op: "load", args: ["path": path, "sha256": sha256 as Any], completion: completion.map { done in { result in
++        self.perform(op: "load", args: ["path": path, "sha256": sha256 ?? NSNull()], completion: completion.map { done in { result in
 +            done(result.flatMap { value in
 +                guard let info = AyuPythonPluginInfo(value) else { return .failure(AyuPythonRuntimeError.decoding) }
 +                return .success(info)
@@ -70883,7 +70869,7 @@ index 00000000..6df7993c
 +    public func transformOutgoing(account: Int32, peer: Int64, text: String, replyTo: Int64?) -> AyuPythonSendOutcome? {
 +        guard self.isAvailable else { return nil }
 +        let value = self.queue.sync { () -> Any? in
-+            return self.callLocked(op: "sendMessage", args: ["account": Int(account), "peer": peer, "text": text, "replyTo": replyTo as Any])
++            return self.callLocked(op: "sendMessage", args: ["account": Int(account), "peer": peer, "text": text, "replyTo": replyTo ?? NSNull()])
 +        }
 +        guard let dictionary = value as? [String: Any], let outText = dictionary["text"] as? String else { return nil }
 +        return AyuPythonSendOutcome(text: outText, cancel: (dictionary["cancel"] as? Bool) ?? false)
@@ -70920,14 +70906,14 @@ index 00000000..6df7993c
 +
 +    // MARK: - Internals
 +
-+    private func perform(op: String, args: [String: Any], completion: ((Result<Any, Error>) -> Void)?) {
++    private func perform(op: String, args: [String: Any], completion: ((Result<Any?, Error>) -> Void)?) {
 +        self.queue.async {
 +            guard self.interpreter != nil, self.started else {
 +                completion?(.failure(AyuPythonRuntimeError.notStarted)); return
 +            }
 +            let value = self.callLocked(op: op, args: args)
 +            if let completion {
-+                DispatchQueue.main.async { completion(.success(value as Any)) }
++                DispatchQueue.main.async { completion(.success(value)) }
 +            }
 +        }
 +    }
@@ -70957,7 +70943,7 @@ index 00000000..6df7993c
 +        let result = handler?(request) ?? .failure("no native handler")
 +        let reply: [String: Any]
 +        switch result {
-+        case let .success(value): reply = ["ok": true, "result": value as Any]
++        case let .success(value): reply = ["ok": true, "result": value ?? NSNull()]
 +        case let .failure(message): reply = ["ok": false, "error": message]
 +        }
 +        guard let replyData = try? JSONSerialization.data(withJSONObject: reply),
@@ -138199,10 +138185,10 @@ index fe34b998..3073f36b 100644
          
 diff --git a/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift b/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift
 new file mode 100644
-index 00000000..5ae8a185
+index 00000000..9def27e9
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,138 @@
 +import Foundation
 +import UIKit
 +import TelegramCore
@@ -138329,11 +138315,12 @@ index 00000000..5ae8a185
 +
 +    func start(runtimeURL: URL, dataDir: URL, native: @escaping (String) -> String) throws {
 +        guard let paths = AyuPythonBootstrap.pythonPaths() else { throw AyuPythonRuntimeError.unavailable }
-+        var error: NSError?
-+        let ok = self.bridge.start(withPythonHome: paths.home, stdlibPath: paths.stdlib, dynloadPath: paths.dynload,
-+                                   runtimePath: runtimeURL.appendingPathComponent("python").path, dataDir: dataDir.path,
-+                                   handler: { payload in native(payload) }, error: &error)
-+        if !ok { throw error ?? AyuPythonRuntimeError.unavailable }
++        let failure = self.bridge.start(withPythonHome: paths.home, stdlibPath: paths.stdlib, dynloadPath: paths.dynload,
++                                        runtimePath: runtimeURL.appendingPathComponent("python").path, dataDir: dataDir.path,
++                                        handler: { payload in native(payload) })
++        if let failure {
++            throw NSError(domain: "AyuPython", code: 1, userInfo: [NSLocalizedDescriptionKey: failure])
++        }
 +    }
 +
 +    func call(_ requestJSON: String) -> String {

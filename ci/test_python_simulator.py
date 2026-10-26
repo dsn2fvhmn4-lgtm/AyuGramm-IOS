@@ -1,5 +1,6 @@
 """Run the actual embedded bridge/converter in an isolated iOS Simulator control app."""
 import json
+import os
 from pathlib import Path
 import plistlib
 import re
@@ -72,6 +73,16 @@ def command(*args):
 
 def run(source, runtime):
     listing = json.loads(command('xcrun', 'simctl', 'list', '-j'))
+    # Earlier interrupted controls used this exact reserved name. Do not touch
+    # ordinary simulators or controls from other active branch runs.
+    for devices in listing.get('devices', {}).values():
+        for stale in devices:
+            if stale.get('name') == 'AyuPython-converter-control':
+                for operation in ('shutdown', 'delete'):
+                    try:
+                        subprocess.run(['xcrun', 'simctl', operation, stale['udid']], check=False, timeout=10)
+                    except subprocess.TimeoutExpired:
+                        print('::notice::Stale control cleanup timed out: ' + operation, flush=True)
     runtimes = [r for r in listing['runtimes'] if r.get('isAvailable') and r['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')]
     if not runtimes:
         print('::notice::No iOS Simulator runtime installed; interpreter execution control was not run. SDK/model checks are separate.')
@@ -88,7 +99,8 @@ def run(source, runtime):
         return (preferred.get(phone['name'], 0), int(numbers[0]) if numbers else 0, phone['identifier'] in paired)
     device = None
     for phone in sorted(phones, key=rank, reverse=True):
-        created = subprocess.run(['xcrun', 'simctl', 'create', 'AyuPython-converter-control', phone['identifier'], selected_runtime['identifier']], capture_output=True, text=True, timeout=30)
+        control_name = 'AyuPython-converter-control-' + os.environ.get('GITHUB_RUN_ID', str(int(time.time())))
+        created = subprocess.run(['xcrun', 'simctl', 'create', control_name, phone['identifier'], selected_runtime['identifier']], capture_output=True, text=True, timeout=30)
         if created.returncode == 0:
             device = created.stdout.strip()
             print('Interpreter control device: ' + phone['name'] + ' / ' + selected_runtime['version'], flush=True)
@@ -100,7 +112,7 @@ def run(source, runtime):
     try:
         print('Booting interpreter control device', flush=True)
         subprocess.run(['xcrun', 'simctl', 'boot', device], check=True, timeout=150)
-        subprocess.run(['xcrun', 'simctl', 'bootstatus', device, '-b'], check=True, timeout=60)
+        subprocess.run(['xcrun', 'simctl', 'bootstatus', device, '-b'], check=True, timeout=180)
         print('Compiling interpreter control application', flush=True)
         source = Path(source)
         with tempfile.TemporaryDirectory(prefix='ayu-python-simulator-') as folder:

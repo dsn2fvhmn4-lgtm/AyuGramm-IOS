@@ -5,6 +5,7 @@ import json
 from pathlib import Path, PurePosixPath
 import plistlib
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -52,6 +53,7 @@ def prepare(source, cache, configuration):
                 destination = target / str(relative)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(bundle.extractfile(item).read())
+                destination.chmod(item.mode & 0o777)
     if not (target / 'Python.framework/Python').is_file():
         raise ValueError('Python device framework is missing')
     (target / 'BUILD').write_text('''load("@build_bazel_rules_apple//apple:apple.bzl", "apple_dynamic_framework_import")
@@ -127,6 +129,8 @@ def package(ipa, archive, runtime, configuration):
                     path = stage / name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(contents)
+                    if is_framework_binary(name):
+                        path.chmod(0o755)
             for framework in sorted((stage / 'Frameworks').glob('*.framework')):
                 subprocess.run(['codesign', '--force', '--sign', '-', '--timestamp=none', str(framework)], check=True)
             for path in (stage / 'Frameworks').rglob('*'):
@@ -140,10 +144,19 @@ def package(ipa, archive, runtime, configuration):
                 continue
             output.writestr(item, source.read(item.filename))
         for name, contents in sorted(files.items()):
-            output.writestr(prefix + name, contents)
+            item = zipfile.ZipInfo(prefix + name)
+            item.create_system = 3
+            item.compress_type = zipfile.ZIP_DEFLATED
+            item.external_attr = (stat.S_IFREG | (0o755 if is_framework_binary(name) else 0o644)) << 16
+            output.writestr(item, contents)
     with zipfile.ZipFile(destination) as result:
         if result.testzip() is not None:
             raise ValueError('Repacked Python IPA failed ZIP integrity validation')
     destination.replace(ipa)
     return {'support': VERSION, 'archive_sha256': SHA256,
             'extension_frameworks': sum(name.endswith('.origin') for name in files), 'converter': 2}
+
+
+def is_framework_binary(name):
+    path = PurePosixPath(name)
+    return path.parent.suffix == '.framework' and path.name == path.parent.stem

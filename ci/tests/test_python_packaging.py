@@ -12,6 +12,23 @@ from python_support import resource_files, package
 
 
 class PythonPackagingTests(unittest.TestCase):
+    def test_repacked_framework_binaries_keep_executable_permissions(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            ipa = Path(folder) / 'app.ipa'
+            with zipfile.ZipFile(ipa, 'w') as z:
+                z.writestr('Payload/Test.app/Info.plist', plistlib.dumps({'CFBundleExecutable': 'Test'}))
+                z.writestr('Payload/Test.app/Frameworks/Python.framework/Python', b'linked framework fixture')
+            resources = {'Frameworks/math.framework/math': b'extension fixture',
+                         'Frameworks/math.framework/Info.plist': plistlib.dumps({'CFBundleExecutable': 'math'})}
+            with patch('python_support.resource_files', return_value=resources), patch('python_support.subprocess.run'):
+                package(ipa, 'unused', 'unused', 'release_arm64')
+            with zipfile.ZipFile(ipa) as z:
+                mode = z.getinfo('Payload/Test.app/Frameworks/math.framework/math').external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
+                mode = z.getinfo('Payload/Test.app/Frameworks/math.framework/Info.plist').external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o644)
+
     def test_stdlib_extensions_are_frameworks_with_round_trip_markers(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)

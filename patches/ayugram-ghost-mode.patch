@@ -68960,10 +68960,10 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..b622c0aa
+index 00000000..7b675c0f
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,796 @@
+@@ -0,0 +1,868 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -69065,7 +69065,7 @@ index 00000000..b622c0aa
 +        switch id {
 +        case 11: push?(ayuGeneralSettingsController(context: context))
 +        case 12: push?(ayuSettingsCategoryController(context: context, category: 3))
-+        case 13: push?(ayuSettingsCategoryController(context: context, category: 4))
++        case 13: push?(ayuChatsSettingsController(context: context))
 +        case 14: ayuPresentPlugins(context: context)
 +        case 15: push?(ayuOtherSettingsController(context: context, navigation: navigation?()))
 +        default: break
@@ -69120,8 +69120,8 @@ index 00000000..b622c0aa
 +        }
 +    }, toggle: { _, _ in })
 +    let icons: [Int32: UIImage?] = [
-+        1: AyuSettingsIcons.symbol("eye.slash.fill", color: UIColor(rgb: 0x8E5CF7)),
-+        2: AyuSettingsIcons.symbol("eye.slash.circle.fill", color: UIColor(rgb: 0x5856D6)),
++        1: AyuSettingsIcons.ghost(color: UIColor(rgb: 0x8E5CF7)),
++        2: AyuSettingsIcons.ghost(color: UIColor(rgb: 0x5856D6), plus: true),
 +        11: AyuSettingsIcons.symbol("clock.arrow.circlepath", color: UIColor(rgb: 0xFF9500)),
 +        12: AyuSettingsIcons.symbol("photo.on.rectangle.angled", color: UIColor(rgb: 0x34C759)),
 +        21: AyuSettingsIcons.symbol("star.circle.fill", color: UIColor(rgb: 0xAF52DE)),
@@ -69430,6 +69430,78 @@ index 00000000..b622c0aa
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        return (ItemListControllerState(presentationData: data, title: .text(ru ? "Основные" : "General"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    push = { [weak controller] in controller?.push($0) }
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++    return controller
++}
++
++/// exteraGram "Chats" page: Stickers, Chats and Messages in the Android order, then the
++/// iOS AyuGram pages that belong here.
++private func ayuChatsSettingsController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var push: ((ViewController) -> Void)?
++    var presentError: (() -> Void)?
++    let arguments = AyuSectionedArguments(open: { id in
++        switch id {
++        case 22: push?(ayuInterfaceSettingsController(context: context, contextMenu: true))
++        case 31: push?(ayuHiddenMessagesController(context: context))
++        case 32: push?(ayuReactionSettingsController(context: context))
++        default: break
++        }
++    }, toggle: { id, value in
++        do {
++            try store.update {
++                switch id {
++                case 1: $0.interface.hideStickerTime = value
++                case 2: $0.interface.unlimitedRecentStickers = value
++                case 11: $0.interface.disableJumpToNextChannel = value
++                case 12: $0.interface.hideKeyboardOnScroll = value
++                case 13: $0.interface.addCommaAfterMention = value
++                case 21: $0.interface.hideFastShare = value
++                default: break
++                }
++            }
++        } catch { presentError?() }
++    })
++    let icons: [Int32: UIImage?] = [
++        1: AyuSettingsIcons.symbol("clock.fill", color: UIColor(rgb: 0xFF9500)),
++        2: AyuSettingsIcons.symbol("rectangle.stack.fill", color: UIColor(rgb: 0xAF52DE)),
++        11: AyuSettingsIcons.symbol("arrow.down.to.line", color: UIColor(rgb: 0x007AFF)),
++        12: AyuSettingsIcons.symbol("keyboard.chevron.compact.down", color: UIColor(rgb: 0x8E8E93)),
++        13: AyuSettingsIcons.symbol("at", color: UIColor(rgb: 0x34C759)),
++        21: AyuSettingsIcons.symbol("arrowshape.turn.up.right.fill", color: UIColor(rgb: 0x32ADE6)),
++        22: AyuSettingsIcons.symbol("text.bubble.fill", color: UIColor(rgb: 0x34C759)),
++        31: AyuSettingsIcons.symbol("eye.slash.fill", color: UIColor(rgb: 0x8E8E93)),
++        32: AyuSettingsIcons.symbol("heart.fill", color: UIColor(rgb: 0xFF2D55))
++    ]
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let interface = settings.interface
++        let entries: [AyuSectionedEntry] = [
++            .header(0, 0, ru ? "СТИКЕРЫ" : "STICKERS"),
++            .toggle(0, 1, icons[1] ?? nil, ru ? "Скрыть время под стикером" : "Hide Time on Stickers", nil, interface.hideStickerTime),
++            .toggle(0, 2, icons[2] ?? nil, ru ? "Больше недавних стикеров" : "Unlimited Recent Stickers", nil, interface.unlimitedRecentStickers),
++            .header(1, 10, ru ? "ЧАТЫ" : "CHATS"),
++            .toggle(1, 11, icons[11] ?? nil, ru ? "Отключить «Перейти в новый канал»" : "Disable \"Jump to the Next Channel\"", nil, interface.disableJumpToNextChannel),
++            .toggle(1, 12, icons[12] ?? nil, ru ? "Скрывать клавиатуру при скролле" : "Hide Keyboard on Scroll", nil, interface.hideKeyboardOnScroll),
++            .toggle(1, 13, icons[13] ?? nil, ru ? "Запятая после упоминания" : "Add Comma after Mention", nil, interface.addCommaAfterMention),
++            .info(1, 14, ru ? "Запятая будет ставиться автоматически после нажатия на пользователя, которого вы хотите упомянуть." : "A comma will be placed automatically after tapping on the user you want to mention."),
++            .header(2, 20, ru ? "СООБЩЕНИЯ" : "MESSAGES"),
++            .toggle(2, 21, icons[21] ?? nil, ru ? "Скрыть кнопку «Поделиться»" : "Hide Share Button", nil, interface.hideFastShare),
++            .link(2, 22, icons[22] ?? nil, ru ? "Меню сообщения" : "Message Menu", ""),
++            .header(3, 30, ru ? "ДОПОЛНИТЕЛЬНО" : "MORE"),
++            .link(3, 31, icons[31] ?? nil, ru ? "Скрытые сообщения" : "Hidden Messages", ""),
++            .link(3, 32, icons[32] ?? nil, ru ? "Реакции в чатах" : "Chat Reactions", "")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        return (ItemListControllerState(presentationData: data, title: .text(ru ? "Чаты" : "Chats"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)), (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
@@ -71411,10 +71483,10 @@ index 00000000..ae6b26ad
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..109b6b3d
+index 00000000..eb081246
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,107 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -71452,6 +71524,11 @@ index 00000000..109b6b3d
 +    public var disableNumberRounding = false
 +    public var hidePhoneNumber = false
 +    public var disableUnarchiveSwipe = false
++    // exteraGram Chats
++    public var hideStickerTime = false
++    public var disableJumpToNextChannel = false
++    public var hideKeyboardOnScroll = false
++    public var addCommaAfterMention = false
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
@@ -71463,6 +71540,7 @@ index 00000000..109b6b3d
 +        case hideStories, hideSimilarChannels, hidePremiumStatuses, hideUnreadCounters, revealSpoilers
 +        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers, streamerMode, hideAllChatsFolder, semiTransparentDeletedMessages, backgroundNotifications
 +        case disableNumberRounding, hidePhoneNumber, disableUnarchiveSwipe
++        case hideStickerTime, disableJumpToNextChannel, hideKeyboardOnScroll, addCommaAfterMention
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -71497,6 +71575,10 @@ index 00000000..109b6b3d
 +        self.disableNumberRounding = try values.decodeIfPresent(Bool.self, forKey: .disableNumberRounding) ?? false
 +        self.hidePhoneNumber = try values.decodeIfPresent(Bool.self, forKey: .hidePhoneNumber) ?? false
 +        self.disableUnarchiveSwipe = try values.decodeIfPresent(Bool.self, forKey: .disableUnarchiveSwipe) ?? false
++        self.hideStickerTime = try values.decodeIfPresent(Bool.self, forKey: .hideStickerTime) ?? false
++        self.disableJumpToNextChannel = try values.decodeIfPresent(Bool.self, forKey: .disableJumpToNextChannel) ?? false
++        self.hideKeyboardOnScroll = try values.decodeIfPresent(Bool.self, forKey: .hideKeyboardOnScroll) ?? false
++        self.addCommaAfterMention = try values.decodeIfPresent(Bool.self, forKey: .addCommaAfterMention) ?? false
 +    }
 +}
 +
@@ -74080,10 +74162,10 @@ index 00000000..73b546fa
 +}
 diff --git a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
 new file mode 100644
-index 00000000..9a84ebf3
+index 00000000..367e3143
 --- /dev/null
 +++ b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,85 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -74098,6 +74180,40 @@ index 00000000..9a84ebf3
 +
 +    /// exteraGram's logo (white plane on red), for the exteraGram preferences row.
 +    public static let exteraLogo: UIImage? = AyuSettingsIcons.bundleLogo("AyuGram/OriginalExtera2", fallbackColor: UIColor(rgb: 0xE83030))
++
++    /// AyuGram's ghost (the Solar ghost from AyuGram for Android) on a colored rounded square.
++    /// With `plus`, the ghost is a little smaller and a "+" badge sits at the bottom right, as
++    /// the Ghost Mode+ icon.
++    public static func ghost(color: UIColor, plus: Bool = false) -> UIImage? {
++        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            context.clear(bounds)
++            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++            context.setFillColor(color.cgColor)
++            context.fillPath()
++            guard let image = UIImage(bundleImageName: "AyuGram/Ghost")?.withTintColor(.white, renderingMode: .alwaysOriginal) else {
++                return
++            }
++            let side: CGFloat = plus ? 19.0 : 21.0
++            let inset: CGFloat = plus ? 4.0 : 4.5
++            UIGraphicsPushContext(context)
++            image.draw(in: CGRect(x: inset, y: inset, width: side, height: side))
++            UIGraphicsPopContext()
++            guard plus else {
++                return
++            }
++            // A white badge with a "+" in the square's color, ringed so it stands off the ghost.
++            let center = CGPoint(x: 22.5, y: 22.5)
++            context.setFillColor(color.cgColor)
++            context.fillEllipse(in: CGRect(x: center.x - 6.5, y: center.y - 6.5, width: 13.0, height: 13.0))
++            context.setFillColor(UIColor.white.cgColor)
++            context.fillEllipse(in: CGRect(x: center.x - 5.0, y: center.y - 5.0, width: 10.0, height: 10.0))
++            context.setFillColor(color.cgColor)
++            context.addPath(UIBezierPath(roundedRect: CGRect(x: center.x - 0.9, y: center.y - 2.6, width: 1.8, height: 5.2), cornerRadius: 0.9).cgPath)
++            context.addPath(UIBezierPath(roundedRect: CGRect(x: center.x - 2.6, y: center.y - 0.9, width: 5.2, height: 1.8), cornerRadius: 0.9).cgPath)
++            context.fillPath()
++        })
++    }
 +
 +    private static func bundleLogo(_ name: String, fallbackColor: UIColor) -> UIImage? {
 +        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
@@ -74184,7 +74300,7 @@ index 75245702..ceb5318b 100644
          "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
          "//submodules/SSignalKit/SSignalKit:SSignalKit",
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
-index 63df27a6..0dfe90b7 100644
+index 63df27a6..25f0a555 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
 @@ -1113,7 +1113,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
@@ -74205,6 +74321,16 @@ index 63df27a6..0dfe90b7 100644
              }
              var reactionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode))?
              if !reactions.reactions.isEmpty {
+@@ -1699,6 +1699,9 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
+                     dateAndStatusApply(animation)
+                     if case .customChatContents = item.associatedData.subject {
+                         strongSelf.dateAndStatusNode.isHidden = true
++                    } else {
++                        // exteraGram "Hide time on stickers".
++                        strongSelf.dateAndStatusNode.isHidden = item.context.account.network.ayuGhostMode.current.interface.hideStickerTime
+                     }
+ 
+                     if needsReplyBackground {
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift
 index e25e0195..faea175b 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift
@@ -74563,7 +74689,7 @@ index 3431d128..f18c545b 100644
                      dateReactionsAndPeers = ([], [])
                  }
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
-index 64699c7b..0abe32cb 100644
+index 64699c7b..7e2dc75d 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
 @@ -594,7 +594,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
@@ -74584,6 +74710,16 @@ index 64699c7b..0abe32cb 100644
              }
              
              var reactionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode))?
+@@ -1070,6 +1070,9 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
+                     dateAndStatusApply(animation)
+                     if case .customChatContents = item.associatedData.subject {
+                         strongSelf.dateAndStatusNode.isHidden = true
++                    } else {
++                        // exteraGram "Hide time on stickers".
++                        strongSelf.dateAndStatusNode.isHidden = item.context.account.network.ayuGhostMode.current.interface.hideStickerTime
+                     }
+                     
+                     if let updatedShareButtonNode = updatedShareButtonNode {
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 index 56ba2739..08e2c3f2 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
@@ -117112,6 +117248,37 @@ index 00000000..787495bd
 +    "provides-namespace": true
 +  }
 +}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/Contents.json
+new file mode 100644
+index 00000000..1abb7deb
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/Contents.json
+@@ -0,0 +1,16 @@
++{
++  "images" : [
++    {
++      "filename" : "ghost.svg",
++      "idiom" : "universal"
++    }
++  ],
++  "info" : {
++    "author" : "xcode",
++    "version" : 1
++  },
++  "properties" : {
++    "preserves-vector-representation" : true,
++    "template-rendering-intent" : "template"
++  }
++}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/ghost.svg b/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/ghost.svg
+new file mode 100644
+index 00000000..7231ce09
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/ghost.svg
+@@ -0,0 +1,3 @@
++<svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill="#FFFFFF" fill-rule="evenodd" clip-rule="evenodd" d="M26 14.42v10.06c0 1.46-1.49 2.42-2.75 1.76-1.02-0.53-2.24-0.45-3.19 0.2-1.06 0.74-2.46 0.74-3.52 0l-0.4-0.26c-0.69-0.48-1.6-0.48-2.29 0l-0.39 0.27c-1.06 0.73-2.46 0.73-3.52 0-0.95-0.66-2.17-0.74-3.2-0.21C5.5 26.9 4 25.94 4 24.48V14.42C4 8.12 8.92 3 15 3s11 5.11 11 11.42ZM11.5 15c0.83 0 1.5-0.9 1.5-2s-0.67-2-1.5-2-1.5 0.9-1.5 2 0.67 2 1.5 2Zm7 0c0.83 0 1.5-0.9 1.5-2s-0.67-2-1.5-2-1.5 0.9-1.5 2 0.67 2 1.5 2Z"/>
++</svg>
 diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Graphite.imageset/AyuGram.png b/submodules/TelegramUI/Images.xcassets/AyuGram/Graphite.imageset/AyuGram.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..0ab23658b78eddcc901fc3fd46279514399291f7
@@ -141705,7 +141872,7 @@ index 00000000..65d2f500
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
-index f5823d12..c9bbe41c 100644
+index f5823d12..17f21b65 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
 @@ -2020,7 +2020,9 @@ extension ChatControllerImpl {
@@ -141728,6 +141895,23 @@ index f5823d12..c9bbe41c 100644
          }, updateTextInputStateAndMode: { [weak self] f in
              if let strongSelf = self {
                  // Every transform handed here is the USER's edit through the chat — autocomplete, the
+@@ -5597,7 +5599,15 @@ extension ChatControllerImpl {
+                 }
+             }
+         }
+-    
++
++        historyNode.ayuBeganUserDragging = { [weak self] in
++            // exteraGram "Hide keyboard on scroll".
++            guard let self, self.context.account.network.ayuGhostMode.current.interface.hideKeyboardOnScroll else {
++                return
++            }
++            self.chatDisplayNode.dismissInput()
++        }
++
+         historyNode.didScrollWithOffset = { [weak self] offset, transition, itemNode, isTracking in
+             guard let strongSelf = self else {
+                 return
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
 index 89e8d45b..af77447e 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
@@ -141989,7 +142173,7 @@ index face5ae7..0b16f7a3 100644
      selfController.updateSlowmodeStatus()
      
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..71bfe85f 100644
+index 5fe58bbf..851a3d0c 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
 @@ -310,6 +310,15 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
@@ -142098,6 +142282,16 @@ index 5fe58bbf..71bfe85f 100644
      
      @objc func moreButtonPressed() {
          self.moreBarButton.play()
+@@ -11200,7 +11241,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+         guard let contentData = self.contentData else {
+             return
+         }
+-        self.chatDisplayNode.historyNode.offerNextChannelToRead = contentData.state.offerNextChannelToRead && self.presentationInterfaceState.interfaceState.selectionState == nil
++        // exteraGram "Disable jump to the next channel".
++        self.chatDisplayNode.historyNode.offerNextChannelToRead = contentData.state.offerNextChannelToRead && self.presentationInterfaceState.interfaceState.selectionState == nil && !self.context.account.network.ayuGhostMode.current.interface.disableJumpToNextChannel
+     }
+     
+     func displayGiveawayStatusInfo(messageId: EngineMessage.Id, giveawayInfo: PremiumGiveawayInfo) {
 diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
 index ee583844..6303f91a 100644
 --- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
@@ -142201,10 +142395,22 @@ index b32f929d..70c867fa 100644
          
          var pinToTop = false
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
-index 0fb1ee10..671394e8 100644
+index 0fb1ee10..26809c39 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
-@@ -683,6 +683,13 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+@@ -669,7 +669,10 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+     var scrolledToIndex: ((MessageHistoryScrollToSubject, Bool) -> Void)?
+     var scrolledToSomeIndex: (() -> Void)?
+     var beganDragging: (() -> Void)?
+-    
++    /// Called only when the user starts dragging the history; `beganDragging` also fires for
++    /// programmatic scrolls to the start or end.
++    var ayuBeganUserDragging: (() -> Void)?
++
+     private let hasVisiblePlayableItemNodesPromise = ValuePromise<Bool>(false, ignoreRepeated: true)
+     var hasVisiblePlayableItemNodes: Signal<Bool, NoError> {
+         return self.hasVisiblePlayableItemNodesPromise.get()
+@@ -683,6 +686,13 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
      
      private var currentPresentationData: ChatPresentationData
      private var chatPresentationDataPromise: Promise<ChatPresentationData>
@@ -142218,7 +142424,15 @@ index 0fb1ee10..671394e8 100644
      private var presentationDataDisposable: Disposable?
      
      private let historyAppearsClearedPromise = ValuePromise<Bool>(false)
-@@ -1993,7 +2000,8 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+@@ -1324,6 +1334,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+             self.isInteractivelyScrollingPromise.set(true)
+             //self.pinToTopStableId = nil
+             self.beganDragging?()
++            self.ayuBeganUserDragging?()
+         }
+ 
+         self.endedInteractiveDragging = { [weak self] _ in
+@@ -1993,7 +2004,8 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
          }
          
          let recommendedChannels: Signal<RecommendedChannels?, NoError>
@@ -142228,7 +142442,7 @@ index 0fb1ee10..671394e8 100644
              recommendedChannels = self.context.engine.peers.recommendedChannels(peerId: peerId)
          } else {
              recommendedChannels = .single(nil)
-@@ -2056,7 +2064,14 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+@@ -2056,7 +2068,14 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
          let messageViewQueue = Queue.mainQueue()
          let historyViewTransitionDisposable = (combineLatest(queue: messageViewQueue,
              historyViewUpdate |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_historyViewUpdate"),
@@ -142244,7 +142458,7 @@ index 0fb1ee10..671394e8 100644
              selectedMessages |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_selectedMessages"),
              updatingMedia |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_updatingMedia"),
              automaticDownloadNetworkType |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_automaticDownloadNetworkType"),
-@@ -2396,7 +2411,8 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+@@ -2396,7 +2415,8 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                      adMessage: allAdMessages.fixed,
                      dynamicAdMessages: allAdMessages.opportunistic,
                      isMusicPlaylist: isMusicPlaylist,
@@ -142414,6 +142628,27 @@ index 1ade8c01..5971ffd5 100644
          return ContextController.Items(content: .list(actions), tip: nil)
      }
  }
+diff --git a/submodules/TelegramUI/Sources/MentionChatInputContextPanelNode.swift b/submodules/TelegramUI/Sources/MentionChatInputContextPanelNode.swift
+index eb248ff0..1081a11b 100644
+--- a/submodules/TelegramUI/Sources/MentionChatInputContextPanelNode.swift
++++ b/submodules/TelegramUI/Sources/MentionChatInputContextPanelNode.swift
+@@ -160,12 +160,14 @@ final class MentionChatInputContextPanelNode: ChatInputContextPanelNode {
+                             }
+                             
+                             if let range = mentionQueryRange {
++                                // exteraGram "Add comma after mention".
++                                let separator = strongSelf.context.account.network.ayuGhostMode.current.interface.addCommaAfterMention ? ", " : " "
+                                 if let addressName = peer.addressName, !addressName.isEmpty {
+-                                    return (textInputState.replacingFlatRange(range, with: addressName + " "), inputMode)
++                                    return (textInputState.replacingFlatRange(range, with: addressName + separator), inputMode)
+                                 } else if !peer.compactDisplayTitle.isEmpty {
+                                     let replacementText = NSMutableAttributedString()
+                                     replacementText.append(NSAttributedString(string: peer.compactDisplayTitle, attributes: [ChatTextInputAttributes.textMention: ChatTextInputTextMentionAttribute(peerId: peer.id)]))
+-                                    replacementText.append(NSAttributedString(string: " "))
++                                    replacementText.append(NSAttributedString(string: separator))
+ 
+                                     // The widened range eats the leading "@" as well as the query.
+                                     let updatedRange = NSRange(location: range.location - 1, length: range.length + 1)
 diff --git a/submodules/TelegramUI/Sources/OpenChatMessage.swift b/submodules/TelegramUI/Sources/OpenChatMessage.swift
 index c46cc951..b3430c9a 100644
 --- a/submodules/TelegramUI/Sources/OpenChatMessage.swift

@@ -66585,7 +66585,7 @@ index 44d09f56..88c3899d 100644
      let sharedContext = context.sharedContext
 diff --git a/submodules/AyuPythonBridge/BUILD b/submodules/AyuPythonBridge/BUILD
 new file mode 100644
-index 00000000..54f2f4a1
+index 00000000..8020e735
 --- /dev/null
 +++ b/submodules/AyuPythonBridge/BUILD
 @@ -0,0 +1,24 @@
@@ -66615,7 +66615,7 @@ index 00000000..54f2f4a1
 +)
 diff --git a/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h
 new file mode 100644
-index 00000000..82b6fa1c
+index 00000000..fa6864af
 --- /dev/null
 +++ b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.h
 @@ -0,0 +1,42 @@
@@ -66663,7 +66663,7 @@ index 00000000..82b6fa1c
 +#endif /* AyuPythonBridgeObjC_h */
 diff --git a/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m
 new file mode 100644
-index 00000000..e7d2a715
+index 00000000..30e4a8a2
 --- /dev/null
 +++ b/submodules/AyuPythonBridge/Sources/AyuPythonBridgeObjC.m
 @@ -0,0 +1,208 @@
@@ -66901,7 +66901,7 @@ index f753a8ea..9367fba0 100644
                      if case let .search(search) = source {
                          switch search {
 diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
-index 5bdff8a6..bd215887 100644
+index 5bdff8a6..d5773315 100644
 --- a/submodules/ChatListUI/Sources/ChatListController.swift
 +++ b/submodules/ChatListUI/Sources/ChatListController.swift
 @@ -452,9 +452,9 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
@@ -66916,8 +66916,29 @@ index 5bdff8a6..bd215887 100644
                      strongSelf.tabBarItem.badgeValue = ""
                  } else {
                      strongSelf.tabBarItem.badgeValue = compactNumericCountString(Int(count.0), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator)
+@@ -2185,7 +2185,10 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+             if self.previewing {
+                 self.storiesReady.set(.single(true))
+             } else {
+-                self.storySubscriptionsDisposable = (self.context.engine.messages.storySubscriptions(isHidden: self.location == .chatList(groupId: .archive))
++                // AyuGram "Hide stories": the chat list header receives no story subscriptions.
++                let ayuHideStories = self.context.account.network.ayuGhostMode.current.interface.hideStories
++                let ayuNoStories: Signal<EngineStorySubscriptions, NoError> = .single(EngineStorySubscriptions(accountItem: nil, items: [], hasMoreToken: nil))
++                self.storySubscriptionsDisposable = ((ayuHideStories ? ayuNoStories : self.context.engine.messages.storySubscriptions(isHidden: self.location == .chatList(groupId: .archive)))
+                 |> deliverOnMainQueue).startStrict(next: { [weak self] rawStorySubscriptions in
+                     guard let self else {
+                         return
+@@ -2245,7 +2248,7 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                 })
+                 
+                 if case .chatList(.root) = self.location {
+-                    self.storyArchiveSubscriptionsDisposable = (self.context.engine.messages.storySubscriptions(isHidden: true)
++                    self.storyArchiveSubscriptionsDisposable = ((ayuHideStories ? ayuNoStories : self.context.engine.messages.storySubscriptions(isHidden: true))
+                     |> deliverOnMainQueue).startStrict(next: { [weak self] rawStoryArchiveSubscriptions in
+                         guard let self else {
+                             return
 diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
-index e41738b1..1b705c7d 100644
+index e41738b1..bc54a27b 100644
 --- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 +++ b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 @@ -1384,6 +1384,22 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
@@ -66978,7 +66999,58 @@ index e41738b1..1b705c7d 100644
          
          var storyState: ChatListItemContent.StoryState?
          if case let .peer(peerData) = item.content {
-@@ -5406,6 +5436,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+@@ -3425,15 +3455,17 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                     }
+                 }
+                 let unreadCountText = compactNumericCountString(Int(unreadCount.count), decimalSeparator: item.presentationData.dateTimeFormat.decimalSeparator)
+-                if unreadCount.count > 0 {
++                // AyuGram "Hide unread counters": an unread chat keeps its dot without a number.
++                let ayuHideUnreadCounters = item.context.account.network.ayuGhostMode.current.interface.hideUnreadCounters
++                if unreadCount.count > 0 && !ayuHideUnreadCounters {
+                     badgeContent = .text(NSAttributedString(string: unreadCountText, font: badgeFont, textColor: badgeTextColor))
+                 } else if isPeerGroup {
+                     badgeContent = .none
+                 } else {
+                     badgeContent = .blank
+                 }
+-                
+-                if let mutedCount = unreadCount.mutedCount, mutedCount > 0 {
++
++                if let mutedCount = unreadCount.mutedCount, mutedCount > 0, !ayuHideUnreadCounters {
+                     let mutedUnreadCountText = compactNumericCountString(Int(mutedCount), decimalSeparator: item.presentationData.dateTimeFormat.decimalSeparator)
+                     currentMentionBadgeImage = PresentationResourcesChatList.badgeBackgroundInactive(item.presentationData.theme, diameter: badgeDiameter)
+                     mentionBadgeContent = .text(NSAttributedString(string: mutedUnreadCountText, font: badgeFont, textColor: theme.unreadBadgeInactiveTextColor))
+@@ -3563,12 +3595,12 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                                 currentCredibilityIconContent = .text(color: item.presentationData.theme.chat.message.incoming.scamColor, string: item.presentationData.strings.Message_ScamAccount.uppercased())
+                             } else if peer.isFake {
+                                 currentCredibilityIconContent = .text(color: item.presentationData.theme.chat.message.incoming.scamColor, string: item.presentationData.strings.Message_FakeAccount.uppercased())
+-                            } else if let emojiStatus = peer.emojiStatus {
++                            } else if !item.context.account.network.ayuGhostMode.current.interface.hidePremiumStatuses, let emojiStatus = peer.emojiStatus {
+                                 currentStatusIconContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
+                                 if let color = emojiStatus.color {
+                                     currentStatusIconParticleColor = UIColor(rgb: UInt32(bitPattern: color))
+                                 }
+-                            } else if peer.isPremium && !premiumConfiguration.isPremiumDisabled {
++                            } else if peer.isPremium && !premiumConfiguration.isPremiumDisabled && !item.context.account.network.ayuGhostMode.current.interface.hidePremiumStatuses {
+                                 currentCredibilityIconContent = .premium(color: item.presentationData.theme.list.itemAccentColor)
+                             }
+                             
+@@ -3594,12 +3626,12 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                         currentCredibilityIconContent = .text(color: item.presentationData.theme.chat.message.incoming.scamColor, string: item.presentationData.strings.Message_ScamAccount.uppercased())
+                     } else if peer.isFake {
+                         currentCredibilityIconContent = .text(color: item.presentationData.theme.chat.message.incoming.scamColor, string: item.presentationData.strings.Message_FakeAccount.uppercased())
+-                    } else if let emojiStatus = peer.emojiStatus {
++                    } else if !item.context.account.network.ayuGhostMode.current.interface.hidePremiumStatuses, let emojiStatus = peer.emojiStatus {
+                         currentStatusIconContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
+                         if let color = emojiStatus.color {
+                             currentStatusIconParticleColor = UIColor(rgb: UInt32(bitPattern: color))
+                         }
+-                    } else if peer.isPremium && !premiumConfiguration.isPremiumDisabled {
++                    } else if peer.isPremium && !premiumConfiguration.isPremiumDisabled && !item.context.account.network.ayuGhostMode.current.interface.hidePremiumStatuses {
+                         currentCredibilityIconContent = .premium(color: item.presentationData.theme.list.itemAccentColor)
+                     }
+                     
+@@ -5406,6 +5438,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                      }
                      
                      transition.updateFrame(node: strongSelf.backgroundNode, frame: CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: layout.contentSize.width, height: itemHeight)))
@@ -66987,7 +67059,7 @@ index e41738b1..1b705c7d 100644
                      let backgroundColor: UIColor
                      let highlightedBackgroundColor: UIColor
                      if item.selected {
-@@ -5437,8 +5469,10 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+@@ -5437,8 +5471,10 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                      
                      if let inlineNavigationLocation = item.interaction.inlineNavigationLocation {
                          transition.updateAlpha(node: strongSelf.backgroundNode, alpha: 1.0 - inlineNavigationLocation.progress)
@@ -68459,7 +68531,7 @@ index 00000000..62d73661
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..303a0144
+index 00000000..d0ffb276
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 @@ -0,0 +1,183 @@
@@ -68707,10 +68779,10 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..6e94c860
+index 00000000..8e52a93b
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,582 @@
+@@ -0,0 +1,603 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -69128,6 +69200,16 @@ index 00000000..6e94c860
 +                case 1: $0.interface.hideFastShare = value
 +                case 2: $0.interface.hideChatsBadge = value
 +                case 3: $0.interface.showMessageShot = value
++                case 5: $0.interface.hideStories = value
++                case 6: $0.interface.hideSimilarChannels = value
++                case 7: $0.interface.hidePremiumStatuses = value
++                case 8: $0.interface.hideUnreadCounters = value
++                case 9: $0.interface.revealSpoilers = value
++                case 10: $0.interface.filterZalgo = value
++                case 11: $0.interface.disableGreetingSticker = value
++                case 12: $0.interface.disableOpenLinkWarning = value
++                case 13: $0.interface.unlimitedRecentStickers = value
++                case 14: $0.interface.spoofWebAppAsAndroid = value
 +                default: break
 +                }
 +            }
@@ -69155,7 +69237,18 @@ index 00000000..6e94c860
 +            .toggle(1, ru ? "Скрыть быструю пересылку" : "Hide bubble quick-share buttons", value.hideFastShare),
 +            .toggle(2, ru ? "Скрыть счётчик вкладки «Чаты»" : "Hide Chats tab unread badge", value.hideChatsBadge),
 +            .toggle(3, "MessageShot", value.showMessageShot),
-+            .info(4, ru ? "Нажатие на ID копирует его. Счётчик меняется только на вкладке «Чаты»; состояние прочтения сохраняется. Быстрая пересылка скрывается возле обычных пузырьков, а комментарии и рекламные действия остаются доступны. MessageShot находится в меню сообщения и в действиях «Поделиться» для выбранных сообщений." : "Tap a profile ID to copy it. The badge setting affects the Chats tab and preserves read state. Quick-share hiding applies to ordinary bubbles; comment and sponsored-message actions remain available. MessageShot appears in the message menu and selected-message Share choices.")
++            .toggle(5, ru ? "Скрыть истории" : "Hide stories", value.hideStories),
++            .toggle(6, ru ? "Скрыть похожие каналы" : "Hide similar channels", value.hideSimilarChannels),
++            .toggle(7, ru ? "Скрыть Premium-статусы в списке чатов" : "Hide Premium statuses in chat list", value.hidePremiumStatuses),
++            .toggle(8, ru ? "Скрыть счётчики непрочитанных" : "Hide unread counters", value.hideUnreadCounters),
++            .toggle(9, ru ? "Показывать спойлеры" : "Reveal spoilers", value.revealSpoilers),
++            .toggle(10, ru ? "Фильтр zalgo-текста" : "Filter zalgo text", value.filterZalgo),
++            .toggle(11, ru ? "Без приветственного стикера" : "Disable greeting sticker", value.disableGreetingSticker),
++            .toggle(12, ru ? "Не спрашивать при открытии ссылок" : "Disable open link warning", value.disableOpenLinkWarning),
++            .toggle(13, ru ? "Больше недавних стикеров" : "Unlimited recent stickers", value.unlimitedRecentStickers),
++            .toggle(14, ru ? "Мини-приложения как на Android" : "Open mini apps as Android", value.spoofWebAppAsAndroid),
++            .info(20, ru ? "Истории, похожие каналы и приветственный стикер применяются при следующем открытии списка чатов или чата (надёжнее всего — после перезапуска). Скрытые истории не отмечаются просмотренными. Счётчики заменяются точкой. Спойлеры и zalgo-фильтр работают для текста сообщений. Предупреждение остаётся для ссылок с поддельным адресом и прокси. «Больше недавних стикеров» хранит до 200 вместо 20 на этом устройстве. Мини-приложения получают платформу android вместо ios." : "Stories, similar channels and the greeting sticker apply the next time the chat list or a chat opens (most reliably after a restart). Hidden stories are not marked as viewed. Counters become a dot. Spoilers and the zalgo filter apply to message text. The warning stays for links with a disguised host and for proxies. Unlimited recent stickers keeps up to 200 instead of 20 on this device. Mini apps receive the android platform instead of ios."),
++            .info(30, ru ? "Нажатие на ID копирует его. Счётчик меняется только на вкладке «Чаты»; состояние прочтения сохраняется. Быстрая пересылка скрывается возле обычных пузырьков, а комментарии и рекламные действия остаются доступны. MessageShot находится в меню сообщения и в действиях «Поделиться» для выбранных сообщений." : "Tap a profile ID to copy it. The badge setting affects the Chats tab and preserves read state. Quick-share hiding applies to ordinary bubbles; comment and sponsored-message actions remain available. MessageShot appears in the message menu and selected-message Share choices.")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        let title = contextMenu ? (ru ? "Меню сообщения" : "Message Menu") : (ru ? "Интерфейс" : "Interface")
@@ -69426,15 +69519,16 @@ index 5302c7be..19538d65 100644
      
      let notificationSettings = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Configuration.ApplicationSpecificPreference(key: PreferencesKeys.globalNotifications))
 diff --git a/submodules/TelegramCore/Sources/Account/Account.swift b/submodules/TelegramCore/Sources/Account/Account.swift
-index af6b6078..0b749cb1 100644
+index af6b6078..1ed30132 100644
 --- a/submodules/TelegramCore/Sources/Account/Account.swift
 +++ b/submodules/TelegramCore/Sources/Account/Account.swift
-@@ -1497,6 +1497,8 @@ public class Account {
+@@ -1497,6 +1497,9 @@ public class Account {
          
          let pendingMessageManager = self.pendingMessageManager
          Logger.shared.log("Account", "Begin watching unsent message ids")
 +        self.managedOperationsDisposable.add(ayuManageArchiveFiles(postbox: self.postbox).start())
 +        self.managedOperationsDisposable.add(ayuManageLocalPremium(postbox: self.postbox, network: self.network, peerId: peerId).start())
++        self.managedOperationsDisposable.add(ayuManageDisplayOptions(network: self.network, peerId: peerId).start())
          self.managedOperationsDisposable.add(postbox.unsentMessageIdsView().start(next: { [weak pendingMessageManager] view in
              pendingMessageManager?.updatePendingMessageIds(view.ids)
          }))
@@ -70318,6 +70412,112 @@ index 00000000..130e741d
 +        encoder.encodeInt64(self.timestamp, forKey: "t")
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuDisplayOptions.swift b/submodules/TelegramCore/Sources/AyuGram/AyuDisplayOptions.swift
+new file mode 100644
+index 00000000..39fe850b
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuDisplayOptions.swift
+@@ -0,0 +1,100 @@
++import Foundation
++
++/// Process-wide AyuGram display options for code that renders without an account context
++/// (text formatting, sticker lists, web app requests). An option is on while any signed-in
++/// account of this process has it enabled.
++public enum AyuDisplayOptions {
++    public struct Flags: Equatable {
++        public var revealSpoilers = false
++        public var filterZalgo = false
++        public var spoofWebAppAsAndroid = false
++        public var unlimitedRecentStickers = false
++        public init() {}
++    }
++
++    private static let lock = NSLock()
++    private static var accounts: [Int64: Flags] = [:]
++
++    public static func update(accountPeerId: Int64, flags: Flags) {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        self.accounts[accountPeerId] = flags
++    }
++
++    private static func any(_ predicate: (Flags) -> Bool) -> Bool {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.accounts.values.contains(where: predicate)
++    }
++
++    public static var revealSpoilers: Bool { return self.any { $0.revealSpoilers } }
++    public static var filterZalgo: Bool { return self.any { $0.filterZalgo } }
++    public static var webAppPlatform: String? { return self.any { $0.spoofWebAppAsAndroid } ? "android" : nil }
++
++    /// Local cap for the recent stickers list; the server keeps its own list.
++    public static var recentStickersLimit: Int { return self.any { $0.unlimitedRecentStickers } ? 200 : 20 }
++
++    /// Combining marks kept after each base character; more are removed as "zalgo" text.
++    public static let maximumCombiningMarks = 2
++
++    private static func isCombiningMark(_ scalar: Unicode.Scalar) -> Bool {
++        switch scalar.properties.generalCategory {
++        case .nonspacingMark, .enclosingMark:
++            // Variation selectors are marks too, but emoji need them.
++            let value = scalar.value
++            return !((0xFE00...0xFE0F).contains(value) || (0xE0100...0xE01EF).contains(value))
++        default:
++            return false
++        }
++    }
++
++    /// UTF-16 ranges of combining marks beyond the per-character limit, in ascending order.
++    public static func zalgoRanges(in text: String) -> [NSRange] {
++        var ranges: [NSRange] = []
++        var offset = 0
++        var run = 0
++        for scalar in text.unicodeScalars {
++            let length = scalar.utf16.count
++            if self.isCombiningMark(scalar) {
++                run += 1
++                if run > self.maximumCombiningMarks {
++                    if let last = ranges.last, last.location + last.length == offset {
++                        ranges[ranges.count - 1].length += length
++                    } else {
++                        ranges.append(NSRange(location: offset, length: length))
++                    }
++                }
++            } else {
++                run = 0
++            }
++            offset += length
++        }
++        return ranges
++    }
++
++    /// Removes excess combining marks in place; attributes of the remaining text stay aligned.
++    /// The result is rebuilt from the kept substrings: per-range deletion is not reliable
++    /// across Foundation implementations for runs of combining marks.
++    public static func removeZalgo(from string: NSMutableAttributedString) {
++        let ranges = self.zalgoRanges(in: string.string)
++        guard !ranges.isEmpty else { return }
++        let rebuilt = NSMutableAttributedString(string: "")
++        var cursor = 0
++        for range in ranges {
++            if range.location > cursor {
++                rebuilt.append(string.attributedSubstring(from: NSRange(location: cursor, length: range.location - cursor)))
++            }
++            cursor = range.location + range.length
++        }
++        if cursor < string.length {
++            rebuilt.append(string.attributedSubstring(from: NSRange(location: cursor, length: string.length - cursor)))
++        }
++        string.setAttributedString(rebuilt)
++    }
++
++    public static func removingZalgo(_ text: String) -> String {
++        let string = NSMutableAttributedString(string: text)
++        self.removeZalgo(from: string)
++        return string.string
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift
 new file mode 100644
 index 00000000..c509943f
@@ -70659,10 +70859,10 @@ index 00000000..ae6b26ad
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..1d618f7c
+index 00000000..521ee594
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,80 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -70680,6 +70880,17 @@ index 00000000..1d618f7c
 +    public var showSearchPhrase = true
 +    public var showCopyMessageIds = true
 +    public var showHideMessage = true
++    // Desktop-parity display options (all off by default).
++    public var hideStories = false
++    public var hideSimilarChannels = false
++    public var hidePremiumStatuses = false
++    public var hideUnreadCounters = false
++    public var revealSpoilers = false
++    public var disableGreetingSticker = false
++    public var disableOpenLinkWarning = false
++    public var filterZalgo = false
++    public var spoofWebAppAsAndroid = false
++    public var unlimitedRecentStickers = false
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
@@ -70688,6 +70899,8 @@ index 00000000..1d618f7c
 +        case showAddFilter
 +        case showRepeatText, showSearchPhrase, showCopyMessageIds
 +        case showHideMessage
++        case hideStories, hideSimilarChannels, hidePremiumStatuses, hideUnreadCounters, revealSpoilers
++        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -70705,6 +70918,16 @@ index 00000000..1d618f7c
 +        self.showSearchPhrase = try values.decodeIfPresent(Bool.self, forKey: .showSearchPhrase) ?? true
 +        self.showCopyMessageIds = try values.decodeIfPresent(Bool.self, forKey: .showCopyMessageIds) ?? true
 +        self.showHideMessage = try values.decodeIfPresent(Bool.self, forKey: .showHideMessage) ?? true
++        self.hideStories = try values.decodeIfPresent(Bool.self, forKey: .hideStories) ?? false
++        self.hideSimilarChannels = try values.decodeIfPresent(Bool.self, forKey: .hideSimilarChannels) ?? false
++        self.hidePremiumStatuses = try values.decodeIfPresent(Bool.self, forKey: .hidePremiumStatuses) ?? false
++        self.hideUnreadCounters = try values.decodeIfPresent(Bool.self, forKey: .hideUnreadCounters) ?? false
++        self.revealSpoilers = try values.decodeIfPresent(Bool.self, forKey: .revealSpoilers) ?? false
++        self.disableGreetingSticker = try values.decodeIfPresent(Bool.self, forKey: .disableGreetingSticker) ?? false
++        self.disableOpenLinkWarning = try values.decodeIfPresent(Bool.self, forKey: .disableOpenLinkWarning) ?? false
++        self.filterZalgo = try values.decodeIfPresent(Bool.self, forKey: .filterZalgo) ?? false
++        self.spoofWebAppAsAndroid = try values.decodeIfPresent(Bool.self, forKey: .spoofWebAppAsAndroid) ?? false
++        self.unlimitedRecentStickers = try values.decodeIfPresent(Bool.self, forKey: .unlimitedRecentStickers) ?? false
 +    }
 +}
 +
@@ -70722,10 +70945,10 @@ index 00000000..1d618f7c
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift
 new file mode 100644
-index 00000000..5c881b38
+index 00000000..2131c179
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuLocalPremium.swift
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,119 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -70827,6 +71050,23 @@ index 00000000..5c881b38
 +    |> distinctUntilChanged
 +    |> map { value -> Void in AyuLocalPremium.update(peerId: peerId, server: value) }
 +    return combineLatest(local, server) |> map { _ in }
++}
++
++/// Keeps this account's entry of the process-wide display options current.
++func ayuManageDisplayOptions(network: Network, peerId: PeerId) -> Signal<Void, NoError> {
++    func flags(_ interface: AyuInterfaceSettings) -> AyuDisplayOptions.Flags {
++        var flags = AyuDisplayOptions.Flags()
++        flags.revealSpoilers = interface.revealSpoilers
++        flags.filterZalgo = interface.filterZalgo
++        flags.spoofWebAppAsAndroid = interface.spoofWebAppAsAndroid
++        flags.unlimitedRecentStickers = interface.unlimitedRecentStickers
++        return flags
++    }
++    AyuDisplayOptions.update(accountPeerId: peerId.toInt64(), flags: flags(network.ayuGhostMode.current.interface))
++    return network.ayuGhostMode.signal
++    |> map { flags($0.interface) }
++    |> distinctUntilChanged
++    |> map { value -> Void in AyuDisplayOptions.update(accountPeerId: peerId.toInt64(), flags: value) }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMediaSendSettings.swift
 new file mode 100644
@@ -71489,7 +71729,7 @@ index 00000000..35137a2f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..6c4fda2d
+index 00000000..7e103d2e
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 @@ -0,0 +1,442 @@
@@ -71937,7 +72177,7 @@ index 00000000..6c4fda2d
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 new file mode 100644
-index 00000000..bdb6d23e
+index 00000000..dc4f2c52
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 @@ -0,0 +1,257 @@
@@ -72677,7 +72917,7 @@ index 5d933383..36f11df6 100644
                  }
                  
 diff --git a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
-index 3d99e59d..c86b5963 100644
+index 3d99e59d..e5363dd4 100644
 --- a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
 +++ b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
 @@ -4622,19 +4622,38 @@ func replayFinalState(
@@ -72733,6 +72973,15 @@ index 3d99e59d..c86b5963 100644
                  var generatedEvent: (reactionAuthor: Peer, reaction: MessageReaction.Reaction, message: Message, timestamp: Int32)?
                  transaction.updateMessage(id, update: { previousMessage in
                      let peers: [PeerId:Peer] = previousMessage.peers.reduce([:], { current, value in
+@@ -6036,7 +6058,7 @@ func replayFinalState(
+         }).map({ $0.1 })
+         for file in stickerFiles {
+             if let entry = CodableEntry(RecentMediaItem(file)) {
+-                transaction.addOrMoveToFirstPositionOrderedItemListItem(collectionId: Namespaces.OrderedItemList.CloudRecentStickers, item: OrderedItemListEntry(id: RecentMediaItemId(file.fileId).rawValue, contents: entry), removeTailIfCountExceeds: 20)
++                transaction.addOrMoveToFirstPositionOrderedItemListItem(collectionId: Namespaces.OrderedItemList.CloudRecentStickers, item: OrderedItemListEntry(id: RecentMediaItemId(file.fileId).rawValue, contents: entry), removeTailIfCountExceeds: AyuDisplayOptions.recentStickersLimit)
+             }
+         }
+     }
 @@ -6410,6 +6432,7 @@ func replayFinalState(
          })
      }
@@ -72741,6 +72990,28 @@ index 3d99e59d..c86b5963 100644
      return AccountReplayedFinalState(
          state: finalState,
          addedIncomingMessageIds: addedIncomingMessageIds,
+diff --git a/submodules/TelegramCore/Sources/State/ApplyUpdateMessage.swift b/submodules/TelegramCore/Sources/State/ApplyUpdateMessage.swift
+index 60ac9b11..7820b975 100644
+--- a/submodules/TelegramCore/Sources/State/ApplyUpdateMessage.swift
++++ b/submodules/TelegramCore/Sources/State/ApplyUpdateMessage.swift
+@@ -467,7 +467,7 @@ func applyUpdateMessage(postbox: Postbox, stateManager: AccountStateManager, mes
+         }
+         for file in sentStickers {
+             if let entry = CodableEntry(RecentMediaItem(file)) {
+-                transaction.addOrMoveToFirstPositionOrderedItemListItem(collectionId: Namespaces.OrderedItemList.CloudRecentStickers, item: OrderedItemListEntry(id: RecentMediaItemId(file.fileId).rawValue, contents: entry), removeTailIfCountExceeds: 20)
++                transaction.addOrMoveToFirstPositionOrderedItemListItem(collectionId: Namespaces.OrderedItemList.CloudRecentStickers, item: OrderedItemListEntry(id: RecentMediaItemId(file.fileId).rawValue, contents: entry), removeTailIfCountExceeds: AyuDisplayOptions.recentStickersLimit)
+             }
+         }
+         for file in sentGifs {
+@@ -666,7 +666,7 @@ func applyUpdateGroupMessages(postbox: Postbox, stateManager: AccountStateManage
+         
+         for file in sentStickers {
+             if let entry = CodableEntry(RecentMediaItem(file)) {
+-                transaction.addOrMoveToFirstPositionOrderedItemListItem(collectionId: Namespaces.OrderedItemList.CloudRecentStickers, item: OrderedItemListEntry(id: RecentMediaItemId(file.fileId).rawValue, contents: entry), removeTailIfCountExceeds: 20)
++                transaction.addOrMoveToFirstPositionOrderedItemListItem(collectionId: Namespaces.OrderedItemList.CloudRecentStickers, item: OrderedItemListEntry(id: RecentMediaItemId(file.fileId).rawValue, contents: entry), removeTailIfCountExceeds: AyuDisplayOptions.recentStickersLimit)
+             }
+         }
+         for file in sentGifs {
 diff --git a/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift b/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
 index 7256668b..2e78ffd5 100644
 --- a/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
@@ -72887,6 +73158,19 @@ index b2e65895..b3ff988c 100644
                      |> map(Optional.init)
                      |> `catch` { _ -> Signal<Api.messages.AffectedMessages?, NoError> in
                          return .single(nil)
+diff --git a/submodules/TelegramCore/Sources/State/SynchronizeRecentlyUsedMediaOperations.swift b/submodules/TelegramCore/Sources/State/SynchronizeRecentlyUsedMediaOperations.swift
+index fe1b5734..8043e609 100644
+--- a/submodules/TelegramCore/Sources/State/SynchronizeRecentlyUsedMediaOperations.swift
++++ b/submodules/TelegramCore/Sources/State/SynchronizeRecentlyUsedMediaOperations.swift
+@@ -40,7 +40,7 @@ func addSynchronizeRecentlyUsedMediaOperation(transaction: Transaction, category
+ func addRecentlyUsedSticker(transaction: Transaction, fileReference: FileMediaReference) {
+     if let resource = fileReference.media.resource as? CloudDocumentMediaResource {
+         if let entry = CodableEntry(RecentMediaItem(fileReference.media)) {
+-            transaction.addOrMoveToFirstPositionOrderedItemListItem(collectionId: Namespaces.OrderedItemList.CloudRecentStickers, item: OrderedItemListEntry(id: RecentMediaItemId(fileReference.media.fileId).rawValue, contents: entry), removeTailIfCountExceeds: 20)
++            transaction.addOrMoveToFirstPositionOrderedItemListItem(collectionId: Namespaces.OrderedItemList.CloudRecentStickers, item: OrderedItemListEntry(id: RecentMediaItemId(fileReference.media.fileId).rawValue, contents: entry), removeTailIfCountExceeds: AyuDisplayOptions.recentStickersLimit)
+         }
+         addSynchronizeRecentlyUsedMediaOperation(transaction: transaction, category: .stickers, operation: .add(id: resource.fileId, accessHash: resource.accessHash, fileReference: fileReference))
+     }
 diff --git a/submodules/TelegramCore/Sources/State/SynchronizeSavedGifsOperation.swift b/submodules/TelegramCore/Sources/State/SynchronizeSavedGifsOperation.swift
 index 7cbef8db..58615c3e 100644
 --- a/submodules/TelegramCore/Sources/State/SynchronizeSavedGifsOperation.swift
@@ -72944,6 +73228,29 @@ index 041f0e62..3056cc9f 100644
                      }
                  } else if peer.isMonoForum {
                      if let inputPeer = apiInputPeer(peer), let subPeer = transaction.getPeer(PeerId(item.threadId)).flatMap(apiInputPeer) {
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/BotWebView.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/BotWebView.swift
+index 949ef14e..ff6c8b24 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/BotWebView.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/BotWebView.swift
+@@ -5,11 +5,16 @@ internal import TelegramApi
+ import MtProtoKit
+ 
+ #if os(macOS)
+-private let botWebViewPlatform = "macos"
++private let nativeBotWebViewPlatform = "macos"
+ #else
+-private let botWebViewPlatform = "ios"
++private let nativeBotWebViewPlatform = "ios"
+ #endif
+ 
++// AyuGram "Open mini apps as Android" reports the Android platform to the bot.
++private var botWebViewPlatform: String {
++    return AyuDisplayOptions.webAppPlatform ?? nativeBotWebViewPlatform
++}
++
+ public enum RequestSimpleWebViewSource : Equatable {
+     case generic
+     case inline(startParam: String?)
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ChatList.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/ChatList.swift
 index 6cb755ca..6fd677df 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/ChatList.swift
@@ -73717,6 +74024,32 @@ index bb5a8c8a..f402ab6c 100644
          self.sourceView = sourceView
          self.emojiContent = emojiContent
          self.currentSelection = currentSelection
+diff --git a/submodules/TelegramUI/Components/OpenUserGeneratedUrl/Sources/OpenUserGeneratedUrl.swift b/submodules/TelegramUI/Components/OpenUserGeneratedUrl/Sources/OpenUserGeneratedUrl.swift
+index 5fe1e292..244b396d 100644
+--- a/submodules/TelegramUI/Components/OpenUserGeneratedUrl/Sources/OpenUserGeneratedUrl.swift
++++ b/submodules/TelegramUI/Components/OpenUserGeneratedUrl/Sources/OpenUserGeneratedUrl.swift
+@@ -106,15 +106,20 @@ public func openUserGeneratedUrl(
+     // A login part hides the host the link opens (see `externalUrlWithLoginPart`).
+     let loginPartUrl = externalUrlWithLoginPart(url)
+ 
++    // AyuGram "Disable open link warning" skips only the plain text-link prompt. Links whose
++    // login part hides the real host, proxy links and forced prompts are still confirmed.
++    var ayuMaySkipPrompt = context.account.network.ayuGhostMode.current.interface.disableOpenLinkWarning
+     if forceConcealed || loginPartUrl != nil {
+         concealed = true
++        ayuMaySkipPrompt = false
+     } else if let parsedUrl = parseInternalUrl(sharedContext: context.sharedContext, context: context, query: url) {
+         if case .proxy = parsedUrl {
+             concealed = true
++            ayuMaySkipPrompt = false
+         }
+     }
+ 
+-    if concealed && !skipConcealedAlert {
++    if concealed && !skipConcealedAlert && !ayuMaySkipPrompt {
+         // For a login part the prompt shows the host the link really opens. The external-URL opener asks about such
+         // a link as well, so accepting it here tells the opener it has been confirmed.
+         let displayUrl = loginPartUrl.map { urlRemovingLoginPart($0).absoluteString } ?? parsedString
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
 index fdc996cb..1e2caf51 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
@@ -139670,7 +140003,7 @@ index fe34b998..3073f36b 100644
          
 diff --git a/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift b/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift
 new file mode 100644
-index 00000000..11a8eeca
+index 00000000..87a624e2
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPython/AyuPythonBootstrap.swift
 @@ -0,0 +1,138 @@
@@ -140775,7 +141108,7 @@ index face5ae7..0b16f7a3 100644
      selfController.updateSlowmodeStatus()
      
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..7faf9cfb 100644
+index 5fe58bbf..71bfe85f 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
 @@ -310,6 +310,15 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
@@ -140794,6 +141127,15 @@ index 5fe58bbf..7faf9cfb 100644
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
+@@ -725,7 +734,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+         
+         self.stickerSettings = ChatInterfaceStickerSettings()
+         
+-        self.presentationInterfaceState = ChatPresentationInterfaceState(chatWallpaper: self.presentationData.chatWallpaper, theme: self.presentationData.theme, preferredGlassType: .default, strings: self.presentationData.strings, dateTimeFormat: self.presentationData.dateTimeFormat, nameDisplayOrder: self.presentationData.nameDisplayOrder, limitsConfiguration: context.currentLimitsConfiguration.with { $0 }, fontSize: self.presentationData.chatFontSize, bubbleCorners: self.presentationData.chatBubbleCorners, accountPeerId: context.account.peerId, mode: mode, chatLocation: chatLocation, subject: subject, greetingData: context.prefetchManager?.preloadedGreetingSticker, pendingUnpinnedAllMessages: false, activeGroupCallInfo: nil, hasActiveGroupCall: false, threadData: nil, isGeneralThreadClosed: nil, replyMessage: nil, accountPeerColor: nil, businessIntro: nil)
++        self.presentationInterfaceState = ChatPresentationInterfaceState(chatWallpaper: self.presentationData.chatWallpaper, theme: self.presentationData.theme, preferredGlassType: .default, strings: self.presentationData.strings, dateTimeFormat: self.presentationData.dateTimeFormat, nameDisplayOrder: self.presentationData.nameDisplayOrder, limitsConfiguration: context.currentLimitsConfiguration.with { $0 }, fontSize: self.presentationData.chatFontSize, bubbleCorners: self.presentationData.chatBubbleCorners, accountPeerId: context.account.peerId, mode: mode, chatLocation: chatLocation, subject: subject, greetingData: context.account.network.ayuGhostMode.current.interface.disableGreetingSticker ? nil : context.prefetchManager?.preloadedGreetingSticker, pendingUnpinnedAllMessages: false, activeGroupCallInfo: nil, hasActiveGroupCall: false, threadData: nil, isGeneralThreadClosed: nil, replyMessage: nil, accountPeerColor: nil, businessIntro: nil)
+         
+         if case let .customChatContents(customChatContents) = subject {
+             switch customChatContents.kind {
 @@ -768,6 +777,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
@@ -140978,7 +141320,7 @@ index b32f929d..70c867fa 100644
          
          var pinToTop = false
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
-index 0fb1ee10..eb1aa155 100644
+index 0fb1ee10..671394e8 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
 @@ -683,6 +683,13 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
@@ -140995,7 +141337,17 @@ index 0fb1ee10..eb1aa155 100644
      private var presentationDataDisposable: Disposable?
      
      private let historyAppearsClearedPromise = ValuePromise<Bool>(false)
-@@ -2056,7 +2063,14 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+@@ -1993,7 +2000,8 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+         }
+         
+         let recommendedChannels: Signal<RecommendedChannels?, NoError>
+-        if let peerId = self.chatLocation.peerId, peerId.namespace == Namespaces.Peer.CloudChannel {
++        // AyuGram "Hide similar channels" skips the recommendations shown after joining.
++        if let peerId = self.chatLocation.peerId, peerId.namespace == Namespaces.Peer.CloudChannel, !self.context.account.network.ayuGhostMode.current.interface.hideSimilarChannels {
+             recommendedChannels = self.context.engine.peers.recommendedChannels(peerId: peerId)
+         } else {
+             recommendedChannels = .single(nil)
+@@ -2056,7 +2064,14 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
          let messageViewQueue = Queue.mainQueue()
          let historyViewTransitionDisposable = (combineLatest(queue: messageViewQueue,
              historyViewUpdate |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_historyViewUpdate"),
@@ -141011,7 +141363,7 @@ index 0fb1ee10..eb1aa155 100644
              selectedMessages |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_selectedMessages"),
              updatingMedia |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_updatingMedia"),
              automaticDownloadNetworkType |> debug_measureTimeToFirstEvent(label: "chatHistoryNode_automaticDownloadNetworkType"),
-@@ -2396,7 +2410,8 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+@@ -2396,7 +2411,8 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                      adMessage: allAdMessages.fixed,
                      dynamicAdMessages: allAdMessages.opportunistic,
                      isMusicPlaylist: isMusicPlaylist,
@@ -141207,7 +141559,7 @@ index c46cc951..b3430c9a 100644
                      let controller = params.context.sharedContext.makeShareScreen(context: params.context, params: ShareControllerParams(subject: .media(.standalone(media: file), nil), immediateExternalShare: true))
                      params.present(controller, nil, .window(.root))
 diff --git a/submodules/TextFormat/Sources/StringWithAppliedEntities.swift b/submodules/TextFormat/Sources/StringWithAppliedEntities.swift
-index d0ec7066..c20bc97a 100644
+index d0ec7066..1f116055 100644
 --- a/submodules/TextFormat/Sources/StringWithAppliedEntities.swift
 +++ b/submodules/TextFormat/Sources/StringWithAppliedEntities.swift
 @@ -199,7 +199,7 @@ func adjustedEntityRangesApplyingSubstitutions(
@@ -141228,6 +141580,31 @@ index d0ec7066..c20bc97a 100644
      let baseQuoteTintColor = baseQuoteTintColor ?? baseColor
      
      var nsString: NSString?
+@@ -437,6 +439,10 @@ public func stringWithAppliedEntities(_ text: String, entities: [MessageTextEnti
+                 }
+                 string.addAttribute(NSAttributedString.Key(rawValue: TelegramTextAttributes.TonAddress), value: TelegramTonAddress(address: address, range: range), range: range)
+             case .Spoiler:
++                // AyuGram "Reveal spoilers": the text is shown as written.
++                if AyuDisplayOptions.revealSpoilers {
++                    break
++                }
+                 if external {
+                     string.addAttribute(NSAttributedString.Key.backgroundColor, value: UIColor.gray, range: range)
+                 } else {
+@@ -542,7 +548,12 @@ public func stringWithAppliedEntities(_ text: String, entities: [MessageTextEnti
+         paragraphStyle.alignment = paragraphAlignment
+         string.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSMakeRange(0, string.length))
+     }
+-    
++
++    // AyuGram "Filter zalgo": drop stacked combining marks after all ranges are applied.
++    if AyuDisplayOptions.filterZalgo {
++        AyuDisplayOptions.removeZalgo(from: string)
++    }
++
+     return string
+ }
+ 
 diff --git a/submodules/WalletContext/Sources/WalletSecurity.swift b/submodules/WalletContext/Sources/WalletSecurity.swift
 index 3d13bc4d..3ca0e6c7 100644
 --- a/submodules/WalletContext/Sources/WalletSecurity.swift
@@ -141243,7 +141620,7 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..ee501df8
+index 00000000..2a18e88e
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
 @@ -0,0 +1,867 @@

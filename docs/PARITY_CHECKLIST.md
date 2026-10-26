@@ -56,7 +56,16 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | message text tools (iOS) | Native phrase search and chat/message ID copying, with separate visibility switches in source after build 8 |
 | showHideMessageInContextMenu (Desktop) | Reversible local cloud-message/album hiding, per-account bounded references, temporary bypass and restore-one/all manager in source after build 8; no database/server deletion |
 | showPrivateChatReactions / showGroupReactions / showChannelReactions (Desktop) | Independent native chat reaction rendering controls with isolated reset in source after build 8; original message data and Saved Messages tags preserved |
-
+| disableStories (Desktop) | Settings → AyuGram → General → Interface → Hide stories: the chat list and archive receive no story subscriptions; applies when the chat list is next created |
+| hideSimilarChannels / collapseSimilarChannels (Desktop) | Hide similar channels: no channel recommendations are requested in channel chats |
+| hidePremiumStatuses (Desktop) | Hide Premium statuses in chat list rows (emoji status and Premium star); verification marks unchanged |
+| hideNotificationCounters (Desktop) | Hide unread counters: unread chats show a dot instead of a number, including the muted count |
+| revealSpoilers (Desktop) | Reveal spoilers in message text rendering; media spoilers unchanged |
+| filterZalgo (Desktop) | Filter zalgo text: more than two combining marks per character are dropped when rendering message text; emoji and variation selectors kept |
+| disableGreetingSticker (Desktop) | Disable greeting sticker in empty private chats |
+| disableOpenLinkWarning (Desktop) | Skip the "Open this link?" prompt for text links; disguised hosts (login part), proxies and forced prompts still ask |
+| unlimitedRecentStickers (Desktop) | Local recent stickers cap raised from 20 to 200; the server list is unchanged |
+| spoofWebviewAsAndroid (Desktop) | Mini apps are requested with platform "android" instead of "ios" |
 Additional Desktop-only scope (not implemented by these flags): shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata, conditional/always silent-send modes, translation providers (Telegram/LibreTranslate/DeepL), chat export (HTML+JSON, forward to Saved Messages) and the media archive manager already have source implementations.
 
 Release gates: clean pinned-patch application, UI import/API-contract checks, parse all changed Swift sources, compile/run real Foundation models, full Telegram target type check/link/package, then device and recorded simulator checks. The 32-check result applies only to the earlier history revision; newly added regex/migration/metadata/media-archive tests have not yet run on a Mac.

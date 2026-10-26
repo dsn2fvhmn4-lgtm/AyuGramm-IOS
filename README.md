@@ -114,3 +114,5 @@ Camera Flip native adapter and the supplied five-plugin dependency inventory: [b
 Chat Colors 1.0 now has a reviewed native adapter in development source: presets/HEX, brightness, profile/list menus and account-local color settings.
 
 The next source revision embeds CPython for an on-device AST converter: supported outgoing hooks become persisted native text programs, with if/else, chained replacements, case changes, strip and prefix/suffix operations. Original plugin code is not executed. See [conversion scope and build integration](docs/AST_CONVERTER.md). This block is separate from the existing Release 4 IPA.
+
+The next base IPA adds **Plugins → Update plugin list**. A signed OTA catalog can add exact-file native plugin adapters without another IPA; imports retain confirmation and installed plugins work offline. See [OTA catalog](docs/PLUGIN_CATALOG_OTA.md) and [publisher procedure](plugin-catalog/README.md). New native hooks still require a base app update.

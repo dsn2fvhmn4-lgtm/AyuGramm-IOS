@@ -68624,10 +68624,10 @@ index 00000000..62d73661
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..47787b4f
+index 00000000..cf0d1946
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,342 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -68642,6 +68642,9 @@ index 00000000..47787b4f
 +    private let russian: Bool
 +    private let palette: AyuPreferencesPalette?
 +    private var reading = false
++    private var updatingCatalog = false
++    private let catalogButton = UIButton(type: .system)
++    private let catalogStatus = UILabel()
 +    private var initialImport: (URL, String)?
 +    private var applying = false
 +    private var query = ""
@@ -68671,10 +68674,73 @@ index 00000000..47787b4f
 +        self.tableView.rowHeight = UITableView.automaticDimension
 +        self.tableView.estimatedRowHeight = 88
 +        self.tableView.backgroundColor = self.palette?.background ?? .systemGroupedBackground
++        self.setupCatalogHeader()
 +    }
 +    override func viewWillAppear(_ animated: Bool) {
 +        super.viewWillAppear(animated)
++        self.updateCatalogHeader()
 +        self.reload()
++    }
++    override func viewDidLayoutSubviews() {
++        super.viewDidLayoutSubviews()
++        ayuFitPreferencesHeader(self.tableView)
++    }
++    private func setupCatalogHeader() {
++        let header = UIView(frame: CGRect(x: 0, y: 0, width: self.tableView.bounds.width, height: 90))
++        self.catalogButton.translatesAutoresizingMaskIntoConstraints = false
++        self.catalogButton.contentHorizontalAlignment = .leading
++        self.catalogButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
++        self.catalogButton.titleLabel?.adjustsFontForContentSizeCategory = true
++        self.catalogButton.titleLabel?.numberOfLines = 0
++        self.catalogButton.tintColor = self.palette?.accent ?? .systemBlue
++        self.catalogButton.addTarget(self, action: #selector(self.updateCatalogTapped), for: .touchUpInside)
++        self.catalogStatus.translatesAutoresizingMaskIntoConstraints = false
++        self.catalogStatus.font = .preferredFont(forTextStyle: .footnote)
++        self.catalogStatus.adjustsFontForContentSizeCategory = true
++        self.catalogStatus.textColor = self.palette?.secondary ?? .secondaryLabel
++        self.catalogStatus.numberOfLines = 0
++        header.addSubview(self.catalogButton); header.addSubview(self.catalogStatus)
++        NSLayoutConstraint.activate([
++            self.catalogButton.topAnchor.constraint(equalTo: header.topAnchor, constant: 8),
++            self.catalogButton.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 20),
++            self.catalogButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -20),
++            self.catalogButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
++            self.catalogStatus.topAnchor.constraint(equalTo: self.catalogButton.bottomAnchor, constant: 2),
++            self.catalogStatus.leadingAnchor.constraint(equalTo: self.catalogButton.leadingAnchor),
++            self.catalogStatus.trailingAnchor.constraint(equalTo: self.catalogButton.trailingAnchor),
++            self.catalogStatus.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -12)
++        ])
++        self.tableView.tableHeaderView = header
++        self.updateCatalogHeader()
++    }
++    private func updateCatalogHeader() {
++        let summary = AyuPluginCatalogStore.shared.summary
++        self.catalogButton.isEnabled = !self.updatingCatalog && !self.reading && !self.applying
++        self.navigationItem.rightBarButtonItem?.isEnabled = !self.updatingCatalog && !self.reading && !self.applying
++        self.catalogButton.setTitle(self.updatingCatalog ? (self.russian ? "Обновление списка…" : "Updating plugin list…") : (self.russian ? "Обновить список плагинов" : "Update plugin list"), for: .normal)
++        self.catalogStatus.text = summary.revision == 0
++            ? (self.russian ? "Загрузить новые адаптеры перед импортом .plugin." : "Download new adapters before importing a .plugin.")
++            : (self.russian ? "Список \(summary.revision) · адаптеров: \(summary.adapterCount)" : "Catalog \(summary.revision) · adapters: \(summary.adapterCount)")
++        self.tableView.setNeedsLayout()
++    }
++    @objc private func updateCatalogTapped() {
++        guard !self.updatingCatalog, !self.reading, !self.applying else { return }
++        self.updatingCatalog = true
++        self.updateCatalogHeader()
++        AyuPluginCatalogStore.shared.update { [weak self] result in
++            guard let self else { return }
++            self.updatingCatalog = false
++            self.updateCatalogHeader()
++            guard self.viewIfLoaded?.window != nil, self.navigationController?.topViewController === self, self.presentedViewController == nil else { return }
++            switch result {
++            case let .success(summary):
++                var text = self.russian ? "Адаптеров: \(summary.adapterCount). Теперь можно импортировать .plugin." : "Adapters: \(summary.adapterCount). You can now import the .plugin file."
++                if summary.requiresNewApp > 0 { text += self.russian ? "\nТребуют новой версии приложения: \(summary.requiresNewApp)." : "\nRequire a newer app version: \(summary.requiresNewApp)." }
++                self.alert(title: self.russian ? "Список плагинов обновлён" : "Plugin list updated", message: text)
++            case let .failure(error):
++                self.alert(title: self.russian ? "Не удалось обновить список" : "Could not update plugin list", message: (self.russian ? "Сохранённый список и установленные плагины не изменились.\n\n" : "The saved catalog and installed plugins were kept.\n\n") + error.localizedDescription)
++            }
++        }
 +    }
 +    func updateSearchResults(for searchController: UISearchController) {
 +        self.query = searchController.searchBar.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -68824,6 +68890,7 @@ index 00000000..47787b4f
 +    private func readImport(_ url: URL, filename: String, picker: UIViewController? = nil) {
 +        guard url.isFileURL, !self.reading, !self.applying else { return }
 +        self.reading = true
++        self.updateCatalogHeader()
 +        let spinner = UIActivityIndicatorView(style: .medium); spinner.startAnimating()
 +        self.navigationItem.leftBarButtonItem = UIBarButtonItem(customView: spinner)
 +        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -68846,7 +68913,8 @@ index 00000000..47787b4f
 +            DispatchQueue.main.async { [weak self] in
 +                guard let self else { return }
 +                self.reading = false
-+                self.navigationItem.leftBarButtonItem = nil
++                self.updateCatalogHeader()
++                self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
 +                let complete: () -> Void = { [weak self] in
 +                    guard let self else { return }
 +                    switch result {
@@ -68874,6 +68942,7 @@ index 00000000..47787b4f
 +    private func apply(_ manifest: AyuPluginManifest, expected: AyuInstalledPlugin?) {
 +        guard !self.applying else { return }
 +        self.applying = true
++        self.updateCatalogHeader()
 +        let progress = UIActivityIndicatorView(style: .medium); progress.startAnimating()
 +        self.navigationItem.leftBarButtonItem = UIBarButtonItem(customView: progress)
 +        self.navigationItem.rightBarButtonItem?.isEnabled = false
@@ -68883,7 +68952,9 @@ index 00000000..47787b4f
 +            let result = Result { try AyuPluginActivation.prepare(manifest) }
 +            DispatchQueue.main.async { [weak self] in
 +                guard let self else { return }
-+                self.applying = false; self.navigationItem.leftBarButtonItem = nil
++                self.applying = false
++                self.updateCatalogHeader()
++                self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
 +                self.navigationItem.rightBarButtonItem?.isEnabled = true; self.isModalInPresentation = false
 +                self.navigationController?.isModalInPresentation = false
 +                do {
@@ -72379,12 +72450,259 @@ index 00000000..35137a2f
 +        }
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift
+new file mode 100644
+index 00000000..fa15166c
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift
+@@ -0,0 +1,241 @@
++import Foundation
++import CryptoKit
++
++public enum AyuPluginCatalogConfiguration {
++    public static let marker = "ayugram/catalog-v1"
++    public static let format = "ayugram-plugin-catalog-v1"
++    public static let maximumAPI = 7
++    public static let adapterDomain = Data("AyuGram adapter v1\0".utf8)
++    public static let catalogDomain = Data("AyuGram catalog v1\0".utf8)
++    public static let maximumResponseBytes = 2 * 1024 * 1024
++    public static let publicKey = Data(base64Encoded: "qEhrxPcZOm6Aj4YsXJr2OFKp1/lrg/IKUkxZ28Zx8oU=")!
++    public static let url = URL(string: "https://raw.githubusercontent.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/main/plugin-catalog/catalog.json")!
++}
++
++public enum AyuPluginCatalogError: LocalizedError {
++    case invalidCatalog, invalidSignature, rollback, tooLarge, alreadyUpdating, network, http(Int)
++    public var errorDescription: String? {
++        switch self {
++        case .invalidCatalog: return "Invalid plugin catalog. The saved catalog was kept."
++        case .invalidSignature: return "Plugin catalog signature is invalid. The saved catalog was kept."
++        case .rollback: return "An older or conflicting catalog was rejected. The saved catalog was kept."
++        case .tooLarge: return "Plugin catalog exceeds the size limit."
++        case .alreadyUpdating: return "The plugin catalog is already updating."
++        case .network: return "Could not download the plugin catalog. Check your connection."
++        case let .http(status): return "Plugin catalog server returned HTTP \(status)."
++        }
++    }
++}
++
++/// A portable per-adapter proof lets installed/exported plugins keep working
++/// offline, including after their catalog entry is superseded or removed.
++public struct AyuPluginCatalogProof: Codable, Equatable {
++    public var manifestData: Data
++    public var signature: Data
++    public func verify(manifest: AyuPluginManifest) throws {
++        guard self.manifestData.count <= 16384, self.signature.count == 64 else { throw AyuPluginCatalogError.invalidSignature }
++        let key = try Curve25519.Signing.PublicKey(rawRepresentation: AyuPluginCatalogConfiguration.publicKey)
++        guard key.isValidSignature(self.signature, for: AyuPluginCatalogConfiguration.adapterDomain + self.manifestData) else { throw AyuPluginCatalogError.invalidSignature }
++        let signed = try JSONDecoder().decode(AyuPluginManifest.self, from: self.manifestData)
++        guard signed.catalogProof == nil, signed.convertedFrom == AyuPluginCatalogConfiguration.marker,
++              signed.apiVersion == 7, let hash = signed.sourceSHA256, ayuCatalogValidHash(hash) else { throw AyuPluginCatalogError.invalidCatalog }
++        var plain = manifest
++        plain.catalogProof = nil
++        let encoder = JSONEncoder()
++        encoder.outputFormatting = [.sortedKeys]
++        // Compare encoded bytes, not Swift String equality: normalization must
++        // not change literal matching while retaining someone else's signature.
++        guard try encoder.encode(plain) == encoder.encode(signed) else { throw AyuPluginCatalogError.invalidSignature }
++    }
++}
++
++private func ayuCatalogValidHash(_ hash: String) -> Bool {
++    return hash.utf8.count == 64 && hash.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
++}
++
++private struct AyuPluginCatalogEnvelope: Codable {
++    var format: String
++    var payload: Data
++    var signature: Data
++}
++
++private struct AyuPluginCatalogPayload: Codable {
++    var revision: Int
++    var createdAt: Int64
++    var adapters: [AyuPluginCatalogProof]
++}
++
++private struct AyuPluginCatalogHeader: Decodable {
++    var apiVersion: Int
++    var sourceSHA256: String
++}
++
++public struct AyuPluginCatalogSummary {
++    public let revision: Int
++    public let adapterCount: Int
++    public let requiresNewApp: Int
++    public let unchanged: Bool
++}
++
++private struct AyuPluginCatalogSnapshot {
++    var revision = 0
++    var adapters: [String: AyuPluginManifest] = [:]
++    var requiresNewApp = 0
++    var digest = Data()
++    func summary(unchanged: Bool = false) -> AyuPluginCatalogSummary {
++        return AyuPluginCatalogSummary(revision: self.revision, adapterCount: self.adapters.count, requiresNewApp: self.requiresNewApp, unchanged: unchanged)
++    }
++    static func decode(_ data: Data) throws -> AyuPluginCatalogSnapshot {
++        guard !data.isEmpty, data.count <= AyuPluginCatalogConfiguration.maximumResponseBytes else { throw AyuPluginCatalogError.tooLarge }
++        let envelope = try JSONDecoder().decode(AyuPluginCatalogEnvelope.self, from: data)
++        guard envelope.format == AyuPluginCatalogConfiguration.format,
++              envelope.payload.count <= 1024 * 1024, envelope.signature.count == 64 else { throw AyuPluginCatalogError.invalidCatalog }
++        let key = try Curve25519.Signing.PublicKey(rawRepresentation: AyuPluginCatalogConfiguration.publicKey)
++        guard key.isValidSignature(envelope.signature, for: AyuPluginCatalogConfiguration.catalogDomain + envelope.payload) else { throw AyuPluginCatalogError.invalidSignature }
++        let payload = try JSONDecoder().decode(AyuPluginCatalogPayload.self, from: envelope.payload)
++        guard (1...2147483647).contains(payload.revision), payload.createdAt >= 0, payload.adapters.count <= 128 else { throw AyuPluginCatalogError.invalidCatalog }
++        var snapshot = AyuPluginCatalogSnapshot()
++        snapshot.revision = payload.revision
++        snapshot.digest = Data(SHA256.hash(data: envelope.payload))
++        var hashes = Set<String>()
++        for proof in payload.adapters {
++            guard proof.manifestData.count <= 16384, proof.signature.count == 64,
++                  key.isValidSignature(proof.signature, for: AyuPluginCatalogConfiguration.adapterDomain + proof.manifestData) else { throw AyuPluginCatalogError.invalidSignature }
++            let header = try JSONDecoder().decode(AyuPluginCatalogHeader.self, from: proof.manifestData)
++            guard header.apiVersion >= 1, ayuCatalogValidHash(header.sourceSHA256), hashes.insert(header.sourceSHA256).inserted else { throw AyuPluginCatalogError.invalidCatalog }
++            if header.apiVersion > AyuPluginCatalogConfiguration.maximumAPI {
++                snapshot.requiresNewApp += 1
++                continue
++            }
++            var manifest = try JSONDecoder().decode(AyuPluginManifest.self, from: proof.manifestData)
++            guard manifest.catalogProof == nil else { throw AyuPluginCatalogError.invalidCatalog }
++            manifest.catalogProof = proof
++            try manifest.validate()
++            snapshot.adapters[header.sourceSHA256] = manifest
++        }
++        return snapshot
++    }
++}
++
++/// Catalog data is global to the app. Installed plugin preferences remain per-account.
++public final class AyuPluginCatalogStore {
++    public static let shared: AyuPluginCatalogStore = {
++        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
++        return AyuPluginCatalogStore(directory: base.appendingPathComponent("AyuPluginCatalog", isDirectory: true))
++    }()
++    private let lock = NSLock()
++    private let directory: URL
++    private let file: URL
++    private var value = AyuPluginCatalogSnapshot()
++    private var updating = false
++    public init(directory: URL) {
++        self.directory = directory
++        self.file = directory.appendingPathComponent("catalog.json")
++        if let attributes = try? FileManager.default.attributesOfItem(atPath: self.file.path),
++           let size = attributes[.size] as? NSNumber, size.intValue <= AyuPluginCatalogConfiguration.maximumResponseBytes,
++           let data = try? Data(contentsOf: self.file), let snapshot = try? AyuPluginCatalogSnapshot.decode(data) {
++            self.value = snapshot
++        }
++    }
++    public var summary: AyuPluginCatalogSummary {
++        self.lock.lock(); defer { self.lock.unlock() }
++        return self.value.summary()
++    }
++    public func manifest(sourceSHA256: String) -> AyuPluginManifest? {
++        self.lock.lock(); defer { self.lock.unlock() }
++        return self.value.adapters[sourceSHA256]
++    }
++    @discardableResult public func apply(_ data: Data) throws -> AyuPluginCatalogSummary {
++        let snapshot = try AyuPluginCatalogSnapshot.decode(data)
++        self.lock.lock(); defer { self.lock.unlock() }
++        guard snapshot.revision >= self.value.revision else { throw AyuPluginCatalogError.rollback }
++        if snapshot.revision == self.value.revision {
++            guard snapshot.digest == self.value.digest else { throw AyuPluginCatalogError.rollback }
++            return self.value.summary(unchanged: true)
++        }
++        try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
++        #if os(iOS)
++        try data.write(to: self.file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
++        #else
++        try data.write(to: self.file, options: .atomic)
++        #endif
++        var excluded = self.directory
++        var resources = URLResourceValues(); resources.isExcludedFromBackup = true
++        try? excluded.setResourceValues(resources)
++        self.value = snapshot
++        return snapshot.summary()
++    }
++    public func update(completion: @escaping (Result<AyuPluginCatalogSummary, Error>) -> Void) {
++        self.lock.lock()
++        if self.updating {
++            self.lock.unlock()
++            DispatchQueue.main.async { completion(.failure(AyuPluginCatalogError.alreadyUpdating)) }
++            return
++        }
++        self.updating = true
++        self.lock.unlock()
++        let download = AyuPluginCatalogDownload { result in
++            let applied = result.flatMap { data in Result { try self.apply(data) } }
++            self.lock.lock(); self.updating = false; self.lock.unlock()
++            DispatchQueue.main.async { completion(applied) }
++        }
++        download.start()
++    }
++}
++
++private final class AyuPluginCatalogDownload: NSObject, URLSessionDataDelegate, @unchecked Sendable {
++    private let completion: (Result<Data, Error>) -> Void
++    private var session: URLSession?
++    private var data = Data()
++    private var failure: Error?
++    private var finished = false
++    init(completion: @escaping (Result<Data, Error>) -> Void) { self.completion = completion; super.init() }
++    func start() {
++        let configuration = URLSessionConfiguration.ephemeral
++        configuration.timeoutIntervalForRequest = 30
++        configuration.timeoutIntervalForResource = 45
++        configuration.httpShouldSetCookies = false
++        configuration.httpCookieStorage = nil
++        configuration.urlCredentialStorage = nil
++        configuration.urlCache = nil
++        let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
++        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
++        self.session = session
++        var components = URLComponents(url: AyuPluginCatalogConfiguration.url, resolvingAgainstBaseURL: false)!
++        components.queryItems = [URLQueryItem(name: "revisionCheck", value: UUID().uuidString)]
++        var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData)
++        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
++        session.dataTask(with: request).resume()
++    }
++    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
++        self.failure = AyuPluginCatalogError.http(response.statusCode)
++        completionHandler(nil)
++    }
++    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
++        guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
++            self.failure = AyuPluginCatalogError.http((response as? HTTPURLResponse)?.statusCode ?? 0)
++            completionHandler(.cancel); return
++        }
++        if response.expectedContentLength > Int64(AyuPluginCatalogConfiguration.maximumResponseBytes) {
++            self.failure = AyuPluginCatalogError.tooLarge
++            completionHandler(.cancel); return
++        }
++        completionHandler(.allow)
++    }
++    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
++        guard self.data.count + data.count <= AyuPluginCatalogConfiguration.maximumResponseBytes else {
++            self.failure = AyuPluginCatalogError.tooLarge
++            dataTask.cancel(); return
++        }
++        self.data.append(data)
++    }
++    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
++        guard !self.finished else { return }
++        self.finished = true
++        session.finishTasksAndInvalidate()
++        if let failure = self.failure { self.completion(.failure(failure)) }
++        else if error != nil { self.completion(.failure(AyuPluginCatalogError.network)) }
++        else { self.completion(.success(self.data)) }
++        self.session = nil
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..7e103d2e
+index 00000000..1007932d
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,442 @@
+@@ -0,0 +1,452 @@
 +import Foundation
 +import CryptoKit
 +
@@ -72486,17 +72804,18 @@ index 00000000..7e103d2e
 +    public var actions: [AyuPluginAction]
 +    public var convertedFrom: String?
 +    public var sourceSHA256: String?
++    public var catalogProof: AyuPluginCatalogProof?
 +    public var limitations: [String]
-+    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = []) {
++    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = [], catalogProof: AyuPluginCatalogProof? = nil) {
 +        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
-+        self.apiVersion = actions.contains(where: { $0.program != nil }) ? 6 : actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
-+        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations
++        self.apiVersion = catalogProof != nil ? 7 : actions.contains(where: { $0.program != nil }) ? 6 : actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
++        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations; self.catalogProof = catalogProof
 +    }
 +    public func validate() throws {
 +        let validID: (String) -> Bool = { text in
 +            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
 +        }
-+        guard self.format == "ayugram-ios-plugin", (1...6).contains(self.apiVersion), validID(self.id),
++        guard self.format == "ayugram-ios-plugin", (1...7).contains(self.apiVersion), validID(self.id),
 +              !self.name.isEmpty, self.name.count <= 64, !self.author.isEmpty, self.author.count <= 128,
 +              !self.version.isEmpty, self.version.count <= 32, self.summary.count <= 2048,
 +              !self.actions.isEmpty, self.actions.count <= 8, Set(self.actions.map(\.id)).count == self.actions.count,
@@ -72530,6 +72849,10 @@ index 00000000..7e103d2e
 +                      action.condition == nil || action.prefix == nil,
 +                      action.replacementCount.map({ (0...4096).contains($0) }) ?? true else { throw AyuPluginError.invalidManifest }
 +            } else if action.prefix != nil || action.condition != nil || action.replacementCount != nil { throw AyuPluginError.invalidManifest }
++        }
++        if self.apiVersion == 7 || self.convertedFrom == AyuPluginCatalogConfiguration.marker || self.catalogProof != nil {
++            guard self.apiVersion == 7, self.convertedFrom == AyuPluginCatalogConfiguration.marker, let proof = self.catalogProof else { throw AyuPluginError.invalidManifest }
++            try proof.verify(manifest: self)
 +        }
 +    }
 +    public var permissions: [String] { return Array(Set(self.actions.map(\.permission))).sorted() }
@@ -72746,6 +73069,10 @@ index 00000000..7e103d2e
 +                guard sample.replacingOccurrences(of: find, with: replacement, options: .literal).utf8.count <= sample.utf8.count else { throw AyuPluginError.invalidInput }
 +            }
 +        }
++        if manifest.convertedFrom == AyuPluginCatalogConfiguration.marker {
++            // prepare/parse already verified the portable per-adapter signature.
++            return prepared
++        }
 +        if manifest.convertedFrom != nil {
 +            if manifest.convertedFrom == AyuAndroidPluginConverter.templateID || manifest.convertedFrom == AyuTextProgram.converterID {
 +                guard let hash = manifest.sourceSHA256, hash.count == 64, hash.allSatisfy({ $0.isHexDigit }),
@@ -72764,7 +73091,7 @@ index 00000000..7e103d2e
 +public enum AyuPluginImporter {
 +    /// Unlim Accounts embeds its Android runtime and is 2.6 MB; only its hash is used.
 +    public static let maximumFileBytes = 4 * 1024 * 1024
-+    public static func parse(_ data: Data, filename: String) throws -> AyuPluginManifest {
++    public static func parse(_ data: Data, filename: String, catalog: AyuPluginCatalogStore = .shared) throws -> AyuPluginManifest {
 +        guard (filename as NSString).pathExtension.lowercased() == "plugin", !data.isEmpty, data.count <= self.maximumFileBytes else { throw AyuPluginError.invalidFile }
 +        if let manifest = try? JSONDecoder().decode(AyuPluginManifest.self, from: data) {
 +            try manifest.validate()
@@ -72772,6 +73099,7 @@ index 00000000..7e103d2e
 +        }
 +        // Conversion is a reviewed native adapter, never a metadata-based execution shortcut.
 +        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
++        if let downloaded = catalog.manifest(sourceSHA256: hash) { return downloaded }
 +        if let reviewed = try? self.reviewedAdapter(sourceSHA256: hash) { return reviewed }
 +        if let converted = try? AyuAndroidPluginConverter.convert(data, sourceSHA256: hash) { return converted }
 +        #if !AYU_POSTBOX_TESTS
@@ -142878,10 +143206,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..2a18e88e
+index 00000000..22c4c149
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,867 @@
+@@ -0,0 +1,920 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -143358,7 +143686,7 @@ index 00000000..2a18e88e
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data(repeating: 0, count: AyuPluginImporter.maximumFileBytes + 1), filename: "test.plugin") }, "File size checked before parsing")
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data("__id__ = 'search_plus'\nraise Exception()".utf8), filename: "test.plugin") }, "Spoofed Android metadata must not select the reviewed adapter or execute code")
 +var invalidPlugin = plugin
-+invalidPlugin.apiVersion = 7
++invalidPlugin.apiVersion = 8
 +check(pluginThrows { try invalidPlugin.validate() }, "Unknown plugin ABI rejected")
 +invalidPlugin = plugin; invalidPlugin.id = "../escape"
 +check(pluginThrows { try invalidPlugin.validate() }, "Path-like IDs rejected")
@@ -143749,6 +144077,59 @@ index 00000000..2a18e88e
 +let unknownProgram = try JSONDecoder().decode(AyuTextProgram.self, from: Data(#"{"instructions":[{"op":"executePython"}]}"#.utf8))
 +check(pluginThrows { try unknownProgram.validate() }, "Native evaluator rejects unmapped instructions")
 +print("PASS: \(checks) model checks including persisted AST-converted text programs")
++
++let otaDirectory = root.appendingPathComponent("ota-catalog", isDirectory: true)
++let otaCatalog = AyuPluginCatalogStore(directory: otaDirectory)
++let otaSource = try Data(contentsOf: pluginFixtures.appendingPathComponent("ota_lowercase_demo.plugin"))
++check(pluginThrows { _ = try AyuPluginImporter.parse(otaSource, filename: "ota.plugin", catalog: otaCatalog) }, "A new helper-method plugin is unsupported before downloading its adapter")
++let catalogData = try Data(contentsOf: pluginFixtures.deletingLastPathComponent().appendingPathComponent("plugin-catalog/catalog.json"))
++let catalogSummary = try otaCatalog.apply(catalogData)
++check(catalogSummary.revision == 2 && catalogSummary.adapterCount == 5, "Signed public catalog activates five reviewed adapters")
++let otaManifest = try AyuPluginImporter.parse(otaSource, filename: "ota.plugin", catalog: otaCatalog)
++check(otaManifest.id == "ota_lowercase_demo" && otaManifest.apiVersion == 7 && otaManifest.catalogProof != nil, "The same original source is supported after catalog refresh without changing the native converter")
++var otaRegistry = AyuPluginRegistry()
++try otaRegistry.installAndActivate(AyuPluginActivation.prepare(otaManifest))
++check(otaRegistry.outgoingText("HeLLo") == "hello", "Downloaded adapter performs its mapped native function")
++let cachedCatalog = AyuPluginCatalogStore(directory: otaDirectory)
++check(cachedCatalog.summary.revision == 2 && cachedCatalog.manifest(sourceSHA256: otaManifest.sourceSHA256!) == otaManifest, "Signed adapters survive cache reload")
++let repeatedCatalog = try otaCatalog.apply(catalogData)
++check(repeatedCatalog.unchanged, "Refreshing the same signed catalog is idempotent")
++let oldCatalogData = try Data(contentsOf: pluginFixtures.appendingPathComponent("catalog_revision1.fixture.json"))
++check(pluginThrows { _ = try otaCatalog.apply(oldCatalogData) }, "A valid but older signed catalog cannot roll the cache back")
++var forgedManifest = otaManifest
++forgedManifest.name = "Forged title"
++check(pluginThrows { try forgedManifest.validate() }, "Catalog proof binds all adapter fields")
++var normalizedManifest = otaManifest
++normalizedManifest.summary = normalizedManifest.summary.replacingOccurrences(of: "é", with: "e\u{301}")
++check(normalizedManifest.summary == otaManifest.summary, "The normalization test uses canonically equivalent Swift strings")
++check(pluginThrows { try normalizedManifest.validate() }, "Canonically equivalent but byte-distinct literal data cannot reuse a catalog signature")
++var invalidProofManifest = otaManifest
++invalidProofManifest.catalogProof!.signature[0] ^= 1
++check(pluginThrows { try invalidProofManifest.validate() }, "A forged per-adapter signature is rejected")
++var unsignedCatalogManifest = otaManifest; unsignedCatalogManifest.catalogProof = nil
++check(pluginThrows { try unsignedCatalogManifest.validate() }, "API 7 cannot be activated without its portable signature")
++var corruptEnvelope = try JSONSerialization.jsonObject(with: catalogData) as! [String: Any]
++var corruptSignature = Data(base64Encoded: corruptEnvelope["signature"] as! String)!
++corruptSignature[0] ^= 1; corruptEnvelope["signature"] = corruptSignature.base64EncodedString()
++let corruptCatalog = try JSONSerialization.data(withJSONObject: corruptEnvelope)
++check(pluginThrows { _ = try otaCatalog.apply(corruptCatalog) }, "A forged catalog cannot replace the last working cache")
++check(pluginThrows { _ = try otaCatalog.apply(Data(repeating: 0, count: AyuPluginCatalogConfiguration.maximumResponseBytes + 1)) }, "Oversized catalogs fail before JSON parsing")
++let retainedCatalogData = try Data(contentsOf: otaDirectory.appendingPathComponent("catalog.json"))
++check(retainedCatalogData == catalogData && otaCatalog.summary.revision == 2, "Failed updates preserve cached bytes and active adapters")
++check(pluginThrows { _ = try AyuPluginImporter.parse(otaSource + Data("\n# edited source".utf8), filename: "edited.plugin", catalog: otaCatalog) }, "Catalog recognition requires the exact original file hash")
++let otaExport = try AyuPluginImporter.export(otaManifest)
++try FileManager.default.removeItem(at: otaDirectory)
++let offlineOTA = try AyuPluginActivation.prepare(AyuPluginImporter.parse(otaExport, filename: "exported.plugin", catalog: AyuPluginCatalogStore(directory: otaDirectory)))
++check(offlineOTA == otaManifest, "An exported adapter carries its proof and remains activatable without a downloaded catalog")
++let restoredOTARegistry = try JSONDecoder().decode(AyuPluginRegistry.self, from: JSONEncoder().encode(otaRegistry))
++try restoredOTARegistry.validate()
++check(restoredOTARegistry.outgoingText("AFTER RESTART") == "after restart", "Installed OTA plugins remain functional offline after settings persistence")
++let blockedCatalogURL = root.appendingPathComponent("blocked-catalog")
++try Data("not a directory".utf8).write(to: blockedCatalogURL)
++let blockedCatalog = AyuPluginCatalogStore(directory: blockedCatalogURL)
++check(pluginThrows { _ = try blockedCatalog.apply(catalogData) }, "Catalog activation requires a successful disk write")
++check(blockedCatalog.summary.revision == 0, "Disk failure does not expose a nonpersisted adapter snapshot")
++print("PASS: \(checks) model checks including signed OTA adapters, exact-file import, rollback protection and offline activation")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

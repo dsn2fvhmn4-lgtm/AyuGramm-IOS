@@ -2,7 +2,7 @@ name: Native iOS port
 
 # Mirrors codemagic.yaml: cheap source checks run before the large native dependency
 # download, so most source errors fail within a few minutes. Pushes to main that touch
-# the port start a build; documentation-only pushes do not.
+# the port start an optimized release_arm64 build; documentation-only pushes do not.
 on:
   push:
     branches: [main]
@@ -16,10 +16,10 @@ on:
   workflow_dispatch:
     inputs:
       configuration:
-        description: Native build configuration (debug_arm64 compiles much faster; both are unsigned)
+        description: Native build configuration (release_arm64 is the small optimized IPA; debug_arm64 compiles faster but is ~500 MB)
         type: choice
-        default: debug_arm64
-        options: [debug_arm64, release_arm64, debug_sim_arm64]
+        default: release_arm64
+        options: [release_arm64, debug_arm64, debug_sim_arm64]
       native_build:
         description: Run the full native build after source checks
         type: boolean
@@ -35,7 +35,7 @@ concurrency:
 env:
   PYTHONUNBUFFERED: "1"
   AYU_SKIP_DSYM: "1"
-  CONFIGURATION: ${{ inputs.configuration || 'debug_arm64' }}
+  CONFIGURATION: ${{ inputs.configuration || 'release_arm64' }}
 
 jobs:
   build:

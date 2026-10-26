@@ -68872,10 +68872,10 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..e9f6b11f
+index 00000000..85977d72
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,740 @@
+@@ -0,0 +1,792 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -68964,118 +68964,166 @@ index 00000000..e9f6b11f
 +    }
 +}
 +
-+private enum AyuHubEntry: ItemListNodeEntry {
-+    case categoriesHeader(String)
-+    case category(Int32, String, UIImage?)
-+    case linksHeader(String)
-+    case link(Int32, String, String, UIImage?)
-+    case info(String)
-+
-+    var section: ItemListSectionId {
-+        switch self {
-+        case .categoriesHeader, .category: return 0
-+        case .linksHeader, .link, .info: return 1
-+        }
-+    }
-+
-+    // Entries are listed in display order; the list requires ascending stable ids.
-+    var stableId: Int32 {
-+        switch self {
-+        case .categoriesHeader: return 0
-+        case let .category(index, _, _): return 1 + index
-+        case .linksHeader: return 100
-+        case let .link(index, _, _, _): return 101 + index
-+        case .info: return 200
-+        }
-+    }
-+
-+    static func < (lhs: AyuHubEntry, rhs: AyuHubEntry) -> Bool { return lhs.stableId < rhs.stableId }
-+
-+    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
-+        let arguments = arguments as! AyuHubArguments
-+        switch self {
-+        case let .categoriesHeader(text), let .linksHeader(text):
-+            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
-+        case let .category(index, title, icon):
-+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, label: "", sectionId: self.section, style: .blocks, action: { arguments.openCategory(Int(index)) })
-+        case let .link(index, title, label, icon):
-+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.openLink(Int(index)) })
-+        case let .info(text):
-+            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
-+        }
-+    }
++private func ayuAppVersion() -> String {
++    return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
 +}
 +
-+private struct AyuHubArguments {
-+    let openCategory: (Int) -> Void
-+    let openLink: (Int) -> Void
-+}
-+
-+private enum AyuHubCategory: CaseIterable {
-+    case ayuGram, filters, general, appearance, chats, plugins
-+
-+    func title(_ ru: Bool) -> String {
-+        switch self {
-+        case .ayuGram: return "AyuGram"
-+        case .filters: return ru ? "Фильтры" : "Filters"
-+        case .general: return ru ? "Основные" : "General"
-+        case .appearance: return ru ? "Оформление" : "Appearance"
-+        case .chats: return ru ? "Чаты" : "Chats"
-+        case .plugins: return ru ? "Плагины" : "Plugins"
-+        }
-+    }
-+
-+    var icon: UIImage? {
-+        switch self {
-+        case .ayuGram: return AyuSettingsIcons.logo
-+        case .filters: return AyuSettingsIcons.symbol("line.3.horizontal.decrease", color: UIColor(rgb: 0xFF3B30))
-+        case .general: return AyuSettingsIcons.symbol("gearshape.fill", color: UIColor(rgb: 0x8E8E93))
-+        case .appearance: return AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0x32ADE6))
-+        case .chats: return AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x34C759))
-+        case .plugins: return AyuSettingsIcons.symbol("puzzlepiece.extension.fill", color: UIColor(rgb: 0xAF52DE))
-+        }
-+    }
-+}
-+
++/// exteraGram preferences (MainPreferencesActivity): the logo header, then Categories
++/// (General, Appearance, Chats, Other) and Links, in the Android order.
 +public func ayuSettingsController(context: AccountContext) -> ViewController {
 +    var push: ((ViewController) -> Void)?
 +    var navigation: (() -> NavigationController?)?
-+    let categories = AyuHubCategory.allCases
-+    let arguments = AyuHubArguments(openCategory: { index in
-+        switch categories[index] {
-+        case .ayuGram: push?(ayuSettingsCategoryController(context: context, category: 0))
-+        case .filters: push?(ayuChatOptionsController(context: context, regex: true))
-+        case .general: push?(ayuGeneralSettingsController(context: context))
-+        case .appearance: push?(ayuSettingsCategoryController(context: context, category: 3))
-+        case .chats: push?(ayuSettingsCategoryController(context: context, category: 4))
-+        case .plugins: ayuPresentPlugins(context: context)
++    let arguments = AyuSectionedArguments(open: { id in
++        switch id {
++        case 11: push?(ayuGeneralSettingsController(context: context))
++        case 12: push?(ayuSettingsCategoryController(context: context, category: 3))
++        case 13: push?(ayuSettingsCategoryController(context: context, category: 4))
++        case 14: push?(ayuOtherSettingsController(context: context, navigation: navigation?()))
++        case 21: ayuOpenChannel(context: context, navigation: navigation?())
++        case 22: context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
++        default: break
 +        }
-+    }, openLink: { index in
-+        if index == 0 {
-+            ayuOpenChannel(context: context, navigation: navigation?())
-+        } else {
-+            context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
-+        }
-+    })
++    }, toggle: { _, _ in })
++    let icons: [Int32: UIImage?] = [
++        11: AyuSettingsIcons.symbol("gearshape.fill", color: UIColor(rgb: 0x8E8E93)),
++        12: AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0x32ADE6)),
++        13: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x34C759)),
++        14: AyuSettingsIcons.symbol("star.fill", color: UIColor(rgb: 0xFF9500)),
++        21: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
++        22: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
++    ]
 +    let signal = context.sharedContext.presentationData
 +    |> deliverOnMainQueue
 +    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
-+        var entries: [AyuHubEntry] = [.categoriesHeader(ru ? "НАСТРОЙКИ" : "SETTINGS")]
-+        for (index, category) in categories.enumerated() {
-+            entries.append(.category(Int32(index), category.title(ru), category.icon))
-+        }
-+        entries.append(.linksHeader(ru ? "ССЫЛКИ" : "LINKS"))
-+        entries.append(.link(0, ru ? "Канал" : "Channel", "@neosay1337", AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF))))
-+        entries.append(.link(1, ru ? "Исходный код и документация" : "Source and documentation", "", AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))))
-+        entries.append(.info(ru ? "Неофициальный клиент. Оригинальные AyuGram Android и Desktop используются как источники поведения и оформления. Полный перенос функций ещё продолжается." : "Unofficial client. Original AyuGram Android and Desktop inform behavior and appearance. Full feature parity is still in progress."))
++        let entries: [AyuSectionedEntry] = [
++            .logo(0, 0, "AyuGram \(ayuAppVersion())", ru ? "Просто клиент на базе exteraGram с запретным функционалом." : "Just an exteraGram based client with ToS breaking features in mind."),
++            .header(1, 10, ru ? "КАТЕГОРИИ" : "CATEGORIES"),
++            .link(1, 11, icons[11] ?? nil, ru ? "Основные" : "General", ""),
++            .link(1, 12, icons[12] ?? nil, ru ? "Оформление" : "Appearance", ""),
++            .link(1, 13, icons[13] ?? nil, ru ? "Чаты" : "Chats", ""),
++            .link(1, 14, icons[14] ?? nil, ru ? "Другое" : "Other", ""),
++            .header(2, 20, ru ? "ССЫЛКИ" : "LINKS"),
++            .link(2, 21, icons[21] ?? nil, ru ? "Канал" : "Channel", "@neosay1337"),
++            .link(2, 22, icons[22] ?? nil, ru ? "Исходный код" : "Source Code", "GitHub")
++        ]
 +        let data = ItemListPresentationData(presentationData)
-+        let state = ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        let state = ItemListControllerState(presentationData: data, title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
 +    navigation = { [weak controller] in controller?.navigationController as? NavigationController }
++    return controller
++}
++
++/// AyuGram preferences (AyuGramPreferencesActivity), opened from its own Settings row.
++public func ayuGramPreferencesController(context: AccountContext) -> ViewController {
++    var push: ((ViewController) -> Void)?
++    let arguments = AyuSectionedArguments(open: { id in
++        switch id {
++        case 1: push?(ayuGhostModeController(context: context))
++        case 2: ayuPresentAdvancedSettings(context: context, page: .sending)
++        case 11: push?(ayuMessageHistoryController(context: context))
++        case 12: ayuPresentMediaArchive(context: context)
++        case 21: ayuPresentAdvancedSettings(context: context, page: .cosmetics)
++        case 22: push?(ayuChatOptionsController(context: context, regex: true))
++        case 23: ayuPresentPlugins(context: context)
++        default: break
++        }
++    }, toggle: { _, _ in })
++    let icons: [Int32: UIImage?] = [
++        1: AyuSettingsIcons.symbol("eye.slash.fill", color: UIColor(rgb: 0x8E5CF7)),
++        2: AyuSettingsIcons.symbol("eye.slash.circle.fill", color: UIColor(rgb: 0x5856D6)),
++        11: AyuSettingsIcons.symbol("clock.arrow.circlepath", color: UIColor(rgb: 0xFF9500)),
++        12: AyuSettingsIcons.symbol("photo.on.rectangle.angled", color: UIColor(rgb: 0x34C759)),
++        21: AyuSettingsIcons.symbol("star.circle.fill", color: UIColor(rgb: 0xAF52DE)),
++        22: AyuSettingsIcons.symbol("line.3.horizontal.decrease", color: UIColor(rgb: 0xFF3B30)),
++        23: AyuSettingsIcons.symbol("puzzlepiece.extension.fill", color: UIColor(rgb: 0x007AFF))
++    ]
++    let signal = context.sharedContext.presentationData
++    |> deliverOnMainQueue
++    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let entries: [AyuSectionedEntry] = [
++            .header(0, 0, ru ? "ПРИЗРАК" : "GHOST ESSENTIALS"),
++            .link(0, 1, icons[1] ?? nil, "Ghost Mode", ""),
++            .link(0, 2, icons[2] ?? nil, "Ghost Mode+", ""),
++            .header(1, 10, ru ? "ШПИОН" : "SPY ESSENTIALS"),
++            .link(1, 11, icons[11] ?? nil, ru ? "История сообщений" : "Message History", ""),
++            .link(1, 12, icons[12] ?? nil, ru ? "Медиаархив" : "Media Archive", ""),
++            .header(2, 20, ru ? "ПОЛЕЗНОЕ" : "QOL TOGGLES"),
++            .link(2, 21, icons[21] ?? nil, ru ? "Локальный Premium и статус" : "Local Premium and status", ""),
++            .link(2, 22, icons[22] ?? nil, ru ? "Фильтры" : "Filters", ""),
++            .link(2, 23, icons[23] ?? nil, ru ? "Плагины" : "Plugins", "")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Настройки AyuGram" : "AyuGram Preferences"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    push = { [weak controller] in controller?.push($0) }
++    return controller
++}
++
++/// exteraGram "Other" (OtherPreferencesActivity): reset the client's display settings and
++/// delete the account. The Android Google analytics toggles have no counterpart in this build.
++private func ayuOtherSettingsController(context: AccountContext, navigation: NavigationController?) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var present: ((ViewController) -> Void)?
++    let arguments = AyuSectionedArguments(open: { id in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        let ru = data.strings.baseLanguageCode.hasPrefix("ru")
++        switch id {
++        case 1:
++            present?(textAlertController(context: context, title: ru ? "Сбросить настройки" : "Reset Settings", text: ru ? "Настройки интерфейса, оформления, MessageShot и реакций вернутся к стандартным. Ghost Mode, история, фильтры и плагины не меняются." : "Interface, appearance, MessageShot and reaction settings return to their defaults. Ghost Mode, history, filters and plugins are kept.", actions: [TextAlertAction(type: .genericAction, title: data.strings.Common_Cancel, action: {}), TextAlertAction(type: .destructiveAction, title: ru ? "Сбросить" : "Reset", action: {
++                do {
++                    try store.update {
++                        $0.interface = AyuInterfaceSettings()
++                        $0.appearance = AyuAppearanceSettings()
++                        $0.messageShot = AyuMessageShotSettings()
++                        $0.reactionDisplay = AyuReactionDisplaySettings()
++                    }
++                    present?(textAlertController(context: context, title: "AyuGram", text: ru ? "Настройки сброшены." : "Preferences have been reset.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
++                } catch {
++                    present?(textAlertController(context: context, title: "AyuGram", text: ru ? "Не удалось сбросить настройки." : "Settings could not be reset.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
++                }
++            })]))
++        case 2:
++            guard let navigation else {
++                return
++            }
++            // Telegram's own deletion flow, with its confirmations and two-step password check.
++            let _ = (context.engine.auth.twoStepVerificationConfiguration()
++            |> take(1)
++            |> deliverOnMainQueue).startStandalone(next: { configuration in
++                let access = TwoStepVerificationAccessConfiguration(configuration: configuration, password: nil)
++                var hasTwoStepAuth = false
++                if case .set = access {
++                    hasTwoStepAuth = true
++                }
++                navigation.pushViewController(deleteAccountOptionsController(context: context, navigationController: navigation, hasTwoStepAuth: hasTwoStepAuth, twoStepAuthData: access))
++            })
++        default:
++            break
++        }
++    }, toggle: { _, _ in })
++    let resetIcon = AyuSettingsIcons.symbol("arrow.counterclockwise", color: UIColor(rgb: 0x8E8E93))
++    let deleteIcon = AyuSettingsIcons.symbol("trash.fill", color: UIColor(rgb: 0xFF3B30))
++    let signal = context.sharedContext.presentationData
++    |> deliverOnMainQueue
++    |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let entries: [AyuSectionedEntry] = [
++            .link(0, 1, resetIcon, ru ? "Сбросить настройки" : "Reset Settings", ""),
++            .link(0, 2, deleteIcon, ru ? "Удалить аккаунт" : "Delete Account", "")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Другое" : "Other"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    present = { [weak controller] in controller?.present($0, in: .window(.root)) }
 +    return controller
 +}
 +
@@ -69176,6 +69224,7 @@ index 00000000..e9f6b11f
 +/// Rows of an exteraGram-style page: headed sections of rows with icons. Stable ids must
 +/// ascend in display order (ItemListController requirement).
 +private enum AyuSectionedEntry: ItemListNodeEntry {
++    case logo(Int32, Int32, String, String)
 +    case header(Int32, Int32, String)
 +    case link(Int32, Int32, UIImage?, String, String)
 +    case toggle(Int32, Int32, UIImage?, String, String?, Bool)
@@ -69183,14 +69232,14 @@ index 00000000..e9f6b11f
 +
 +    var section: ItemListSectionId {
 +        switch self {
-+        case let .header(section, _, _), let .link(section, _, _, _, _), let .toggle(section, _, _, _, _, _), let .info(section, _, _):
++        case let .logo(section, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .toggle(section, _, _, _, _, _), let .info(section, _, _):
 +            return section
 +        }
 +    }
 +
 +    var stableId: Int32 {
 +        switch self {
-+        case let .header(_, id, _), let .link(_, id, _, _, _), let .toggle(_, id, _, _, _, _), let .info(_, id, _):
++        case let .logo(_, id, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .toggle(_, id, _, _, _, _), let .info(_, id, _):
 +            return id
 +        }
 +    }
@@ -69199,6 +69248,7 @@ index 00000000..e9f6b11f
 +
 +    static func == (lhs: AyuSectionedEntry, rhs: AyuSectionedEntry) -> Bool {
 +        switch (lhs, rhs) {
++        case let (.logo(ls, li, lt, lx), .logo(rs, ri, rt, rx)): return ls == rs && li == ri && lt == rt && lx == rx
 +        case let (.header(ls, li, lt), .header(rs, ri, rt)): return ls == rs && li == ri && lt == rt
 +        case let (.link(ls, li, _, lt, ll), .link(rs, ri, _, rt, rl)): return ls == rs && li == ri && lt == rt && ll == rl
 +        case let (.toggle(ls, li, _, lt, lx, lv), .toggle(rs, ri, _, rt, rx, rv)): return ls == rs && li == ri && lt == rt && lx == rx && lv == rv
@@ -69210,6 +69260,8 @@ index 00000000..e9f6b11f
 +    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
 +        let arguments = arguments as! AyuSectionedArguments
 +        switch self {
++        case let .logo(_, _, title, text):
++            return AyuSettingsHeaderItem(theme: presentationData.theme, title: title, text: text, sectionId: self.section)
 +        case let .header(_, _, text):
 +            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
 +        case let .link(_, id, icon, title, label):
@@ -69615,6 +69667,149 @@ index 00000000..e9f6b11f
 +        })
 +    }
 +    return controller
++}
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsHeaderItem.swift b/submodules/SettingsUI/Sources/AyuSettingsHeaderItem.swift
+new file mode 100644
+index 00000000..dc9746ca
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuSettingsHeaderItem.swift
+@@ -0,0 +1,137 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++import SwiftSignalKit
++import TelegramPresentationData
++import ItemListUI
++import AppBundle
++
++/// The exteraGram preferences header (HeaderSettingsCell): the round app logo, then the app
++/// name with its version and a one-line description, centered above the categories.
++final class AyuSettingsHeaderItem: ListViewItem, ItemListItem {
++    let theme: PresentationTheme
++    let title: String
++    let text: String
++    let sectionId: ItemListSectionId
++
++    init(theme: PresentationTheme, title: String, text: String, sectionId: ItemListSectionId) {
++        self.theme = theme
++        self.title = title
++        self.text = text
++        self.sectionId = sectionId
++    }
++
++    func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
++        async {
++            let node = AyuSettingsHeaderItemNode()
++            let (layout, apply) = node.asyncLayout()(self, params, itemListNeighbors(item: self, topFacet: neighbors.previous?.base(ItemListNeighborFacet.self), bottomFacet: neighbors.next?.base(ItemListNeighborFacet.self)))
++            node.contentSize = layout.contentSize
++            node.insets = layout.insets
++            Queue.mainQueue().async {
++                completion(node, {
++                    return (nil, { _ in apply() })
++                })
++            }
++        }
++    }
++
++    func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, neighbors: ListViewItemNeighbors, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {
++        Queue.mainQueue().async {
++            guard let nodeValue = node() as? AyuSettingsHeaderItemNode else {
++                assertionFailure()
++                return
++            }
++            let makeLayout = nodeValue.asyncLayout()
++            async {
++                let (layout, apply) = makeLayout(self, params, itemListNeighbors(item: self, topFacet: neighbors.previous?.base(ItemListNeighborFacet.self), bottomFacet: neighbors.next?.base(ItemListNeighborFacet.self)))
++                Queue.mainQueue().async {
++                    completion(layout, { _ in
++                        apply()
++                    })
++                }
++            }
++        }
++    }
++}
++
++private let logoSize = CGSize(width: 100.0, height: 100.0)
++
++private let logoImage: UIImage? = generateImage(logoSize, rotatedContext: { size, context in
++    let bounds = CGRect(origin: CGPoint(), size: size)
++    context.clear(bounds)
++    context.addEllipse(in: bounds)
++    context.clip()
++    if let image = UIImage(bundleImageName: "AyuGram/Brand") {
++        UIGraphicsPushContext(context)
++        image.draw(in: bounds)
++        UIGraphicsPopContext()
++    } else {
++        context.setFillColor(UIColor(rgb: 0x8E5CF7).cgColor)
++        context.fill(bounds)
++    }
++})
++
++final class AyuSettingsHeaderItemNode: ListViewItemNode {
++    private let logoNode: ASImageNode
++    private let titleNode: TextNode
++    private let textNode: TextNode
++
++    init() {
++        self.logoNode = ASImageNode()
++        self.logoNode.isLayerBacked = true
++        self.logoNode.displaysAsynchronously = false
++        self.logoNode.image = logoImage
++
++        self.titleNode = TextNode()
++        self.titleNode.isUserInteractionEnabled = false
++        self.titleNode.contentsScale = UIScreen.main.scale
++
++        self.textNode = TextNode()
++        self.textNode.isUserInteractionEnabled = false
++        self.textNode.contentsScale = UIScreen.main.scale
++
++        super.init(layerBacked: false)
++
++        self.addSubnode(self.logoNode)
++        self.addSubnode(self.titleNode)
++        self.addSubnode(self.textNode)
++    }
++
++    func asyncLayout() -> (_ item: AyuSettingsHeaderItem, _ params: ListViewItemLayoutParams, _ neighbors: ItemListNeighbors) -> (ListViewItemNodeLayout, () -> Void) {
++        let makeTitleLayout = TextNode.asyncLayout(self.titleNode)
++        let makeTextLayout = TextNode.asyncLayout(self.textNode)
++
++        return { [weak self] item, params, neighbors in
++            let width = params.width - params.leftInset - params.rightInset - 64.0
++            let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: Font.semibold(22.0), textColor: item.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), alignment: .center, cutout: nil, insets: UIEdgeInsets()))
++            let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.text, font: Font.regular(14.0), textColor: item.theme.list.freeTextColor), backgroundColor: nil, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), alignment: .center, lineSpacing: 0.1, cutout: nil, insets: UIEdgeInsets()))
++
++            let topInset: CGFloat = 8.0
++            let titleY = topInset + logoSize.height + 16.0
++            let textY = titleY + titleLayout.size.height + 6.0
++            let contentSize = CGSize(width: params.width, height: textY + textLayout.size.height + 8.0)
++            let layout = ListViewItemNodeLayout(contentSize: contentSize, insets: itemListNeighborsGroupedInsets(neighbors, params))
++
++            return (layout, { [weak self] in
++                guard let self else {
++                    return
++                }
++                self.accessibilityLabel = "\(item.title), \(item.text)"
++                let _ = titleApply()
++                let _ = textApply()
++                self.logoNode.frame = CGRect(origin: CGPoint(x: floor((params.width - logoSize.width) / 2.0), y: topInset), size: logoSize)
++                self.titleNode.frame = CGRect(origin: CGPoint(x: floor((params.width - titleLayout.size.width) / 2.0), y: titleY), size: titleLayout.size)
++                self.textNode.frame = CGRect(origin: CGPoint(x: floor((params.width - textLayout.size.width) / 2.0), y: textY), size: textLayout.size)
++            })
++        }
++    }
++
++    override func animateInsertion(_ currentTimestamp: Double, duration: Double, options: ListViewItemAnimationOptions) {
++        self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.4)
++    }
++
++    override func animateRemoved(_ currentTimestamp: Double, duration: Double) {
++        self.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15, removeOnCompletion: false)
++    }
 +}
 diff --git a/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift b/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift
 index 588fc00b..e64473ce 100644
@@ -74470,18 +74665,19 @@ index 34f23770..6680052d 100644
      for section in InfoSection.allCases {
          if let sectionItems = items[section], !sectionItems.isEmpty {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-index 8c4a24b7..07254d64 100644
+index 8c4a24b7..84b887af 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-@@ -161,6 +161,7 @@ enum PeerInfoContextSubject {
+@@ -161,6 +161,8 @@ enum PeerInfoContextSubject {
  }
  
  enum PeerInfoSettingsSection {
 +    case ayuGram
++    case ayuGramPreferences
      case avatar
      case edit
      case proxy
-@@ -2234,6 +2235,10 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -2234,6 +2236,10 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
                  guard let strongSelf = self else {
                      return
                  }
@@ -74492,7 +74688,7 @@ index 8c4a24b7..07254d64 100644
                  let currentTimestamp = CACurrentMediaTime()
                  if let previousTimestamp, currentTimestamp < previousTimestamp + 1.0 {
                      return
-@@ -2306,6 +2311,11 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -2306,6 +2312,11 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
                  guard let strongSelf = self, let peer = strongSelf.data?.peer else {
                      return
                  }
@@ -74504,7 +74700,7 @@ index 8c4a24b7..07254d64 100644
                  let currentTimestamp = CACurrentMediaTime()
                  if let previousTimestamp, currentTimestamp < previousTimestamp + 1.0 {
                      return
-@@ -2535,7 +2545,8 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -2535,7 +2546,8 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
  
          self.dataDisposable = combineLatest(
              queue: Queue.mainQueue(),
@@ -74514,7 +74710,7 @@ index 8c4a24b7..07254d64 100644
              self.forceIsContactPromise.get(),
              reactionSourceMessage
          ).startStrict(next: { [weak self] data, forceIsContact, reactionSourceMessage in
-@@ -7692,3 +7703,26 @@ struct ClearPeerHistory {
+@@ -7692,3 +7704,26 @@ struct ClearPeerHistory {
          }
      }
  }
@@ -74571,19 +74767,21 @@ index 63293572..96d3fb3e 100644
                  let headerButtons = Set(peerInfoHeaderButtons(peer: peer, cachedData: data.cachedData, isOpenedFromChat: strongSelf.isOpenedFromChat, isExpanded: true, videoCallsEnabled: strongSelf.videoCallsEnabled, isSecretChat: strongSelf.peerId.namespace == Namespaces.Peer.SecretChat, isContact: strongSelf.data?.isContact ?? false, threadInfo: strongSelf.data?.threadData?.info))
                  
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
-index f1c1917b..7da00905 100644
+index f1c1917b..1bbd23c7 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift
-@@ -51,6 +51,8 @@ extension PeerInfoScreenNode {
+@@ -51,6 +51,10 @@ extension PeerInfoScreenNode {
              }
          }
          switch section {
 +        case .ayuGram:
 +            push(ayuSettingsController(context: self.context))
++        case .ayuGramPreferences:
++            push(ayuGramPreferencesController(context: self.context))
          case .avatar:
              self.controller?.openAvatarForEditing()
          case .edit:
-@@ -238,6 +240,7 @@ extension PeerInfoScreenNode {
+@@ -238,6 +242,7 @@ extension PeerInfoScreenNode {
                      }
                  }
                  
@@ -74592,20 +74790,34 @@ index f1c1917b..7da00905 100644
                      var replaceImpl: ((ViewController) -> Void)?
                      let controller = PremiumLimitScreen(context: strongSelf.context, subject: .accounts, count: Int32(count), action: {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
-index a4873696..30dd8da0 100644
+index a4873696..a22f2e1e 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
-@@ -222,6 +222,9 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
+@@ -29,6 +29,8 @@ enum SettingsSection: Int, CaseIterable {
+     case support
+ }
+ 
++private let ayuPreferencesIcon = AyuSettingsIcons.symbol("eye.slash.fill", color: UIColor(rgb: 0x8E5CF7))
++
+ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentationData: PresentationData, interaction: PeerInfoInteraction, isExpanded: Bool) -> [(AnyHashable, [PeerInfoScreenItem])] {
+     guard let data = data else {
+         return []
+@@ -222,6 +224,14 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
          }
      }
      
-+    items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 100, text: "AyuGram", icon: AyuSettingsIcons.logo, action: {
++    // AyuGram for Android lists both preference screens first in the settings block.
++    let ayuRussian = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++    items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 100, text: ayuRussian ? "Настройки exteraGram" : "exteraGram Preferences", icon: AyuSettingsIcons.logo, action: {
 +        interaction.openSettings(.ayuGram)
++    }))
++    items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 101, text: ayuRussian ? "Настройки AyuGram" : "AyuGram Preferences", icon: ayuPreferencesIcon, action: {
++        interaction.openSettings(.ayuGramPreferences)
 +    }))
      items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 1, text: presentationData.strings.Settings_SavedMessages, icon: PresentationResourcesSettings.savedMessages, action: {
          interaction.openSettings(.savedMessages)
      }))
-@@ -470,7 +473,8 @@ func settingsEditingItems(data: PeerInfoScreenData?, state: PeerInfoState, conte
+@@ -470,7 +480,8 @@ func settingsEditingItems(data: PeerInfoScreenData?, state: PeerInfoState, conte
      }
      
      if case let .user(user) = data.peer {

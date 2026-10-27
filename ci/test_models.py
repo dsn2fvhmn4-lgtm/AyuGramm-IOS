@@ -21,11 +21,6 @@ def run(source: Path):
                         str(source / 'tools/ayu-tests/startup/main.swift'),
                         '-o', str(output / 'startup-tests')], check=True)
         subprocess.run([str(output / 'startup-tests')], check=True)
-        subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
-                        str(source / 'submodules/TelegramUI/Sources/Chat/AyuDiceButtonLayout.swift'),
-                        str(source / 'tools/ayu-tests/dice-button/main.swift'),
-                        '-o', str(output / 'dice-button-tests')], check=True)
-        subprocess.run([str(output / 'dice-button-tests')], check=True)
         murmur = source / 'submodules/MurMurHash32'
         header = murmur / 'PublicHeaders/MurMurHash32/MurMurHash32.h'
         (output / 'module.modulemap').write_text(

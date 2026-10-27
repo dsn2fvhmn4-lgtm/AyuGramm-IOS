@@ -75995,134 +75995,6 @@ index 00000000..cdb949f1
 +        return try encoder.encode(manifest)
 +    }
 +}
-diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift
-new file mode 100644
-index 00000000..e81433a5
---- /dev/null
-+++ b/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift
-@@ -0,0 +1,122 @@
-+import Foundation
-+import Postbox
-+import SwiftSignalKit
-+import MtProtoKit
-+internal import TelegramApi
-+
-+public enum AyuPreparedDiceError: Error {
-+    case invalidRequest, unsupportedResponse, forwardingChangesValue, attemptsExhausted
-+    case authorNotHidden, expired, server(String)
-+}
-+
-+/// A real server-issued roll in Saved Messages, never a client-supplied dice value.
-+public final class AyuPreparedDice {
-+    public let value: Int32
-+    public let attempts: Int
-+    fileprivate let messageId: Int32
-+    fileprivate let accountId: PeerId
-+    fileprivate let createdAt = Date()
-+    fileprivate init(value: Int32, attempts: Int, messageId: Int32, accountId: PeerId) {
-+        self.value = value; self.attempts = attempts; self.messageId = messageId; self.accountId = accountId
-+    }
-+}
-+
-+/// The actual server acknowledgement, including attribution that a recipient may see.
-+public struct AyuPreparedDiceSendResult {
-+    public let value: Int32
-+    public let hasForwardHeader: Bool
-+}
-+
-+public enum AyuPreparedDiceEvent {
-+    case progress(attempt: Int, lastValue: Int32?)
-+    case ready(AyuPreparedDice)
-+}
-+
-+private func ayuServerDice(_ updates: Api.Updates) -> (id: Int32, value: Int32, hasForwardHeader: Bool)? {
-+    // A short acknowledgement without the media is deliberately not treated as proof.
-+    let dice: [(Int32, Int32, Bool)] = updates.messages.compactMap { message in
-+        guard case let .message(data) = message,
-+              case let .messageMediaDice(media)? = data.media,
-+              media.emoticon == "🎲", (1 ... 6).contains(media.value), data.id > 0 else { return nil }
-+        return (data.id, media.value, data.fwdFrom != nil)
-+    }
-+    guard dice.count == 1 else { return nil }
-+    return dice[0]
-+}
-+
-+private func ayuDiceResult(account: Account, request: Signal<Api.Updates, MTRpcError>) -> Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError> {
-+    return request
-+    |> mapError { error -> AyuPreparedDiceError in .server(error.errorDescription) }
-+    |> mapToSignal { updates -> Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError> in
-+        account.stateManager.addUpdates(updates)
-+        account.network.ayuReassertOfflineAfterSending()
-+        guard let result = ayuServerDice(updates) else { return .fail(.unsupportedResponse) }
-+        return .single(result)
-+    }
-+}
-+
-+private func ayuForwardPreparedDice(account: Account, id: Int32, to peer: Api.InputPeer, threadId: Int32?) -> Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError> {
-+    var flags: Int32 = 1 << 11 // drop_author; the payload remains a forwarded server roll.
-+    if threadId != nil { flags |= 1 << 9 }
-+    return ayuDiceResult(account: account, request: account.network.request(Api.functions.messages.forwardMessages(
-+        flags: flags, fromPeer: .inputPeerSelf, id: [id], randomId: [Int64.random(in: Int64.min ... Int64.max)],
-+        toPeer: peer, topMsgId: threadId, replyTo: nil, scheduleDate: nil, scheduleRepeatPeriod: nil,
-+        sendAs: nil, quickReplyShortcut: nil, effect: nil, videoTimestamp: nil, allowPaidStars: nil, suggestedPost: nil
-+    ), automaticFloodWait: false))
-+}
-+
-+/// Preparation only touches Saved Messages. At most 24 ordinary rolls, two seconds apart.
-+/// Server flood errors end the operation; there is no automatic retry or rate-limit bypass.
-+public func ayuPrepareDice(account: Account, value: Int32) -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> {
-+    guard (1 ... 6).contains(value) else { return .fail(.invalidRequest) }
-+    let queue = Queue(name: "AyuGram.PreparedDice")
-+    func roll(_ attempt: Int, tested: Bool) -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> {
-+        let request = account.network.request(Api.functions.messages.sendMedia(
-+            flags: 0, peer: .inputPeerSelf, replyTo: nil, media: .inputMediaDice(.init(emoticon: "🎲")),
-+            message: "", randomId: Int64.random(in: Int64.min ... Int64.max), replyMarkup: nil, entities: nil,
-+            scheduleDate: nil, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil,
-+            effect: nil, allowPaidStars: nil, suggestedPost: nil
-+        ), automaticFloodWait: false)
-+        return ayuDiceResult(account: account, request: request)
-+        |> mapToSignal { result -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> in
-+            let verified: Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError>
-+            if tested && result.value != value {
-+                verified = .single(result)
-+            } else {
-+                // Test this exact forwarding API against Saved Messages before any recipient send.
-+                verified = ayuForwardPreparedDice(account: account, id: result.id, to: .inputPeerSelf, threadId: nil)
-+                |> mapToSignal { forwarded -> Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError> in
-+                    guard forwarded.value == result.value else { return .fail(.forwardingChangesValue) }
-+                    guard !forwarded.hasForwardHeader else { return .fail(.authorNotHidden) }
-+                    return .single(result)
-+                }
-+            }
-+            return verified |> mapToSignal { verifiedRoll -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> in
-+                if verifiedRoll.value == value {
-+                    return .single(.ready(AyuPreparedDice(value: value, attempts: attempt, messageId: verifiedRoll.id, accountId: account.peerId)))
-+                }
-+                guard attempt < 24 else { return .fail(.attemptsExhausted) }
-+                return .single(.progress(attempt: attempt, lastValue: verifiedRoll.value))
-+                |> then(roll(attempt + 1, tested: true) |> delay(2.0, queue: queue))
-+            }
-+        }
-+    }
-+    return .single(.progress(attempt: 0, lastValue: nil)) |> then(roll(1, tested: false))
-+}
-+
-+/// Caller must obtain explicit confirmation: a recipient send may still be rejected or rerolled.
-+public func ayuSendPreparedDice(account: Account, dice: AyuPreparedDice, peerId: EnginePeer.Id, threadId: Int64?) -> Signal<AyuPreparedDiceSendResult, AyuPreparedDiceError> {
-+    guard dice.accountId == account.peerId, Date().timeIntervalSince(dice.createdAt) < 600 else { return .fail(.expired) }
-+    guard [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
-+          threadId == nil || (threadId! > 0 && threadId! <= Int64(Int32.max)) else { return .fail(.invalidRequest) }
-+    return account.postbox.transaction { transaction -> Api.InputPeer? in
-+        guard let peer = transaction.getPeer(peerId), !peer.isCopyProtectionEnabled else { return nil }
-+        return apiInputPeerOrSelf(peer, accountPeerId: account.peerId)
-+    }
-+    |> castError(AyuPreparedDiceError.self)
-+    |> mapToSignal { input -> Signal<AyuPreparedDiceSendResult, AyuPreparedDiceError> in
-+        guard let input else { return .fail(.invalidRequest) }
-+        return ayuForwardPreparedDice(account: account, id: dice.messageId, to: input, threadId: threadId.map { Int32($0) })
-+        |> map { AyuPreparedDiceSendResult(value: $0.value, hasForwardHeader: $0.hasForwardHeader) }
-+    }
-+}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 new file mode 100644
 index 00000000..dc4f2c52
@@ -145159,25 +145031,6 @@ index 00000000..662c8032
 +        self.disposable.dispose()
 +    }
 +}
-diff --git a/submodules/TelegramUI/Sources/Chat/AyuDiceButtonLayout.swift b/submodules/TelegramUI/Sources/Chat/AyuDiceButtonLayout.swift
-new file mode 100644
-index 00000000..b7f751de
---- /dev/null
-+++ b/submodules/TelegramUI/Sources/Chat/AyuDiceButtonLayout.swift
-@@ -0,0 +1,13 @@
-+import Foundation
-+import CoreGraphics
-+
-+/// Keep the floating picker at the right side of the visible chat, below navigation and above input.
-+func ayuDicePickerFrame(size: CGSize, topInset: CGFloat, bottomInset: CGFloat, leftInset: CGFloat, rightInset: CGFloat) -> CGRect? {
-+    let side: CGFloat = 44.0
-+    let left = max(0.0, leftInset) + 8.0
-+    let right = size.width - max(0.0, rightInset) - 8.0
-+    let top = max(0.0, topInset) + 12.0
-+    let bottom = size.height - max(0.0, bottomInset) - 12.0
-+    guard right - left >= side, bottom - top >= side else { return nil }
-+    return CGRect(x: right - side, y: top + (bottom - top - side) / 2.0, width: side, height: side)
-+}
 diff --git a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
 new file mode 100644
 index 00000000..e912d793
@@ -145304,197 +145157,6 @@ index 00000000..e912d793
 +        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
 +              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 512, kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return nil }
 +        return UIImage(cgImage: image)
-+    }
-+}
-diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift
-new file mode 100644
-index 00000000..b3cf3087
---- /dev/null
-+++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift
-@@ -0,0 +1,185 @@
-+import Foundation
-+import UIKit
-+import Display
-+import SwiftSignalKit
-+import TelegramCore
-+import AccountContext
-+import ChatPresentationInterfaceState
-+
-+private final class AyuDiceController: UITableViewController {
-+    private let context: AccountContext
-+    private let peerId: EnginePeer.Id
-+    private let threadId: Int64?
-+    private let russian: Bool
-+    private let maySend: () -> Bool
-+    private let request = MetaDisposable()
-+    private var prepared: AyuPreparedDice?
-+    private var busy = false
-+    private var generation = 0
-+    private var status: String
-+
-+    init(context: AccountContext, peerId: EnginePeer.Id, threadId: Int64?, russian: Bool, maySend: @escaping () -> Bool) {
-+        self.context = context; self.peerId = peerId; self.threadId = threadId; self.russian = russian; self.maySend = maySend
-+        self.status = russian ? "Эксперимент: подбор реального броска в Избранном и пересылка. Это не управление новым серверным броском." : "Experimental: prepare a real roll in Saved Messages, then forward it. This does not control a new server roll."
-+        super.init(style: .insetGrouped)
-+        self.title = russian ? "Готовый бросок 🎲" : "Prepared dice 🎲"
-+        self.isModalInPresentation = true
-+    }
-+    required init?(coder: NSCoder) { return nil }
-+    deinit { self.request.dispose() }
-+    override func viewDidLoad() {
-+        super.viewDidLoad()
-+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(self.close))
-+        self.tableView.rowHeight = UITableView.automaticDimension
-+        self.tableView.estimatedRowHeight = 48
-+    }
-+    @objc private func close() {
-+        self.generation += 1; self.request.set(nil); self.dismiss(animated: true)
-+    }
-+    override func viewDidDisappear(_ animated: Bool) {
-+        super.viewDidDisappear(animated)
-+        if self.isBeingDismissed || self.navigationController?.isBeingDismissed == true {
-+            self.generation += 1; self.request.set(nil)
-+        }
-+    }
-+    override func numberOfSections(in tableView: UITableView) -> Int { return 1 }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return 6 }
-+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? { return section == 0 ? self.status : nil }
-+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-+        let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
-+        cell.textLabel?.numberOfLines = 0
-+        cell.textLabel?.text = (self.russian ? "Отправить " : "Send ") + String(indexPath.row + 1)
-+        cell.isUserInteractionEnabled = !self.busy
-+        cell.textLabel?.textColor = self.busy ? .secondaryLabel : self.view.tintColor
-+        return cell
-+    }
-+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-+        tableView.deselectRow(at: indexPath, animated: true)
-+        guard !self.busy else { return }
-+        let value = Int32(indexPath.row + 1)
-+        let alert = UIAlertController(title: (self.russian ? "Отправить " : "Send ") + String(value), message: self.russian
-+            ? "До 24 случайных бросков и проверочная пересылка в Избранном. После проверки числа и отсутствия автора приложение само отправит кубик в этот чат. Сообщения в Избранном останутся. Telegram может отклонить отправку или изменить результат; ограничения аккаунта не исключены."
-+            : "Up to 24 random rolls and a test forward in Saved Messages. After checking the value and absence of attribution, the app sends the dice to this chat automatically. Saved Messages are retained. Telegram may reject the send or change the result; account restrictions remain possible.", preferredStyle: .alert)
-+        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
-+        alert.addAction(UIAlertAction(title: self.russian ? "Отправить" : "Send", style: .default, handler: { [weak self] _ in
-+            guard let self, !self.busy else { return }
-+            self.prepare(value)
-+        }))
-+        self.present(alert, animated: true)
-+    }
-+    private func failed(_ error: AyuPreparedDiceError) {
-+        self.busy = false
-+        switch error {
-+        case .authorNotHidden:
-+            self.status = self.russian ? "Telegram сохранил «Переслано от» при проверке. Отправка в чат остановлена: скрытие автора не подтверждено." : "Telegram retained attribution during the self-test. Recipient sending stopped: author removal was not confirmed."
-+        case .forwardingChangesValue:
-+            self.status = self.russian ? "Telegram изменил число при проверочной пересылке. Собеседнику ничего не отправлено." : "Telegram changed the value during the test forward. Nothing was sent to the recipient."
-+        case .attemptsExhausted:
-+            self.status = self.russian ? "За 24 попытки нужное число не выпало. Подбор остановлен." : "The requested value did not appear in 24 attempts. Preparation stopped."
-+        case let .server(message): self.status = "Telegram: " + message
-+        case .expired: self.status = self.russian ? "Бросок устарел. Подготовь новый." : "This prepared roll expired. Prepare another."
-+        case .unsupportedResponse:
-+            self.status = self.russian ? "Сервер не вернул подтверждённый результат. Операция остановлена. Проверь Избранное и чат перед повтором." : "The server did not return a verifiable result. Stopped. Check Saved Messages and the chat before retrying."
-+        case .invalidRequest:
-+            self.status = self.russian ? "Этот чат или тема недоступны для пересылки." : "This chat or topic is unavailable for forwarding."
-+        }
-+        self.tableView.reloadData()
-+    }
-+    private func prepare(_ value: Int32) {
-+        self.generation += 1; let generation = self.generation
-+        self.prepared = nil; self.busy = true
-+        self.status = self.russian ? "Подготовка в Избранном…" : "Preparing in Saved Messages…"
-+        self.tableView.reloadData()
-+        self.request.set((ayuPrepareDice(account: self.context.account, value: value) |> deliverOnMainQueue).start(next: { [weak self] event in
-+            guard let self, self.generation == generation else { return }
-+            switch event {
-+            case let .progress(attempt, last):
-+                self.status = (self.russian ? "Попыток: " : "Attempts: ") + "\(attempt)/24" + (last.map { (self.russian ? ". Выпало: " : ". Last roll: ") + String($0) } ?? "")
-+            case let .ready(dice):
-+                self.prepared = dice
-+                self.status = self.russian ? "Число и скрытие автора проверены. Отправка…" : "Value and author removal checked. Sending…"
-+                // Defer subscribing until the preparation subscription has been assigned.
-+                Queue.mainQueue().async { [weak self] in
-+                    guard let self, self.generation == generation else { return }
-+                    self.send()
-+                }
-+            }
-+            self.tableView.reloadData()
-+        }, error: { [weak self] error in
-+            guard let self, self.generation == generation else { return }; self.failed(error)
-+        }))
-+    }
-+    private func send() {
-+        guard self.maySend(), let dice = self.prepared else { self.failed(.invalidRequest); return }
-+        self.generation += 1; let generation = self.generation
-+        self.prepared = nil; self.busy = true
-+        self.status = self.russian ? "Пересылка…" : "Forwarding…"; self.tableView.reloadData()
-+        self.request.set((ayuSendPreparedDice(account: self.context.account, dice: dice, peerId: self.peerId, threadId: self.threadId) |> deliverOnMainQueue).start(next: { [weak self] actual in
-+            guard let self, self.generation == generation else { return }
-+            self.busy = false
-+            self.status = (self.russian ? "Сервер подтвердил отправку: " : "Server-confirmed sent value: ") + String(actual.value)
-+            if actual.value != dice.value { self.status += self.russian ? ". Telegram изменил число. Повторная отправка отключена." : ". Telegram changed the value. No automatic resend." }
-+            if actual.hasForwardHeader { self.status += self.russian ? ". Сервер оставил «Переслано от» у отправленного сообщения. Повторной отправки не будет." : ". The sent message retained server attribution. No resend will occur." }
-+            self.tableView.reloadData()
-+            if actual.value == dice.value && !actual.hasForwardHeader { self.dismiss(animated: true) }
-+        }, error: { [weak self] error in
-+            guard let self, self.generation == generation else { return }; self.failed(error)
-+        }))
-+    }
-+}
-+
-+extension ChatControllerImpl {
-+    func ayuUpdateFloatingDiceButton(layout: ContainerViewLayout, navigationBottom: CGFloat, isPreviewing: Bool, transition: ContainedViewLayoutTransition) {
-+        guard self.isNodeLoaded, !isPreviewing,
-+              let peerId = self.chatLocation.peerId,
-+              [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
-+              canSendMessagesToChat(self.presentationInterfaceState),
-+              self.presentationInterfaceState.interfaceState.selectionState == nil,
-+              self.presentationInterfaceState.interfaceState.editMessage == nil,
-+              let frame = ayuDicePickerFrame(size: layout.size,
-+                  topInset: max(navigationBottom, layout.safeInsets.top),
-+                  bottomInset: max(layout.inputHeight ?? 0.0, max(layout.intrinsicInsets.bottom, layout.safeInsets.bottom)) + 64.0,
-+                  leftInset: layout.safeInsets.left, rightInset: layout.safeInsets.right) else {
-+            self.ayuDicePickerButton?.isHidden = true
-+            return
-+        }
-+        let button: UIButton
-+        if let current = self.ayuDicePickerButton {
-+            button = current
-+        } else {
-+            button = UIButton(type: .system)
-+            button.setImage(UIImage(systemName: "die.face.6", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21.0, weight: .semibold)), for: .normal)
-+            button.layer.cornerRadius = 22.0
-+            button.layer.shadowColor = UIColor.black.cgColor
-+            button.layer.shadowOpacity = 0.15
-+            button.layer.shadowRadius = 4.0
-+            button.layer.shadowOffset = CGSize(width: 0.0, height: 2.0)
-+            button.accessibilityIdentifier = "ayu.chooseDice"
-+            button.addTarget(self, action: #selector(self.ayuFloatingDicePressed), for: .touchUpInside)
-+            button.frame = frame
-+            self.ayuDicePickerButton = button
-+            self.view.addSubview(button)
-+        }
-+        button.isHidden = false
-+        button.backgroundColor = self.presentationData.theme.list.itemBlocksBackgroundColor
-+        button.tintColor = self.presentationData.theme.list.itemAccentColor
-+        button.accessibilityLabel = self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Выбрать число кубика" : "Choose dice value"
-+        transition.updateFrame(view: button, frame: frame)
-+        self.view.bringSubviewToFront(button)
-+    }
-+
-+    @objc private func ayuFloatingDicePressed() {
-+        self.ayuOpenPreparedDice()
-+    }
-+
-+    func ayuOpenPreparedDice() {
-+        guard let peerId = self.chatLocation.peerId, peerId.namespace != Namespaces.Peer.SecretChat,
-+              canSendMessagesToChat(self.presentationInterfaceState), self.presentationInterfaceState.interfaceState.editMessage == nil else { return }
-+        let threadId = self.chatLocation.threadId
-+        let controller = AyuDiceController(context: self.context, peerId: peerId, threadId: threadId, russian: self.presentationData.strings.baseLanguageCode.hasPrefix("ru"), maySend: { [weak self] in
-+            guard let self else { return false }
-+            return self.chatLocation.peerId == peerId && self.chatLocation.threadId == threadId && canSendMessagesToChat(self.presentationInterfaceState) && self.presentationInterfaceState.interfaceState.editMessage == nil
-+        })
-+        self.context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: controller))
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFilters.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFilters.swift
@@ -146483,7 +146145,7 @@ index face5ae7..34bbb294 100644
      selfController.updateSlowmodeStatus()
      
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..3007633f 100644
+index 5fe58bbf..8c2f255a 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
 @@ -310,6 +310,16 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
@@ -146503,15 +146165,7 @@ index 5fe58bbf..3007633f 100644
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
-@@ -324,6 +334,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
- 
-     let chatBackgroundNode: WallpaperBackgroundNode
-     public private(set) var controllerInteraction: ChatControllerInteraction?
-+    var ayuDicePickerButton: UIButton?
-     var interfaceInteraction: ChatPanelInterfaceInteraction?
-     
-     let messageContextDisposable = MetaDisposable()
-@@ -725,7 +736,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -725,7 +735,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          
          self.stickerSettings = ChatInterfaceStickerSettings()
          
@@ -146520,7 +146174,7 @@ index 5fe58bbf..3007633f 100644
          
          if case let .customChatContents(customChatContents) = subject {
              switch customChatContents.kind {
-@@ -768,6 +779,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -768,6 +778,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
          self.ready.set(.never())
@@ -146528,7 +146182,7 @@ index 5fe58bbf..3007633f 100644
          
          self.chatBackgroundNode.contentStatsUpdated = { [weak self] in
              guard let self else {
-@@ -2408,6 +2420,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2408,6 +2419,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -146539,7 +146193,7 @@ index 5fe58bbf..3007633f 100644
              var attributes: [MessageAttribute] = []
              if let query = query {
                  attributes.append(EmojiSearchQueryMessageAttribute(query: query))
-@@ -2681,6 +2697,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2681,6 +2696,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                      }
                  }
                  
@@ -146550,7 +146204,7 @@ index 5fe58bbf..3007633f 100644
                  strongSelf.presentPaidMessageAlertIfNeeded(completion: { [weak self] postpone in
                      guard let strongSelf = self else {
                          return
-@@ -2737,6 +2757,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2737,6 +2756,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -146561,7 +146215,7 @@ index 5fe58bbf..3007633f 100644
              strongSelf.enqueueChatContextResult(collection, result, hideVia: true, closeMediaInput: true, silentPosting: silentPosting, resetTextInputState: resetTextInputState)
              
              return true
-@@ -6450,6 +6474,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -6450,6 +6473,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              }
          }
          self.moreBarButton.addTarget(self, action: #selector(self.moreButtonPressed), forControlEvents: .touchUpInside)
@@ -146574,7 +146228,7 @@ index 5fe58bbf..3007633f 100644
          
          self.navigationItem.titleView = self.chatTitleView
          self.chatTitleView?.tapAction = { [weak self] in
-@@ -7082,6 +7112,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7082,6 +7111,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
  
      deinit {
@@ -146583,23 +146237,7 @@ index 5fe58bbf..3007633f 100644
          let _ = ChatControllerCount.modify { value in
              return value - 1
          }
-@@ -8517,6 +8549,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
-             self.applyNavigationBarLayout(suspendedNavigationBarLayout, navigationLayout: self.navigationLayout(layout: layout), additionalBackgroundHeight: self.additionalNavigationBarBackgroundHeight, transition: navigationBarTransition)
-         }
-         self.navigationBar?.additionalContentNode.hitTestSlop = UIEdgeInsets(top: 0.0, left: 0.0, bottom: self.additionalNavigationBarHitTestSlop, right: 0.0)
-+        self.ayuUpdateFloatingDiceButton(layout: layout, navigationBottom: self.navigationLayout(layout: layout).navigationFrame.maxY, isPreviewing: self.isPreviewingMode, transition: transition)
-     }
-     
-     func updateChatPresentationInterfaceState(animated: Bool = true, interactive: Bool, saveInterfaceState: Bool = false, _ f: (ChatPresentationInterfaceState) -> ChatPresentationInterfaceState, completion: @escaping (ContainedViewLayoutTransition) -> Void = { _ in }) {
-@@ -8536,6 +8569,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
-     }
-     
-     func updateItemNodesSelectionStates(animated: Bool) {
-+        if let layout = self.validLayout { self.ayuUpdateFloatingDiceButton(layout: layout, navigationBottom: self.navigationLayout(layout: layout).navigationFrame.maxY, isPreviewing: self.isPreviewingMode, transition: .immediate) }
-         self.chatDisplayNode.historyNode.forEachItemNode { itemNode in
-             if let itemNode = itemNode as? ChatMessageItemView {
-                 itemNode.updateSelectionState(animated: animated)
-@@ -8639,6 +8673,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8639,6 +8670,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              self.navigationButtonAction(button.action)
          }
      }
@@ -146618,7 +146256,7 @@ index 5fe58bbf..3007633f 100644
      
      @objc func moreButtonPressed() {
          self.moreBarButton.play()
-@@ -11200,7 +11246,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -11200,7 +11243,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          guard let contentData = self.contentData else {
              return
          }
@@ -146629,7 +146267,7 @@ index 5fe58bbf..3007633f 100644
      
      func displayGiveawayStatusInfo(messageId: EngineMessage.Id, giveawayInfo: PremiumGiveawayInfo) {
 diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
-index ee583844..a536fcbc 100644
+index ee583844..48571724 100644
 --- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
 @@ -37,6 +37,7 @@ import ReplyAccessoryPanelNode
@@ -146654,17 +146292,7 @@ index ee583844..a536fcbc 100644
              if inputPanelNode !== self.inputPanelNode {
                  if let inputTextPanelNode = self.inputPanelNode as? ChatTextInputPanelNode {
                      if inputTextPanelNode.isFocused {
-@@ -4437,6 +4445,9 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
-     }
-     
-     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-+        if let button = self.controller?.ayuDicePickerButton, !button.isHidden, button.frame.contains(point) {
-+            return button.hitTest(self.view.convert(point, to: button), with: event)
-+        }
-         switch self.chatPresentationInterfaceState.mode {
-         case .standard(.previewing):
-             if let subject = self.controller?.subject, case let .messageOptions(_, _, info) = subject, case .reply = info {
-@@ -5086,8 +5097,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+@@ -5086,8 +5094,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
              let effectiveInputText: NSAttributedString
              let composeContent = effectivePresentationInterfaceState.interfaceState.composeInputState.content
              let isNewMessage = effectivePresentationInterfaceState.interfaceState.editMessage == nil
@@ -146676,7 +146304,7 @@ index ee583844..a536fcbc 100644
                  && !composeContent.isEmpty
                  && !composeContent.isEntityExpressible(options: [])
              let peerSpecificEmojiPack = (self.controller?.contentData?.state.peerView?.cachedData as? CachedChannelData)?.emojiPack
-@@ -5265,6 +5278,21 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+@@ -5265,6 +5275,21 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
              
              let trimmedInputText = effectiveInputText.string.trimmingCharacters(in: .whitespacesAndNewlines)
              let peerId = effectivePresentationInterfaceState.chatLocation.peerId
@@ -147078,47 +146706,6 @@ index 3d13bc4d..3ca0e6c7 100644
          #if os(macOS)
          return nil
          #else
-diff --git a/tools/ayu-tests/dice-button/main.swift b/tools/ayu-tests/dice-button/main.swift
-new file mode 100644
-index 00000000..d5764666
---- /dev/null
-+++ b/tools/ayu-tests/dice-button/main.swift
-@@ -0,0 +1,35 @@
-+import Foundation
-+import CoreGraphics
-+
-+func check(_ condition: @autoclosure () -> Bool, _ message: String) {
-+    if !condition() { fatalError(message) }
-+}
-+
-+let portrait = CGSize(width: 375, height: 812)
-+let normal = ayuDicePickerFrame(size: portrait, topInset: 88, bottomInset: 98, leftInset: 0, rightInset: 0)!
-+check(normal.width == 44 && normal.height == 44, "44-point touch target")
-+check(normal.maxX == portrait.width-8, "Always at the right side of the chat")
-+let keyboard = ayuDicePickerFrame(size: portrait, topInset: 88, bottomInset: 355, leftInset: 0, rightInset: 0)!
-+check(keyboard.midY < normal.midY, "Move above the keyboard")
-+check(keyboard.maxY <= portrait.height-355, "Do not cover keyboard or composer")
-+check(ayuDicePickerFrame(size: CGSize(width: 40,height: 100), topInset: 0,bottomInset: 0,leftInset: 0,rightInset: 0) == nil, "Reject unusable width")
-+check(ayuDicePickerFrame(size: portrait, topInset: 88,bottomInset: 750,leftInset: 0,rightInset: 0) == nil, "Hide when input occupies the viewport")
-+var count = 6
-+for size in [CGSize(width: 320,height: 600), CGSize(width: 375,height: 812), CGSize(width: 414,height: 896), CGSize(width: 812,height: 375), CGSize(width: 1024,height: 768)] {
-+    for top in [CGFloat(44),88,140] {
-+        for bottom in [CGFloat(34),98,355] {
-+            for side in [CGFloat(0),44] {
-+                if let rect = ayuDicePickerFrame(size: size,topInset: top,bottomInset: bottom,leftInset: side,rightInset: side) {
-+                    check(rect.minX >= side+8 && rect.maxX <= size.width-side-8, "Respect side safe areas")
-+                    check(rect.minY >= top+12 && rect.maxY <= size.height-bottom-12, "Respect navigation and input")
-+                    check(rect.width == 44 && rect.height == 44, "Stable accessible size")
-+                    count += 3
-+                } else {
-+                    check(size.height-bottom-top-24 < 44 || size.width-side*2-16 < 44, "Hide only when usable area is too small")
-+                    count += 1
-+                }
-+            }
-+        }
-+    }
-+}
-+print("PASS: \(count) floating dice-button placement checks")
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
 index 00000000..bad12843

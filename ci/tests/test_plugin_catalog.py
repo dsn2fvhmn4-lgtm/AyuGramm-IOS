@@ -65,3 +65,26 @@ class PluginCatalogTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT / 'runtime/python'))
         from _ayu_converter import compile_source
         with self.assertRaises(ValueError): compile_source((ROOT / 'plugins/ota_lowercase_demo.plugin').read_text(encoding='utf-8'))
+
+    def test_supplied_batch_report_matches_published_catalog_without_placeholder_adapters(self):
+        report = json.loads((ROOT / 'docs/PLUGIN_BATCH_STATUS.json').read_text(encoding='utf-8'))
+        envelope = json.loads((ROOT / 'plugin-catalog/catalog.json').read_text(encoding='utf-8'))
+        payload = json.loads(base64.b64decode(envelope['payload']))
+        entries = {json.loads(base64.b64decode(item['manifestData']))['sourceSHA256']: json.loads(base64.b64decode(item['manifestData'])) for item in payload['adapters']}
+        self.assertEqual(len(report['plugins']), 28)
+        supported = [row for row in report['plugins'] if row['status'] == 'supported_native_adapter']
+        self.assertEqual(len(supported), 4)
+        for row in supported:
+            self.assertEqual(entries[row['sha256']]['id'], row['metadata']['__id__'])
+            self.assertEqual(native_manifest(entries[row['sha256']]), entries[row['sha256']])
+        for row in report['plugins']:
+            if row['status'] == 'requires_engine_update':
+                self.assertNotIn(row['sha256'], entries)
+                self.assertTrue(row['engine_work'])
+                self.assertTrue(row['note_ru'])
+
+    def test_fixed_signed_catalog_fixture_keeps_rollback_tests_independent_of_publication(self):
+        envelope = json.loads((ROOT / 'plugins/catalog_revision2.fixture.json').read_text(encoding='utf-8'))
+        payload = json.loads(base64.b64decode(envelope['payload']))
+        self.assertEqual(payload['revision'], 2)
+        self.assertEqual(len(payload['adapters']), 5)

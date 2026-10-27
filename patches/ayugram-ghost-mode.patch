@@ -143173,10 +143173,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..22c4c149
+index 00000000..9263419d
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,920 @@
+@@ -0,0 +1,959 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -144049,7 +144049,7 @@ index 00000000..22c4c149
 +let otaCatalog = AyuPluginCatalogStore(directory: otaDirectory)
 +let otaSource = try Data(contentsOf: pluginFixtures.appendingPathComponent("ota_lowercase_demo.plugin"))
 +check(pluginThrows { _ = try AyuPluginImporter.parse(otaSource, filename: "ota.plugin", catalog: otaCatalog) }, "A new helper-method plugin is unsupported before downloading its adapter")
-+let catalogData = try Data(contentsOf: pluginFixtures.deletingLastPathComponent().appendingPathComponent("plugin-catalog/catalog.json"))
++let catalogData = try Data(contentsOf: pluginFixtures.appendingPathComponent("catalog_revision2.fixture.json"))
 +let catalogSummary = try otaCatalog.apply(catalogData)
 +check(catalogSummary.revision == 2 && catalogSummary.adapterCount == 5, "Signed public catalog activates five reviewed adapters")
 +let otaManifest = try AyuPluginImporter.parse(otaSource, filename: "ota.plugin", catalog: otaCatalog)
@@ -144097,6 +144097,45 @@ index 00000000..22c4c149
 +check(pluginThrows { _ = try blockedCatalog.apply(catalogData) }, "Catalog activation requires a successful disk write")
 +check(blockedCatalog.summary.revision == 0, "Disk failure does not expose a nonpersisted adapter snapshot")
 +print("PASS: \(checks) model checks including signed OTA adapters, exact-file import, rollback protection and offline activation")
++
++// Exercise the current production catalog separately from fixed rollback fixtures.
++let liveCatalogData = try Data(contentsOf: pluginFixtures.deletingLastPathComponent().appendingPathComponent("plugin-catalog/catalog.json"))
++let liveCatalog = AyuPluginCatalogStore(directory: root.appendingPathComponent("production-catalog"))
++let liveSummary = try liveCatalog.apply(liveCatalogData)
++check(liveSummary.revision >= 4 && liveSummary.adapterCount >= 7, "Production catalog includes the supplied batch adapters")
++if let batchManifest = liveCatalog.manifest(sourceSHA256: "421911448e6fe62b3292b43b8593ebb24056b238278bab002576381d541238bc") {
++    let batchPrepared = try AyuPluginActivation.prepare(batchManifest)
++    var batchRegistry = AyuPluginRegistry()
++    try batchRegistry.installAndActivate(batchPrepared)
++    let batchExport = try AyuPluginImporter.export(batchPrepared)
++    let batchRestored = try AyuPluginImporter.parse(batchExport, filename: "game_arcade.plugin", catalog: AyuPluginCatalogStore(directory: root.appendingPathComponent("empty-game_arcade")))
++    check(batchRestored == batchPrepared && batchRegistry.action(pluginID: "game_arcade", actionID: batchPrepared.actions[0].id)?.kind == .arcadeGame, "Signed game_arcade adapter activates, persists its proof and exports offline")
++} else { check(false, "Production catalog is missing game_arcade") }
++if let batchManifest = liveCatalog.manifest(sourceSHA256: "6c5e2f697da4d87b0409841d96dd9bf69f224073c44b555c6fd9de782c70d40f") {
++    let batchPrepared = try AyuPluginActivation.prepare(batchManifest)
++    var batchRegistry = AyuPluginRegistry()
++    try batchRegistry.installAndActivate(batchPrepared)
++    let batchExport = try AyuPluginImporter.export(batchPrepared)
++    let batchRestored = try AyuPluginImporter.parse(batchExport, filename: "unlim_accounts.plugin", catalog: AyuPluginCatalogStore(directory: root.appendingPathComponent("empty-unlim_accounts")))
++    check(batchRestored == batchPrepared && batchRegistry.action(pluginID: "unlim_accounts", actionID: batchPrepared.actions[0].id)?.kind == .unlimitedAccounts, "Signed unlim_accounts adapter activates, persists its proof and exports offline")
++} else { check(false, "Production catalog is missing unlim_accounts") }
++if let batchManifest = liveCatalog.manifest(sourceSHA256: "a7217c0cc672615e3558b8f3391b522f7e031bc0900a84315b4eb4f53ece8de5") {
++    let batchPrepared = try AyuPluginActivation.prepare(batchManifest)
++    var batchRegistry = AyuPluginRegistry()
++    try batchRegistry.installAndActivate(batchPrepared)
++    let batchExport = try AyuPluginImporter.export(batchPrepared)
++    let batchRestored = try AyuPluginImporter.parse(batchExport, filename: "chat_colors.plugin", catalog: AyuPluginCatalogStore(directory: root.appendingPathComponent("empty-chat_colors")))
++    check(batchRestored == batchPrepared && batchRegistry.action(pluginID: "chat_colors", actionID: batchPrepared.actions[0].id)?.kind == .chatColors, "Signed chat_colors adapter activates, persists its proof and exports offline")
++} else { check(false, "Production catalog is missing chat_colors") }
++if let batchManifest = liveCatalog.manifest(sourceSHA256: "61136472b21e9ac23fc32883e137173ef1a85314d2cc6c63719be003555f1e98") {
++    let batchPrepared = try AyuPluginActivation.prepare(batchManifest)
++    var batchRegistry = AyuPluginRegistry()
++    try batchRegistry.installAndActivate(batchPrepared)
++    let batchExport = try AyuPluginImporter.export(batchPrepared)
++    let batchRestored = try AyuPluginImporter.parse(batchExport, filename: "camera_flip.plugin", catalog: AyuPluginCatalogStore(directory: root.appendingPathComponent("empty-camera_flip")))
++    check(batchRestored == batchPrepared && batchRegistry.action(pluginID: "camera_flip", actionID: batchPrepared.actions[0].id)?.kind == .cameraFlip, "Signed camera_flip adapter activates, persists its proof and exports offline")
++} else { check(false, "Production catalog is missing camera_flip") }
++print("PASS: \(checks) model checks including all four supplied batch catalog adapters")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

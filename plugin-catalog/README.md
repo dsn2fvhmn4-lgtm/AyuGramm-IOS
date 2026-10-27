@@ -1,6 +1,6 @@
 # OTA plugin adapters
 
-The API 7 base IPA adds **Settings → AyuGram → Plugins → Update plugin list**.
+The API 7 base IPA adds **Settings → exteraGram → Plugins → ⟳ next to +**.
 After that one base installation, publishing another supported native adapter in
 this directory does not require rebuilding or reinstalling the IPA.
 
@@ -50,3 +50,5 @@ Failed downloads/signatures/validation/writes keep the previous catalog. Older
 revisions and conflicting contents under the same revision are rejected. The
 client reports entries that require a newer app API. A new adapter for a changed
 source file must use that changed file's exact hash.
+
+Current supplied-plugin compatibility and device OTA test: [Russian batch report](../docs/PLUGIN_BATCH_STATUS_RU.md).

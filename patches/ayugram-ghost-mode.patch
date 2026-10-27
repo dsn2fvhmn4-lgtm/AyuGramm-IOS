@@ -66875,6 +66875,220 @@ index 00000000..30e4a8a2
 +@end
 +
 +#endif // AYU_PYTHON_AVAILABLE
+diff --git a/submodules/Camera/CameraLegacy/Sources/CameraRoundLegacyVideoFilter.swift b/submodules/Camera/CameraLegacy/Sources/CameraRoundLegacyVideoFilter.swift
+index 06f6e72f..8c0b01a9 100644
+--- a/submodules/Camera/CameraLegacy/Sources/CameraRoundLegacyVideoFilter.swift
++++ b/submodules/Camera/CameraLegacy/Sources/CameraRoundLegacyVideoFilter.swift
+@@ -122,7 +122,18 @@ final class CameraRoundLegacyVideoFilter {
+             sourceImage = sourceImage.transformed(by: CGAffineTransformMakeTranslation(0.0, -(sourceImage.extent.height - sourceImage.extent.width) / 2.0))
+             sourceImage = sourceImage.cropped(to: CGRect(x: 0.0, y: 0.0, width: sourceImage.extent.width, height: sourceImage.extent.width))
+         }
+-        
++
++        // AyuGram horizon lock: counter-rotate the square about its centre (Core Image is
++        // y-up, so a negative angle turns the picture clockwise against a clockwise roll).
++        let horizonRoll = CameraHorizonLock.shared.roll
++        if horizonRoll != 0.0 {
++            let extent = sourceImage.extent
++            let rotation = CGAffineTransform(translationX: -extent.midX, y: -extent.midY)
++                .concatenating(CGAffineTransform(rotationAngle: -horizonRoll))
++                .concatenating(CGAffineTransform(translationX: extent.midX, y: extent.midY))
++            sourceImage = sourceImage.clampedToExtent().transformed(by: rotation).cropped(to: extent)
++        }
++
+         if additional {
+             self.lastAdditionalSourceImage = sourceImage
+         } else {
+diff --git a/submodules/Camera/CameraNeo/MetalResources/CameraNeo.metal b/submodules/Camera/CameraNeo/MetalResources/CameraNeo.metal
+index 375c2619..018f3593 100644
+--- a/submodules/Camera/CameraNeo/MetalResources/CameraNeo.metal
++++ b/submodules/Camera/CameraNeo/MetalResources/CameraNeo.metal
+@@ -18,13 +18,25 @@ struct FrameUniforms {
+     float4 decoration;
+ };
+ 
+-static float2 sourceCoordinate(float2 outputCoordinate, float4 source) {
++// AyuGram horizon lock: turns the square output's sampling point about its centre by `angle`
++// (blend.z, radians). Applied before mirroring, so it is the same for both cameras.
++static float2 horizonLockedCoordinate(float2 outputCoordinate, float angle) {
++    if (angle == 0.0) {
++        return outputCoordinate;
++    }
++    float s = sin(angle);
++    float c = cos(angle);
++    float2 d = outputCoordinate - 0.5;
++    return 0.5 + float2(c * d.x - s * d.y, s * d.x + c * d.y);
++}
++
++static float2 sourceCoordinate(float2 outputCoordinate, float4 source, float horizonAngle) {
+     uint rotation = uint(source.z + 0.5);
+     bool mirrored = source.w > 0.5;
+ 
+     float2 orientedSize = (rotation == 1 || rotation == 3) ? source.yx : source.xy;
+     float shortestSide = min(orientedSize.x, orientedSize.y);
+-    float2 coordinate = outputCoordinate;
++    float2 coordinate = horizonLockedCoordinate(outputCoordinate, horizonAngle);
+     coordinate.x = 0.5 + (coordinate.x - 0.5) * shortestSide / orientedSize.x;
+     coordinate.y = 0.5 + (coordinate.y - 0.5) * shortestSide / orientedSize.y;
+ 
+@@ -73,7 +85,7 @@ static float3 readCompositeRgb(
+     float2 outputCoordinate,
+     constant FrameUniforms &uniforms
+ ) {
+-    float2 primaryCoordinate = sourceCoordinate(outputCoordinate, uniforms.primarySource);
++    float2 primaryCoordinate = sourceCoordinate(outputCoordinate, uniforms.primarySource, uniforms.blend.z);
+     float3 primaryRgb = readRgb(
+         primaryY,
+         primaryCbCr,
+@@ -86,7 +98,7 @@ static float3 readCompositeRgb(
+     );
+ 
+     if (uniforms.blend.y > 0.5 && uniforms.blend.x > 0.0) {
+-        float2 secondaryCoordinate = sourceCoordinate(outputCoordinate, uniforms.secondarySource);
++        float2 secondaryCoordinate = sourceCoordinate(outputCoordinate, uniforms.secondarySource, uniforms.blend.z);
+         float3 secondaryRgb = readRgb(
+             secondaryY,
+             secondaryCbCr,
+@@ -124,7 +136,7 @@ kernel void convertNV12(
+     float2 pixelCoordinate = float2(gid) + 0.5;
+     float2 outputCoordinate = pixelCoordinate / outputSize;
+ 
+-    float2 primaryCoordinate = sourceCoordinate(outputCoordinate, uniforms.primarySource);
++    float2 primaryCoordinate = sourceCoordinate(outputCoordinate, uniforms.primarySource, uniforms.blend.z);
+     float3 primaryRgb = readRgb(
+         primaryY,
+         primaryCbCr,
+@@ -138,7 +150,7 @@ kernel void convertNV12(
+ 
+     float3 result = primaryRgb;
+     if (uniforms.blend.y > 0.5 && uniforms.blend.x > 0.0) {
+-        float2 secondaryCoordinate = sourceCoordinate(outputCoordinate, uniforms.secondarySource);
++        float2 secondaryCoordinate = sourceCoordinate(outputCoordinate, uniforms.secondarySource, uniforms.blend.z);
+         float3 secondaryRgb = readRgb(
+             secondaryY,
+             secondaryCbCr,
+diff --git a/submodules/Camera/CameraNeo/Sources/RoundVideoFrameProcessor.swift b/submodules/Camera/CameraNeo/Sources/RoundVideoFrameProcessor.swift
+index 901bd950..7f88b6f5 100644
+--- a/submodules/Camera/CameraNeo/Sources/RoundVideoFrameProcessor.swift
++++ b/submodules/Camera/CameraNeo/Sources/RoundVideoFrameProcessor.swift
+@@ -409,7 +409,8 @@ final class RoundVideoFrameProcessor {
+             secondaryRow2: secondaryConversion.row2,
+             secondaryOffset: secondaryConversion.offset,
+             secondarySource: Self.sourceDescription(for: effectiveSecondary, texture: secondaryY),
+-            blend: SIMD4<Float>(max(0.0, min(1.0, mixFactor)), secondary == nil ? 0.0 : 1.0, 0.0, 0.0),
++            // z: AyuGram horizon lock, the counter-rotation for the phone's current roll.
++            blend: SIMD4<Float>(max(0.0, min(1.0, mixFactor)), secondary == nil ? 0.0 : 1.0, Float(-CameraHorizonLock.shared.roll), 0.0),
+             decoration: SIMD4<Float>(0.0, 0.0, 0.0, 0.0)
+         )
+ 
+diff --git a/submodules/Camera/Sources/CameraHorizonLock.swift b/submodules/Camera/Sources/CameraHorizonLock.swift
+new file mode 100644
+index 00000000..e355ac35
+--- /dev/null
++++ b/submodules/Camera/Sources/CameraHorizonLock.swift
+@@ -0,0 +1,102 @@
++import Foundation
++import CoreMotion
++
++/// AyuGram horizon lock for video messages: the device roll, taken from gravity and unwrapped
++/// across ±180° so a full turn never flips the frame. Video frames are counter-rotated by it,
++/// which costs nothing in a round video: the visible circle stays covered at any angle.
++/// Thread-safe; frame processors read `roll` on their own queues.
++public final class CameraHorizonLock {
++    public static let shared = CameraHorizonLock()
++
++    /// Below this share of gravity in the screen plane the phone lies flat and the
++    /// roll is noise, so the last angle is held.
++    private static let minimumPlanarGravity = 0.25
++    private static let smoothing = 0.3
++
++    private let lock = NSLock()
++    private let motionManager = CMMotionManager()
++    private let queue: OperationQueue
++    private var users = 0
++    private var previousRawRoll: Double?
++    private var unwrappedRoll = 0.0
++    private var smoothedRoll = 0.0
++
++    private init() {
++        self.queue = OperationQueue()
++        self.queue.name = "CameraHorizonLock"
++        self.queue.maxConcurrentOperationCount = 1
++        self.queue.qualityOfService = .userInteractive
++    }
++
++    /// The phone's clockwise roll in radians; 0 while nothing holds the lock.
++    public var roll: Double {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.users > 0 ? self.smoothedRoll : 0.0
++    }
++
++    /// Balanced by `stop()`. Main thread.
++    public func start() {
++        self.lock.lock()
++        self.users += 1
++        let isFirst = self.users == 1
++        if isFirst {
++            self.previousRawRoll = nil
++            self.unwrappedRoll = 0.0
++            self.smoothedRoll = 0.0
++        }
++        self.lock.unlock()
++
++        guard isFirst, self.motionManager.isDeviceMotionAvailable else {
++            return
++        }
++        self.motionManager.deviceMotionUpdateInterval = 1.0 / 60.0
++        self.motionManager.startDeviceMotionUpdates(to: self.queue, withHandler: { [weak self] motion, _ in
++            guard let self, let gravity = motion?.gravity else {
++                return
++            }
++            self.update(gravityX: gravity.x, gravityY: gravity.y)
++        })
++    }
++
++    /// Main thread.
++    public func stop() {
++        self.lock.lock()
++        guard self.users > 0 else {
++            self.lock.unlock()
++            return
++        }
++        self.users -= 1
++        let isLast = self.users == 0
++        self.lock.unlock()
++
++        if isLast {
++            self.motionManager.stopDeviceMotionUpdates()
++        }
++    }
++
++    private func update(gravityX: Double, gravityY: Double) {
++        guard hypot(gravityX, gravityY) > CameraHorizonLock.minimumPlanarGravity else {
++            return
++        }
++        // Upright portrait is 0; turning the phone clockwise (right side down) is positive.
++        let rawRoll = atan2(gravityX, -gravityY)
++
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        if let previousRawRoll = self.previousRawRoll {
++            var delta = rawRoll - previousRawRoll
++            if delta > Double.pi {
++                delta -= 2.0 * Double.pi
++            } else if delta < -Double.pi {
++                delta += 2.0 * Double.pi
++            }
++            self.unwrappedRoll += delta
++            self.smoothedRoll += CameraHorizonLock.smoothing * (self.unwrappedRoll - self.smoothedRoll)
++        } else {
++            self.unwrappedRoll = rawRoll
++            self.smoothedRoll = rawRoll
++        }
++        self.previousRawRoll = rawRoll
++    }
++}
 diff --git a/submodules/ChatListUI/Sources/ChatContextMenus.swift b/submodules/ChatListUI/Sources/ChatContextMenus.swift
 index f753a8ea..9367fba0 100644
 --- a/submodules/ChatListUI/Sources/ChatContextMenus.swift
@@ -69422,20 +69636,22 @@ index 00000000..7d6107d3
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..d5fc4591
+index 00000000..687f3580
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,868 @@
+@@ -0,0 +1,1016 @@
 +import Foundation
 +import UIKit
 +import Display
 +import SwiftSignalKit
 +import TelegramCore
 +import TelegramPresentationData
++import TelegramUIPreferences
 +import PresentationDataUtils
 +import ItemListUI
 +import AccountContext
 +import TextFormat
++import PeerNameColorScreen
 +
 +private struct AyuSettingsArguments {
 +    let open: (Int32) -> Void
@@ -69460,16 +69676,24 @@ index 00000000..d5fc4591
 +    case record(AyuMessageHistoryRecord)
 +    case richText(AyuMessageHistoryRecord)
 +    case attachment(Int32, AyuArchivedAttachment)
++    /// Real chat bubbles on the user's wallpaper, as in Appearance; shown above the page's rows.
++    case previewHeader(String)
++    case preview(PresentationTheme, TelegramWallpaper, PresentationFontSize, PresentationChatBubbleCorners, PresentationDateTimeFormat, PresentationPersonNameOrder, [ChatPreviewMessageItem])
++    case previewFooter(String)
 +
 +    var section: ItemListSectionId {
 +        switch self {
 +        case .record, .attachment: return 1
++        case .previewHeader, .preview, .previewFooter: return 2
 +        default: return 0
 +        }
 +    }
 +
 +    var stableId: Int64 {
 +        switch self {
++        case .previewHeader: return -3
++        case .preview: return -2
++        case .previewFooter: return -1
 +        case let .link(id, _), let .toggle(id, _, _), let .info(id, _): return Int64(id)
 +        case .clear: return 50
 +        case let .record(record): return 100 + Int64(record.id)
@@ -69510,6 +69734,15 @@ index 00000000..d5fc4591
 +            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: preview, label: kind, sectionId: self.section, style: .blocks, action: { arguments.record(record.id) })
 +        case let .attachment(_, attachment):
 +            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: attachment.displayName, label: ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file), sectionId: self.section, style: .blocks, action: { arguments.attachment(attachment.id) })
++        case let .previewHeader(text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .preview(theme, wallpaper, fontSize, corners, dateTimeFormat, nameOrder, items):
++            guard let context = arguments.context else {
++                return ItemListTextItem(presentationData: presentationData, text: .plain(""), sectionId: self.section)
++            }
++            return ThemeSettingsChatPreviewItem(context: context, systemStyle: .glass, theme: theme, componentTheme: theme, strings: presentationData.strings, sectionId: self.section, fontSize: fontSize, chatBubbleCorners: corners, wallpaper: wallpaper, dateTimeFormat: dateTimeFormat, nameDisplayOrder: nameOrder, messageItems: items)
++        case let .previewFooter(text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
 +        }
 +    }
 +}
@@ -69574,7 +69807,7 @@ index 00000000..d5fc4591
 +        case 2: ayuPresentAdvancedSettings(context: context, page: .sending)
 +        case 11: push?(ayuMessageHistoryController(context: context))
 +        case 12: ayuPresentMediaArchive(context: context)
-+        case 21: ayuPresentAdvancedSettings(context: context, page: .cosmetics)
++        case 21: push?(ayuLocalPremiumController(context: context))
 +        case 22: push?(ayuChatOptionsController(context: context, regex: true))
 +        case 31: ayuOpenChannel(context: context, navigation: navigation?())
 +        case 32: context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
@@ -69587,7 +69820,7 @@ index 00000000..d5fc4591
 +        11: AyuSettingsIcons.glyph("Item List/Icons/Clock", color: UIColor(rgb: 0xFF9500)),
 +        12: AyuSettingsIcons.glyph("AyuGram/MediaArchive", color: UIColor(rgb: 0x34C759), side: 19.0),
 +        21: AyuSettingsIcons.glyph("Item List/Icons/Premium", color: UIColor(rgb: 0xAF52DE)),
-+        22: AyuSettingsIcons.glyph("AyuGram/Filter", color: UIColor(rgb: 0xFF3B30), side: 19.0),
++        22: AyuSettingsIcons.glyph("AyuGram/Filter", color: UIColor(rgb: 0xFF3B30), side: 20.0),
 +        31: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
 +        32: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
 +    ]
@@ -69617,6 +69850,120 @@ index 00000000..d5fc4591
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] in controller?.push($0) }
 +    navigation = { [weak controller] in controller?.navigationController as? NavigationController }
++    return controller
++}
++
++private enum AyuLocalPremiumEntry: ItemListNodeEntry {
++    case previewHeader(String)
++    case preview(PresentationTheme, PresentationPersonNameOrder, EnginePeer)
++    case previewFooter(String)
++    case toggle(Int32, String, Bool)
++    case clearStatus(String)
++    case info(String)
++
++    var section: ItemListSectionId {
++        switch self {
++        case .previewHeader, .preview, .previewFooter: return 0
++        case .toggle: return 1
++        case .clearStatus, .info: return 2
++        }
++    }
++
++    var stableId: Int32 {
++        switch self {
++        case .previewHeader: return 0
++        case .preview: return 1
++        case .previewFooter: return 2
++        case let .toggle(id, _, _): return 10 + id
++        case .clearStatus: return 20
++        case .info: return 21
++        }
++    }
++
++    static func < (lhs: AyuLocalPremiumEntry, rhs: AyuLocalPremiumEntry) -> Bool { return lhs.stableId < rhs.stableId }
++
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! AyuSectionedArguments
++        switch self {
++        case let .previewHeader(text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .preview(theme, nameOrder, peer):
++            guard let context = arguments.context else {
++                return ItemListTextItem(presentationData: presentationData, text: .plain(""), sectionId: self.section)
++            }
++            return ayuProfilePreviewItem(context: context, theme: theme, strings: presentationData.strings, sectionId: self.section, peer: peer, nameDisplayOrder: nameOrder)
++        case let .previewFooter(text), let .info(text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        case let .toggle(id, title, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
++        case let .clearStatus(title):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: { arguments.open(20) })
++        }
++    }
++}
++
++/// The account's own peer as this client draws it with Local Premium and the local status.
++private func ayuLocalPremiumPreviewPeer(_ peer: EnginePeer, settings: AyuAdvancedSettings) -> EnginePeer {
++    guard case let .user(user) = peer else { return peer }
++    var updated = user
++    if settings.localPremium || settings.localEmojiStatusEnabled {
++        updated = updated.withUpdatedFlags(user.flags.union(.isPremium))
++    }
++    if let fileId = settings.localStatusFileId {
++        updated = updated.withUpdatedEmojiStatus(PeerEmojiStatus(content: .emoji(fileId: fileId), expirationDate: nil))
++    }
++    return .user(updated)
++}
++
++/// Local Premium and status, with the profile header preview from "Your color → Profile".
++private func ayuLocalPremiumController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var presentError: (() -> Void)?
++    let update: ((inout AyuAdvancedSettings) -> Void) -> Void = { transform in
++        do {
++            try store.update { transform(&$0.advanced) }
++        } catch { presentError?() }
++    }
++    let arguments = AyuSectionedArguments(open: { id in
++        if id == 20 { update { $0.localEmojiFileId = nil } }
++    }, toggle: { id, value in
++        update {
++            switch id {
++            case 0: $0.localPremium = value
++            case 1: $0.localEmojiStatusEnabled = value
++            case 2: $0.animateLocalEmoji = value
++            default: break
++            }
++        }
++    }, context: context)
++    let accountPeer = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.Peer(id: context.account.peerId))
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal, accountPeer)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings, peer -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let advanced = settings.advanced
++        var entries: [AyuLocalPremiumEntry] = []
++        if let peer {
++            entries.append(.previewHeader(ru ? "ПРЕДПРОСМОТР" : "PREVIEW"))
++            entries.append(.preview(presentationData.theme, presentationData.nameDisplayOrder, ayuLocalPremiumPreviewPeer(peer, settings: advanced)))
++            entries.append(.previewFooter(ru ? "Так твой профиль выглядит в этом клиенте. Другие видят его как обычно." : "This is how your profile looks in this client. Others see it as usual."))
++        }
++        entries.append(.toggle(0, ru ? "Локальный Telegram Premium β" : "Local Telegram Premium β", advanced.localPremium))
++        entries.append(.toggle(1, ru ? "Локальный статус в профиле" : "Local status in own profile", advanced.localEmojiStatusEnabled))
++        entries.append(.toggle(2, ru ? "Повторять анимацию" : "Loop animation", advanced.animateLocalEmoji))
++        if advanced.localEmojiFileId != nil {
++            entries.append(.clearStatus(ru ? "Убрать выбранное эмодзи" : "Clear selected emoji"))
++        }
++        entries.append(.info(ru ? "Локальный Premium открывает в этом клиенте значок, эмодзи-статусы, Premium-эмодзи и стикеры. Подписка, лимиты и проверки сервера не меняются. Premium-эмодзи без подписки отправляются ссылками tg://emoji: в AyuGram они видны как эмодзи, в других клиентах — как эмодзи-ссылки.\n\nЧтобы выбрать статус, открой свой профиль и нажми на значок рядом с именем." : "Local Premium unlocks the badge, emoji statuses, Premium emoji and stickers in this client. Subscription, limits and server checks are unchanged. Without a subscription, Premium emoji are sent as tg://emoji links: AyuGram shows them as emoji, other clients as emoji links.\n\nTo pick a status, open your own profile and tap the icon beside your name."))
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Локальный Premium" : "Local Premium"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
 +    return controller
 +}
 +
@@ -69752,7 +70099,7 @@ index 00000000..d5fc4591
 +        case 20: ayuPresentAppIcons(context: context)
 +        case 50: ayuPresentAdvancedSettings(context: context, page: .sending)
 +        case 51: ayuPresentAdvancedSettings(context: context, page: .translation)
-+        case 52: ayuPresentAdvancedSettings(context: context, page: .cosmetics)
++        case 52: push?(ayuLocalPremiumController(context: context))
 +        case 53: ayuPresentMediaArchive(context: context)
 +        default: break
 +        }
@@ -69773,6 +70120,7 @@ index 00000000..d5fc4591
 +private struct AyuSectionedArguments {
 +    let open: (Int32) -> Void
 +    let toggle: (Int32, Bool) -> Void
++    var context: AccountContext? = nil
 +}
 +
 +/// Rows of an exteraGram-style page: headed sections of rows with icons. Stable ids must
@@ -69925,6 +70273,7 @@ index 00000000..d5fc4591
 +                case 12: $0.interface.hideKeyboardOnScroll = value
 +                case 13: $0.interface.addCommaAfterMention = value
 +                case 21: $0.interface.hideFastShare = value
++                case 23: $0.interface.horizonLockVideoMessages = value
 +                default: break
 +                }
 +            }
@@ -69938,6 +70287,7 @@ index 00000000..d5fc4591
 +        13: AyuSettingsIcons.symbol("at", color: UIColor(rgb: 0x34C759)),
 +        21: AyuSettingsIcons.symbol("arrowshape.turn.up.right.fill", color: UIColor(rgb: 0x32ADE6)),
 +        22: AyuSettingsIcons.symbol("text.bubble.fill", color: UIColor(rgb: 0x34C759)),
++        23: AyuSettingsIcons.symbol("level.fill", color: UIColor(rgb: 0xFF9500)),
 +        31: AyuSettingsIcons.symbol("eye.slash.fill", color: UIColor(rgb: 0x8E8E93)),
 +        32: AyuSettingsIcons.symbol("heart.fill", color: UIColor(rgb: 0xFF2D55))
 +    ]
@@ -69958,6 +70308,8 @@ index 00000000..d5fc4591
 +            .header(2, 20, ru ? "СООБЩЕНИЯ" : "MESSAGES"),
 +            .toggle(2, 21, icons[21] ?? nil, ru ? "Скрыть кнопку «Поделиться»" : "Hide Share Button", nil, interface.hideFastShare),
 +            .link(2, 22, icons[22] ?? nil, ru ? "Меню сообщения" : "Message Menu", ""),
++            .toggle(2, 23, icons[23] ?? nil, ru ? "Горизонт в кружках" : "Horizon Lock in Video Messages", nil, interface.horizonLockVideoMessages),
++            .info(2, 24, ru ? "Кружок остаётся ровным, даже если наклонить или повернуть телефон. Работает по гироскопу, без потери качества." : "Video messages stay level however you tilt or turn the phone. Gyroscope-driven, with no loss of quality."),
 +            .header(3, 30, ru ? "ДОПОЛНИТЕЛЬНО" : "MORE"),
 +            .link(3, 31, icons[31] ?? nil, ru ? "Скрытые сообщения" : "Hidden Messages", ""),
 +            .link(3, 32, icons[32] ?? nil, ru ? "Реакции в чатах" : "Chat Reactions", "")
@@ -70187,12 +70539,22 @@ index 00000000..d5fc4591
 +        let _ = context.engine.messages.updateAyuMessageHistory(saveEdits: id == 0 ? value : nil, saveDeleted: id == 1 ? value : nil, saveFormatting: id == 2 ? value : nil, saveReactions: id == 3 ? value : nil, saveForBots: id == 4 ? value : nil, saveMedia: id == 5 ? value : nil, mediaPrivateChats: id == 6 ? value : nil, mediaPublicChannels: id == 7 ? value : nil, mediaPrivateChannels: id == 8 ? value : nil, mediaPublicGroups: id == 9 ? value : nil, mediaPrivateGroups: id == 10 ? value : nil).startStandalone()
 +    }, record: { id in
 +        push?(ayuHistoryRecordController(context: context, recordId: id))
-+    })
++    }, context: context)
 +    let signal = combineLatest(context.sharedContext.presentationData, context.engine.messages.ayuMessageHistory())
 +    |> deliverOnMainQueue
 +    |> map { presentationData, history -> (ItemListControllerState, (ItemListNodeState, Any)) in
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        var previewItems: [ChatPreviewMessageItem] = [
++            ChatPreviewMessageItem(outgoing: false, reply: nil, text: ru ? "Встречаемся в 7" : "Meet at 7", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuEdited: history.saveEdits)
++        ]
++        if history.saveDeleted {
++            previewItems.append(ChatPreviewMessageItem(outgoing: false, reply: nil, text: ru ? "Скинь потом пароль от вайфая" : "Send me the Wi-Fi password later", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuDeleted: true))
++        }
++        previewItems.append(ChatPreviewMessageItem(outgoing: true, reply: nil, text: ru ? "Ок, буду 👍" : "OK, see you there 👍", nameColor: .preset(.blue), backgroundEmojiId: nil))
 +        var entries: [AyuSettingsEntry] = [
++            .previewHeader(ru ? "ПРЕДПРОСМОТР" : "PREVIEW"),
++            .preview(presentationData.theme, presentationData.chatWallpaper, presentationData.chatFontSize, presentationData.chatBubbleCorners, presentationData.dateTimeFormat, presentationData.nameDisplayOrder, previewItems),
++            .previewFooter(ru ? "Так сохранённые сообщения выглядят в чате." : "This is how saved messages look in chats."),
 +            .toggle(0, ru ? "Сохранять текст до правки" : "Save text before edits", history.saveEdits),
 +            .toggle(1, ru ? "Сохранять удалённый текст" : "Save deleted text", history.saveDeleted),
 +            .toggle(2, ru ? "Сохранять форматирование" : "Save formatting", history.saveFormatting),
@@ -70587,6 +70949,51 @@ index 5302c7be..19538d65 100644
      }
      
      let notificationSettings = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Configuration.ApplicationSpecificPreference(key: PreferencesKeys.globalNotifications))
+diff --git a/submodules/SettingsUI/Sources/Themes/ThemeSettingsChatPreviewItem.swift b/submodules/SettingsUI/Sources/Themes/ThemeSettingsChatPreviewItem.swift
+index 0d2ec6c5..035f8ead 100644
+--- a/submodules/SettingsUI/Sources/Themes/ThemeSettingsChatPreviewItem.swift
++++ b/submodules/SettingsUI/Sources/Themes/ThemeSettingsChatPreviewItem.swift
+@@ -30,14 +30,20 @@ struct ChatPreviewMessageItem: Equatable {
+         if lhs.backgroundEmojiId != rhs.backgroundEmojiId {
+             return false
+         }
++        if lhs.ayuEdited != rhs.ayuEdited || lhs.ayuDeleted != rhs.ayuDeleted {
++            return false
++        }
+         return true
+     }
+-    
++
+     let outgoing: Bool
+     let reply: (String, String)?
+     let text: String
+     let nameColor: PeerColor
+     let backgroundEmojiId: Int64?
++    /// AyuGram Message History preview: draw the message as edited / as a saved deleted one.
++    var ayuEdited: Bool = false
++    var ayuDeleted: Bool = false
+ }
+ 
+ class ThemeSettingsChatPreviewItem: ListViewItem, ItemListItem {
+@@ -162,7 +168,17 @@ class ThemeSettingsChatPreviewItemNode: ListViewItemNode {
+                     messages[replyMessageId] = EngineRawMessage(stableId: 3, stableVersion: 0, id: replyMessageId, globallyUniqueId: nil, groupingKey: nil, groupInfo: nil, threadId: nil, timestamp: 66000, flags: [.Incoming], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: peers[peerId], text: text, attributes: [], media: [], peers: peers, associatedMessages: EngineSimpleDictionary(), associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
+                 }
+                 
+-                let message = EngineRawMessage(stableId: 1, stableVersion: 0, id: EngineMessage.Id(peerId: messageItem.outgoing ? otherPeerId : peerId, namespace: 0, id: 1), globallyUniqueId: nil, groupingKey: nil, groupInfo: nil, threadId: nil, timestamp: 66000, flags: messageItem.outgoing ? [] : [.Incoming], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: messageItem.outgoing ? TelegramUser(id: otherPeerId, accessHash: nil, firstName: "", lastName: "", username: nil, phone: nil, photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil) : nil, text: messageItem.text, attributes: messageItem.reply != nil ? [ReplyMessageAttribute(messageId: replyMessageId, threadMessageId: nil, quote: nil, isQuote: false, innerSubject: nil)] : [], media: [], peers: peers, associatedMessages: messages, associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
++                var attributes: [EngineMessage.Attribute] = messageItem.reply != nil ? [ReplyMessageAttribute(messageId: replyMessageId, threadMessageId: nil, quote: nil, isQuote: false, innerSubject: nil)] : []
++                if messageItem.ayuEdited {
++                    attributes.append(EditedMessageAttribute(date: 66000, isHidden: false))
++                }
++                if messageItem.ayuDeleted {
++                    attributes.append(AyuDeletedMessageAttribute(timestamp: 66000))
++                }
++                if messageItem.ayuEdited || messageItem.ayuDeleted {
++                    attributes.append(AyuSettingsPreviewMessageAttribute())
++                }
++                let message = EngineRawMessage(stableId: 1, stableVersion: 0, id: EngineMessage.Id(peerId: messageItem.outgoing ? otherPeerId : peerId, namespace: 0, id: 1), globallyUniqueId: nil, groupingKey: nil, groupInfo: nil, threadId: nil, timestamp: 66000, flags: messageItem.outgoing ? [] : [.Incoming], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: messageItem.outgoing ? TelegramUser(id: otherPeerId, accessHash: nil, firstName: "", lastName: "", username: nil, phone: nil, photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil) : nil, text: messageItem.text, attributes: attributes, media: [], peers: peers, associatedMessages: messages, associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
+                 items.append(item.context.sharedContext.makeChatMessagePreviewItem(context: item.context, messages: [EngineMessage(message)], theme: item.componentTheme, strings: item.strings, wallpaper: item.wallpaper, fontSize: item.fontSize, chatBubbleCorners: item.chatBubbleCorners, dateTimeFormat: item.dateTimeFormat, nameOrder: item.nameDisplayOrder, forcedResourceStatus: nil, tapMessage: nil, clickThroughMessage: nil, backgroundNode: currentBackgroundNode, availableReactions: nil, accountPeer: nil, isCentered: false, isPreview: true, isStandalone: false, rank: nil, rankRole: nil, isGiftMessageComposerPreview: false, activateGiftMessageInput: nil))
+             }
+             
 diff --git a/submodules/TelegramCore/Sources/Account/Account.swift b/submodules/TelegramCore/Sources/Account/Account.swift
 index af6b6078..1ed30132 100644
 --- a/submodules/TelegramCore/Sources/Account/Account.swift
@@ -71460,10 +71867,10 @@ index 00000000..a75d2a37
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift b/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift
 new file mode 100644
-index 00000000..130e741d
+index 00000000..80a60c29
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuDeletedMessageAttribute.swift
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,27 @@
 +import Foundation
 +import Postbox
 +
@@ -71480,6 +71887,16 @@ index 00000000..130e741d
 +    public func encode(_ encoder: PostboxEncoder) {
 +        encoder.encodeInt64(self.timestamp, forKey: "t")
 +    }
++}
++
++/// Marks a message built for an AyuGram settings preview, which shows the "edited" mark
++/// that ordinary previews hide. Never stored.
++public final class AyuSettingsPreviewMessageAttribute: MessageAttribute {
++    public init() {}
++
++    public init(decoder: PostboxDecoder) {}
++
++    public func encode(_ encoder: PostboxEncoder) {}
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuDisplayOptions.swift b/submodules/TelegramCore/Sources/AyuGram/AyuDisplayOptions.swift
 new file mode 100644
@@ -72036,10 +72453,10 @@ index 00000000..ae6b26ad
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
-index 00000000..eb081246
+index 00000000..86b4e0dc
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,111 @@
 +import Foundation
 +
 +public struct AyuInterfaceSettings: Codable, Equatable {
@@ -72082,6 +72499,8 @@ index 00000000..eb081246
 +    public var disableJumpToNextChannel = false
 +    public var hideKeyboardOnScroll = false
 +    public var addCommaAfterMention = false
++    /// Keeps video messages level against the phone's roll (gyroscope counter-rotation).
++    public var horizonLockVideoMessages = false
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
@@ -72094,6 +72513,7 @@ index 00000000..eb081246
 +        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers, streamerMode, hideAllChatsFolder, semiTransparentDeletedMessages, backgroundNotifications
 +        case disableNumberRounding, hidePhoneNumber, disableUnarchiveSwipe
 +        case hideStickerTime, disableJumpToNextChannel, hideKeyboardOnScroll, addCommaAfterMention
++        case horizonLockVideoMessages
 +    }
 +    public init(from decoder: Decoder) throws {
 +        let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -72132,6 +72552,7 @@ index 00000000..eb081246
 +        self.disableJumpToNextChannel = try values.decodeIfPresent(Bool.self, forKey: .disableJumpToNextChannel) ?? false
 +        self.hideKeyboardOnScroll = try values.decodeIfPresent(Bool.self, forKey: .hideKeyboardOnScroll) ?? false
 +        self.addCommaAfterMention = try values.decodeIfPresent(Bool.self, forKey: .addCommaAfterMention) ?? false
++        self.horizonLockVideoMessages = try values.decodeIfPresent(Bool.self, forKey: .horizonLockVideoMessages) ?? false
 +    }
 +}
 +
@@ -75818,7 +76239,7 @@ index 64699c7b..7e2dc75d 100644
                      
                      if let updatedShareButtonNode = updatedShareButtonNode {
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
-index 56ba2739..08e2c3f2 100644
+index 56ba2739..8565ccfb 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 @@ -284,7 +284,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
@@ -75830,6 +76251,15 @@ index 56ba2739..08e2c3f2 100644
                  if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
                      dateReactionsAndPeers = ([], [])
                  }
+@@ -708,7 +708,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                     statusSuggestedWidthAndContinue = statusLayout(ChatMessageDateAndStatusNode.Arguments(
+                         context: item.context,
+                         presentationData: item.presentationData,
+-                        edited: edited && !item.presentationData.isPreview,
++                        edited: edited && (!item.presentationData.isPreview || item.message.attributes.contains(where: { $0 is AyuSettingsPreviewMessageAttribute })),
+                         impressionCount: !item.presentationData.isPreview ? viewCount : nil,
+                         dateText: dateText,
+                         type: statusType,
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTodoBubbleContentNode/Sources/ChatMessageTodoBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTodoBubbleContentNode/Sources/ChatMessageTodoBubbleContentNode.swift
 index 1875e7fe..e60152fc 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageTodoBubbleContentNode/Sources/ChatMessageTodoBubbleContentNode.swift
@@ -76167,6 +76597,51 @@ index a4873696..7334667a 100644
              interaction.openSettings(.phoneNumber)
          }))
      }
+diff --git a/submodules/TelegramUI/Components/Settings/PeerNameColorScreen/Sources/AyuProfilePreviewItem.swift b/submodules/TelegramUI/Components/Settings/PeerNameColorScreen/Sources/AyuProfilePreviewItem.swift
+new file mode 100644
+index 00000000..b3d04866
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Settings/PeerNameColorScreen/Sources/AyuProfilePreviewItem.swift
+@@ -0,0 +1,12 @@
++import Foundation
++import Display
++import TelegramCore
++import TelegramPresentationData
++import TelegramUIPreferences
++import ItemListUI
++import AccountContext
++
++/// The "Your color → Profile" header as a settings row, for AyuGram's Local Premium page.
++public func ayuProfilePreviewItem(context: AccountContext, theme: PresentationTheme, strings: PresentationStrings, sectionId: ItemListSectionId, peer: EnginePeer, nameDisplayOrder: PresentationPersonNameOrder) -> ListViewItem & ItemListItem {
++    return PeerNameColorProfilePreviewItem(context: context, theme: theme, componentTheme: theme, strings: strings, topInset: 8.0, bottomInset: 8.0, sectionId: sectionId, peer: peer, subtitleString: strings.Presence_online, files: [:], nameDisplayOrder: nameDisplayOrder, showBackground: true)
++}
+diff --git a/submodules/TelegramUI/Components/Settings/PeerNameColorScreen/Sources/PeerNameColorProfilePreviewItem.swift b/submodules/TelegramUI/Components/Settings/PeerNameColorScreen/Sources/PeerNameColorProfilePreviewItem.swift
+index 436e82de..d1a11e6a 100644
+--- a/submodules/TelegramUI/Components/Settings/PeerNameColorScreen/Sources/PeerNameColorProfilePreviewItem.swift
++++ b/submodules/TelegramUI/Components/Settings/PeerNameColorScreen/Sources/PeerNameColorProfilePreviewItem.swift
+@@ -211,8 +211,11 @@ final class PeerNameColorProfilePreviewItemNode: ListViewItemNode {
+                     
+                     self.bottomStripeNode.frame = CGRect(origin: CGPoint(x: 0.0, y: contentSize.height - separatorHeight), size: CGSize(width: layoutSize.width, height: separatorHeight))
+                 } else {
+-                    self.backgroundNode.isHidden = true
+-                    
++                    // Only AyuGram's Local Premium list hosts this item outside a standalone
++                    // component; it needs the block background under a colorless cover.
++                    self.backgroundNode.isHidden = false
++                    self.backgroundNode.alpha = 1.0
++
+                     let hasCorners = itemListHasRoundedBlockLayout(params)
+                     var hasTopCorners = false
+                     var hasBottomCorners = false
+@@ -237,7 +240,7 @@ final class PeerNameColorProfilePreviewItemNode: ListViewItemNode {
+                         self.bottomStripeNode.isHidden = hasCorners
+                     }
+                                         
+-                    self.maskNode.image = hasCorners ? PresentationResourcesItemList.cornersImage(item.componentTheme, top: hasTopCorners, bottom: hasBottomCorners) : nil
++                    self.maskNode.image = hasCorners ? PresentationResourcesItemList.cornersImage(item.componentTheme, top: hasTopCorners, bottom: hasBottomCorners, glass: true) : nil
+                     
+                     self.topStripeNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -min(insets.top, separatorHeight)), size: CGSize(width: layoutSize.width, height: separatorHeight))
+                     self.bottomStripeNode.frame = CGRect(origin: CGPoint(x: bottomStripeInset, y: contentSize.height + bottomStripeOffset), size: CGSize(width: layoutSize.width - bottomStripeInset, height: separatorHeight))
 diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/AyuCameraFlipGestureRecognizer.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/AyuCameraFlipGestureRecognizer.swift
 new file mode 100644
 index 00000000..ffb3af06
@@ -76220,7 +76695,7 @@ index 00000000..ffb3af06
 +    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { self.abort() }
 +}
 diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
-index 5d7709ba..ed614f0c 100644
+index 5d7709ba..4db2bc43 100644
 --- a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
 +++ b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
 @@ -287,6 +287,8 @@ private final class VideoMessageCameraScreenComponent: CombinedComponent {
@@ -76256,7 +76731,52 @@ index 5d7709ba..ed614f0c 100644
              
              self.updateScreenBrightness(isFrontCamera: isFrontCamera)
              
-@@ -1107,6 +1109,24 @@ public class VideoMessageCameraScreen: ViewController {
+@@ -907,9 +909,13 @@ public class VideoMessageCameraScreen: ViewController {
+         private var resultPreviewView: ResultPreviewView?
+         
+         private var cameraStateDisposable: Disposable?
+-                
++
+         private let idleTimerExtensionDisposable = MetaDisposable()
+-        
++
++        /// AyuGram horizon lock: holds `CameraHorizonLock` and turns the live preview with it.
++        private var ayuHorizonLockActive = false
++        private var ayuHorizonPreviewLink: SharedDisplayLinkDriver.Link?
++
+         fileprivate var cameraIsActive = true {
+             didSet {
+                 if self.cameraIsActive {
+@@ -1070,6 +1076,28 @@ public class VideoMessageCameraScreen: ViewController {
+             self.cameraStateDisposable?.dispose()
+             self.idleTimerExtensionDisposable.dispose()
+             self.backgroundView.removeFromSuperview()
++            self.ayuHorizonPreviewLink?.invalidate()
++            if self.ayuHorizonLockActive {
++                CameraHorizonLock.shared.stop()
++            }
++        }
++
++        private func ayuStartHorizonLockIfEnabled() {
++            guard !self.ayuHorizonLockActive, self.context.account.network.ayuGhostMode.current.interface.horizonLockVideoMessages else {
++                return
++            }
++            self.ayuHorizonLockActive = true
++            CameraHorizonLock.shared.start()
++            self.ayuHorizonPreviewLink = SharedDisplayLinkDriver.shared.add(framesPerSecond: .fps(60), { [weak self] _ in
++                guard let self else {
++                    return
++                }
++                // UIKit turns clockwise for a positive angle, which levels a clockwise roll.
++                // The preview sits in a circle, so the turned frame always covers it.
++                let transform = CGAffineTransform(rotationAngle: CGFloat(CameraHorizonLock.shared.roll))
++                self.mainPreviewView.transform = transform
++                self.additionalPreviewView.transform = transform
++            })
+         }
+         
+         func withReadyCamera(isFirstTime: Bool = false, _ f: @escaping () -> Void) {
+@@ -1107,6 +1135,24 @@ public class VideoMessageCameraScreen: ViewController {
              
              let pinchGestureRecognizer = UIPinchGestureRecognizer(target: self, action: #selector(self.handlePinch(_:)))
              self.view.addGestureRecognizer(pinchGestureRecognizer)
@@ -76281,7 +76801,38 @@ index 5d7709ba..ed614f0c 100644
          }
                  
          fileprivate func setupCamera() {
-@@ -1729,6 +1749,7 @@ public class VideoMessageCameraScreen: ViewController {
+@@ -1146,8 +1192,9 @@ public class VideoMessageCameraScreen: ViewController {
+             })
+             
+             camera.focus(at: CGPoint(x: 0.5, y: 0.5), autoFocus: true)
++            self.ayuStartHorizonLockIfEnabled()
+             camera.startCapture()
+-            
++
+             self.camera = camera
+             
+             Queue.mainQueue().justDispatch {
+@@ -1617,11 +1664,16 @@ public class VideoMessageCameraScreen: ViewController {
+             let previewInnerFrame = CGRect(origin: CGPoint(x: 0.0, y: floorToScreenPixels((previewFrame.height - previewInnerSize.height) / 2.0)), size: previewInnerSize)
+             
+             let additionalPreviewInnerFrame = CGRect(origin: CGPoint(x: 0.0, y: floorToScreenPixels((previewFrame.height - additionalPreviewInnerSize.height) / 2.0)), size: additionalPreviewInnerSize)
++            // Bounds and centre rather than frame: the horizon lock may have turned the previews.
++            let ayuSetPreviewFrame: (UIView, CGRect) -> Void = { view, frame in
++                view.bounds = CGRect(origin: CGPoint(), size: frame.size)
++                view.center = CGPoint(x: frame.midX, y: frame.midY)
++            }
+             if self.cameraState.isDualCameraEnabled {
+-                self.mainPreviewView.frame = previewInnerFrame
+-                self.additionalPreviewView.frame = additionalPreviewInnerFrame
++                ayuSetPreviewFrame(self.mainPreviewView, previewInnerFrame)
++                ayuSetPreviewFrame(self.additionalPreviewView, additionalPreviewInnerFrame)
+             } else {
+-                self.mainPreviewView.frame = self.cameraState.position == .front ? additionalPreviewInnerFrame : previewInnerFrame
++                ayuSetPreviewFrame(self.mainPreviewView, self.cameraState.position == .front ? additionalPreviewInnerFrame : previewInnerFrame)
+             }
+             
+             self.progressView.frame = previewBounds
+@@ -1729,6 +1781,7 @@ public class VideoMessageCameraScreen: ViewController {
      
      private var audioSessionDisposable: Disposable?
      
@@ -118369,12 +118920,14 @@ index 00000000..7d873fdb
 +}
 diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/filter.svg b/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/filter.svg
 new file mode 100644
-index 00000000..ea4790ee
+index 00000000..ea6c1558
 --- /dev/null
 +++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Filter.imageset/filter.svg
-@@ -0,0 +1,3 @@
+@@ -0,0 +1,5 @@
 +<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-+<path fill="#FFFFFF" d="M4.6 3.5h14.8c0.88 0 1.6 0.72 1.6 1.6v1.15c0 0.47-0.2 0.91-0.55 1.21L14.6 12.3v6.05c0 0.53-0.3 1.01-0.77 1.25l-2.5 1.27c-0.66 0.34-1.43-0.14-1.43-0.88V12.3L4.05 7.46A1.6 1.6 0 0 1 3 6.25V5.1c0-0.88 0.72-1.6 1.6-1.6Z"/>
++<path fill="#FFFFFF" d="M1 3c0-0.55 0.45-1 1-1h6c0.55 0 1 0.45 1 1v0.09c0 0.26-0.1 0.52-0.3 0.7L6.8 5.71C6.6 5.89 6.5 6.15 6.5 6.4v3.2c0 0.69-0.67 1.17-1.32 0.95l-1-0.33C3.78 10.09 3.5 9.7 3.5 9.28V6.64c0-0.25-0.1-0.5-0.26-0.68L1.26 3.8C1.09 3.6 1 3.36 1 3.1V3Z"/>
++<path fill="none" stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M12.4 3.45H15.4C16.6 3.45 17.3 3.8 17.95 4.85L21.4 10.65C21.9 11.5 21.9 12.5 21.4 13.35L17.95 19.15C17.3 20.2 16.6 20.55 15.4 20.55H6.6C3.2 20.55 1.85 19.2 1.85 15.8V11.6"/>
++<path fill="#FFFFFF" d="M16 10.5A1.5 1.5 0 1 0 16 13.5 1.5 1.5 0 1 0 16 10.5z"/>
 +</svg>
 diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/Ghost.imageset/Contents.json
 new file mode 100644

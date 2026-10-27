@@ -75955,6 +75955,127 @@ index 00000000..cdb949f1
 +        return try encoder.encode(manifest)
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift
+new file mode 100644
+index 00000000..099f681d
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift
+@@ -0,0 +1,115 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++import MtProtoKit
++internal import TelegramApi
++
++public enum AyuPreparedDiceError: Error {
++    case invalidRequest, unsupportedResponse, forwardingChangesValue, attemptsExhausted
++    case expired, server(String)
++}
++
++/// A real server-issued roll in Saved Messages, never a client-supplied dice value.
++public final class AyuPreparedDice {
++    public let value: Int32
++    public let attempts: Int
++    fileprivate let messageId: Int32
++    fileprivate let accountId: PeerId
++    fileprivate let createdAt = Date()
++    fileprivate init(value: Int32, attempts: Int, messageId: Int32, accountId: PeerId) {
++        self.value = value; self.attempts = attempts; self.messageId = messageId; self.accountId = accountId
++    }
++}
++
++public enum AyuPreparedDiceEvent {
++    case progress(attempt: Int, lastValue: Int32?)
++    case ready(AyuPreparedDice)
++}
++
++private func ayuServerDice(_ updates: Api.Updates) -> (id: Int32, value: Int32)? {
++    // A short acknowledgement without the media is deliberately not treated as proof.
++    let dice: [(Int32, Int32)] = updates.messages.compactMap { message in
++        guard case let .message(data) = message,
++              case let .messageMediaDice(media)? = data.media,
++              media.emoticon == "🎲", (1 ... 6).contains(media.value), data.id > 0 else { return nil }
++        return (data.id, media.value)
++    }
++    guard dice.count == 1 else { return nil }
++    return dice[0]
++}
++
++private func ayuDiceResult(account: Account, request: Signal<Api.Updates, MTRpcError>) -> Signal<(id: Int32, value: Int32), AyuPreparedDiceError> {
++    return request
++    |> mapError { error -> AyuPreparedDiceError in .server(error.errorDescription) }
++    |> mapToSignal { updates -> Signal<(id: Int32, value: Int32), AyuPreparedDiceError> in
++        account.stateManager.addUpdates(updates)
++        account.network.ayuReassertOfflineAfterSending()
++        guard let result = ayuServerDice(updates) else { return .fail(.unsupportedResponse) }
++        return .single(result)
++    }
++}
++
++private func ayuForwardPreparedDice(account: Account, id: Int32, to peer: Api.InputPeer, threadId: Int32?) -> Signal<(id: Int32, value: Int32), AyuPreparedDiceError> {
++    var flags: Int32 = 1 << 11 // drop_author; the payload remains a forwarded server roll.
++    if threadId != nil { flags |= 1 << 9 }
++    return ayuDiceResult(account: account, request: account.network.request(Api.functions.messages.forwardMessages(
++        flags: flags, fromPeer: .inputPeerSelf, id: [id], randomId: [Int64.random(in: Int64.min ... Int64.max)],
++        toPeer: peer, topMsgId: threadId, replyTo: nil, scheduleDate: nil, scheduleRepeatPeriod: nil,
++        sendAs: nil, quickReplyShortcut: nil, effect: nil, videoTimestamp: nil, allowPaidStars: nil, suggestedPost: nil
++    ), automaticFloodWait: false))
++}
++
++/// Preparation only touches Saved Messages. At most 24 ordinary rolls, two seconds apart.
++/// Server flood errors end the operation; there is no automatic retry or rate-limit bypass.
++public func ayuPrepareDice(account: Account, value: Int32) -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> {
++    guard (1 ... 6).contains(value) else { return .fail(.invalidRequest) }
++    let queue = Queue(name: "AyuGram.PreparedDice")
++    func roll(_ attempt: Int, tested: Bool) -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> {
++        let request = account.network.request(Api.functions.messages.sendMedia(
++            flags: 0, peer: .inputPeerSelf, replyTo: nil, media: .inputMediaDice(.init(emoticon: "🎲")),
++            message: "", randomId: Int64.random(in: Int64.min ... Int64.max), replyMarkup: nil, entities: nil,
++            scheduleDate: nil, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil,
++            effect: nil, allowPaidStars: nil, suggestedPost: nil
++        ), automaticFloodWait: false)
++        return ayuDiceResult(account: account, request: request)
++        |> mapToSignal { result -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> in
++            let verified: Signal<(id: Int32, value: Int32), AyuPreparedDiceError>
++            if tested && result.value != value {
++                verified = .single(result)
++            } else {
++                // Test this exact forwarding API against Saved Messages before any recipient send.
++                verified = ayuForwardPreparedDice(account: account, id: result.id, to: .inputPeerSelf, threadId: nil)
++                |> mapToSignal { forwarded -> Signal<(id: Int32, value: Int32), AyuPreparedDiceError> in
++                    guard forwarded.value == result.value else { return .fail(.forwardingChangesValue) }
++                    return .single(result)
++                }
++            }
++            return verified |> mapToSignal { verifiedRoll -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> in
++                if verifiedRoll.value == value {
++                    return .single(.ready(AyuPreparedDice(value: value, attempts: attempt, messageId: verifiedRoll.id, accountId: account.peerId)))
++                }
++                guard attempt < 24 else { return .fail(.attemptsExhausted) }
++                return .single(.progress(attempt: attempt, lastValue: verifiedRoll.value))
++                |> then(roll(attempt + 1, tested: true) |> delay(2.0, queue: queue))
++            }
++        }
++    }
++    return .single(.progress(attempt: 0, lastValue: nil)) |> then(roll(1, tested: false))
++}
++
++/// Caller must obtain explicit confirmation: a recipient send may still be rejected or rerolled.
++public func ayuSendPreparedDice(account: Account, dice: AyuPreparedDice, peerId: EnginePeer.Id, threadId: Int64?) -> Signal<Int32, AyuPreparedDiceError> {
++    guard dice.accountId == account.peerId, Date().timeIntervalSince(dice.createdAt) < 600 else { return .fail(.expired) }
++    guard [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
++          threadId == nil || (threadId! > 0 && threadId! <= Int64(Int32.max)) else { return .fail(.invalidRequest) }
++    return account.postbox.transaction { transaction -> Api.InputPeer? in
++        guard let peer = transaction.getPeer(peerId), !peer.isCopyProtectionEnabled else { return nil }
++        return apiInputPeerOrSelf(peer, accountPeerId: account.peerId)
++    }
++    |> castError(AyuPreparedDiceError.self)
++    |> mapToSignal { input -> Signal<Int32, AyuPreparedDiceError> in
++        guard let input else { return .fail(.invalidRequest) }
++        return ayuForwardPreparedDice(account: account, id: dice.messageId, to: input, threadId: threadId.map { Int32($0) })
++        |> map { $0.value }
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
 new file mode 100644
 index 00000000..dc4f2c52
@@ -145119,6 +145240,149 @@ index 00000000..e912d793
 +        return UIImage(cgImage: image)
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift
+new file mode 100644
+index 00000000..b215485e
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift
+@@ -0,0 +1,137 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import ChatPresentationInterfaceState
++
++private final class AyuDiceController: UITableViewController {
++    private let context: AccountContext
++    private let peerId: EnginePeer.Id
++    private let threadId: Int64?
++    private let russian: Bool
++    private let maySend: () -> Bool
++    private let request = MetaDisposable()
++    private var prepared: AyuPreparedDice?
++    private var busy = false
++    private var generation = 0
++    private var status: String
++
++    init(context: AccountContext, peerId: EnginePeer.Id, threadId: Int64?, russian: Bool, maySend: @escaping () -> Bool) {
++        self.context = context; self.peerId = peerId; self.threadId = threadId; self.russian = russian; self.maySend = maySend
++        self.status = russian ? "Эксперимент: подбор реального броска в Избранном и пересылка. Это не управление новым серверным броском." : "Experimental: prepare a real roll in Saved Messages, then forward it. This does not control a new server roll."
++        super.init(style: .insetGrouped)
++        self.title = russian ? "Готовый бросок 🎲" : "Prepared dice 🎲"
++        self.isModalInPresentation = true
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.request.dispose() }
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(self.close))
++        self.tableView.rowHeight = UITableView.automaticDimension
++        self.tableView.estimatedRowHeight = 48
++    }
++    @objc private func close() {
++        self.generation += 1; self.request.set(nil); self.dismiss(animated: true)
++    }
++    override func viewDidDisappear(_ animated: Bool) {
++        super.viewDidDisappear(animated)
++        if self.isBeingDismissed || self.navigationController?.isBeingDismissed == true {
++            self.generation += 1; self.request.set(nil)
++        }
++    }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? 6 : (self.prepared == nil ? 0 : 1) }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? { return section == 0 ? self.status : nil }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
++        cell.textLabel?.numberOfLines = 0
++        if indexPath.section == 0 {
++            cell.textLabel?.text = (self.russian ? "Подготовить " : "Prepare ") + String(indexPath.row + 1)
++        } else if let dice = self.prepared {
++            cell.textLabel?.text = (self.russian ? "Переслать готовый бросок: " : "Forward prepared roll: ") + String(dice.value)
++        }
++        cell.isUserInteractionEnabled = !self.busy
++        cell.textLabel?.textColor = self.busy ? .secondaryLabel : self.view.tintColor
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard !self.busy else { return }
++        let preparing = indexPath.section == 0
++        let value = Int32(indexPath.row + 1)
++        let alert = UIAlertController(title: self.title, message: preparing
++            ? (self.russian ? "До 24 случайных бросков и проверочная пересылка в Избранном. Сообщения останутся там. Если сервер меняет число, подбор остановится. Блокировка аккаунта не исключена." : "Up to 24 random rolls and a test forward in Saved Messages. These messages remain there. Preparation stops if forwarding changes the value. Account restrictions remain possible.")
++            : (self.russian ? "Переслать выбранный готовый бросок в этот чат? Даже после проверки Telegram может изменить результат или отклонить отправку." : "Forward this prepared roll to this chat? Telegram may still change the result or reject the send after the self-test."), preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        alert.addAction(UIAlertAction(title: preparing ? (self.russian ? "Подготовить" : "Prepare") : (self.russian ? "Переслать" : "Forward"), style: .default, handler: { [weak self] _ in
++            guard let self, !self.busy else { return }
++            if preparing { self.prepare(value) } else { self.send() }
++        }))
++        self.present(alert, animated: true)
++    }
++    private func failed(_ error: AyuPreparedDiceError) {
++        self.busy = false
++        switch error {
++        case .forwardingChangesValue:
++            self.status = self.russian ? "Telegram изменил число при проверочной пересылке. Собеседнику ничего не отправлено." : "Telegram changed the value during the test forward. Nothing was sent to the recipient."
++        case .attemptsExhausted:
++            self.status = self.russian ? "За 24 попытки нужное число не выпало. Подбор остановлен." : "The requested value did not appear in 24 attempts. Preparation stopped."
++        case let .server(message): self.status = "Telegram: " + message
++        case .expired: self.status = self.russian ? "Бросок устарел. Подготовь новый." : "This prepared roll expired. Prepare another."
++        case .unsupportedResponse:
++            self.status = self.russian ? "Сервер не вернул подтверждённый результат. Операция остановлена. Проверь Избранное и чат перед повтором." : "The server did not return a verifiable result. Stopped. Check Saved Messages and the chat before retrying."
++        case .invalidRequest:
++            self.status = self.russian ? "Этот чат или тема недоступны для пересылки." : "This chat or topic is unavailable for forwarding."
++        }
++        self.tableView.reloadData()
++    }
++    private func prepare(_ value: Int32) {
++        self.generation += 1; let generation = self.generation
++        self.prepared = nil; self.busy = true
++        self.status = self.russian ? "Подготовка в Избранном…" : "Preparing in Saved Messages…"
++        self.tableView.reloadData()
++        self.request.set((ayuPrepareDice(account: self.context.account, value: value) |> deliverOnMainQueue).start(next: { [weak self] event in
++            guard let self, self.generation == generation else { return }
++            switch event {
++            case let .progress(attempt, last):
++                self.status = (self.russian ? "Попыток: " : "Attempts: ") + "\(attempt)/24" + (last.map { (self.russian ? ". Выпало: " : ". Last roll: ") + String($0) } ?? "")
++            case let .ready(dice):
++                self.prepared = dice; self.busy = false
++                self.status = (self.russian ? "Готово: " : "Ready: ") + "\(dice.value). " + (self.russian ? "Проверочная пересылка сохранила число. Подтверди отправку ниже." : "The test forward preserved the value. Confirm forwarding below.")
++            }
++            self.tableView.reloadData()
++        }, error: { [weak self] error in
++            guard let self, self.generation == generation else { return }; self.failed(error)
++        }))
++    }
++    private func send() {
++        guard self.maySend(), let dice = self.prepared else { self.failed(.invalidRequest); return }
++        self.generation += 1; let generation = self.generation
++        self.prepared = nil; self.busy = true
++        self.status = self.russian ? "Пересылка…" : "Forwarding…"; self.tableView.reloadData()
++        self.request.set((ayuSendPreparedDice(account: self.context.account, dice: dice, peerId: self.peerId, threadId: self.threadId) |> deliverOnMainQueue).start(next: { [weak self] actual in
++            guard let self, self.generation == generation else { return }
++            self.busy = false
++            self.status = (self.russian ? "Сервер подтвердил отправку: " : "Server-confirmed sent value: ") + String(actual)
++            if actual != dice.value { self.status += self.russian ? ". Telegram изменил число. Повторная отправка отключена." : ". Telegram changed the value. No automatic resend." }
++            self.tableView.reloadData()
++        }, error: { [weak self] error in
++            guard let self, self.generation == generation else { return }; self.failed(error)
++        }))
++    }
++}
++
++extension ChatControllerImpl {
++    func ayuOpenPreparedDice() {
++        guard let peerId = self.chatLocation.peerId, peerId.namespace != Namespaces.Peer.SecretChat,
++              canSendMessagesToChat(self.presentationInterfaceState), self.presentationInterfaceState.interfaceState.editMessage == nil else { return }
++        let controller = AyuDiceController(context: self.context, peerId: peerId, threadId: self.chatLocation.threadId, russian: self.presentationData.strings.baseLanguageCode.hasPrefix("ru"), maySend: { [weak self] in
++            guard let self else { return false }
++            return self.chatLocation.peerId == peerId && canSendMessagesToChat(self.presentationInterfaceState) && self.presentationInterfaceState.interfaceState.editMessage == nil
++        })
++        self.context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: controller))
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFilters.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFilters.swift
 new file mode 100644
 index 00000000..24b5f454
@@ -146433,7 +146697,7 @@ index 0fb1ee10..26809c39 100644
                  let lastHeaderId = filteredEntries.last.flatMap { listMessageDateHeaderId(timestamp: $0.index.timestamp) } ?? 0
                  let processedView = ChatHistoryView(originalView: view, filteredEntries: filteredEntries, associatedData: associatedData, lastHeaderId: lastHeaderId, id: id, locationInput: update.2, ignoreMessagesInTimestampRange: update.3, ignoreMessageIds: update.4)
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..09a9b43d 100644
+index 1ade8c01..118ec7d9 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -146481,7 +146745,7 @@ index 1ade8c01..09a9b43d 100644
              if !actions.isEmpty {
                  actions.insert(.separator, at: 0)
              }
-@@ -2479,6 +2485,64 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2479,6 +2485,73 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
@@ -146501,6 +146765,15 @@ index 1ade8c01..09a9b43d 100644
 +            if !message.text.isEmpty, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
 +                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Перевести" : "AyuGram · Translate", icon: { theme in UIImage(systemName: "character.bubble")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal) }, action: { controller, _ in
 +                    controller?.dismiss(completion: { ayuPresentTranslation(context: context, text: message.text) })
++                })))
++            }
++            if chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, message.id.peerId.namespace != Namespaces.Peer.SecretChat, EngineMessage(message).adAttribute == nil {
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Готовый бросок 🎲" : "AyuGram · Prepared dice 🎲", icon: { theme in
++                    return UIImage(systemName: "die.face.6")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                }, action: { controller, _ in
++                    controller?.dismiss(completion: {
++                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuOpenPreparedDice()
++                    })
 +                })))
 +            }
 +            // Plugins belong to exteraGram: this opens the enabled plugins' actions for this chat.

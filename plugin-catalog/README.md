@@ -56,3 +56,7 @@ Current supplied-plugin compatibility and device OTA test: [Russian batch report
 ## Engine API 8
 
 The updated base IPA adds native Group Mentions, configurable Reactions Total and a partial petpet GIF composer, and raises the installed-plugin cap to 64. Their catalog manifests declare API 8. Existing API 7 clients keep their previous seven entries and report these three as requiring a newer app. The remaining plugins in the batch are not implemented yet. See [the engine update notes](../docs/PLUGIN_ENGINE8_RU.md) for usage and exact limitations.
+
+## Engine API 9
+
+Adds `formattedCopy` (new native capability, minimum API 9) and native author/date/media filters in the Search+ UI. The existing `searchTerms` adapter remains backward compatible: older base apps keep basic search, API 9 apps get the new controls. Catalog revision 6 has 11 entries, of which API 8 can use 10 and API 7 can use 7. [Usage and limits](../docs/PLUGIN_ENGINE9_RU.md).

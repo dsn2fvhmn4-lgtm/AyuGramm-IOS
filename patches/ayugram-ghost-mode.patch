@@ -74978,6 +74978,20 @@ index 5c0a9101..92d7de3d 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/SearchMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/SearchMessages.swift
+index d16a1001..c99d48ec 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/SearchMessages.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/SearchMessages.swift
+@@ -1164,3 +1164,9 @@ func _internal_refreshGlobalPostSearchState(account: Account) -> Signal<Never, N
+         |> ignoreValues
+     }
+ }
++
++/// Uses the same conversion as the actual search implementation. A missing access
++/// hash must not silently turn an author-filtered search into an unfiltered one.
++public func ayuCanUseSearchAuthor(peer: EnginePeer) -> Bool {
++    return apiInputPeer(peer._asPeer()) != nil
++}
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatFolders.swift b/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatFolders.swift
 index fc1d37c3..bc75d17e 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Peers/ChatFolders.swift
@@ -142721,7 +142735,7 @@ index 00000000..24b5f454
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift
 new file mode 100644
-index 00000000..c2b3a03e
+index 00000000..651f4b61
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift
 @@ -0,0 +1,84 @@
@@ -142762,7 +142776,7 @@ index 00000000..c2b3a03e
 +    }
 +    var body = markers.joined(separator: "\n")
 +    if !message.text.isEmpty { body += (body.isEmpty ? "" : "\n") + message.text }
-+    if message.text.isEmpty, let transcription = message.attributes.compactMap({ $0 as? AudioTranscriptionMessageAttribute }).first, !transcription.isPending, transcription.error == nil, !transcription.text.isEmpty {
++    if let transcription = message.attributes.compactMap({ $0 as? AudioTranscriptionMessageAttribute }).first, !transcription.isPending, transcription.error == nil, !transcription.text.isEmpty, transcription.text != message.text {
 +        body += (body.isEmpty ? "" : "\n") + transcription.text
 +    }
 +    return body
@@ -142796,7 +142810,7 @@ index 00000000..c2b3a03e
 +                return try AyuFormattedCopyRecord.render(records, includeTimestamp: includeTimestamp, russian: russian)
 +            }
 +        } |> deliverOnMainQueue).start(next: { [weak self] result in
-+            guard let self, self.chatLocation.peerId == peerId, self.context.account.network.ayuGhostMode.current.plugins.activeFormattedCopyTimestamp != nil,
++            guard let self, self.view.window != nil, self.chatLocation.peerId == peerId, self.context.account.network.ayuGhostMode.current.plugins.activeFormattedCopyTimestamp != nil,
 +                  !self.presentationInterfaceState.copyProtectionEnabled, !self.presentationInterfaceState.myCopyProtectionEnabled else { return }
 +            switch result {
 +            case let .success(text):
@@ -142907,10 +142921,10 @@ index 00000000..2c07baa7
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
 new file mode 100644
-index 00000000..d1ecf73a
+index 00000000..fe76d17d
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,305 @@
 +import Foundation
 +import UIKit
 +import AvatarNode
@@ -142953,7 +142967,7 @@ index 00000000..d1ecf73a
 +        self.tableView.rowHeight = UITableView.automaticDimension
 +        self.tableView.estimatedRowHeight = 64
 +    }
-+    @objc private func done() { self.request.set(nil); self.dismiss(animated: true) }
++    @objc private func done() { self.generation += 1; self.request.set(nil); self.dismiss(animated: true) }
 +    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
 +    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? self.commands.count : self.messages.count }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
@@ -143043,6 +143057,7 @@ index 00000000..d1ecf73a
 +        self.present(alert, animated: true)
 +    }
 +    private func presentSearchMedia(_ command: (String, AyuPluginAction, String), sourceRect: CGRect) {
++        self.generation += 1; self.request.set(nil)
 +        let alert = UIAlertController(title: self.russian ? "Тип сообщений" : "Message type", message: nil, preferredStyle: .actionSheet)
 +        let titles = self.russian ? ["Все", "Фото", "Видео", "Файлы", "Музыка", "Голосовые и кружки", "GIF"] : ["All", "Photos", "Videos", "Files", "Music", "Voice and video messages", "GIF"]
 +        for (index, media) in AyuAdvancedSearchOptions.Media.allCases.enumerated() {
@@ -143078,12 +143093,13 @@ index 00000000..d1ecf73a
 +    private func searchWithAuthor(_ queries: [String], options: AyuAdvancedSearchOptions, command: (String, AyuPluginAction, String)) {
 +        switch options.author {
 +        case .any: self.search(queries, command: command, options: options)
-+        case let .user(id): self.search(queries, command: command, options: options, authorId: EnginePeer.Id(namespace: Namespaces.Peer.CloudUser, id: EnginePeer.Id.Id._internalFromInt64Value(id)))
++        case let .user(id): self.searchWithCachedAuthor(queries, options: options, command: command, authorId: EnginePeer.Id(namespace: Namespaces.Peer.CloudUser, id: EnginePeer.Id.Id._internalFromInt64Value(id)))
 +        case let .username(name):
 +            self.generation += 1
 +            let generation = self.generation
 +            self.messages = []; self.status = self.russian ? "Поиск автора…" : "Resolving author…"; self.tableView.reloadData()
-+            self.request.set((self.context.engine.peers.resolvePeerByName(name: name, referrer: nil)
++            let resolverSlot = MetaDisposable(); self.request.set(resolverSlot)
++            resolverSlot.set((self.context.engine.peers.resolvePeerByName(name: name, referrer: nil)
 +            |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
 +                if case let .result(peer) = result { return .single(peer) }
 +                return .complete()
@@ -143093,9 +143109,25 @@ index 00000000..d1ecf73a
 +            |> deliverOnMainQueue).start(next: { [weak self] peer in
 +                guard let self, self.generation == generation, self.available(command) else { return }
 +                guard let peer else { self.status = self.russian ? "Автор не найден или время ожидания истекло. Поиск без автора автоматически не запускается." : "Author not found or request timed out. An unfiltered search was not started."; self.tableView.reloadData(); return }
-+                self.search(queries, command: command, options: options, authorId: peer.id)
++                self.searchWithCachedAuthor(queries, options: options, command: command, authorId: peer.id)
 +            }))
 +        }
++    }
++    private func searchWithCachedAuthor(_ queries: [String], options: AyuAdvancedSearchOptions, command: (String, AyuPluginAction, String), authorId: EnginePeer.Id) {
++        self.generation += 1
++        let generation = self.generation
++        self.messages = []; self.status = self.russian ? "Проверка автора…" : "Checking author…"; self.tableView.reloadData()
++        let authorSlot = MetaDisposable(); self.request.set(authorSlot)
++        authorSlot.set((self.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: authorId))
++        |> take(1)
++        |> deliverOnMainQueue).start(next: { [weak self] peer in
++            guard let self, self.generation == generation, self.available(command) else { return }
++            guard let peer, ayuCanUseSearchAuthor(peer: peer) else {
++                self.status = self.russian ? "Автор недоступен по этому ID. Укажи @username или сначала открой его профиль в Telegram. Поиск без фильтра не выполнялся." : "Author is not available by this ID. Use @username or open their Telegram profile first. No unfiltered search was performed."
++                self.tableView.reloadData(); return
++            }
++            self.search(queries, command: command, options: options, authorId: peer.id)
++        }))
 +    }
 +    private func search(_ queries: [String], command: (String, AyuPluginAction, String), options: AyuAdvancedSearchOptions? = nil, authorId: EnginePeer.Id? = nil) {
 +        self.generation += 1
@@ -143126,7 +143158,12 @@ index 00000000..d1ecf73a
 +            guard self.available(command) else { self.messages = []; self.status = self.russian ? "Плагин выключен или изменён." : "Plugin disabled or changed."; self.tableView.reloadData(); return }
 +            guard let batches else { self.status = self.russian ? "Время ожидания истекло. Попробуй снова." : "Search timed out. Try again."; self.tableView.reloadData(); return }
 +            var unique: [EngineMessage.Id: EngineMessage] = [:]
-+            for message in batches.flatMap({ $0 }) where message.id.peerId == self.peerId { unique[message.id] = message }
++            for message in batches.flatMap({ $0 }) where message.id.peerId == self.peerId {
++                if let authorId, message.author?.id != authorId { continue }
++                if let minimum = options?.minimumDate, message.timestamp < minimum { continue }
++                if let maximum = options?.maximumDate, message.timestamp > maximum { continue }
++                unique[message.id] = message
++            }
 +            self.messages = unique.values.sorted { $0.timestamp == $1.timestamp ? $0.id.id > $1.id.id : $0.timestamp > $1.timestamp }
 +            self.status = (self.russian ? "Результатов: " : "Results: ") + String(self.messages.count) + (self.russian ? ". До 40 на фразу; это не вся история." : ". Up to 40 per phrase; this is not the entire history.")
 +            self.tableView.reloadData()
@@ -143471,7 +143508,7 @@ index 00000000..5703373c
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
-index 5bf77c1b..cd7bb16e 100644
+index 5bf77c1b..50e958a6 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
 @@ -72,6 +72,18 @@ extension ChatControllerImpl {
@@ -143482,7 +143519,7 @@ index 5bf77c1b..cd7bb16e 100644
 +                   !self.presentationInterfaceState.copyProtectionEnabled, !self.presentationInterfaceState.myCopyProtectionEnabled,
 +                   updatedMessages.count <= 100, updatedMessages.allSatisfy(ayuCanCopyFormatted), case let .list(items) = actions.content {
 +                    let ids = updatedMessages.map(\.id)
-+                    let title = self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Копировать с автором и датой" : "Copy with author and date"
++                    let title = self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Копировать с подробностями" : "Copy with details"
 +                    actions.content = .list(items + [.action(ContextMenuActionItem(text: title, icon: { theme in
 +                        return UIImage(systemName: "doc.on.doc")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
 +                    }, action: { [weak self] _, finish in
@@ -143712,7 +143749,7 @@ index 5fe58bbf..8c2f255a 100644
      
      func displayGiveawayStatusInfo(messageId: EngineMessage.Id, giveawayInfo: PremiumGiveawayInfo) {
 diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
-index ee583844..746df90e 100644
+index ee583844..48571724 100644
 --- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
 @@ -37,6 +37,7 @@ import ReplyAccessoryPanelNode
@@ -143728,7 +143765,7 @@ index ee583844..746df90e 100644
          
          if let inputPanelNode = inputPanelNodes.primary, !previewing {
 +            if let selectionPanel = inputPanelNode as? ChatMessageSelectionInputPanelNode {
-+                selectionPanel.ayuFormattedCopyTitle = self.chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru") ? "Копировать с автором и датой" : "Copy with author and date"
++                selectionPanel.ayuFormattedCopyTitle = self.chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru") ? "Копировать с подробностями" : "Copy with details"
 +                if self.context.account.network.ayuGhostMode.current.plugins.activeFormattedCopyTimestamp != nil {
 +                    selectionPanel.ayuCopyFormatted = { [weak self] ids in self?.controller?.ayuCopyFormattedMessages(Array(ids)) }
 +                } else { selectionPanel.ayuCopyFormatted = nil }
@@ -144185,10 +144222,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..94027abb
+index 00000000..bad12843
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,1059 @@
+@@ -0,0 +1,1069 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -145248,6 +145285,16 @@ index 00000000..94027abb
 +var downgradedCopy = copyManifest; downgradedCopy.apiVersion = 8
 +check(pluginThrows { try downgradedCopy.validate() }, "Older engine schemas cannot claim formatted-copy support")
 +print("PASS: \(checks) native model checks including advanced search filters and formatted-copy semantics")
++
++if let signedCopy = liveCatalog.manifest(sourceSHA256: "5ad0f526b0f2423da62d417bbdff002aa3a31d2a07c9d5063f441b4c04a64407") {
++    let preparedSignedCopy = try AyuPluginActivation.prepare(signedCopy)
++    let copyExport = try AyuPluginImporter.export(preparedSignedCopy)
++    let copyReimport = try AyuPluginImporter.parse(copyExport, filename: "formatted_copy.plugin", catalog: AyuPluginCatalogStore(directory: root.appendingPathComponent("offline-copy-catalog")))
++    check(copyReimport == signedCopy && copyReimport.apiVersion == 9, "API 9 signed adapters activate and retain their proof through offline export/import")
++    var missingCopyProof = signedCopy; missingCopyProof.catalogProof = nil
++    check(pluginThrows { try missingCopyProof.validate() }, "API 9 catalog adapters still require their portable signature")
++} else { check(false, "The production catalog contains the new signed formatted-copy adapter") }
++print("PASS: \(checks) native model checks including API 9 signed adapter activation")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

@@ -116,3 +116,14 @@ class PluginCatalogTests(unittest.TestCase):
         manifest = native_manifest(value)
         self.assertEqual(manifest['apiVersion'], 9)
         self.assertEqual(manifest['actions'][0]['kind'], 'formattedCopy')
+
+    def test_production_formatted_copy_is_bound_to_the_original_source_and_engine9(self):
+        report = json.loads((ROOT / 'docs/PLUGIN_BATCH_STATUS.json').read_text(encoding='utf-8'))
+        row = next(row for row in report['plugins'] if row['metadata']['__id__'] == 'formatted_copy')
+        envelope = json.loads((ROOT / 'plugin-catalog/catalog.json').read_text(encoding='utf-8'))
+        payload = json.loads(base64.b64decode(envelope['payload']))
+        entries = [json.loads(base64.b64decode(item['manifestData'])) for item in payload['adapters']]
+        manifest = next(entry for entry in entries if entry['sourceSHA256'] == row['sha256'])
+        self.assertEqual(manifest['apiVersion'], 9)
+        self.assertEqual(manifest['actions'][0]['kind'], 'formattedCopy')
+        self.assertEqual(native_manifest(manifest), manifest)

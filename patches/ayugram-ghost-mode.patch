@@ -68993,10 +68993,10 @@ index 00000000..73afd1c1
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
 new file mode 100644
-index 00000000..85dba355
+index 00000000..829f0d8f
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,87 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -69027,6 +69027,7 @@ index 00000000..85dba355
 +        self.hosted.navigationBar.scrollEdgeAppearance = appearance
 +        self.hosted.navigationBar.compactAppearance = appearance
 +        self.hosted.navigationBar.tintColor = theme.list.itemAccentColor
++        self.hosted.navigationBar.isTranslucent = false
 +
 +        super.init(navigationBarPresentationData: nil)
 +        self.statusBar.statusBarStyle = theme.rootController.statusBarStyle.style
@@ -69806,10 +69807,10 @@ index 00000000..d3f99a8f
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..151b2e45
+index 00000000..22abd912
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,391 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -69856,7 +69857,7 @@ index 00000000..151b2e45
 +/// The plugin list, laid out like exteraGram's PluginsActivity: a searchable list where each
 +/// plugin shows its name, version, author and description with an on/off switch, and "+"
 +/// installs a .plugin file.
-+final class AyuPluginManagerController: UITableViewController, UIDocumentPickerDelegate, UISearchResultsUpdating {
++final class AyuPluginManagerController: UITableViewController, UIDocumentPickerDelegate, UISearchBarDelegate {
 +    private let store: AyuGhostModeStore
 +    private let russian: Bool
 +    private let palette: AyuPreferencesPalette?
@@ -69866,6 +69867,7 @@ index 00000000..151b2e45
 +    private var initialImport: (URL, String)?
 +    private var applying = false
 +    private var query = ""
++    private var didSetInitialScrollPosition = false
 +    private var preparingIDs = Set<String>()
 +    private let settingsController: ((String) -> UIViewController?)?
 +    private let keepAwake: (() -> (() -> Void))?
@@ -69889,6 +69891,28 @@ index 00000000..151b2e45
 +    required init?(coder: NSCoder) { return nil }
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
++        self.edgesForExtendedLayout = []
++        self.extendedLayoutIncludesOpaqueBars = false
++        let title = UILabel()
++        title.text = self.title
++        title.font = .systemFont(ofSize: 17.0, weight: .semibold)
++        title.textColor = self.palette?.text ?? .label
++        let badge = UIButton(type: .system)
++        badge.setTitle("ALPHA", for: .normal)
++        badge.titleLabel?.font = .systemFont(ofSize: 10.0, weight: .bold)
++        badge.setTitleColor(self.palette?.accent ?? .systemBlue, for: .normal)
++        badge.backgroundColor = (self.palette?.accent ?? .systemBlue).withAlphaComponent(0.14)
++        badge.layer.cornerRadius = 6.0
++        badge.isUserInteractionEnabled = false
++        badge.accessibilityTraits = .staticText
++        badge.translatesAutoresizingMaskIntoConstraints = false
++        NSLayoutConstraint.activate([badge.widthAnchor.constraint(equalToConstant: 48.0), badge.heightAnchor.constraint(equalToConstant: 22.0)])
++        let heading = UIStackView(arrangedSubviews: [title, badge])
++        heading.axis = .horizontal
++        heading.alignment = .center
++        heading.spacing = 6.0
++        heading.frame.size = heading.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
++        self.navigationItem.titleView = heading
 +        self.navigationItem.leftBarButtonItem = self.makeCloseItem()
 +        let install = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(self.installTapped))
 +        install.accessibilityLabel = self.russian ? "Установить плагин" : "Install plugin"
@@ -69896,16 +69920,17 @@ index 00000000..151b2e45
 +        refresh.accessibilityLabel = self.russian ? "Обновить список поддержки плагинов" : "Refresh plugin support list"
 +        self.catalogRefresh = refresh
 +        self.navigationItem.rightBarButtonItems = [install, refresh]
-+        let search = UISearchController(searchResultsController: nil)
-+        search.searchResultsUpdater = self
-+        search.obscuresBackgroundDuringPresentation = false
-+        search.searchBar.placeholder = self.russian ? "Поиск" : "Search"
-+        self.navigationItem.searchController = search
-+        if #available(iOS 16.0, *) {
-+            self.navigationItem.preferredSearchBarPlacement = .stacked
-+        }
-+        self.navigationItem.hidesSearchBarWhenScrolling = false
-+        self.definesPresentationContext = true
++        // A real table header reserves space for search on every supported iOS version.
++        // The navigation-integrated search bar could overlay and clip the first plugin row.
++        let search = UISearchBar(frame: CGRect(x: 0.0, y: 0.0, width: self.tableView.bounds.width, height: 56.0))
++        search.delegate = self
++        search.searchBarStyle = .minimal
++        search.placeholder = self.russian ? "Поиск" : "Search"
++        search.autoresizingMask = [.flexibleWidth]
++        search.searchTextField.returnKeyType = .done
++        self.tableView.tableHeaderView = search
++        self.tableView.contentInsetAdjustmentBehavior = .automatic
++        self.tableView.keyboardDismissMode = .onDrag
 +        self.tableView.rowHeight = UITableView.automaticDimension
 +        self.tableView.estimatedRowHeight = 120
 +        self.tableView.backgroundColor = self.palette?.background ?? .systemGroupedBackground
@@ -69943,9 +69968,12 @@ index 00000000..151b2e45
 +            }
 +        }
 +    }
-+    func updateSearchResults(for searchController: UISearchController) {
-+        self.query = searchController.searchBar.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
++        self.query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 +        self.reload()
++    }
++    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
++        searchBar.resignFirstResponder()
 +    }
 +    /// Installed plugins matching the search text (name, author or description).
 +    private var items: [AyuInstalledPlugin] {
@@ -69989,6 +70017,10 @@ index 00000000..151b2e45
 +    }
 +    override func viewDidAppear(_ animated: Bool) {
 +        super.viewDidAppear(animated)
++        if !self.didSetInitialScrollPosition {
++            self.didSetInitialScrollPosition = true
++            self.tableView.setContentOffset(CGPoint(x: 0.0, y: -self.tableView.adjustedContentInset.top), animated: false)
++        }
 +        if let initial = self.initialImport { self.initialImport = nil; self.readImport(initial.0, filename: initial.1) }
 +    }
 +    @objc private func done() {

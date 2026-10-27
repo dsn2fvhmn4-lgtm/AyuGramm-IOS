@@ -143288,10 +143288,10 @@ index 00000000..24b5f454
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift
 new file mode 100644
-index 00000000..806af055
+index 00000000..a5350e19
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,108 @@
 +import Foundation
 +import UIKit
 +import SwiftSignalKit
@@ -143351,7 +143351,16 @@ index 00000000..806af055
 +        // Reply sources missing from a message's associated messages are read in a second request.
 +        let result: Signal<Result<String, Error>, NoError> = engine.data.get(EngineDataMap(unique.map { TelegramEngine.EngineData.Item.Messages.Message(id: $0) }))
 +        |> mapToSignal { found -> Signal<Result<String, Error>, NoError> in
-+            let messages = found.values.compactMap { $0?._asMessage() }.sorted { $0.timestamp == $1.timestamp ? $0.id.id < $1.id.id : $0.timestamp < $1.timestamp }
++            // Split up with explicit types: as one chain this timed out the type checker in release builds.
++            let loaded: [EngineRawMessage] = found.values.compactMap { value -> EngineRawMessage? in
++                return value?._asMessage()
++            }
++            let messages: [EngineRawMessage] = loaded.sorted(by: { lhs, rhs -> Bool in
++                if lhs.timestamp != rhs.timestamp {
++                    return lhs.timestamp < rhs.timestamp
++                }
++                return lhs.id.id < rhs.id.id
++            })
 +            guard messages.count == unique.count, messages.allSatisfy(ayuCanCopyFormatted) else { return .single(.failure(AyuPluginError.invalidInput)) }
 +            let replyIds = Set(messages.compactMap { message -> EngineMessage.Id? in
 +                guard let reply = message.attributes.compactMap({ $0 as? ReplyMessageAttribute }).first, message.associatedMessages[reply.messageId] == nil else { return nil }
@@ -143363,7 +143372,11 @@ index 00000000..806af055
 +                    let records = messages.map { message -> AyuFormattedCopyRecord in
 +                        var quote: AyuFormattedCopyRecord.Quote?
 +                        if let reply = message.attributes.compactMap({ $0 as? ReplyMessageAttribute }).first {
-+                            if let source = message.associatedMessages[reply.messageId] ?? replies[reply.messageId].flatMap({ $0 })?._asMessage(), ayuCanCopyFormatted(source) {
++                            var replySource: EngineRawMessage? = message.associatedMessages[reply.messageId]
++                            if replySource == nil, let entry = replies[reply.messageId], let fetched = entry {
++                                replySource = fetched._asMessage()
++                            }
++                            if let source = replySource, ayuCanCopyFormatted(source) {
 +                                quote = .init(author: ayuFormattedCopyAuthor(source), text: ayuFormattedCopyBody(source, russian: russian))
 +                            } else { quote = .init(author: "", text: russian ? "[исходное сообщение недоступно]" : "[original message unavailable]") }
 +                        }

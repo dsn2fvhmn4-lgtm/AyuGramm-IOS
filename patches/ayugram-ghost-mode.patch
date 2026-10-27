@@ -67962,6 +67962,59 @@ index 00000000..024d27f1
 +        }
 +    }
 +}
+diff --git a/submodules/ItemListUI/Sources/Items/ItemListDisclosureItem.swift b/submodules/ItemListUI/Sources/Items/ItemListDisclosureItem.swift
+index 141669b2..c1c6f940 100644
+--- a/submodules/ItemListUI/Sources/Items/ItemListDisclosureItem.swift
++++ b/submodules/ItemListUI/Sources/Items/ItemListDisclosureItem.swift
+@@ -59,6 +59,7 @@ public class ItemListDisclosureItem: ListViewItem, ItemListItem, ListItemCompone
+     let titleFont: ItemListDisclosureItemTitleFont
+     let titleIcon: UIImage?
+     let titleBadge: String?
++    let titleBadgeColor: UIColor?
+     let enabled: Bool
+     let label: String
+     let attributedLabel: NSAttributedString?
+@@ -87,6 +88,7 @@ public class ItemListDisclosureItem: ListViewItem, ItemListItem, ListItemCompone
+         titleFont: ItemListDisclosureItemTitleFont = .regular,
+         titleIcon: UIImage? = nil,
+         titleBadge: String? = nil,
++        titleBadgeColor: UIColor? = nil,
+         label: String,
+         attributedLabel: NSAttributedString? = nil,
+         labelStyle: ItemListDisclosureLabelStyle = .text,
+@@ -112,6 +114,7 @@ public class ItemListDisclosureItem: ListViewItem, ItemListItem, ListItemCompone
+         self.titleFont = titleFont
+         self.titleIcon = titleIcon
+         self.titleBadge = titleBadge
++        self.titleBadgeColor = titleBadgeColor
+         self.enabled = enabled
+         self.labelStyle = labelStyle
+         self.label = label
+@@ -453,7 +456,14 @@ public class ItemListDisclosureItemNode: ListViewItemNode, ItemListItemNode {
+             
+             var titleBadgeTextNodeLayout: (TextNodeLayout, () -> TextNode)?
+             if let titleBadge = item.titleBadge {
+-                let titleBadgeTextNodeLayoutValue = makeTitleBadgeTextNodeLayout(TextNodeLayoutArguments(attributedString: item.attributedTitle ?? NSAttributedString(string: titleBadge, font: Font.medium(11.0), textColor: item.presentationData.theme.list.itemCheckColors.foregroundColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 100.0, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
++                var titleBadgeTextColor = item.presentationData.theme.list.itemCheckColors.foregroundColor
++                if let titleBadgeColor = item.titleBadgeColor {
++                    // A light badge (AyuGram's yellow BETA) needs dark text to stay readable.
++                    var badgeWhite: CGFloat = 0.0
++                    titleBadgeColor.getWhite(&badgeWhite, alpha: nil)
++                    titleBadgeTextColor = badgeWhite > 0.7 ? UIColor(white: 0.12, alpha: 1.0) : .white
++                }
++                let titleBadgeTextNodeLayoutValue = makeTitleBadgeTextNodeLayout(TextNodeLayoutArguments(attributedString: item.attributedTitle ?? NSAttributedString(string: titleBadge, font: Font.medium(11.0), textColor: titleBadgeTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: 100.0, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+                 titleBadgeTextNodeLayout = titleBadgeTextNodeLayoutValue
+                 maxTitleWidth -= 5.0 + titleBadgeTextNodeLayoutValue.0.size.width
+             }
+@@ -793,7 +803,7 @@ public class ItemListDisclosureItemNode: ListViewItemNode, ItemListItemNode {
+                             strongSelf.titleBadgeNode = titleBadgeNode
+                             strongSelf.addSubnode(titleBadgeNode)
+                             
+-                            titleBadgeNode.image = generateFilledRoundedRectImage(size: CGSize(width: 16.0, height: 16.0), cornerRadius: 5.0, color: item.presentationData.theme.list.itemCheckColors.fillColor)?.stretchableImage(withLeftCapWidth: 6, topCapHeight: 6)
++                            titleBadgeNode.image = generateFilledRoundedRectImage(size: CGSize(width: 16.0, height: 16.0), cornerRadius: 5.0, color: item.titleBadgeColor ?? item.presentationData.theme.list.itemCheckColors.fillColor)?.stretchableImage(withLeftCapWidth: 6, topCapHeight: 6)
+                         }
+                         
+                         let titleBadgeTextNode = badgeTextApply()
 diff --git a/submodules/PasscodeCore/Sources/Passcode.swift b/submodules/PasscodeCore/Sources/Passcode.swift
 index d1ff0f65..696b01d3 100644
 --- a/submodules/PasscodeCore/Sources/Passcode.swift
@@ -68168,16 +68221,17 @@ index 00000000..e9b8bba6
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuAppearanceController.swift b/submodules/SettingsUI/Sources/AyuAppearanceController.swift
 new file mode 100644
-index 00000000..e56a4624
+index 00000000..12a5c7a3
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuAppearanceController.swift
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,184 @@
 +import Foundation
 +import UIKit
 +import Display
 +import SwiftSignalKit
 +import TelegramCore
 +import TelegramPresentationData
++import TelegramUIPreferences
 +import PresentationDataUtils
 +import ItemListUI
 +import AccountContext
@@ -68188,31 +68242,37 @@ index 00000000..e56a4624
 +}
 +
 +private struct AyuAppearanceArguments {
++    let context: AccountContext
 +    let toggle: (Int32, Bool) -> Void
 +    let text: (Int32, String) -> Void
++    let style: (AyuAppearanceSettings.DeletedMarkStyle) -> Void
 +    let save: () -> Void
 +    let reset: () -> Void
 +}
 +
 +private enum AyuAppearanceEntry: ItemListNodeEntry {
++    case preview(AyuAppearanceSettings, PresentationTheme, TelegramWallpaper, PresentationFontSize, PresentationChatBubbleCorners, PresentationDateTimeFormat, PresentationPersonNameOrder, [ChatPreviewMessageItem])
 +    case header(Int32, String)
 +    case toggle(Int32, String, Bool)
++    case style(Int32, AyuAppearanceSettings.DeletedMarkStyle, String, Bool)
 +    case input(Int32, String, String)
 +    case action(Int32, String)
 +    case info(Int32, String)
 +
 +    var stableId: Int32 {
 +        switch self {
-+        case let .header(id, _), let .toggle(id, _, _), let .input(id, _, _), let .action(id, _), let .info(id, _): return id
++        case .preview: return -1
++        case let .header(id, _), let .toggle(id, _, _), let .style(id, _, _, _), let .input(id, _, _), let .action(id, _), let .info(id, _): return id
 +        }
 +    }
 +
 +    var section: ItemListSectionId {
 +        switch self.stableId {
-+        case 0 ... 2: return 0
-+        case 3 ... 4: return 1
-+        case 5 ... 6: return 2
-+        default: return 3
++        case ...0: return 0
++        case 1 ... 9: return 1
++        case 10 ... 19: return 2
++        case 20 ... 29: return 3
++        default: return 4
 +        }
 +    }
 +
@@ -68221,16 +68281,34 @@ index 00000000..e56a4624
 +    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
 +        let arguments = arguments as! AyuAppearanceArguments
 +        switch self {
++        case let .preview(_, theme, wallpaper, fontSize, corners, dateTimeFormat, nameOrder, items):
++            return ThemeSettingsChatPreviewItem(context: arguments.context, systemStyle: .glass, theme: theme, componentTheme: theme, strings: presentationData.strings, sectionId: self.section, fontSize: fontSize, chatBubbleCorners: corners, wallpaper: wallpaper, dateTimeFormat: dateTimeFormat, nameDisplayOrder: nameOrder, messageItems: items)
 +        case let .header(_, text):
 +            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
 +        case let .toggle(id, title, value):
 +            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
++        case let .style(_, style, title, checked):
++            return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: title, style: .right, checked: checked, zeroSeparatorInsets: false, sectionId: self.section, action: { arguments.style(style) })
 +        case let .input(id, text, placeholder):
 +            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: ""), text: text, placeholder: placeholder, type: .regular(capitalization: false, autocorrection: false), returnKeyType: .done, spacing: 0.0, clearType: .always, maxLength: 24, sectionId: self.section, textUpdated: { arguments.text(id, $0) }, action: arguments.save)
 +        case let .action(id, title):
-+            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: id == 7 ? arguments.save : arguments.reset)
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: id == 30 ? arguments.save : arguments.reset)
 +        case let .info(_, text):
 +            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        }
++    }
++
++    static func == (lhs: AyuAppearanceEntry, rhs: AyuAppearanceEntry) -> Bool {
++        switch (lhs, rhs) {
++        case let (.preview(la, lt, lw, lf, lc, ld, ln, li), .preview(ra, rt, rw, rf, rc, rd, rn, ri)):
++            return la == ra && lt === rt && lw == rw && lf == rf && lc == rc && ld == rd && ln == rn && li == ri
++        case let (.header(li, lt), .header(ri, rt)): return li == ri && lt == rt
++        case let (.toggle(li, lt, lv), .toggle(ri, rt, rv)): return li == ri && lt == rt && lv == rv
++        case let (.style(li, ls, lt, lc), .style(ri, rs, rt, rc)): return li == ri && ls == rs && lt == rt && lc == rc
++        case let (.input(li, lt, lp), .input(ri, rt, rp)): return li == ri && lt == rt && lp == rp
++        case let (.action(li, lt), .action(ri, rt)): return li == ri && lt == rt
++        case let (.info(li, lt), .info(ri, rt)): return li == ri && lt == rt
++        default: return false
 +        }
 +    }
 +}
@@ -68243,21 +68321,25 @@ index 00000000..e56a4624
 +    let draft = ValuePromise(initialDraft, ignoreRepeated: true)
 +    var presentError: ((Error) -> Void)?
 +    var finishEditing: (() -> Void)?
-+    let arguments = AyuAppearanceArguments(toggle: { id, value in
++    let arguments = AyuAppearanceArguments(context: context, toggle: { id, value in
 +        do {
 +            try store.update {
-+                if id == 1 { $0.appearance.showGhostButton = value }
++                if id == 3 { $0.appearance.showGhostButton = value }
 +                if id == 2 { $0.appearance.showMessageSeconds = value }
 +            }
 +        } catch { presentError?(error) }
 +    }, text: { id, text in
 +        let updated = draftText.modify { previous in
 +            var updated = previous
-+            if id == 4 { updated.deleted = text }
-+            if id == 6 { updated.edited = text }
++            if id == 14 { updated.deleted = text }
++            if id == 21 { updated.edited = text }
 +            return updated
 +        }
 +        draft.set(updated)
++    }, style: { style in
++        do {
++            try store.update { $0.appearance.deletedMarkStyle = style }
++        } catch { presentError?(error) }
 +    }, save: {
 +        let text = draftText.with { $0 }
 +        do {
@@ -68286,18 +68368,28 @@ index 00000000..e56a4624
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
 +        let appearance = settings.appearance
 +        let unsaved = text.deleted != appearance.deletedMark || text.edited != appearance.editedMark
-+        let entries: [AyuAppearanceEntry] = [
-+            .header(0, "AYUGRAM"),
-+            .toggle(1, ru ? "Призрак в заголовке чата" : "Ghost button in chat header", appearance.showGhostButton),
-+            .toggle(2, ru ? "Секунды во времени сообщений" : "Seconds in message timestamps", appearance.showMessageSeconds),
-+            .header(3, ru ? "МЕТКА УДАЛЁННЫХ СООБЩЕНИЙ" : "DELETED MESSAGE LABEL"),
-+            .input(4, text.deleted, ru ? "Удалено" : "Deleted"),
-+            .header(5, ru ? "МЕТКА ИЗМЕНЁННЫХ СООБЩЕНИЙ" : "EDITED MESSAGE LABEL"),
-+            .input(6, text.edited, presentationData.strings.Conversation_MessageEditedLabel),
-+            .action(7, ru ? (unsaved ? "Сохранить метки •" : "Сохранить метки") : (unsaved ? "Save labels •" : "Save labels")),
-+            .action(8, ru ? "Сбросить оформление чатов" : "Reset chat appearance"),
-+            .info(9, ru ? "Переключатели применяются сразу. Для текста нажми «Сохранить метки». Пустое поле возвращает стандартную подпись на языке приложения. До 24 символов и 96 байт в одной строке. Сохранение удалённых сообщений включается отдельно в «Истории сообщений». Если спрятать призрака, Ghost Mode по-прежнему доступен в настройках AyuGram." : "Switches apply immediately. Use Save labels for text changes. Empty fields restore the app language's default labels. Up to 24 characters and 96 bytes on one line. Deleted-message capture is enabled separately in Message History. Ghost Mode remains accessible from AyuGram settings when the header button is hidden.")
++        let previewItems = [
++            ChatPreviewMessageItem(outgoing: false, reply: nil, text: ru ? "Скинь потом пароль от вайфая" : "Send me the Wi-Fi password later", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuDeleted: true),
++            ChatPreviewMessageItem(outgoing: true, reply: nil, text: ru ? "Уже передумал 🙂" : "Changed my mind 🙂", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuEdited: true)
 +        ]
++        var entries: [AyuAppearanceEntry] = [
++            .preview(appearance, presentationData.theme, presentationData.chatWallpaper, presentationData.chatFontSize, presentationData.chatBubbleCorners, presentationData.dateTimeFormat, presentationData.nameDisplayOrder, previewItems),
++            .header(1, "AYUGRAM"),
++            .toggle(2, ru ? "Секунды во времени сообщений" : "Seconds in message timestamps", appearance.showMessageSeconds),
++            .toggle(3, ru ? "Призрак в заголовке чата" : "Ghost button in chat header", appearance.showGhostButton),
++            .header(10, ru ? "МЕТКА УДАЛЁННЫХ" : "DELETED MESSAGE MARK"),
++            .style(11, .text, ru ? "Текст" : "Text", appearance.deletedMarkStyle == .text),
++            .style(12, .trash, ru ? "Корзина 🗑" : "Trash 🗑", appearance.deletedMarkStyle == .trash),
++            .style(13, .eye, ru ? "Глаз 👁" : "Eye 👁", appearance.deletedMarkStyle == .eye)
++        ]
++        if appearance.deletedMarkStyle == .text {
++            entries.append(.input(14, text.deleted, ru ? "Удалено" : "Deleted"))
++        }
++        entries.append(.header(20, ru ? "МЕТКА ИЗМЕНЁННЫХ" : "EDITED MESSAGE MARK"))
++        entries.append(.input(21, text.edited, presentationData.strings.Conversation_MessageEditedLabel))
++        entries.append(.action(30, ru ? (unsaved ? "Сохранить метки •" : "Сохранить метки") : (unsaved ? "Save labels •" : "Save labels")))
++        entries.append(.action(31, ru ? "Сбросить оформление чатов" : "Reset chat appearance"))
++        entries.append(.info(32, ru ? "Пустое поле — стандартная подпись. Текст меток применяется кнопкой «Сохранить метки», остальное — сразу." : "An empty field uses the standard label. Text labels apply with Save labels; everything else applies at once."))
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Оформление чатов" : "Chat Appearance"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
@@ -68457,10 +68549,10 @@ index 00000000..82b56cf0
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
 new file mode 100644
-index 00000000..a7108b76
+index 00000000..7914e8ea
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,239 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -68473,53 +68565,90 @@ index 00000000..a7108b76
 +
 +private struct AyuOptionsArguments {
 +    let toggle: (Int32, Bool) -> Void
-+    let text: (String) -> Void
-+    let save: () -> Void
++    let openRule: (Int) -> Void
++    let addRule: () -> Void
 +    let clear: () -> Void
 +}
 +
 +private enum AyuOptionsEntry: ItemListNodeEntry {
-+    case toggle(Int32, String, Bool)
-+    case input(String)
-+    case save(String)
-+    case clear(String)
-+    case info(Int32, String)
++    case header(Int32, Int32, String)
++    case toggle(Int32, Int32, UIImage?, String, Bool)
++    case picture(Int32, Int32, AyuPreviewPicture)
++    case rule(Int32, Int, String)
++    case addRule(Int32, String)
++    case clear(Int32, String)
++    case info(Int32, Int32, String)
 +
-+    var section: ItemListSectionId { return 0 }
-+    var stableId: Int32 {
++    var section: ItemListSectionId {
 +        switch self {
-+        case let .toggle(id, _, _), let .info(id, _): return id
-+        case .input: return 10
-+        case .save: return 11
-+        case .clear: return 12
++        case let .header(section, _, _), let .toggle(section, _, _, _, _), let .picture(section, _, _), let .rule(section, _, _), let .addRule(section, _), let .clear(section, _), let .info(section, _, _):
++            return section
 +        }
 +    }
++
++    var stableId: Int32 {
++        switch self {
++        case let .header(_, id, _), let .toggle(_, id, _, _, _), let .picture(_, id, _), let .info(_, id, _):
++            return id
++        case let .rule(_, index, _):
++            return 1000 + Int32(index)
++        case .addRule:
++            return 1100
++        case .clear:
++            return 1200
++        }
++    }
++
 +    static func < (lhs: AyuOptionsEntry, rhs: AyuOptionsEntry) -> Bool { return lhs.stableId < rhs.stableId }
++
++    static func == (lhs: AyuOptionsEntry, rhs: AyuOptionsEntry) -> Bool {
++        switch (lhs, rhs) {
++        case let (.header(ls, li, lt), .header(rs, ri, rt)): return ls == rs && li == ri && lt == rt
++        case let (.toggle(ls, li, _, lt, lv), .toggle(rs, ri, _, rt, rv)): return ls == rs && li == ri && lt == rt && lv == rv
++        case let (.picture(ls, li, lp), .picture(rs, ri, rp)): return ls == rs && li == ri && lp == rp
++        case let (.rule(ls, li, lt), .rule(rs, ri, rt)): return ls == rs && li == ri && lt == rt
++        case let (.addRule(ls, lt), .addRule(rs, rt)): return ls == rs && lt == rt
++        case let (.clear(ls, lt), .clear(rs, rt)): return ls == rs && lt == rt
++        case let (.info(ls, li, lt), .info(rs, ri, rt)): return ls == rs && li == ri && lt == rt
++        default: return false
++        }
++    }
 +
 +    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
 +        let arguments = arguments as! AyuOptionsArguments
 +        switch self {
-+        case let .toggle(id, title, value):
-+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
-+        case let .input(text):
-+            return ItemListMultilineInputItem(presentationData: presentationData, systemStyle: .glass, text: text, placeholder: "pattern", maxLength: ItemListMultilineInputItemTextLimit(value: 16500, display: true), sectionId: self.section, style: .blocks, capitalization: false, autocorrection: false, textUpdated: arguments.text)
-+        case let .save(title):
-+            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: arguments.save)
-+        case let .clear(title):
++        case let .header(_, _, text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .toggle(_, id, icon, title, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
++        case let .picture(_, _, picture):
++            return picture.item(theme: presentationData.theme, ru: presentationData.strings.baseLanguageCode.hasPrefix("ru"), sectionId: self.section)
++        case let .rule(_, index, pattern):
++            let attributedPattern = NSAttributedString(string: pattern, attributes: [.font: UIFont.monospacedSystemFont(ofSize: presentationData.fontSize.itemListBaseFontSize, weight: .regular), .foregroundColor: presentationData.theme.list.itemPrimaryTextColor])
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: pattern, attributedTitle: attributedPattern, label: "", sectionId: self.section, style: .blocks, action: { arguments.openRule(index) })
++        case let .addRule(_, title):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: arguments.addRule)
++        case let .clear(_, title):
 +            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: arguments.clear)
-+        case let .info(_, text):
++        case let .info(_, _, text):
 +            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
 +        }
 +    }
 +}
 +
++/// `regex`: the Filters page (rules as rows, each edited on its own). Otherwise the Sending
++/// Options page, with a picture under each media option that shows what it adds.
++/// `initialPatterns` opens the rule editor with that pattern, as "Add Filter" did.
 +public func ayuChatOptionsController(context: AccountContext, regex: Bool, initialPatterns: [String]? = nil) -> ViewController {
 +    let store = context.account.network.ayuGhostMode
-+    let initialText = (initialPatterns ?? store.current.regexFilters.patterns).joined(separator: "\n")
-+    let draft = ValuePromise<String>(initialText, ignoreRepeated: true)
-+    let draftText = Atomic<String>(value: initialText)
 +    var presentError: ((String) -> Void)?
 +    var confirmClear: (() -> Void)?
++    var editRule: ((Int?, String) -> Void)?
++    let ruleIcons: [Int32: UIImage?] = [
++        0: AyuSettingsIcons.glyph("AyuGram/Filter", color: UIColor(rgb: 0xFF3B30), side: 20.0),
++        1: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x007AFF)),
++        2: AyuSettingsIcons.symbol("textformat", color: UIColor(rgb: 0x8E8E93))
++    ]
 +    let arguments = AyuOptionsArguments(toggle: { id, value in
 +        do {
 +            try store.update { settings in
@@ -68537,67 +68666,117 @@ index 00000000..a7108b76
 +                        if value { settings.silentSendMode = mode }
 +                        else if settings.silentSendMode == mode { settings.silentSendMode = .never }
 +                    case 2: settings.mediaSend.confirmStickers = value
-+                    case 3: settings.mediaSend.confirmGifs = value
-+                    case 4: settings.mediaSend.previewVoice = value
-+                    case 5: settings.mediaSend.previewRound = value
++                    case 10: settings.mediaSend.confirmGifs = value
++                    case 20: settings.mediaSend.previewVoice = value
++                    case 30: settings.mediaSend.previewRound = value
 +                    default: break
 +                    }
 +                }
 +            }
 +        } catch { presentError?(error.localizedDescription) }
-+    }, text: { text in
-+        let _ = draftText.swap(text)
-+        draft.set(text)
-+    }, save: {
-+        do {
-+            try store.update { settings in
-+                settings.regexFilters.patterns = draftText.with { $0.components(separatedBy: .newlines).filter { !$0.isEmpty } }
-+            }
-+        } catch { presentError?(error.localizedDescription) }
++    }, openRule: { index in
++        let patterns = store.current.regexFilters.patterns
++        guard patterns.indices.contains(index) else { return }
++        editRule?(index, patterns[index])
++    }, addRule: {
++        editRule?(nil, "")
 +    }, clear: { confirmClear?() })
-+    let signal = combineLatest(context.sharedContext.presentationData, store.signal, draft.get())
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
 +    |> deliverOnMainQueue
-+    |> map { presentationData, settings, text -> (ItemListControllerState, (ItemListNodeState, Any)) in
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
-+        let entries: [AyuOptionsEntry]
++        var entries: [AyuOptionsEntry] = []
 +        if regex {
-+            entries = [
-+                .toggle(0, ru ? "Скрывать совпавшие сообщения" : "Hide matching messages", settings.regexFilters.enabled),
-+                .toggle(1, ru ? "Также в личных чатах и группах" : "Also in private chats and groups", settings.regexFilters.includeChats),
-+                .toggle(2, ru ? "Без учёта регистра" : "Case insensitive", settings.regexFilters.caseInsensitive),
-+                .info(3, ru ? "Одно регулярное выражение на строку, до 32 правил по 512 байт. По умолчанию фильтруются только каналы. Сообщения скрываются локально; база и синхронизация сохраняются. Альбом скрывается целиком при совпадении загруженной подписи. Реклама, служебные и секретные сообщения не фильтруются. Поиск и выбор сообщений показывают оригиналы. При исчерпании бюджета обработки часть сообщений может остаться видимой." : "One regular expression per line; up to 32 rules of 512 bytes. Channels only by default. Messages are hidden locally; database and synchronization are unchanged. Albums are hidden when a loaded caption matches. Ads, service and secret messages are excluded. Search/navigation and selection show originals. Messages can remain visible if the processing budget is exceeded."),
-+                .info(4, ru ? "Сохранено правил: \(settings.regexFilters.patterns.count)/32. В редакторе: \(text.components(separatedBy: .newlines).filter { !$0.isEmpty }.count)/32. Текст применяется кнопкой «Сохранить правила»; выключатель фильтрации и область действия меняются сразу." : "Saved rules: \(settings.regexFilters.patterns.count)/32. Editor: \(text.components(separatedBy: .newlines).filter { !$0.isEmpty }.count)/32. Apply editor text with Save rules; filtering and scope switches apply immediately."),
-+                .input(text),
-+                .save(ru ? "Сохранить правила" : "Save rules"),
-+                .clear(ru ? "Удалить все правила" : "Clear all rules")
-+            ]
++            let filters = settings.regexFilters
++            entries.append(.toggle(0, 0, ruleIcons[0] ?? nil, ru ? "Скрывать по правилам" : "Hide matching messages", filters.enabled))
++            entries.append(.toggle(0, 1, ruleIcons[1] ?? nil, ru ? "Личные чаты и группы" : "Private chats and groups", filters.includeChats))
++            entries.append(.toggle(0, 2, ruleIcons[2] ?? nil, ru ? "Без учёта регистра" : "Ignore case", filters.caseInsensitive))
++            entries.append(.info(0, 3, ru ? "Без второго переключателя фильтруются только каналы. Сообщения скрываются только на этом устройстве." : "Without the second switch only channels are filtered. Messages are hidden on this device only."))
++            entries.append(.header(1, 10, ru ? "ПРАВИЛА · \(filters.patterns.count) ИЗ 32" : "RULES · \(filters.patterns.count) OF 32"))
++            for (index, pattern) in filters.patterns.enumerated() {
++                entries.append(.rule(1, index, pattern))
++            }
++            if filters.patterns.count < 32 {
++                entries.append(.addRule(1, ru ? "Добавить правило" : "Add Rule"))
++            }
++            entries.append(.info(1, 1150, ru ? "Пример: казино|ставки — скроет сообщения, где есть любое из этих слов. Нажми на правило, чтобы изменить или удалить его." : "Example: casino|betting hides messages containing either word. Tap a rule to edit or delete it."))
++            if !filters.patterns.isEmpty {
++                entries.append(.clear(2, ru ? "Удалить все правила" : "Delete All Rules"))
++            }
 +        } else {
-+            entries = [
-+                .toggle(0, ru ? "Всегда отправлять без звука" : "Always send without sound", settings.silentSendMode == .always),
-+                .toggle(1, ru ? "Без звука в Ghost Mode" : "Send silently in Ghost Mode", settings.silentSendMode == .inGhostMode),
-+                .toggle(2, ru ? "Подтверждать стикеры" : "Confirm sticker sends", settings.mediaSend.confirmStickers),
-+                .toggle(3, ru ? "Подтверждать GIF" : "Confirm GIF sends", settings.mediaSend.confirmGifs),
-+                .toggle(4, ru ? "Предпросмотр голосовых" : "Preview voice recordings", settings.mediaSend.previewVoice),
-+                .toggle(5, ru ? "Предпросмотр кружков" : "Preview video notes", settings.mediaSend.previewRound),
-+                .info(6, ru ? "Режимы отправки без звука взаимоисключающие; явная отправка без звука из меню сохраняется. Подтверждения стикеров и GIF включаются отдельно. Предпросмотр останавливает обычную запись перед отправкой: можно прослушать или посмотреть её и нажать «Отправить». Для однократных сообщений дополнительный предпросмотр не добавляется. Все четыре параметра по умолчанию выключены." : "Silent-send modes are mutually exclusive; explicit Send Without Sound remains available. Sticker/GIF confirmations are independent. Recording preview stops an ordinary recording before sending, letting you review it and press Send. View-once sends retain their native flow without an added preview. All four media options default off.")
-+            ]
++            let media = settings.mediaSend
++            entries.append(.toggle(0, 0, nil, ru ? "Всегда отправлять без звука" : "Always send without sound", settings.silentSendMode == .always))
++            entries.append(.toggle(0, 1, nil, ru ? "Без звука в Ghost Mode" : "Send silently in Ghost Mode", settings.silentSendMode == .inGhostMode))
++            entries.append(.toggle(0, 2, nil, ru ? "Подтверждать стикеры" : "Confirm sticker sends", media.confirmStickers))
++            entries.append(.info(0, 3, ru ? "Режимы без звука взаимоисключающие; «Отправить без звука» в меню остаётся." : "Silent modes are mutually exclusive; Send Without Sound stays in the menu."))
++            entries.append(.toggle(1, 10, nil, ru ? "Подтверждать GIF" : "Confirm GIF sends", media.confirmGifs))
++            entries.append(.picture(1, 11, .gifConfirmation))
++            entries.append(.toggle(2, 20, nil, ru ? "Предпросмотр голосовых" : "Preview voice recordings", media.previewVoice))
++            entries.append(.picture(2, 21, .voicePreview))
++            entries.append(.toggle(3, 30, nil, ru ? "Предпросмотр кружков" : "Preview video notes", media.previewRound))
++            entries.append(.picture(3, 31, .videoNotePreview))
++            entries.append(.info(3, 32, ru ? "С предпросмотром запись не уходит сразу: её можно прослушать или посмотреть и потом отправить. Для однократных сообщений предпросмотра нет." : "With preview a recording is not sent at once: review it, then send. View-once messages skip the preview."))
 +        }
 +        let data = ItemListPresentationData(presentationData)
-+        let title = regex ? (ru ? "Regex-фильтры" : "Regex Filters") : (ru ? "Отправка сообщений" : "Sending Options")
++        let title = regex ? (ru ? "Фильтры" : "Filters") : (ru ? "Отправка сообщений" : "Sending Options")
 +        let state = ItemListControllerState(presentationData: data, title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-+        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
 +    }
 +    let controller = ItemListController(context: context, state: signal)
++    let updatePatterns: (([String]) -> [String]) -> Void = { transform in
++        do {
++            try store.update { $0.regexFilters.patterns = transform($0.regexFilters.patterns) }
++        } catch { presentError?(error.localizedDescription) }
++    }
++    editRule = { index, text in
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let alert = UIAlertController(title: index == nil ? (ru ? "Новое правило" : "New Rule") : (ru ? "Правило" : "Rule"), message: ru ? "Регулярное выражение, до 512 байт" : "Regular expression, up to 512 bytes", preferredStyle: .alert)
++        alert.addTextField { field in
++            field.text = text
++            field.placeholder = ru ? "казино|ставки" : "casino|betting"
++            field.autocapitalizationType = .none
++            field.autocorrectionType = .no
++            field.font = UIFont.monospacedSystemFont(ofSize: 15.0, weight: .regular)
++        }
++        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++            let value = (alert?.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++            guard !value.isEmpty else { return }
++            guard (try? NSRegularExpression(pattern: value)) != nil else {
++                presentError?(ru ? "Это не регулярное выражение: проверь скобки и спецсимволы." : "This is not a valid regular expression: check brackets and special characters.")
++                return
++            }
++            updatePatterns { patterns in
++                var patterns = patterns
++                if let index, patterns.indices.contains(index) {
++                    patterns[index] = value
++                } else if !patterns.contains(value) {
++                    patterns.append(value)
++                }
++                return patterns
++            }
++        }))
++        if let index {
++            alert.addAction(UIAlertAction(title: ru ? "Удалить" : "Delete", style: .destructive, handler: { _ in
++                updatePatterns { patterns in
++                    var patterns = patterns
++                    if patterns.indices.contains(index) {
++                        patterns.remove(at: index)
++                    }
++                    return patterns
++                }
++            }))
++        }
++        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(alert)
++    }
 +    confirmClear = { [weak controller] in
 +        let data = context.sharedContext.currentPresentationData.with { $0 }
 +        let ru = data.strings.baseLanguageCode.hasPrefix("ru")
-+        controller?.present(textAlertController(context: context, title: "AyuGram", text: ru ? "Удалить все правила этого аккаунта и выключить фильтрацию? Несохранённый текст редактора тоже будет очищен." : "Delete all rules for this account and turn filtering off? Unsaved editor text will also be cleared.", actions: [
++        controller?.present(textAlertController(context: context, title: ru ? "Удалить все правила?" : "Delete all rules?", text: ru ? "Фильтрация выключится." : "Filtering will be turned off.", actions: [
 +            TextAlertAction(type: .genericAction, title: data.strings.Common_Cancel, action: {}),
-+            TextAlertAction(type: .destructiveAction, title: data.strings.Common_OK, action: {
++            TextAlertAction(type: .destructiveAction, title: ru ? "Удалить" : "Delete", action: {
 +                do {
 +                    try store.update { $0.regexFilters.patterns = []; $0.regexFilters.enabled = false }
-+                    let _ = draftText.swap("")
-+                    draft.set("")
 +                } catch { presentError?(error.localizedDescription) }
 +            })
 +        ]), in: .window(.root))
@@ -68605,6 +68784,11 @@ index 00000000..a7108b76
 +    presentError = { [weak controller] message in
 +        let data = context.sharedContext.currentPresentationData.with { $0 }
 +        controller?.present(textAlertController(context: context, title: "AyuGram", text: message, actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++    if regex, let pattern = initialPatterns?.last {
++        Queue.mainQueue().after(0.4) {
++            editRule?(nil, pattern)
++        }
 +    }
 +    return controller
 +}
@@ -68974,6 +69158,443 @@ index 00000000..77b19608
 +        ]), in: .window(.root))
 +    }
 +    return controller
++}
+diff --git a/submodules/SettingsUI/Sources/AyuMediaArchiveScreen.swift b/submodules/SettingsUI/Sources/AyuMediaArchiveScreen.swift
+new file mode 100644
+index 00000000..2c1fdf0d
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuMediaArchiveScreen.swift
+@@ -0,0 +1,431 @@
++import Foundation
++import UIKit
++import AVFoundation
++import ImageIO
++import QuickLook
++import Display
++import AsyncDisplayKit
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import AccountContext
++
++/// The Media Archive as a page like a chat's shared media: a grid of the archived copies with
++/// Photos / Videos / Files / Voice tabs. A tap opens the file full screen, a long press shares
++/// or removes it, and "…" holds the limits and the whole-archive actions.
++final class AyuMediaArchiveScreen: ViewController {
++    fileprivate enum Kind: Int, CaseIterable {
++        case all, photo, video, file, voice
++
++        static func of(_ attachment: AyuArchivedAttachment) -> Kind {
++            let name = attachment.storedName.isEmpty ? attachment.displayName : attachment.storedName
++            switch (name as NSString).pathExtension.lowercased() {
++            case "jpg", "jpeg", "png", "heic", "heif", "webp", "gif": return .photo
++            case "mp4", "mov", "m4v": return .video
++            case "ogg", "oga", "opus", "m4a", "mp3", "wav", "aac": return .voice
++            default: return .file
++            }
++        }
++
++        func title(ru: Bool) -> String {
++            switch self {
++            case .all: return ru ? "Все" : "All"
++            case .photo: return ru ? "Фото" : "Photos"
++            case .video: return ru ? "Видео" : "Videos"
++            case .file: return ru ? "Файлы" : "Files"
++            case .voice: return ru ? "Голосовые" : "Voice"
++            }
++        }
++    }
++
++    fileprivate struct Item {
++        let attachment: AyuArchivedAttachment
++        let url: URL?
++        let kind: Kind
++    }
++
++    private let context: AccountContext
++    private var presentationData: PresentationData
++    fileprivate var ru: Bool { return self.presentationData.strings.baseLanguageCode.hasPrefix("ru") }
++
++    private let disposable = MetaDisposable()
++    private let operation = MetaDisposable()
++    private var state = AyuMessageHistoryState()
++    private var items: [Item] = []
++    private var visibleItems: [Item] = []
++    private var kind: Kind = .all
++
++    private var segmentedControl: UISegmentedControl?
++    private var usageLabel: UILabel?
++    private var emptyLabel: UILabel?
++    private var collectionView: UICollectionView?
++    private var dataSource: AyuMediaArchiveDataSource?
++    private var previewSource: AyuMediaArchivePreviewSource?
++
++    init(context: AccountContext) {
++        self.context = context
++        self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
++        super.init(navigationBarPresentationData: NavigationBarPresentationData(presentationData: self.presentationData))
++        self.title = self.ru ? "Медиаархив" : "Media Archive"
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "•••", style: .plain, target: self, action: #selector(self.morePressed))
++    }
++
++    required init(coder aDecoder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        self.disposable.dispose()
++        self.operation.dispose()
++    }
++
++    override func loadDisplayNode() {
++        self.displayNode = ASDisplayNode()
++        self.displayNode.backgroundColor = self.presentationData.theme.list.blocksBackgroundColor
++        self.displayNodeDidLoad()
++
++        let view = self.displayNode.view
++        let segmentedControl = UISegmentedControl(items: Kind.allCases.map { $0.title(ru: self.ru) })
++        segmentedControl.selectedSegmentIndex = 0
++        segmentedControl.addTarget(self, action: #selector(self.kindChanged(_:)), for: .valueChanged)
++        segmentedControl.overrideUserInterfaceStyle = self.presentationData.theme.overallDarkAppearance ? .dark : .light
++        view.addSubview(segmentedControl)
++        self.segmentedControl = segmentedControl
++
++        let usageLabel = UILabel()
++        usageLabel.font = UIFont.systemFont(ofSize: 13.0)
++        usageLabel.textColor = self.presentationData.theme.list.freeTextColor
++        usageLabel.textAlignment = .center
++        view.addSubview(usageLabel)
++        self.usageLabel = usageLabel
++
++        let layout = UICollectionViewFlowLayout()
++        layout.minimumInteritemSpacing = 2.0
++        layout.minimumLineSpacing = 2.0
++        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
++        collectionView.backgroundColor = .clear
++        collectionView.alwaysBounceVertical = true
++        let dataSource = AyuMediaArchiveDataSource(screen: self)
++        collectionView.dataSource = dataSource
++        collectionView.delegate = dataSource
++        collectionView.register(AyuMediaArchiveCell.self, forCellWithReuseIdentifier: "cell")
++        view.addSubview(collectionView)
++        self.collectionView = collectionView
++        self.dataSource = dataSource
++
++        let emptyLabel = UILabel()
++        emptyLabel.numberOfLines = 0
++        emptyLabel.textAlignment = .center
++        emptyLabel.font = UIFont.systemFont(ofSize: 15.0)
++        emptyLabel.textColor = self.presentationData.theme.list.freeTextColor
++        emptyLabel.text = self.ru ? "Здесь пока пусто.\nВключи «Копировать загруженные медиа» в «Истории сообщений», и сюда будут попадать фото, видео и файлы из удалённых и изменённых сообщений." : "Nothing here yet.\nTurn on \"Copy cached media\" in Message History to keep photos, videos and files from deleted and edited messages."
++        view.addSubview(emptyLabel)
++        self.emptyLabel = emptyLabel
++
++        let engine = self.context.engine
++        self.disposable.set((engine.messages.ayuMessageHistory()
++        |> mapToSignal { state -> Signal<(AyuMessageHistoryState, [(AyuArchivedAttachment, URL?)]), NoError> in
++            return engine.messages.ayuArchivedMediaFiles() |> map { (state, $0) }
++        }
++        |> deliverOnMainQueue).startStrict(next: { [weak self] state, files in
++            guard let self else {
++                return
++            }
++            self.state = state
++            self.items = files.map { Item(attachment: $0.0, url: $0.1, kind: Kind.of($0.0)) }
++            self.reload()
++        }))
++    }
++
++    override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
++        super.containerLayoutUpdated(layout, transition: transition)
++        let top = self.navigationLayout(layout: layout).navigationFrame.maxY
++        let side = max(layout.safeInsets.left, 16.0)
++        let width = layout.size.width
++        self.segmentedControl?.frame = CGRect(x: side, y: top + 8.0, width: width - side * 2.0, height: 32.0)
++        self.usageLabel?.frame = CGRect(x: side, y: top + 46.0, width: width - side * 2.0, height: 18.0)
++        let gridTop = top + 72.0
++        self.collectionView?.frame = CGRect(x: layout.safeInsets.left, y: gridTop, width: width - layout.safeInsets.left - layout.safeInsets.right, height: layout.size.height - gridTop)
++        self.collectionView?.contentInset = UIEdgeInsets(top: 0.0, left: 0.0, bottom: layout.intrinsicInsets.bottom + 8.0, right: 0.0)
++        self.collectionView?.collectionViewLayout.invalidateLayout()
++        self.emptyLabel?.frame = CGRect(x: 32.0, y: gridTop + 40.0, width: width - 64.0, height: 120.0)
++    }
++
++    @objc private func kindChanged(_ control: UISegmentedControl) {
++        self.kind = Kind(rawValue: control.selectedSegmentIndex) ?? .all
++        self.reload()
++    }
++
++    private func reload() {
++        self.visibleItems = self.kind == .all ? self.items : self.items.filter { $0.kind == self.kind }
++        let bytes = self.items.reduce(Int64(0)) { $0 + $1.attachment.byteCount }
++        let used = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
++        self.usageLabel?.text = self.ru ? "\(self.items.count) файлов · \(used) из \(self.state.mediaQuotaMB) МБ" : "\(self.items.count) files · \(used) of \(self.state.mediaQuotaMB) MB"
++        self.emptyLabel?.isHidden = !self.visibleItems.isEmpty
++        self.collectionView?.reloadData()
++    }
++
++    fileprivate var itemCount: Int {
++        return self.visibleItems.count
++    }
++
++    fileprivate func item(at index: Int) -> Item? {
++        return self.visibleItems.indices.contains(index) ? self.visibleItems[index] : nil
++    }
++
++    fileprivate var theme: PresentationTheme {
++        return self.presentationData.theme
++    }
++
++    fileprivate func open(index: Int) {
++        let urls = self.visibleItems.compactMap { $0.url }
++        guard let item = self.item(at: index), let url = item.url, let start = urls.firstIndex(of: url) else {
++            return
++        }
++        let source = AyuMediaArchivePreviewSource(urls: urls)
++        self.previewSource = source
++        let preview = QLPreviewController()
++        preview.dataSource = source
++        preview.currentPreviewItemIndex = start
++        self.context.sharedContext.applicationBindings.presentNativeController(preview)
++    }
++
++    fileprivate func share(index: Int) {
++        guard let url = self.item(at: index)?.url else {
++            return
++        }
++        self.context.sharedContext.applicationBindings.presentNativeController(UIActivityViewController(activityItems: [url], applicationActivities: nil))
++    }
++
++    fileprivate func remove(ids: Set<String>) {
++        guard !ids.isEmpty else {
++            return
++        }
++        let ru = self.ru
++        self.present(textAlertController(context: self.context, title: ids.count == 1 ? (ru ? "Удалить копию?" : "Remove copy?") : (ru ? "Удалить весь медиаархив?" : "Remove the whole media archive?"), text: ru ? "Текст в «Истории сообщений» останется." : "Text in Message History is kept.", actions: [
++            TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
++            TextAlertAction(type: .destructiveAction, title: ru ? "Удалить" : "Remove", action: { [weak self] in
++                guard let self else {
++                    return
++                }
++                self.operation.set(self.context.engine.messages.ayuRemoveArchivedMedia(ids: ids).startStrict())
++            })
++        ]), in: .window(.root))
++    }
++
++    @objc private func morePressed() {
++        let ru = self.ru
++        let actionSheet = ActionSheetController(presentationData: self.presentationData)
++        actionSheet.setItemGroups([ActionSheetItemGroup(items: [
++            ActionSheetButtonItem(title: ru ? "Лимиты архива · \(self.state.mediaFileLimitMB) МБ на файл" : "Archive limits · \(self.state.mediaFileLimitMB) MB per file", color: .accent, action: { [weak self, weak actionSheet] in
++                actionSheet?.dismissAnimated()
++                self?.editLimits()
++            }),
++            ActionSheetButtonItem(title: ru ? "Сохранить все файлы" : "Export all files", color: .accent, action: { [weak self, weak actionSheet] in
++                actionSheet?.dismissAnimated()
++                self?.exportAll()
++            }),
++            ActionSheetButtonItem(title: ru ? "Удалить весь медиаархив" : "Remove all archived media", color: .destructive, action: { [weak self, weak actionSheet] in
++                actionSheet?.dismissAnimated()
++                guard let self else {
++                    return
++                }
++                self.remove(ids: Set(self.items.map { $0.attachment.id }))
++            })
++        ]), ActionSheetItemGroup(items: [
++            ActionSheetButtonItem(title: self.presentationData.strings.Common_Cancel, color: .accent, font: .bold, action: { [weak actionSheet] in
++                actionSheet?.dismissAnimated()
++            })
++        ])])
++        self.present(actionSheet, in: .window(.root))
++    }
++
++    private func exportAll() {
++        let urls = self.items.compactMap { $0.url }
++        guard !urls.isEmpty else {
++            return
++        }
++        self.context.sharedContext.applicationBindings.presentNativeController(UIDocumentPickerViewController(forExporting: urls, asCopy: true))
++    }
++
++    private func editLimits() {
++        let ru = self.ru
++        let alert = UIAlertController(title: ru ? "Лимиты, МБ" : "Limits, MB", message: ru ? "На файл: 1–250 · всего: 25–2000" : "Per file: 1–250 · total: 25–2000", preferredStyle: .alert)
++        alert.addTextField { [state = self.state] field in
++            field.keyboardType = .numberPad
++            field.placeholder = ru ? "На файл" : "Per file"
++            field.text = String(state.mediaFileLimitMB)
++        }
++        alert.addTextField { [state = self.state] field in
++            field.keyboardType = .numberPad
++            field.placeholder = ru ? "Всего" : "Total"
++            field.text = String(state.mediaQuotaMB)
++        }
++        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak self, weak alert] _ in
++            guard let self, let fileText = alert?.textFields?[0].text, let quotaText = alert?.textFields?[1].text, let fileMB = Int32(fileText), let quotaMB = Int32(quotaText) else {
++                return
++            }
++            self.operation.set(self.context.engine.messages.ayuSetMediaArchiveLimits(fileMB: fileMB, quotaMB: quotaMB).startStrict())
++        }))
++        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        self.context.sharedContext.applicationBindings.presentNativeController(alert)
++    }
++}
++
++private final class AyuMediaArchiveDataSource: NSObject, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
++    private weak var screen: AyuMediaArchiveScreen?
++
++    init(screen: AyuMediaArchiveScreen) {
++        self.screen = screen
++    }
++
++    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
++        return self.screen?.itemCount ?? 0
++    }
++
++    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
++        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "cell", for: indexPath)
++        if let cell = cell as? AyuMediaArchiveCell, let screen = self.screen, let item = screen.item(at: indexPath.item) {
++            cell.configure(item: item, theme: screen.theme)
++        }
++        return cell
++    }
++
++    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
++        let side = floor((collectionView.bounds.width - 4.0) / 3.0)
++        return CGSize(width: side, height: side)
++    }
++
++    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
++        collectionView.deselectItem(at: indexPath, animated: true)
++        self.screen?.open(index: indexPath.item)
++    }
++
++    func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
++        guard let screen = self.screen, let item = screen.item(at: indexPath.item) else {
++            return nil
++        }
++        let ru = screen.ru
++        let index = indexPath.item
++        let id = item.attachment.id
++        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil, actionProvider: { [weak screen] _ in
++            return UIMenu(title: item.attachment.displayName, children: [
++                UIAction(title: ru ? "Поделиться" : "Share", image: UIImage(systemName: "square.and.arrow.up"), handler: { _ in
++                    screen?.share(index: index)
++                }),
++                UIAction(title: ru ? "Удалить копию" : "Remove copy", image: UIImage(systemName: "trash"), attributes: .destructive, handler: { _ in
++                    screen?.remove(ids: Set([id]))
++                })
++            ])
++        })
++    }
++}
++
++private final class AyuMediaArchiveCell: UICollectionViewCell {
++    private let imageView = UIImageView()
++    private let iconView = UIImageView()
++    private let nameLabel = UILabel()
++    private let badgeLabel = UILabel()
++    private var representedId: String?
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        self.contentView.clipsToBounds = true
++        self.imageView.contentMode = .scaleAspectFill
++        self.imageView.clipsToBounds = true
++        self.iconView.contentMode = .scaleAspectFit
++        self.nameLabel.font = UIFont.systemFont(ofSize: 11.0)
++        self.nameLabel.textAlignment = .center
++        self.nameLabel.numberOfLines = 2
++        self.badgeLabel.font = UIFont.systemFont(ofSize: 11.0, weight: .semibold)
++        self.badgeLabel.textColor = .white
++        self.badgeLabel.textAlignment = .center
++        self.badgeLabel.backgroundColor = UIColor(white: 0.0, alpha: 0.5)
++        self.badgeLabel.layer.cornerRadius = 8.0
++        self.badgeLabel.clipsToBounds = true
++        self.contentView.addSubview(self.imageView)
++        self.contentView.addSubview(self.iconView)
++        self.contentView.addSubview(self.nameLabel)
++        self.contentView.addSubview(self.badgeLabel)
++    }
++
++    required init?(coder: NSCoder) {
++        return nil
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        let bounds = self.contentView.bounds
++        self.imageView.frame = bounds
++        self.iconView.frame = CGRect(x: bounds.midX - 18.0, y: bounds.midY - 30.0, width: 36.0, height: 36.0)
++        self.nameLabel.frame = CGRect(x: 6.0, y: bounds.midY + 12.0, width: bounds.width - 12.0, height: 30.0)
++        self.badgeLabel.frame = CGRect(x: 6.0, y: bounds.maxY - 22.0, width: 28.0, height: 16.0)
++    }
++
++    fileprivate func configure(item: AyuMediaArchiveScreen.Item, theme: PresentationTheme) {
++        self.representedId = item.attachment.id
++        self.contentView.backgroundColor = theme.list.itemBlocksBackgroundColor
++        self.imageView.image = nil
++        self.nameLabel.textColor = theme.list.itemPrimaryTextColor
++        let visual = item.kind == .photo || item.kind == .video
++        self.iconView.isHidden = visual
++        self.nameLabel.isHidden = visual
++        self.badgeLabel.isHidden = item.kind != .video
++        self.badgeLabel.text = "▶︎"
++        if !visual {
++            let symbol = item.kind == .voice ? "waveform" : "doc.fill"
++            self.iconView.image = UIImage(systemName: symbol)?.withTintColor(theme.list.itemAccentColor, renderingMode: .alwaysOriginal)
++            self.nameLabel.text = item.attachment.displayName
++            return
++        }
++        guard let url = item.url else {
++            return
++        }
++        let id = item.attachment.id
++        let isVideo = item.kind == .video
++        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++            let image = isVideo ? AyuMediaArchiveCell.videoThumbnail(url) : AyuMediaArchiveCell.imageThumbnail(url)
++            DispatchQueue.main.async {
++                guard let self, self.representedId == id else {
++                    return
++                }
++                self.imageView.image = image
++            }
++        }
++    }
++
++    private static func imageThumbnail(_ url: URL) -> UIImage? {
++        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
++              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 360] as CFDictionary) else {
++            return nil
++        }
++        return UIImage(cgImage: image)
++    }
++
++    private static func videoThumbnail(_ url: URL) -> UIImage? {
++        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
++        generator.appliesPreferredTrackTransform = true
++        generator.maximumSize = CGSize(width: 360.0, height: 360.0)
++        guard let image = try? generator.copyCGImage(at: .zero, actualTime: nil) else {
++            return nil
++        }
++        return UIImage(cgImage: image)
++    }
++}
++
++private final class AyuMediaArchivePreviewSource: NSObject, QLPreviewControllerDataSource {
++    private let urls: [URL]
++
++    init(urls: [URL]) {
++        self.urls = urls
++    }
++
++    func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
++        return self.urls.count
++    }
++
++    func previewItem(at index: Int, controller: QLPreviewController) -> QLPreviewItem {
++        return self.urls[index] as NSURL
++    }
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
@@ -69634,12 +70255,127 @@ index 00000000..7d6107d3
 +        tableView.tableHeaderView = header
 +    }
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuPreviewImageItem.swift b/submodules/SettingsUI/Sources/AyuPreviewImageItem.swift
+new file mode 100644
+index 00000000..8b28f3d2
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuPreviewImageItem.swift
+@@ -0,0 +1,109 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++import SwiftSignalKit
++import TelegramPresentationData
++import ItemListUI
++
++/// A settings block that shows a picture drawn for the current settings: the previews of
++/// AyuGram pages (message menu, MessageShot, sending options). `key` names the state the
++/// picture was drawn for, so the row redraws only when that state changes.
++final class AyuPreviewImageItem: ListViewItem, ItemListItem {
++    let theme: PresentationTheme
++    let key: String
++    let height: CGFloat
++    let draw: (CGSize, PresentationTheme) -> UIImage?
++    let sectionId: ItemListSectionId
++
++    init(theme: PresentationTheme, key: String, height: CGFloat, sectionId: ItemListSectionId, draw: @escaping (CGSize, PresentationTheme) -> UIImage?) {
++        self.theme = theme
++        self.key = key
++        self.height = height
++        self.draw = draw
++        self.sectionId = sectionId
++    }
++
++    func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
++        Queue.mainQueue().async {
++            let node = AyuPreviewImageItemNode()
++            let (layout, apply) = node.asyncLayout()(self, params, itemListNeighbors(item: self, topFacet: neighbors.previous?.base(ItemListNeighborFacet.self), bottomFacet: neighbors.next?.base(ItemListNeighborFacet.self)))
++            node.contentSize = layout.contentSize
++            node.insets = layout.insets
++            completion(node, {
++                return (nil, { _ in apply() })
++            })
++        }
++    }
++
++    func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, neighbors: ListViewItemNeighbors, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {
++        Queue.mainQueue().async {
++            if let nodeValue = node() as? AyuPreviewImageItemNode {
++                let (layout, apply) = nodeValue.asyncLayout()(self, params, itemListNeighbors(item: self, topFacet: neighbors.previous?.base(ItemListNeighborFacet.self), bottomFacet: neighbors.next?.base(ItemListNeighborFacet.self)))
++                completion(layout, { _ in
++                    apply()
++                })
++            }
++        }
++    }
++}
++
++final class AyuPreviewImageItemNode: ListViewItemNode {
++    private let backgroundNode: ASDisplayNode
++    private let imageNode: ASImageNode
++    private let maskNode: ASImageNode
++    private var drawnKey: String?
++    private var drawnWidth: CGFloat = 0.0
++    private var drawnTheme: PresentationTheme?
++
++    init() {
++        self.backgroundNode = ASDisplayNode()
++        self.backgroundNode.isLayerBacked = true
++        self.imageNode = ASImageNode()
++        self.imageNode.displaysAsynchronously = false
++        self.imageNode.contentMode = .scaleToFill
++        self.maskNode = ASImageNode()
++        super.init(layerBacked: false)
++        self.clipsToBounds = true
++        self.addSubnode(self.backgroundNode)
++        self.addSubnode(self.imageNode)
++        self.addSubnode(self.maskNode)
++    }
++
++    func asyncLayout() -> (_ item: AyuPreviewImageItem, _ params: ListViewItemLayoutParams, _ neighbors: ItemListNeighbors) -> (ListViewItemNodeLayout, () -> Void) {
++        return { [weak self] item, params, neighbors in
++            let contentSize = CGSize(width: params.width, height: item.height)
++            let insets = itemListNeighborsGroupedInsets(neighbors, params)
++            let layout = ListViewItemNodeLayout(contentSize: contentSize, insets: insets)
++            return (layout, { [weak self] in
++                guard let self else {
++                    return
++                }
++                let blockFrame = CGRect(x: params.leftInset, y: 0.0, width: params.width - params.leftInset - params.rightInset, height: contentSize.height)
++                self.backgroundNode.backgroundColor = item.theme.list.itemBlocksBackgroundColor
++                self.backgroundNode.frame = blockFrame
++                self.imageNode.frame = blockFrame
++                if self.drawnKey != item.key || self.drawnWidth != blockFrame.width || self.drawnTheme !== item.theme {
++                    self.drawnKey = item.key
++                    self.drawnWidth = blockFrame.width
++                    self.drawnTheme = item.theme
++                    self.imageNode.image = item.draw(blockFrame.size, item.theme)
++                }
++                var hasTopCorners = false
++                var hasBottomCorners = false
++                if case .sameSection(false) = neighbors.top {} else { hasTopCorners = true }
++                if case .sameSection(false) = neighbors.bottom {} else { hasBottomCorners = true }
++                self.maskNode.image = itemListHasRoundedBlockLayout(params) ? PresentationResourcesItemList.cornersImage(item.theme, top: hasTopCorners, bottom: hasBottomCorners, glass: true) : nil
++                self.maskNode.frame = blockFrame
++            })
++        }
++    }
++
++    override func animateInsertion(_ currentTimestamp: Double, duration: Double, options: ListViewItemAnimationOptions) {
++        self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)
++    }
++
++    override func animateRemoved(_ currentTimestamp: Double, duration: Double) {
++        self.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15, removeOnCompletion: false)
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..687f3580
+index 00000000..f6cff607
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,1016 @@
+@@ -0,0 +1,1102 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -69680,11 +70416,15 @@ index 00000000..687f3580
 +    case previewHeader(String)
 +    case preview(PresentationTheme, TelegramWallpaper, PresentationFontSize, PresentationChatBubbleCorners, PresentationDateTimeFormat, PresentationPersonNameOrder, [ChatPreviewMessageItem])
 +    case previewFooter(String)
++    /// A drawn picture of what the page's settings do, in the preview section.
++    case picture(AyuPreviewPicture)
++    /// Opens the saved-message list of Message History on its own page.
++    case archiveLink(String, String)
 +
 +    var section: ItemListSectionId {
 +        switch self {
-+        case .record, .attachment: return 1
-+        case .previewHeader, .preview, .previewFooter: return 2
++        case .record, .attachment, .archiveLink: return 1
++        case .previewHeader, .preview, .previewFooter, .picture: return 2
 +        default: return 0
 +        }
 +    }
@@ -69692,9 +70432,10 @@ index 00000000..687f3580
 +    var stableId: Int64 {
 +        switch self {
 +        case .previewHeader: return -3
-+        case .preview: return -2
++        case .preview, .picture: return -2
 +        case .previewFooter: return -1
 +        case let .link(id, _), let .toggle(id, _, _), let .info(id, _): return Int64(id)
++        case .archiveLink: return 40
 +        case .clear: return 50
 +        case let .record(record): return 100 + Int64(record.id)
 +        case .richText: return 1
@@ -69743,6 +70484,10 @@ index 00000000..687f3580
 +            return ThemeSettingsChatPreviewItem(context: context, systemStyle: .glass, theme: theme, componentTheme: theme, strings: presentationData.strings, sectionId: self.section, fontSize: fontSize, chatBubbleCorners: corners, wallpaper: wallpaper, dateTimeFormat: dateTimeFormat, nameDisplayOrder: nameOrder, messageItems: items)
 +        case let .previewFooter(text):
 +            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        case let .picture(picture):
++            return picture.item(theme: presentationData.theme, ru: presentationData.strings.baseLanguageCode.hasPrefix("ru"), sectionId: self.section)
++        case let .archiveLink(title, label):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: AyuSettingsIcons.symbol("tray.full.fill", color: UIColor(rgb: 0xFF9500)), title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.open(13) })
 +        }
 +    }
 +}
@@ -69769,7 +70514,7 @@ index 00000000..687f3580
 +    let icons: [Int32: UIImage?] = [
 +        11: AyuSettingsIcons.symbol("gearshape.fill", color: UIColor(rgb: 0x8E8E93)),
 +        12: AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0x32ADE6)),
-+        13: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x34C759)),
++        13: AyuSettingsIcons.glyph("AyuGram/Chats", color: UIColor(rgb: 0x34C759), side: 20.0),
 +        14: AyuSettingsIcons.glyph("AyuGram/Plugins", color: UIColor(rgb: 0x007AFF), side: 20.0),
 +        15: AyuSettingsIcons.symbol("star.fill", color: UIColor(rgb: 0xFF9500))
 +    ]
@@ -69783,7 +70528,7 @@ index 00000000..687f3580
 +            .link(1, 11, icons[11] ?? nil, ru ? "Основные" : "General", ""),
 +            .link(1, 12, icons[12] ?? nil, ru ? "Оформление" : "Appearance", ""),
 +            .link(1, 13, icons[13] ?? nil, ru ? "Чаты" : "Chats", ""),
-+            .link(1, 14, icons[14] ?? nil, ru ? "Плагины" : "Plugins", ""),
++            .badgedLink(1, 14, icons[14] ?? nil, ru ? "Плагины" : "Plugins", "ALPHA", 0xFF453A),
 +            .link(1, 15, icons[15] ?? nil, ru ? "Другое" : "Other", "")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
@@ -69804,9 +70549,9 @@ index 00000000..687f3580
 +    let arguments = AyuSectionedArguments(open: { id in
 +        switch id {
 +        case 1: push?(ayuGhostModeController(context: context))
-+        case 2: ayuPresentAdvancedSettings(context: context, page: .sending)
++        case 2: push?(ayuGhostModePlusController(context: context))
 +        case 11: push?(ayuMessageHistoryController(context: context))
-+        case 12: ayuPresentMediaArchive(context: context)
++        case 12: push?(AyuMediaArchiveScreen(context: context))
 +        case 21: push?(ayuLocalPremiumController(context: context))
 +        case 22: push?(ayuChatOptionsController(context: context, regex: true))
 +        case 31: ayuOpenChannel(context: context, navigation: navigation?())
@@ -69900,6 +70645,68 @@ index 00000000..687f3580
 +            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: { arguments.open(20) })
 +        }
 +    }
++}
++
++/// Ghost Mode+ as a page of the settings stack (it used to slide up as a separate sheet).
++private func ayuGhostModePlusController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var presentError: (() -> Void)?
++    var presentController: ((ViewController) -> Void)?
++    let update: ((inout AyuAdvancedSettings) -> Void) -> Void = { transform in
++        do {
++            try store.update { transform(&$0.advanced) }
++        } catch { presentError?() }
++    }
++    let arguments = AyuSectionedArguments(open: { id in
++        guard id == 3 else { return }
++        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let actionSheet = ActionSheetController(presentationData: presentationData)
++        var items: [ActionSheetItem] = [ActionSheetTextItem(title: ru ? "Через сколько отправлять" : "Send after")]
++        for delay in [Int32(10), 30, 60, 300, 3600] {
++            let title = delay < 60 ? (ru ? "\(delay) секунд" : "\(delay) seconds") : (ru ? "\(delay / 60) мин" : "\(delay / 60) min")
++            items.append(ActionSheetButtonItem(title: title, color: .accent, action: { [weak actionSheet] in
++                actionSheet?.dismissAnimated()
++                update { $0.scheduleDelay = delay }
++            }))
++        }
++        actionSheet.setItemGroups([ActionSheetItemGroup(items: items), ActionSheetItemGroup(items: [
++            ActionSheetButtonItem(title: presentationData.strings.Common_Cancel, color: .accent, font: .bold, action: { [weak actionSheet] in
++                actionSheet?.dismissAnimated()
++            })
++        ])])
++        presentController?(actionSheet)
++    }, toggle: { id, value in
++        update {
++            if id == 1 { $0.setScheduling(value) } else if id == 11 { $0.setReadAfterSend(value) }
++        }
++    })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let advanced = settings.advanced
++        let delay = advanced.scheduleDelay < 60 ? (ru ? "\(advanced.scheduleDelay) с" : "\(advanced.scheduleDelay) s") : (ru ? "\(advanced.scheduleDelay / 60) мин" : "\(advanced.scheduleDelay / 60) min")
++        var entries: [AyuSectionedEntry] = [
++            .toggle(1, 1, AyuSettingsIcons.symbol("clock.badge.checkmark.fill", color: UIColor(rgb: 0x5856D6)), ru ? "Отправлять через отложенные" : "Send through scheduling", nil, advanced.scheduleOutgoing)
++        ]
++        if advanced.scheduleOutgoing {
++            entries.append(.link(1, 3, AyuSettingsIcons.symbol("timer", color: UIColor(rgb: 0xFF9500)), ru ? "Задержка" : "Delay", delay))
++        }
++        entries.append(.info(1, 4, ru ? "Сообщение уходит как отложенное и публикуется через заданное время, пока включён призрак. Только обычный текст, без медиа и тем." : "A message goes out as scheduled and is published after the delay while Ghost Mode is on. Plain text only, no media or topics."))
++        entries.append(.toggle(2, 11, AyuSettingsIcons.symbol("checkmark.message.fill", color: UIColor(rgb: 0x34C759)), ru ? "Прочитать после отправки" : "Mark read after send", nil, advanced.markReadAfterSend))
++        entries.append(.info(2, 12, ru ? "После твоего ответа чат отмечается прочитанным, даже если отчёты о прочтении скрыты. Не работает вместе с отложенной отправкой." : "After you reply the chat is marked as read, even with read receipts hidden. Can't be combined with scheduled sending."))
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text("Ghost Mode+"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    presentController = { [weak controller] in controller?.present($0, in: .window(.root)) }
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++    return controller
 +}
 +
 +/// The account's own peer as this client draws it with Local Premium and the local status.
@@ -70073,7 +70880,8 @@ index 00000000..687f3580
 +    case 2:
 +        return (ru ? "Основные" : "General", [(51, ru ? "Переводчики" : "Translation providers"), (2, ru ? "Отправка сообщений" : "Sending Options"), (5, ru ? "Интерфейс" : "Interface"), (6, ru ? "Меню сообщения" : "Message Menu")])
 +    case 3:
-+        return (ru ? "Оформление" : "Appearance", [(52, ru ? "Локальный Premium и статус" : "Local Premium and status"), (4, ru ? "Оформление чатов" : "Chat Appearance"), (7, ru ? "Оформление MessageShot" : "MessageShot Appearance"), (20, ru ? "Иконка приложения" : "App Icon")])
++        // Local Premium lives on the AyuGram page only; the app icon picker is not listed here.
++        return (ru ? "Оформление" : "Appearance", [(4, ru ? "Оформление чатов" : "Chat Appearance"), (7, ru ? "Оформление MessageShot" : "MessageShot Appearance")])
 +    default:
 +        return (ru ? "Чаты" : "Chats", [(8, ru ? "Скрытые сообщения" : "Hidden Messages"), (9, ru ? "Реакции в чатах" : "Chat Reactions")])
 +    }
@@ -70097,10 +70905,10 @@ index 00000000..687f3580
 +        case 8: push?(ayuHiddenMessagesController(context: context))
 +        case 9: push?(ayuReactionSettingsController(context: context))
 +        case 20: ayuPresentAppIcons(context: context)
-+        case 50: ayuPresentAdvancedSettings(context: context, page: .sending)
++        case 50: push?(ayuGhostModePlusController(context: context))
 +        case 51: ayuPresentAdvancedSettings(context: context, page: .translation)
 +        case 52: push?(ayuLocalPremiumController(context: context))
-+        case 53: ayuPresentMediaArchive(context: context)
++        case 53: push?(AyuMediaArchiveScreen(context: context))
 +        default: break
 +        }
 +    }, update: { _, _ in }, record: { _ in })
@@ -70129,19 +70937,21 @@ index 00000000..687f3580
 +    case logo(Int32, Int32, AyuSettingsHeaderItem.Logo, String, String)
 +    case header(Int32, Int32, String)
 +    case link(Int32, Int32, UIImage?, String, String)
++    /// A link whose title carries a coloured badge (ALPHA, BETA).
++    case badgedLink(Int32, Int32, UIImage?, String, String, UInt32)
 +    case toggle(Int32, Int32, UIImage?, String, String?, Bool)
 +    case info(Int32, Int32, String)
 +
 +    var section: ItemListSectionId {
 +        switch self {
-+        case let .logo(section, _, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .toggle(section, _, _, _, _, _), let .info(section, _, _):
++        case let .logo(section, _, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .badgedLink(section, _, _, _, _, _), let .toggle(section, _, _, _, _, _), let .info(section, _, _):
 +            return section
 +        }
 +    }
 +
 +    var stableId: Int32 {
 +        switch self {
-+        case let .logo(_, id, _, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .toggle(_, id, _, _, _, _), let .info(_, id, _):
++        case let .logo(_, id, _, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .badgedLink(_, id, _, _, _, _), let .toggle(_, id, _, _, _, _), let .info(_, id, _):
 +            return id
 +        }
 +    }
@@ -70153,6 +70963,7 @@ index 00000000..687f3580
 +        case let (.logo(ls, li, ll, lt, lx), .logo(rs, ri, rl, rt, rx)): return ls == rs && li == ri && ll == rl && lt == rt && lx == rx
 +        case let (.header(ls, li, lt), .header(rs, ri, rt)): return ls == rs && li == ri && lt == rt
 +        case let (.link(ls, li, _, lt, ll), .link(rs, ri, _, rt, rl)): return ls == rs && li == ri && lt == rt && ll == rl
++        case let (.badgedLink(ls, li, _, lt, lb, lc), .badgedLink(rs, ri, _, rt, rb, rc)): return ls == rs && li == ri && lt == rt && lb == rb && lc == rc
 +        case let (.toggle(ls, li, _, lt, lx, lv), .toggle(rs, ri, _, rt, rx, rv)): return ls == rs && li == ri && lt == rt && lx == rx && lv == rv
 +        case let (.info(ls, li, lt), .info(rs, ri, rt)): return ls == rs && li == ri && lt == rt
 +        default: return false
@@ -70168,6 +70979,8 @@ index 00000000..687f3580
 +            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
 +        case let .link(_, id, icon, title, label):
 +            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.open(id) })
++        case let .badgedLink(_, id, icon, title, badge, color):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, titleBadge: badge, titleBadgeColor: UIColor(rgb: color), label: "", sectionId: self.section, style: .blocks, action: { arguments.open(id) })
 +        case let .toggle(_, id, icon, title, text, value):
 +            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, text: text, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
 +        case let .info(_, _, text):
@@ -70404,6 +71217,8 @@ index 00000000..687f3580
 +        case .dark: theme = ru ? "Тёмная" : "Dark"
 +        }
 +        let entries: [AyuSettingsEntry] = [
++            .previewHeader(ru ? "ПРЕДПРОСМОТР" : "PREVIEW"),
++            .picture(.messageShot(value)),
 +            .link(0, (ru ? "Тема: " : "Theme: ") + theme),
 +            .toggle(1, ru ? "Фон картинки" : "Image background", value.showBackground),
 +            .toggle(2, ru ? "Имена авторов" : "Author names", value.showAuthors),
@@ -70435,13 +71250,9 @@ index 00000000..687f3580
 +                    case 0: $0.interface.showReactionPicker = value
 +                    case 1: $0.interface.showReadSummary = value
 +                    case 2: $0.interface.showEditedInfo = value
-+                    case 3: $0.interface.showMessageDetails = value
++                    case 3: $0.interface.showMessageShot = value
 +                    case 4: $0.interface.showAuthorSearch = value
-+                    case 5: $0.interface.showAddFilter = value
-+                    case 6: $0.interface.showRepeatText = value
-+                    case 7: $0.interface.showSearchPhrase = value
 +                    case 8: $0.interface.showCopyMessageIds = value
-+                    case 9: $0.interface.showHideMessage = value
 +                    default: break
 +                    }
 +                    return
@@ -70476,17 +71287,15 @@ index 00000000..687f3580
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
 +        let value = settings.interface
 +        let entries: [AyuSettingsEntry] = contextMenu ? [
++            .previewHeader(ru ? "ПРЕДПРОСМОТР" : "PREVIEW"),
++            .picture(.messageMenu(value)),
 +            .toggle(0, ru ? "Панель выбора реакций" : "Reaction picker", value.showReactionPicker),
 +            .toggle(1, ru ? "Сводка прочтений и реакций" : "Read and reaction summary", value.showReadSummary),
 +            .toggle(2, ru ? "Время правки в меню" : "Edit information in menu", value.showEditedInfo),
-+            .toggle(3, ru ? "Данные сообщения" : "Message Details", value.showMessageDetails),
-+            .toggle(4, ru ? "Поиск сообщений автора" : "Messages from Author", value.showAuthorSearch),
-+            .toggle(5, ru ? "Добавить фильтр из сообщения" : "Add Filter from Message", value.showAddFilter),
-+            .toggle(6, ru ? "Повторить текст в черновик" : "Repeat Text to Draft", value.showRepeatText),
-+            .toggle(7, ru ? "Найти фразу" : "Find Phrase", value.showSearchPhrase),
++            .toggle(3, "MessageShot", value.showMessageShot),
++            .toggle(4, ru ? "Сообщения автора" : "Messages from Author", value.showAuthorSearch),
 +            .toggle(8, ru ? "Копировать ID сообщения" : "Copy Message IDs", value.showCopyMessageIds),
-+            .toggle(9, ru ? "Скрыть сообщение локально" : "Hide Message Locally", value.showHideMessage),
-+            .info(10, ru ? "Изменения видны при следующем открытии меню сообщения. Поиск автора доступен в группах для сообщений с известным пользователем-автором. Скрытие сводки не меняет уведомления о прочтении. Теги Избранного сохраняются; MessageShot настраивается в разделе «Интерфейс»." : "Changes apply the next time a message menu opens. Author search is available in groups for messages with a known user author. Hiding the summary does not change read receipts. Saved Messages tags remain available; configure MessageShot under Interface.")
++            .info(10, ru ? "Меняется при следующем открытии меню. «Сообщения автора» — только в группах. Скрытие сводки не меняет отчёты о прочтении." : "Applies the next time a menu opens. Messages from Author appears in groups only. Hiding the summary does not change read receipts.")
 +        ] : [
 +            .toggle(0, ru ? "ID в профилях" : "Show IDs in profiles", value.showPeerIds),
 +            .toggle(1, ru ? "Скрыть быструю пересылку" : "Hide bubble quick-share buttons", value.hideFastShare),
@@ -70522,10 +71331,16 @@ index 00000000..687f3580
 +    return controller
 +}
 +
-+private func ayuMessageHistoryController(context: AccountContext, messageId: EngineMessage.Id? = nil) -> ViewController {
++/// `archiveOnly`: the saved messages themselves, on their own page so the settings page
++/// stays short however many there are.
++private func ayuMessageHistoryController(context: AccountContext, messageId: EngineMessage.Id? = nil, archiveOnly: Bool = false) -> ViewController {
 +    var push: ((ViewController) -> Void)?
 +    var present: ((ViewController) -> Void)?
 +    let arguments = AyuSettingsArguments(open: { id in
++        if id == 13 {
++            push?(ayuMessageHistoryController(context: context, messageId: messageId, archiveOnly: true))
++            return
++        }
 +        guard id == 10 else { return }
 +        let data = context.sharedContext.currentPresentationData.with { $0 }
 +        let ru = data.strings.baseLanguageCode.hasPrefix("ru")
@@ -70544,6 +71359,22 @@ index 00000000..687f3580
 +    |> deliverOnMainQueue
 +    |> map { presentationData, history -> (ItemListControllerState, (ItemListNodeState, Any)) in
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let records = history.records.filter { record in
++            guard let messageId else { return true }
++            return record.peerId == messageId.peerId.toInt64() && record.messageId == messageId.id
++        }
++        if archiveOnly {
++            var entries: [AyuSettingsEntry] = []
++            if records.isEmpty {
++                entries.append(.info(12, ru ? "Архив пока пуст. Записи появятся после новых правок или удалений." : "The archive is empty. Entries appear after new edits or deletions."))
++            } else {
++                entries.append(contentsOf: records.reversed().map { .record($0) })
++                entries.append(.clear(ru ? "Очистить архив" : "Clear archive"))
++            }
++            let data = ItemListPresentationData(presentationData)
++            let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Архив сообщений" : "Saved Messages Archive"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++            return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++        }
 +        var previewItems: [ChatPreviewMessageItem] = [
 +            ChatPreviewMessageItem(outgoing: false, reply: nil, text: ru ? "Встречаемся в 7" : "Meet at 7", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuEdited: history.saveEdits)
 +        ]
@@ -70566,18 +71397,9 @@ index 00000000..687f3580
 +            .toggle(8, ru ? "Медиа частных каналов" : "Private-channel media", history.mediaPrivateChannels),
 +            .toggle(9, ru ? "Медиа публичных групп" : "Public-group media", history.mediaPublicGroups),
 +            .toggle(10, ru ? "Медиа частных групп" : "Private-group media", history.mediaPrivateGroups),
-+            .info(11, ru ? "Только уже загруженный текст обычных облачных сообщений. До 100 записей за 7 дней, до 8 КБ каждая. Копирование медиа включается отдельно: только уже загруженные фото и файлы до 25 МБ, до 250 МБ на аккаунт. Недоступные файлы не загружаются. Защищённые, секретные и исчезающие сообщения исключены; неизвестный срок хранения чата также исключает сохранение. Архив находится в базе этого аккаунта на устройстве." : "Only text already received in ordinary cloud messages. Up to 100 entries for 7 days, up to 8 KB each. Media copying is opt-in: cached photos/files only, up to 25 MB each and 250 MB per account. Unavailable files are not downloaded. Protected, secret and disappearing messages are excluded, including chats whose lifetime is unknown. The archive stays in this account's local database.")
++            .info(11, ru ? "Сохраняется только то, что уже пришло: до 100 записей за 7 дней. Медиа копируются отдельно — до 25 МБ на файл и 250 МБ всего. Секретные, защищённые и исчезающие сообщения не сохраняются. Всё хранится только на этом устройстве." : "Only what has already arrived is kept: up to 100 entries for 7 days. Media is copied separately, up to 25 MB per file and 250 MB in total. Secret, protected and disappearing messages are never kept. Everything stays on this device.")
 +        ]
-+        let records = history.records.filter { record in
-+            guard let messageId else { return true }
-+            return record.peerId == messageId.peerId.toInt64() && record.messageId == messageId.id
-+        }
-+        if records.isEmpty {
-+            entries.append(.info(12, ru ? "Архив пока пуст. Записи появятся после новых правок или удалений при включённых переключателях." : "The archive is empty. Entries are collected from future edits or deletions while enabled."))
-+        } else {
-+            entries.append(.clear(ru ? "Очистить архив" : "Clear archive"))
-+            entries.append(contentsOf: records.reversed().map { .record($0) })
-+        }
++        entries.append(.archiveLink(ru ? "Архив сообщений" : "Saved Messages Archive", "\(records.count)"))
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "История сообщений" : "Message History"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
@@ -70658,10 +71480,10 @@ index 00000000..687f3580
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsHeaderItem.swift b/submodules/SettingsUI/Sources/AyuSettingsHeaderItem.swift
 new file mode 100644
-index 00000000..3e8b3981
+index 00000000..e1ba816d
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsHeaderItem.swift
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,183 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -70749,15 +71571,34 @@ index 00000000..3e8b3981
 +private let ayuGramLogoImage = roundLogo("AyuGram/Brand", fallbackColor: UIColor(rgb: 0x8E5CF7))
 +private let exteraGramLogoImage = roundLogo("AyuGram/OriginalExtera2", fallbackColor: UIColor(rgb: 0xE83030))
 +
++/// The yellow BETA tag beside the exteraGram title.
++private let betaBadgeImage: UIImage? = {
++    let text = NSAttributedString(string: "BETA", attributes: [.font: UIFont.systemFont(ofSize: 12.0, weight: .bold), .foregroundColor: UIColor(rgb: 0x2B2300), .kern: 0.3])
++    let textSize = text.size()
++    let size = CGSize(width: ceil(textSize.width) + 14.0, height: 20.0)
++    let format = UIGraphicsImageRendererFormat()
++    format.opaque = false
++    return UIGraphicsImageRenderer(size: size, format: format).image { _ in
++        UIColor(rgb: 0xFFD60A).setFill()
++        UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: 7.0).fill()
++        text.draw(at: CGPoint(x: 7.0, y: floor((size.height - textSize.height) / 2.0)))
++    }
++}()
++
 +final class AyuSettingsHeaderItemNode: ListViewItemNode {
 +    private let logoNode: ASImageNode
 +    private let titleNode: TextNode
 +    private let textNode: TextNode
++    private let badgeNode: ASImageNode
 +
 +    init() {
 +        self.logoNode = ASImageNode()
 +        self.logoNode.isLayerBacked = true
 +        self.logoNode.displaysAsynchronously = false
++
++        self.badgeNode = ASImageNode()
++        self.badgeNode.isLayerBacked = true
++        self.badgeNode.displaysAsynchronously = false
 +
 +        self.titleNode = TextNode()
 +        self.titleNode.isUserInteractionEnabled = false
@@ -70772,6 +71613,7 @@ index 00000000..3e8b3981
 +        self.addSubnode(self.logoNode)
 +        self.addSubnode(self.titleNode)
 +        self.addSubnode(self.textNode)
++        self.addSubnode(self.badgeNode)
 +    }
 +
 +    func asyncLayout() -> (_ item: AyuSettingsHeaderItem, _ params: ListViewItemLayoutParams, _ neighbors: ItemListNeighbors) -> (ListViewItemNodeLayout, () -> Void) {
@@ -70803,7 +71645,15 @@ index 00000000..3e8b3981
 +                    self.logoNode.image = exteraGramLogoImage
 +                }
 +                self.logoNode.frame = CGRect(origin: CGPoint(x: floor((params.width - logoSize.width) / 2.0), y: topInset), size: logoSize)
-+                self.titleNode.frame = CGRect(origin: CGPoint(x: floor((params.width - titleLayout.size.width) / 2.0), y: titleY), size: titleLayout.size)
++                let badge: UIImage? = item.logo == .exteraGram ? betaBadgeImage : nil
++                let badgeSpacing: CGFloat = 8.0
++                let badgeWidth = badge.map { $0.size.width + badgeSpacing } ?? 0.0
++                let titleX = floor((params.width - titleLayout.size.width - badgeWidth) / 2.0)
++                self.titleNode.frame = CGRect(origin: CGPoint(x: titleX, y: titleY), size: titleLayout.size)
++                self.badgeNode.image = badge
++                if let badge {
++                    self.badgeNode.frame = CGRect(origin: CGPoint(x: titleX + titleLayout.size.width + badgeSpacing, y: titleY + floor((titleLayout.size.height - badge.size.height) / 2.0) + 1.0), size: badge.size)
++                }
 +                self.textNode.frame = CGRect(origin: CGPoint(x: floor((params.width - textLayout.size.width) / 2.0), y: textY), size: textLayout.size)
 +            })
 +        }
@@ -70815,6 +71665,371 @@ index 00000000..3e8b3981
 +
 +    override func animateRemoved(_ currentTimestamp: Double, duration: Double) {
 +        self.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15, removeOnCompletion: false)
++    }
++}
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift b/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
+new file mode 100644
+index 00000000..c5aaa9de
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
+@@ -0,0 +1,359 @@
++import Foundation
++import UIKit
++import Display
++import TelegramCore
++import TelegramPresentationData
++
++/// Which picture a settings page shows, with the values it is drawn for.
++enum AyuPreviewPicture: Equatable {
++    case messageMenu(AyuInterfaceSettings)
++    case messageShot(AyuMessageShotSettings)
++    case gifConfirmation
++    case voicePreview
++    case videoNotePreview
++
++    var height: CGFloat {
++        switch self {
++        case .messageMenu: return 330.0
++        case .messageShot: return 250.0
++        case .gifConfirmation: return 170.0
++        case .voicePreview: return 130.0
++        case .videoNotePreview: return 200.0
++        }
++    }
++
++    func item(theme: PresentationTheme, ru: Bool, sectionId: Int32) -> AyuPreviewImageItem {
++        let picture = self
++        return AyuPreviewImageItem(theme: theme, key: "\(picture)|\(ru)", height: self.height, sectionId: sectionId, draw: { size, theme in
++            switch picture {
++            case let .messageMenu(interface): return AyuSettingsPreviews.messageMenu(size: size, theme: theme, interface: interface, ru: ru)
++            case let .messageShot(settings): return AyuSettingsPreviews.messageShot(size: size, theme: theme, settings: settings, ru: ru)
++            case .gifConfirmation: return AyuSettingsPreviews.gifConfirmation(size: size, theme: theme, ru: ru)
++            case .voicePreview: return AyuSettingsPreviews.voicePreview(size: size, theme: theme, ru: ru)
++            case .videoNotePreview: return AyuSettingsPreviews.videoNotePreview(size: size, theme: theme, ru: ru)
++            }
++        })
++    }
++}
++
++/// Pictures for `AyuPreviewImageItem`: each shows what a group of settings does, drawn for
++/// the current values and the app theme.
++enum AyuSettingsPreviews {
++    private static func render(_ size: CGSize, _ draw: (CGContext) -> Void) -> UIImage? {
++        guard size.width > 1.0, size.height > 1.0 else {
++            return nil
++        }
++        let format = UIGraphicsImageRendererFormat()
++        format.opaque = false
++        return UIGraphicsImageRenderer(size: size, format: format).image { context in
++            draw(context.cgContext)
++        }
++    }
++
++    private static func chatBackdrop(_ rect: CGRect, dark: Bool, in context: CGContext) {
++        let colors = dark
++            ? [UIColor(rgb: 0x1E2B26).cgColor, UIColor(rgb: 0x1C2738).cgColor]
++            : [UIColor(rgb: 0xCFE3C3).cgColor, UIColor(rgb: 0xB9D3E6).cgColor]
++        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0.0, 1.0]) {
++            context.saveGState()
++            context.clip(to: rect)
++            context.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.minY), end: CGPoint(x: rect.maxX, y: rect.maxY), options: [])
++            context.restoreGState()
++        }
++    }
++
++    private static func text(_ string: String, at point: CGPoint, size: CGFloat, weight: UIFont.Weight = .regular, color: UIColor) {
++        (string as NSString).draw(at: point, withAttributes: [.font: UIFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color])
++    }
++
++    private static func textWidth(_ string: String, size: CGFloat, weight: UIFont.Weight = .regular) -> CGFloat {
++        return ceil((string as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: size, weight: weight)]).width)
++    }
++
++    private static func symbol(_ name: String, in rect: CGRect, color: UIColor) {
++        let configuration = UIImage.SymbolConfiguration(pointSize: rect.height, weight: .regular)
++        guard let image = UIImage(systemName: name, withConfiguration: configuration)?.withTintColor(color, renderingMode: .alwaysOriginal) else {
++            return
++        }
++        let scale = min(rect.width / image.size.width, rect.height / image.size.height)
++        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
++        image.draw(in: CGRect(x: rect.midX - size.width / 2.0, y: rect.midY - size.height / 2.0, width: size.width, height: size.height))
++    }
++
++    // MARK: - Message menu
++
++    static func messageMenu(size: CGSize, theme: PresentationTheme, interface: AyuInterfaceSettings, ru: Bool) -> UIImage? {
++        let dark = theme.overallDarkAppearance
++        return render(size) { context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            chatBackdrop(bounds, dark: dark, in: context)
++            let primary: UIColor = dark ? .white : .black
++            let secondary = primary.withAlphaComponent(0.5)
++
++            // The pressed message.
++            let bubbleText = ru ? "Скинь фото с выходных" : "Send the weekend photos"
++            let bubbleWidth = min(size.width - 120.0, textWidth(bubbleText, size: 15.0) + 64.0)
++            let bubble = CGRect(x: 16.0, y: 16.0, width: bubbleWidth, height: 36.0)
++            (dark ? UIColor(rgb: 0x262628) : UIColor.white).setFill()
++            UIBezierPath(roundedRect: bubble, cornerRadius: 17.0).fill()
++            text(bubbleText, at: CGPoint(x: bubble.minX + 12.0, y: bubble.minY + 8.0), size: 15.0, color: primary)
++            text("12:40", at: CGPoint(x: bubble.maxX - 38.0, y: bubble.minY + 16.0), size: 11.0, color: secondary)
++
++            var y = bubble.maxY + 8.0
++            let menuX: CGFloat = 16.0
++            let menuWidth: CGFloat = min(250.0, size.width - 32.0)
++            if interface.showReactionPicker {
++                let strip = CGRect(x: menuX, y: y, width: menuWidth, height: 40.0)
++                (dark ? UIColor(rgb: 0x2C2C2E) : UIColor.white).setFill()
++                UIBezierPath(roundedRect: strip, cornerRadius: 20.0).fill()
++                let emoji = ["❤️", "👍", "🔥", "😂", "😢", "🤩"]
++                let step = (strip.width - 20.0) / CGFloat(emoji.count)
++                for (index, value) in emoji.enumerated() {
++                    text(value, at: CGPoint(x: strip.minX + 10.0 + step * CGFloat(index) + (step - 22.0) / 2.0, y: strip.minY + 9.0), size: 19.0, color: primary)
++                }
++                y = strip.maxY + 6.0
++            }
++
++            var rows: [(String?, String, Bool)] = []
++            if interface.showReadSummary {
++                rows.append(("eye", ru ? "Прочитали 3 · ❤️ 2" : "3 Seen · ❤️ 2", true))
++            }
++            if interface.showEditedInfo {
++                rows.append(("pencil", ru ? "Изменено в 12:41" : "Edited at 12:41", true))
++            }
++            rows.append(("arrowshape.turn.up.left", ru ? "Ответить" : "Reply", false))
++            rows.append(("doc.on.doc", ru ? "Копировать" : "Copy", false))
++            rows.append((nil, "", false))
++            if interface.showMessageShot {
++                rows.append(("photo.on.rectangle", "AyuGram · MessageShot", false))
++            }
++            rows.append(("character.bubble", ru ? "AyuGram · Перевести" : "AyuGram · Translate", false))
++            if interface.showCopyMessageIds {
++                rows.append(("number", ru ? "AyuGram · Копировать ID" : "AyuGram · Copy Message IDs", false))
++            }
++            if interface.showAuthorSearch {
++                rows.append(("person.crop.circle.badge.magnifyingglass", ru ? "AyuGram · Сообщения автора" : "AyuGram · Messages from Author", false))
++            }
++            if let last = rows.last, last.0 == nil {
++                rows.removeLast()
++            }
++
++            let rowHeight: CGFloat = 34.0
++            let separatorHeight: CGFloat = 8.0
++            let menuHeight = rows.reduce(CGFloat(8.0)) { $0 + ($1.0 == nil ? separatorHeight : rowHeight) }
++            let menu = CGRect(x: menuX, y: y, width: menuWidth, height: min(menuHeight, size.height - y - 10.0))
++            context.saveGState()
++            let menuPath = UIBezierPath(roundedRect: menu, cornerRadius: 16.0)
++            (dark ? UIColor(rgb: 0x2C2C2E) : UIColor.white).setFill()
++            menuPath.fill()
++            menuPath.addClip()
++            var rowY = menu.minY + 4.0
++            for row in rows {
++                guard let icon = row.0 else {
++                    (dark ? UIColor(rgb: 0x1C1C1E) : UIColor(rgb: 0xEFEFF4)).setFill()
++                    UIBezierPath(rect: CGRect(x: menu.minX, y: rowY + 2.0, width: menu.width, height: separatorHeight - 4.0)).fill()
++                    rowY += separatorHeight
++                    continue
++                }
++                let color = row.2 ? secondary : primary
++                text(row.1, at: CGPoint(x: menu.minX + 14.0, y: rowY + 8.0), size: row.2 ? 13.0 : 15.0, color: color)
++                symbol(icon, in: CGRect(x: menu.maxX - 34.0, y: rowY + 8.0, width: 20.0, height: 18.0), color: color)
++                rowY += rowHeight
++            }
++            context.restoreGState()
++        }
++    }
++
++    // MARK: - MessageShot
++
++    static func messageShot(size: CGSize, theme: PresentationTheme, settings: AyuMessageShotSettings, ru: Bool) -> UIImage? {
++        let dark: Bool
++        switch settings.theme {
++        case .automatic: dark = theme.overallDarkAppearance
++        case .light: dark = false
++        case .dark: dark = true
++        }
++        return render(size) { context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            // The page behind the picture: a checkerboard shows where the picture is transparent.
++            (theme.overallDarkAppearance ? UIColor(rgb: 0x2C2C2E) : UIColor(rgb: 0xE5E5EA)).setFill()
++            context.fill(bounds)
++            if !settings.showBackground {
++                (theme.overallDarkAppearance ? UIColor(rgb: 0x3A3A3C) : UIColor(rgb: 0xD1D1D6)).setFill()
++                let cell: CGFloat = 10.0
++                var row = 0
++                var cy: CGFloat = 0.0
++                while cy < size.height {
++                    var cx: CGFloat = row % 2 == 0 ? 0.0 : cell
++                    while cx < size.width {
++                        context.fill(CGRect(x: cx, y: cy, width: cell, height: cell))
++                        cx += cell * 2.0
++                    }
++                    cy += cell
++                    row += 1
++                }
++            }
++
++            let canvas = bounds.insetBy(dx: 18.0, dy: 14.0)
++            let background = dark ? UIColor(red: 0.09, green: 0.08, blue: 0.13, alpha: 1.0) : UIColor(red: 0.94, green: 0.93, blue: 0.98, alpha: 1.0)
++            let secondary = dark ? UIColor(white: 0.70, alpha: 1.0) : UIColor(white: 0.40, alpha: 1.0)
++            let primary: UIColor = dark ? .white : .black
++            let authorColor = dark ? UIColor(red: 0.78, green: 0.69, blue: 1.0, alpha: 1.0) : UIColor(red: 0.36, green: 0.22, blue: 0.63, alpha: 1.0)
++            if settings.showBackground {
++                background.setFill()
++                UIBezierPath(roundedRect: canvas, cornerRadius: 12.0).fill()
++            }
++
++            var y = canvas.minY + 10.0
++            if settings.showHeader {
++                text("AyuGram · MessageShot", at: CGPoint(x: canvas.minX + 12.0, y: y), size: 12.0, weight: .semibold, color: secondary)
++                y += 22.0
++            }
++            let cards: [(Bool, String, String, Bool)] = [
++                (false, ru ? "Аня" : "Anna", ru ? "Смотри, какой закат 🌅" : "Look at this sunset 🌅", true),
++                (true, ru ? "Ты" : "You", ru ? "Вау, красота!" : "Wow, beautiful!", false)
++            ]
++            let cardWidth = canvas.width - 64.0
++            for card in cards {
++                let x = card.0 ? canvas.maxX - 10.0 - cardWidth : canvas.minX + 10.0
++                var height: CGFloat = 12.0
++                if settings.showAuthors { height += 18.0 }
++                height += 20.0
++                let hasPhoto = card.3 && settings.showMediaPreviews
++                if card.3 { height += hasPhoto ? 56.0 : 18.0 }
++                if settings.showDate { height += 16.0 }
++                height += 8.0
++                guard y + height <= canvas.maxY - 4.0 else { break }
++                let frame = CGRect(x: x, y: y, width: cardWidth, height: height)
++                let fill = dark ? UIColor(white: card.0 ? 0.23 : 0.16, alpha: 1.0) : (card.0 ? UIColor(red: 0.88, green: 0.84, blue: 0.98, alpha: 1.0) : .white)
++                fill.setFill()
++                UIBezierPath(roundedRect: frame, cornerRadius: 12.0).fill()
++                var cy = frame.minY + 8.0
++                if settings.showAuthors {
++                    text(card.1, at: CGPoint(x: frame.minX + 10.0, y: cy), size: 12.0, weight: .semibold, color: authorColor)
++                    cy += 18.0
++                }
++                text(card.2, at: CGPoint(x: frame.minX + 10.0, y: cy), size: 13.0, color: primary)
++                cy += 20.0
++                if card.3 {
++                    if hasPhoto {
++                        let photo = CGRect(x: frame.minX + 10.0, y: cy, width: min(110.0, frame.width - 20.0), height: 50.0)
++                        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [UIColor(rgb: 0xFF9F0A).cgColor, UIColor(rgb: 0xBF5AF2).cgColor] as CFArray, locations: [0.0, 1.0]) {
++                            context.saveGState()
++                            UIBezierPath(roundedRect: photo, cornerRadius: 8.0).addClip()
++                            context.drawLinearGradient(gradient, start: CGPoint(x: photo.minX, y: photo.minY), end: CGPoint(x: photo.minX, y: photo.maxY), options: [])
++                            context.restoreGState()
++                        }
++                        cy += 56.0
++                    } else {
++                        text(ru ? "[фото]" : "[photo]", at: CGPoint(x: frame.minX + 10.0, y: cy), size: 12.0, color: secondary)
++                        cy += 18.0
++                    }
++                }
++                if settings.showDate {
++                    text(ru ? "сегодня, 19:24" : "today, 7:24 PM", at: CGPoint(x: frame.minX + 10.0, y: cy), size: 10.0, color: secondary)
++                }
++                y = frame.maxY + 8.0
++            }
++        }
++    }
++
++    // MARK: - Sending options
++
++    static func gifConfirmation(size: CGSize, theme: PresentationTheme, ru: Bool) -> UIImage? {
++        let dark = theme.overallDarkAppearance
++        return render(size) { context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            chatBackdrop(bounds, dark: dark, in: context)
++            UIColor(white: 0.0, alpha: 0.25).setFill()
++            context.fill(bounds)
++            let alert = CGRect(x: bounds.midX - 120.0, y: bounds.midY - 66.0, width: 240.0, height: 132.0)
++            (dark ? UIColor(rgb: 0x2C2C2E) : UIColor(rgb: 0xF2F2F7)).setFill()
++            UIBezierPath(roundedRect: alert, cornerRadius: 16.0).fill()
++            let gif = CGRect(x: alert.minX + 14.0, y: alert.minY + 14.0, width: 56.0, height: 56.0)
++            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [UIColor(rgb: 0x5AC8FA).cgColor, UIColor(rgb: 0x5856D6).cgColor] as CFArray, locations: [0.0, 1.0]) {
++                context.saveGState()
++                UIBezierPath(roundedRect: gif, cornerRadius: 10.0).addClip()
++                context.drawLinearGradient(gradient, start: CGPoint(x: gif.minX, y: gif.minY), end: CGPoint(x: gif.maxX, y: gif.maxY), options: [])
++                context.restoreGState()
++            }
++            text("GIF", at: CGPoint(x: gif.minX + 15.0, y: gif.midY - 9.0), size: 15.0, weight: .bold, color: .white)
++            let primary: UIColor = dark ? .white : .black
++            text(ru ? "Отправить GIF?" : "Send this GIF?", at: CGPoint(x: gif.maxX + 12.0, y: gif.minY + 10.0), size: 15.0, weight: .semibold, color: primary)
++            text(ru ? "в чат «Аня»" : "to Anna", at: CGPoint(x: gif.maxX + 12.0, y: gif.minY + 32.0), size: 13.0, color: primary.withAlphaComponent(0.5))
++            (dark ? UIColor(white: 1.0, alpha: 0.12) : UIColor(white: 0.0, alpha: 0.12)).setFill()
++            context.fill(CGRect(x: alert.minX, y: alert.maxY - 44.0, width: alert.width, height: 0.5))
++            context.fill(CGRect(x: alert.midX, y: alert.maxY - 44.0, width: 0.5, height: 44.0))
++            let accent = theme.list.itemAccentColor
++            let cancel = ru ? "Отмена" : "Cancel"
++            let send = ru ? "Отправить" : "Send"
++            text(cancel, at: CGPoint(x: alert.minX + (alert.width / 2.0 - textWidth(cancel, size: 16.0)) / 2.0, y: alert.maxY - 32.0), size: 16.0, color: accent)
++            text(send, at: CGPoint(x: alert.midX + (alert.width / 2.0 - textWidth(send, size: 16.0, weight: .semibold)) / 2.0, y: alert.maxY - 32.0), size: 16.0, weight: .semibold, color: accent)
++        }
++    }
++
++    static func voicePreview(size: CGSize, theme: PresentationTheme, ru: Bool) -> UIImage? {
++        let dark = theme.overallDarkAppearance
++        return render(size) { context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            chatBackdrop(bounds, dark: dark, in: context)
++            let primary: UIColor = dark ? .white : .black
++            let accent = theme.list.itemAccentColor
++            let hint = ru ? "Прослушай и отправь" : "Listen, then send"
++            text(hint, at: CGPoint(x: bounds.midX - textWidth(hint, size: 13.0) / 2.0, y: 18.0), size: 13.0, color: primary.withAlphaComponent(0.6))
++
++            let panel = CGRect(x: 0.0, y: bounds.maxY - 64.0, width: bounds.width, height: 64.0)
++            (dark ? UIColor(rgb: 0x1C1C1E) : UIColor(rgb: 0xF7F7F7)).setFill()
++            context.fill(panel)
++            symbol("trash", in: CGRect(x: 16.0, y: panel.midY - 11.0, width: 22.0, height: 22.0), color: UIColor(rgb: 0xFF453A))
++            let pill = CGRect(x: 50.0, y: panel.midY - 18.0, width: panel.width - 50.0 - 64.0, height: 36.0)
++            accent.withAlphaComponent(0.18).setFill()
++            UIBezierPath(roundedRect: pill, cornerRadius: 18.0).fill()
++            accent.setFill()
++            UIBezierPath(ovalIn: CGRect(x: pill.minX + 4.0, y: pill.minY + 4.0, width: 28.0, height: 28.0)).fill()
++            symbol("play.fill", in: CGRect(x: pill.minX + 11.0, y: pill.minY + 11.0, width: 14.0, height: 14.0), color: .white)
++            let bars: [CGFloat] = [6, 12, 18, 10, 22, 14, 8, 20, 16, 9, 24, 12, 7, 18, 11, 15, 6, 13, 19, 9, 14, 8]
++            var bx = pill.minX + 42.0
++            accent.setFill()
++            for value in bars where bx < pill.maxX - 46.0 {
++                UIBezierPath(roundedRect: CGRect(x: bx, y: pill.midY - value / 2.0, width: 3.0, height: value), cornerRadius: 1.5).fill()
++                bx += 5.0
++            }
++            text("0:07", at: CGPoint(x: pill.maxX - 40.0, y: pill.midY - 8.0), size: 13.0, color: accent)
++            accent.setFill()
++            UIBezierPath(ovalIn: CGRect(x: panel.maxX - 52.0, y: panel.midY - 18.0, width: 36.0, height: 36.0)).fill()
++            symbol("arrow.up", in: CGRect(x: panel.maxX - 43.0, y: panel.midY - 9.0, width: 18.0, height: 18.0), color: .white)
++        }
++    }
++
++    static func videoNotePreview(size: CGSize, theme: PresentationTheme, ru: Bool) -> UIImage? {
++        let dark = theme.overallDarkAppearance
++        return render(size) { context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            chatBackdrop(bounds, dark: dark, in: context)
++            let accent = theme.list.itemAccentColor
++            let diameter = min(bounds.height - 70.0, 130.0)
++            let circle = CGRect(x: bounds.midX - diameter / 2.0, y: 14.0, width: diameter, height: diameter)
++            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [UIColor(rgb: 0xFFB26B).cgColor, UIColor(rgb: 0xE76A9B).cgColor] as CFArray, locations: [0.0, 1.0]) {
++                context.saveGState()
++                UIBezierPath(ovalIn: circle).addClip()
++                context.drawLinearGradient(gradient, start: CGPoint(x: circle.minX, y: circle.minY), end: CGPoint(x: circle.maxX, y: circle.maxY), options: [])
++                context.restoreGState()
++            }
++            symbol("person.fill", in: circle.insetBy(dx: diameter * 0.28, dy: diameter * 0.26), color: UIColor(white: 1.0, alpha: 0.55))
++            UIColor(white: 0.0, alpha: 0.35).setFill()
++            UIBezierPath(ovalIn: CGRect(x: circle.midX - 20.0, y: circle.midY - 20.0, width: 40.0, height: 40.0)).fill()
++            symbol("play.fill", in: CGRect(x: circle.midX - 8.0, y: circle.midY - 9.0, width: 18.0, height: 18.0), color: .white)
++
++            let panel = CGRect(x: 0.0, y: bounds.maxY - 48.0, width: bounds.width, height: 48.0)
++            (dark ? UIColor(rgb: 0x1C1C1E) : UIColor(rgb: 0xF7F7F7)).setFill()
++            context.fill(panel)
++            symbol("trash", in: CGRect(x: 16.0, y: panel.midY - 10.0, width: 20.0, height: 20.0), color: UIColor(rgb: 0xFF453A))
++            let duration = "0:12"
++            text(duration, at: CGPoint(x: bounds.midX - textWidth(duration, size: 14.0) / 2.0, y: panel.midY - 9.0), size: 14.0, color: dark ? .white : .black)
++            accent.setFill()
++            UIBezierPath(ovalIn: CGRect(x: panel.maxX - 48.0, y: panel.midY - 16.0, width: 32.0, height: 32.0)).fill()
++            symbol("arrow.up", in: CGRect(x: panel.maxX - 40.0, y: panel.midY - 8.0, width: 16.0, height: 16.0), color: .white)
++        }
 +    }
 +}
 diff --git a/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift b/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift
@@ -71294,23 +72509,31 @@ index 00000000..bc3c1aae
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAppearanceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAppearanceSettings.swift
 new file mode 100644
-index 00000000..e48eaf76
+index 00000000..9a13f252
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuAppearanceSettings.swift
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,90 @@
 +import Foundation
 +
 +public struct AyuAppearanceSettings: Codable, Equatable {
++    /// How a saved deleted message is marked beside its time: the text label, or an icon instead.
++    public enum DeletedMarkStyle: String, Codable, CaseIterable {
++        case text
++        case trash
++        case eye
++    }
++
 +    public var showGhostButton = true
 +    public var showMessageSeconds = false
 +    /// Empty strings use the current language's standard labels.
 +    public var deletedMark = ""
 +    public var editedMark = ""
++    public var deletedMarkStyle: DeletedMarkStyle = .text
 +
 +    public init() {}
 +
 +    private enum CodingKeys: String, CodingKey {
-+        case showGhostButton, showMessageSeconds, deletedMark, editedMark
++        case showGhostButton, showMessageSeconds, deletedMark, editedMark, deletedMarkStyle
 +    }
 +
 +    public init(from decoder: Decoder) throws {
@@ -71319,6 +72542,7 @@ index 00000000..e48eaf76
 +        self.showMessageSeconds = try values.decodeIfPresent(Bool.self, forKey: .showMessageSeconds) ?? false
 +        self.deletedMark = try values.decodeIfPresent(String.self, forKey: .deletedMark) ?? ""
 +        self.editedMark = try values.decodeIfPresent(String.self, forKey: .editedMark) ?? ""
++        self.deletedMarkStyle = (try? values.decodeIfPresent(DeletedMarkStyle.self, forKey: .deletedMarkStyle)) ?? .text
 +        self.normalize()
 +        try self.validate()
 +    }
@@ -71341,11 +72565,42 @@ index 00000000..e48eaf76
 +    }
 +
 +    public func deletedLabel(fallback value: String) -> String {
-+        return self.deletedMark.isEmpty ? value : self.deletedMark
++        switch self.deletedMarkStyle {
++        case .trash: return "🗑"
++        case .eye: return "👁"
++        case .text: return self.deletedMark.isEmpty ? value : self.deletedMark
++        }
 +    }
 +
 +    public func editedLabel(fallback value: String) -> String {
 +        return self.editedMark.isEmpty ? value : self.editedMark
++    }
++}
++
++/// An icon deleted-mark travels inside the timestamp string as one private-use character,
++/// so the status node can draw a monochrome icon in the time's colour in its place.
++/// Anything else that shows the string must `split` it first.
++public enum AyuDeletedMarkGlyph {
++    private static let trash: Character = "\u{E0A0}"
++    private static let eye: Character = "\u{E0A1}"
++
++    public static func marker(for style: AyuAppearanceSettings.DeletedMarkStyle) -> String? {
++        switch style {
++        case .trash: return String(AyuDeletedMarkGlyph.trash)
++        case .eye: return String(AyuDeletedMarkGlyph.eye)
++        case .text: return nil
++        }
++    }
++
++    /// The text without the marker, and the style the marker stood for.
++    public static func split(_ text: String) -> (text: String, style: AyuAppearanceSettings.DeletedMarkStyle?) {
++        if text.contains(AyuDeletedMarkGlyph.trash) {
++            return (text.replacingOccurrences(of: String(AyuDeletedMarkGlyph.trash), with: ""), .trash)
++        }
++        if text.contains(AyuDeletedMarkGlyph.eye) {
++            return (text.replacingOccurrences(of: String(AyuDeletedMarkGlyph.eye), with: ""), .eye)
++        }
++        return (text, nil)
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift b/submodules/TelegramCore/Sources/AyuGram/AyuArchiveFileStore.swift
@@ -75867,6 +77122,19 @@ index d7da5d10..90c668f3 100644
          strongSelf.appliedForwardInfo = ChatMessageAppliedForwardInfo(messageId: item.content.firstMessage.id, source: forwardSource, authorSignature: forwardAuthorSignature)
          strongSelf.updateAccessibilityData(accessibilityData)
          strongSelf.disablesComments = disablesComments
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageCallBubbleContentNode/Sources/ChatMessageCallBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageCallBubbleContentNode/Sources/ChatMessageCallBubbleContentNode.swift
+index 40186f89..78106004 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageCallBubbleContentNode/Sources/ChatMessageCallBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageCallBubbleContentNode/Sources/ChatMessageCallBubbleContentNode.swift
+@@ -246,7 +246,7 @@ public class ChatMessageCallBubbleContentNode: ChatMessageBubbleContentNode {
+                     }
+                 }
+                 
+-                let dateText = stringForMessageTimestampStatus(context: item.context, message: EngineMessage(item.message), dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings, associatedData: item.associatedData)
++                let dateText = AyuDeletedMarkGlyph.split(stringForMessageTimestampStatus(context: item.context, message: EngineMessage(item.message), dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings, associatedData: item.associatedData)).text
+                 
+                 var statusText: String
+                 if let callDuration = callDuration, callDuration > 1 {
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift
 index 17517556..4079116c 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageContactBubbleContentNode/Sources/ChatMessageContactBubbleContentNode.swift
@@ -75881,10 +77149,49 @@ index 17517556..4079116c 100644
                      dateReactionsAndPeers = ([], [])
                  }
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
-index 215b975f..3865027b 100644
+index 215b975f..565cdc5a 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/ChatMessageDateAndStatusNode.swift
-@@ -607,7 +607,8 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
+@@ -206,6 +206,32 @@ func packReactionRows(_ itemSizes: [CGSize], width: CGFloat, topInset: CGFloat)
+     return (positions, CGSize(width: widestRow, height: totalHeight), currentRowWidth)
+ }
+ 
++private let ayuDeletedMarkImageCache = Atomic<[String: UIImage]>(value: [:])
++
++/// A trash or eye glyph rendered to a bitmap in the given colour (layers draw `cgImage`,
++/// which a tinted symbol image does not carry), cached per style, colour and size.
++private func ayuDeletedMarkImage(style: AyuAppearanceSettings.DeletedMarkStyle, color: UIColor, pointSize: CGFloat) -> UIImage? {
++    let key = "\(style.rawValue)-\(color.argb)-\(pointSize)"
++    if let cached = ayuDeletedMarkImageCache.with({ $0[key] }) {
++        return cached
++    }
++    let configuration = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
++    guard let symbol = UIImage(systemName: style == .eye ? "eye.fill" : "trash.fill", withConfiguration: configuration)?.withTintColor(color, renderingMode: .alwaysOriginal) else {
++        return nil
++    }
++    let format = UIGraphicsImageRendererFormat()
++    format.opaque = false
++    let image = UIGraphicsImageRenderer(size: symbol.size, format: format).image { _ in
++        symbol.draw(at: CGPoint())
++    }
++    let _ = ayuDeletedMarkImageCache.modify { current in
++        var current = current
++        current[key] = image
++        return current
++    }
++    return image
++}
++
+ public class ChatMessageDateAndStatusNode: ASDisplayNode {
+     public struct TrailingReactionSettings {
+         public var displayInline: Bool
+@@ -603,11 +629,13 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
+                 }
+             }
+             
+-            var updatedDateText = arguments.dateText
++            let ayuDeletedMark = AyuDeletedMarkGlyph.split(arguments.dateText)
++            var updatedDateText = ayuDeletedMark.text
              if arguments.edited {
                  if let useEditedTimestamp = arguments.context.getAppConfigValue("message_primary_edited_date") as? Bool, useEditedTimestamp {
                  } else {
@@ -75894,8 +77201,24 @@ index 215b975f..3865027b 100644
                  }
              }
              if let impressionCount = arguments.impressionCount {
+@@ -615,6 +643,15 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
+             }
+             
+             let dateFont = Font.regular(floor(arguments.presentationData.fontSize.baseDisplaySize * 11.0 / 17.0))
++            if let style = ayuDeletedMark.style {
++                // AyuGram icon mark for a saved deleted message: drawn in the time's colour in the
++                // views-icon slot; a post that already shows views keeps an emoji instead.
++                if impressionImage == nil {
++                    impressionImage = ayuDeletedMarkImage(style: style, color: dateColor, pointSize: floor(dateFont.pointSize * 0.9))
++                } else {
++                    updatedDateText = (style == .trash ? "🗑 " : "👁 ") + updatedDateText
++                }
++            }
+             let (date, dateApply) = dateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: updatedDateText, font: dateFont, textColor: dateColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .middle, constrainedSize: arguments.constrainedSize, alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+             
+             let checkOffset = floor(arguments.presentationData.fontSize.baseDisplaySize * 6.0 / 17.0)
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
-index ad79b915..a0f7be57 100644
+index ad79b915..2d168b5e 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
 @@ -107,7 +107,8 @@ public func stringForMessageTimestampStatus(
@@ -75928,7 +77251,7 @@ index ad79b915..a0f7be57 100644
      }
      
      var authorTitle: String?
-@@ -251,5 +252,19 @@ public func stringForMessageTimestampStatus(
+@@ -251,5 +252,24 @@ public func stringForMessageTimestampStatus(
          }
      }
      
@@ -75943,8 +77266,13 @@ index ad79b915..a0f7be57 100644
 +        }
 +    }
 +    if message.ayuIsDeleted {
-+        let label = ayuAppearance.deletedLabel(fallback: strings.baseLanguageCode.hasPrefix("ru") ? "Удалено" : "Deleted")
-+        dateText = "\(label) · \(dateText)"
++        if let marker = AyuDeletedMarkGlyph.marker(for: ayuAppearance.deletedMarkStyle) {
++            // The status node draws this as a monochrome icon in the time's colour.
++            dateText = marker + dateText
++        } else {
++            let label = ayuAppearance.deletedLabel(fallback: strings.baseLanguageCode.hasPrefix("ru") ? "Удалено" : "Deleted")
++            dateText = "\(label) · \(dateText)"
++        }
 +    }
      return dateText
  }
@@ -76338,6 +77666,24 @@ index 5fe1e292..244b396d 100644
          // For a login part the prompt shows the host the link really opens. The external-URL opener asks about such
          // a link as well, so accepting it here tells the opener it has been confirmed.
          let displayUrl = loginPartUrl.map { urlRemovingLoginPart($0).absoluteString } ?? parsedString
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenDisclosureItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenDisclosureItem.swift
+index cc748ae6..49bb700c 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenDisclosureItem.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenDisclosureItem.swift
+@@ -171,8 +171,11 @@ private final class PeerInfoScreenDisclosureItemNode: PeerInfoScreenItemNode {
+         } else if case .badge = item.label {
+             labelColorValue = presentationData.theme.list.itemCheckColors.foregroundColor
+             labelFont = Font.regular(15.0)
+-        } else if case .titleBadge = item.label {
+-            labelColorValue = presentationData.theme.list.itemCheckColors.foregroundColor
++        } else if case let .titleBadge(_, badgeColor) = item.label {
++            // A light badge (AyuGram's yellow BETA) needs dark text to stay readable.
++            var badgeWhite: CGFloat = 0.0
++            badgeColor.getWhite(&badgeWhite, alpha: nil)
++            labelColorValue = badgeWhite > 0.7 ? UIColor(white: 0.12, alpha: 1.0) : presentationData.theme.list.itemCheckColors.foregroundColor
+             labelFont = Font.medium(11.0)
+         } else if case .labelBadge = item.label {
+             labelColorValue = presentationData.theme.list.itemCheckColors.foregroundColor
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
 index fdc996cb..0e6ead75 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
@@ -76570,7 +77916,7 @@ index f1c1917b..1bbd23c7 100644
                      var replaceImpl: ((ViewController) -> Void)?
                      let controller = PremiumLimitScreen(context: strongSelf.context, subject: .accounts, count: Int32(count), action: {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
-index a4873696..7334667a 100644
+index a4873696..80a7b214 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 @@ -222,6 +222,13 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
@@ -76578,7 +77924,7 @@ index a4873696..7334667a 100644
      }
      
 +    // AyuGram for Android lists both preference screens first in the settings block.
-+    items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 100, text: "exteraGram", icon: AyuSettingsIcons.exteraLogo, action: {
++    items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 100, label: .titleBadge("BETA", UIColor(rgb: 0xFFD60A)), text: "exteraGram", icon: AyuSettingsIcons.exteraLogo, action: {
 +        interaction.openSettings(.ayuGram)
 +    }))
 +    items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 101, text: "AyuGram", icon: AyuSettingsIcons.logo, action: {
@@ -118881,6 +120227,38 @@ index 00000000..43e2623d
 +    "version": 1
 +  }
 +}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Chats.imageset/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/Chats.imageset/Contents.json
+new file mode 100644
+index 00000000..aab5790d
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Chats.imageset/Contents.json
+@@ -0,0 +1,16 @@
++{
++  "images" : [
++    {
++      "filename" : "chats.svg",
++      "idiom" : "universal"
++    }
++  ],
++  "info" : {
++    "author" : "xcode",
++    "version" : 1
++  },
++  "properties" : {
++    "preserves-vector-representation" : true,
++    "template-rendering-intent" : "template"
++  }
++}
+diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Chats.imageset/chats.svg b/submodules/TelegramUI/Images.xcassets/AyuGram/Chats.imageset/chats.svg
+new file mode 100644
+index 00000000..414fc515
+--- /dev/null
++++ b/submodules/TelegramUI/Images.xcassets/AyuGram/Chats.imageset/chats.svg
+@@ -0,0 +1,4 @@
++<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++<path fill="#FFFFFF" d="M6.5 2h7A4.5 4.5 0 0 1 18 6.5V9A4.5 4.5 0 0 1 17.985 9.368A7.2 7.2 0 0 0 10.455 13.500H9.6l-3.4 2.5c-.55.4-1.3 0-1.3-.65V13.3A4.5 4.5 0 0 1 2 9V6.5A4.5 4.5 0 0 1 6.5 2Z"/>
++<path fill="#FFFFFF" fill-rule="evenodd" d="M21.21 14.92 L22.92 15.51 L22.92 17.49 L21.21 18.08 L21.10 18.36 L21.88 19.99 L20.49 21.38 L18.86 20.60 L18.58 20.71 L17.99 22.42 L16.01 22.42 L15.42 20.71 L15.14 20.60 L13.51 21.38 L12.12 19.99 L12.90 18.36 L12.79 18.08 L11.08 17.49 L11.08 15.51 L12.79 14.92 L12.90 14.64 L12.12 13.01 L13.51 11.62 L15.14 12.40 L15.42 12.29 L16.01 10.58 L17.99 10.58 L18.58 12.29 L18.86 12.40 L20.49 11.62 L21.88 13.01 L21.10 14.64ZM15.10 16.50a1.90 1.90 0 1 0 3.80 0a1.90 1.90 0 1 0 -3.80 0Z"/>
++</svg>
 diff --git a/submodules/TelegramUI/Images.xcassets/AyuGram/Contents.json b/submodules/TelegramUI/Images.xcassets/AyuGram/Contents.json
 new file mode 100644
 index 00000000..787495bd
@@ -144532,7 +145910,7 @@ index 0fb1ee10..26809c39 100644
                  let lastHeaderId = filteredEntries.last.flatMap { listMessageDateHeaderId(timestamp: $0.index.timestamp) } ?? 0
                  let processedView = ChatHistoryView(originalView: view, filteredEntries: filteredEntries, associatedData: associatedData, lastHeaderId: lastHeaderId, id: id, locationInput: update.2, ignoreMessagesInTimestampRange: update.3, ignoreMessageIds: update.4)
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..5971ffd5 100644
+index 1ade8c01..0b2ab3c7 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -144580,7 +145958,7 @@ index 1ade8c01..5971ffd5 100644
              if !actions.isEmpty {
                  actions.insert(.separator, at: 0)
              }
-@@ -2479,6 +2485,110 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2479,6 +2485,54 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
@@ -144588,15 +145966,6 @@ index 1ade8c01..5971ffd5 100644
 +            let ru = chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru")
 +            let ayuInterface = context.account.network.ayuGhostMode.current.interface
 +            var ayuActions: [ContextMenuItem] = []
-+            if ayuInterface.showHideMessage, chatPresentationInterfaceState.subject == nil, chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, messages.allSatisfy({ EngineMessage($0).ayuHiddenReference != nil }) {
-+                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Скрыть локально" : "AyuGram · Hide Locally", icon: { theme in
-+                    return UIImage(systemName: "eye.slash")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
-+                }, action: { controller, _ in
-+                    controller?.dismiss(completion: {
-+                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuHideMessages(ids: messages.map { $0.id })
-+                    })
-+                })))
-+            }
 +            if ayuInterface.showMessageShot, !chatPresentationInterfaceState.copyProtectionEnabled, messages.allSatisfy({ EngineMessage($0).ayuCanMessageShot }) {
 +                ayuActions.append(.action(ContextMenuActionItem(text: "AyuGram · MessageShot", icon: { theme in
 +                    return UIImage(systemName: "photo.on.rectangle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
@@ -144606,56 +145975,9 @@ index 1ade8c01..5971ffd5 100644
 +                    })
 +                })))
 +            }
-+            if ayuInterface.showMessageDetails {
-+                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Данные сообщения" : "AyuGram · Message Details", icon: { theme in
-+                    return UIImage(systemName: "info.circle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
-+                }, action: { controller, _ in
-+                    controller?.dismiss(completion: {
-+                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.push(ayuMessageDetailsController(context: context, message: EngineMessage(message)))
-+                    })
-+                })))
-+            }
-+            if ayuInterface.showAddFilter, !message.text.isEmpty, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
-+                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Добавить фильтр" : "AyuGram · Add Filter", icon: { theme in
-+                    return UIImage(systemName: "line.3.horizontal.decrease.circle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
-+                }, action: { controller, _ in
-+                    controller?.dismiss(completion: {
-+                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuAddFilterFromMessage(id: message.id)
-+                    })
-+                })))
-+            }
-+            if chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
-+                if ayuInterface.showRepeatText, canSendMessagesToChat(chatPresentationInterfaceState), chatPresentationInterfaceState.interfaceState.editMessage == nil, AyuTextToolsPolicy.canRepeat(message.text) || (EngineMessage(message).ayuCanRepeatAsCopy && message.id.peerId.namespace != Namespaces.Peer.SecretChat) {
-+                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Повторить" : "AyuGram · Repeat", icon: { theme in
-+                        return UIImage(systemName: "repeat")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
-+                    }, action: { controller, _ in
-+                        controller?.dismiss(completion: {
-+                            (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuUseMessageText(id: message.id, repeatText: true)
-+                        })
-+                    })))
-+                }
-+                if ayuInterface.showSearchPhrase, AyuTextToolsPolicy.searchQuery(for: message.text) != nil {
-+                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Найти фразу" : "AyuGram · Find Phrase", icon: { theme in
-+                        return UIImage(systemName: "magnifyingglass")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
-+                    }, action: { controller, _ in
-+                        controller?.dismiss(completion: {
-+                            (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuUseMessageText(id: message.id, repeatText: false)
-+                        })
-+                    })))
-+                }
-+            }
 +            if !message.text.isEmpty, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
 +                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Перевести" : "AyuGram · Translate", icon: { theme in UIImage(systemName: "character.bubble")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal) }, action: { controller, _ in
 +                    controller?.dismiss(completion: { ayuPresentTranslation(context: context, text: message.text) })
-+                })))
-+            }
-+            if context.account.network.ayuGhostMode.current.plugins.installed.contains(where: { $0.enabled }), chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, message.id.peerId.namespace != Namespaces.Peer.SecretChat, EngineMessage(message).adAttribute == nil {
-+                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Плагины" : "AyuGram · Plugins", icon: { theme in
-+                    return UIImage(systemName: "puzzlepiece.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
-+                }, action: { controller, _ in
-+                    controller?.dismiss(completion: {
-+                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuOpenPlugins()
-+                    })
 +                })))
 +            }
 +            if ayuInterface.showCopyMessageIds, EngineMessage(message).adAttribute == nil {

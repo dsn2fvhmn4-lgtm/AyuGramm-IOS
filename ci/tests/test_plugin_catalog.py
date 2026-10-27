@@ -88,3 +88,11 @@ class PluginCatalogTests(unittest.TestCase):
         payload = json.loads(base64.b64decode(envelope['payload']))
         self.assertEqual(payload['revision'], 2)
         self.assertEqual(len(payload['adapters']), 5)
+
+    def test_new_native_capabilities_publish_with_their_required_engine_api(self):
+        for kind in ('groupMentions', 'petpet', 'reactionsTotal'):
+            value = self.manifest()
+            value['actions'] = [{'id': 'native', 'title': 'Native', 'kind': kind}]
+            manifest = native_manifest(value)
+            self.assertEqual(manifest['apiVersion'], 8)
+            self.assertEqual(manifest['actions'][0]['kind'], kind)

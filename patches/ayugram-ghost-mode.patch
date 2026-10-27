@@ -143839,10 +143839,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..8d63120f
+index 00000000..6b0b94a5
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,1025 @@
+@@ -0,0 +1,1019 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -144333,7 +144333,7 @@ index 00000000..8d63120f
 +check(registry.action(pluginID: plugin.id, actionID: "search") == searchAction, "Enabled action can resolve")
 +try registry.install(plugin)
 +check(registry.installed.count == 1 && !registry.installed[0].enabled, "Replacement is atomic and disables the plugin")
-+for index in 1...11 {
++for index in 1...63 {
 +    var another = plugin; another.id = "p\(index)"; try registry.install(another)
 +}
 +let fullRegistry = registry
@@ -144341,7 +144341,7 @@ index 00000000..8d63120f
 +check(pluginThrows { try registry.install(overflowPlugin) }, "Registry size must be bounded")
 +check(registry == fullRegistry, "Capacity failure must preserve registry")
 +registry.remove(id: plugin.id)
-+check(registry.installed.count == 11, "Uninstall removes only the selected plugin")
++check(registry.installed.count == 63, "Uninstall removes only the selected plugin")
 +let replaceAction = AyuPluginAction(id: "replace", title: "Replace", kind: .replaceText, find: "[x]", replacement: "done")
 +let replaced = try replaceAction.transformed("[x] .* [x]")
 +check(replaced == "done .* done", "Text replacement is literal, not arbitrary regex/code")
@@ -144861,12 +144861,6 @@ index 00000000..8d63120f
 +check(preparedPetpet.apiVersion == 8 && preparedPetpet.permissions == ["media.petpet.create"], "Petpet imports through a typed native media capability")
 +var oldPetpet = preparedPetpet; oldPetpet.apiVersion = 7
 +check(pluginThrows { try oldPetpet.validate() }, "A media capability cannot be smuggled into an older engine ABI")
-+var capacityRegistry = AyuPluginRegistry()
-+for index in 0..<64 {
-+    try capacityRegistry.install(AyuPluginManifest(id: "capacity_\(index)", name: "Capacity", author: "test", version: "1", summary: "", actions: [AyuPluginAction(id: "search", title: "Search", kind: .search)]))
-+}
-+check(capacityRegistry.installed.count == 64, "The expanded engine can hold the full supplied batch instead of stopping at twelve plugins")
-+check(pluginThrows { try capacityRegistry.install(AyuPluginManifest(id: "capacity_overflow", name: "Capacity", author: "test", version: "1", summary: "", actions: [AyuPluginAction(id: "search", title: "Search", kind: .search)])) }, "Registry still bounds installation count")
 +print("PASS: \(checks) native model checks including reaction totals, media capability and expanded registry")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644

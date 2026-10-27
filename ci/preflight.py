@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import plistlib
 import os
@@ -41,6 +42,10 @@ def main():
     parser.add_argument('source', type=Path)
     args = parser.parse_args()
     source = args.source.resolve()
+    import_check = source / "build-system/Make/PostboxImportCheck.py"
+    if import_check.exists():
+        subprocess.run([sys.executable, str(import_check), str(source)], check=True)
+        print("PASS: actual upstream Postbox import/access check before native dependencies")
     paths = set()
     for arguments in (['diff', '--name-only', '-z', 'HEAD'], ['ls-files', '--others', '--exclude-standard', '-z']):
         output = subprocess.check_output(['git', *arguments], cwd=source)

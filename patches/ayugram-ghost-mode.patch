@@ -142735,10 +142735,10 @@ index 00000000..24b5f454
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift
 new file mode 100644
-index 00000000..651f4b61
+index 00000000..806af055
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,95 @@
 +import Foundation
 +import UIKit
 +import SwiftSignalKit
@@ -142794,22 +142794,33 @@ index 00000000..651f4b61
 +              !ids.isEmpty, ids.count <= 100, ids.allSatisfy({ $0.peerId == peerId }) else { return }
 +        let russian = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
 +        let unique = Set(ids)
-+        self.ayuFormattedCopyDisposable.set((self.context.account.postbox.transaction { transaction -> Result<String, Error> in
-+            return Result {
-+                let messages = unique.compactMap { transaction.getMessage($0) }.sorted { $0.timestamp == $1.timestamp ? $0.id.id < $1.id.id : $0.timestamp < $1.timestamp }
-+                guard messages.count == unique.count, messages.allSatisfy(ayuCanCopyFormatted) else { throw AyuPluginError.invalidInput }
-+                let records = messages.map { message -> AyuFormattedCopyRecord in
-+                    var quote: AyuFormattedCopyRecord.Quote?
-+                    if let reply = message.attributes.compactMap({ $0 as? ReplyMessageAttribute }).first {
-+                        if let source = message.associatedMessages[reply.messageId] ?? transaction.getMessage(reply.messageId), ayuCanCopyFormatted(source) {
-+                            quote = .init(author: ayuFormattedCopyAuthor(source), text: ayuFormattedCopyBody(source, russian: russian))
-+                        } else { quote = .init(author: "", text: russian ? "[исходное сообщение недоступно]" : "[original message unavailable]") }
++        let engine = self.context.engine
++        // Reply sources missing from a message's associated messages are read in a second request.
++        let result: Signal<Result<String, Error>, NoError> = engine.data.get(EngineDataMap(unique.map { TelegramEngine.EngineData.Item.Messages.Message(id: $0) }))
++        |> mapToSignal { found -> Signal<Result<String, Error>, NoError> in
++            let messages = found.values.compactMap { $0?._asMessage() }.sorted { $0.timestamp == $1.timestamp ? $0.id.id < $1.id.id : $0.timestamp < $1.timestamp }
++            guard messages.count == unique.count, messages.allSatisfy(ayuCanCopyFormatted) else { return .single(.failure(AyuPluginError.invalidInput)) }
++            let replyIds = Set(messages.compactMap { message -> EngineMessage.Id? in
++                guard let reply = message.attributes.compactMap({ $0 as? ReplyMessageAttribute }).first, message.associatedMessages[reply.messageId] == nil else { return nil }
++                return reply.messageId
++            })
++            return engine.data.get(EngineDataMap(replyIds.map { TelegramEngine.EngineData.Item.Messages.Message(id: $0) }))
++            |> map { replies -> Result<String, Error> in
++                return Result {
++                    let records = messages.map { message -> AyuFormattedCopyRecord in
++                        var quote: AyuFormattedCopyRecord.Quote?
++                        if let reply = message.attributes.compactMap({ $0 as? ReplyMessageAttribute }).first {
++                            if let source = message.associatedMessages[reply.messageId] ?? replies[reply.messageId].flatMap({ $0 })?._asMessage(), ayuCanCopyFormatted(source) {
++                                quote = .init(author: ayuFormattedCopyAuthor(source), text: ayuFormattedCopyBody(source, russian: russian))
++                            } else { quote = .init(author: "", text: russian ? "[исходное сообщение недоступно]" : "[original message unavailable]") }
++                        }
++                        return AyuFormattedCopyRecord(timestamp: message.timestamp, author: ayuFormattedCopyAuthor(message), text: ayuFormattedCopyBody(message, russian: russian), quote: quote)
 +                    }
-+                    return AyuFormattedCopyRecord(timestamp: message.timestamp, author: ayuFormattedCopyAuthor(message), text: ayuFormattedCopyBody(message, russian: russian), quote: quote)
++                    return try AyuFormattedCopyRecord.render(records, includeTimestamp: includeTimestamp, russian: russian)
 +                }
-+                return try AyuFormattedCopyRecord.render(records, includeTimestamp: includeTimestamp, russian: russian)
 +            }
-+        } |> deliverOnMainQueue).start(next: { [weak self] result in
++        }
++        self.ayuFormattedCopyDisposable.set((result |> deliverOnMainQueue).start(next: { [weak self] result in
 +            guard let self, self.view.window != nil, self.chatLocation.peerId == peerId, self.context.account.network.ayuGhostMode.current.plugins.activeFormattedCopyTimestamp != nil,
 +                  !self.presentationInterfaceState.copyProtectionEnabled, !self.presentationInterfaceState.myCopyProtectionEnabled else { return }
 +            switch result {

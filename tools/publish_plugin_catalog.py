@@ -68,7 +68,7 @@ def validate_program(program):
 def native_manifest(value, source=None):
     value = {k: v for k, v in value.items() if k in {'format', 'apiVersion', 'id', 'name', 'author', 'version', 'summary', 'actions', 'sourceSHA256', 'convertedFrom', 'limitations'}}
     value.pop('catalogProof', None)
-    value['apiVersion'] = 8 if any(a.get('kind') in {'groupMentions', 'petpet', 'reactionsTotal'} for a in value.get('actions', [])) else 7
+    value['apiVersion'] = 9 if any(a.get('kind') == 'formattedCopy' for a in value.get('actions', [])) else 8 if any(a.get('kind') in {'groupMentions', 'petpet', 'reactionsTotal', 'formattedCopy'} for a in value.get('actions', [])) else 7
     value['convertedFrom'] = MARKER
     if source is not None:
         value['sourceSHA256'] = hashlib.sha256(source).hexdigest()
@@ -86,7 +86,7 @@ def native_manifest(value, source=None):
     actions = value.get('actions')
     if not isinstance(actions, list) or not 1 <= len(actions) <= 8:
         raise ValueError('Adapter needs 1...8 native actions')
-    allowed = {'search', 'searchTerms', 'replaceText', 'outgoingReplace', 'cameraFlip', 'chatColors', 'arcadeGame', 'unlimitedAccounts', 'groupMentions', 'petpet', 'reactionsTotal'}
+    allowed = {'search', 'searchTerms', 'replaceText', 'outgoingReplace', 'cameraFlip', 'chatColors', 'arcadeGame', 'unlimitedAccounts', 'groupMentions', 'petpet', 'reactionsTotal', 'formattedCopy'}
     ids = set()
     for action in actions:
         if action.get('kind') not in allowed or not re.fullmatch(r'[a-z0-9_-]{1,64}', action.get('id', '')):

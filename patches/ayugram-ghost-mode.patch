@@ -68763,10 +68763,10 @@ index 00000000..77b19608
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
-index 00000000..5d70686f
+index 00000000..12d332af
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,279 @@
 +import UIKit
 +import Display
 +import TelegramCore
@@ -68784,7 +68784,7 @@ index 00000000..5d70686f
 +
 +final class AyuPluginDetailsController: UITableViewController {
 +    private enum Row: Equatable {
-+        case enable, cameraGesture, cameraHaptic, chatColors, mentionGroups, reactionTotals
++        case enable, cameraGesture, cameraHaptic, chatColors, mentionGroups, reactionTotals, formattedTimestamp
 +        case game(AyuArcadeGame)
 +        case arcadeCloseButton, arcadeConfirmExit, arcadeKeepScreenOn, arcadeReset
 +        case export, remove
@@ -68818,6 +68818,7 @@ index 00000000..5d70686f
 +        if self.has(.chatColors) { settings.append(.chatColors) }
 +        if self.has(.groupMentions) { settings.append(.mentionGroups) }
 +        if self.has(.reactionsTotal) { settings.append(.reactionTotals) }
++        if self.has(.formattedCopy) { settings.append(.formattedTimestamp) }
 +        if self.has(.arcadeGame) { settings += [.arcadeCloseButton, .arcadeConfirmExit, .arcadeKeepScreenOn] }
 +        var result = [settings]
 +        if self.has(.arcadeGame) {
@@ -68916,6 +68917,8 @@ index 00000000..5d70686f
 +                toggle.accessibilityLabel = cell.textLabel?.text
 +                toggle.addTarget(self, action: #selector(self.toggle(_:)), for: .valueChanged); cell.accessoryView = toggle
 +            }
++        case .formattedTimestamp:
++            self.switchCell(cell, title: self.russian ? "Копировать дату и время" : "Include date and time", value: self.plugin?.formattedCopyTimestamp ?? true, tag: 0, action: #selector(self.formattedTimestampChanged(_:)))
 +        case .reactionTotals:
 +            cell.textLabel?.text = self.russian ? "Счётчик реакций" : "Reaction totals"
 +            cell.accessoryType = .disclosureIndicator
@@ -68989,6 +68992,10 @@ index 00000000..5d70686f
 +        }
 +        let settings = self.arcadeSettings
 +        self.present(AyuArcadeGameController(url: game.url, showCloseButton: settings.showCloseButton, confirmExit: settings.confirmExit, russian: self.russian, keepAwake: settings.keepScreenOn ? self.keepAwake : nil), animated: true)
++    }
++    @objc private func formattedTimestampChanged(_ toggle: UISwitch) {
++        do { try self.store.update { try $0.plugins.setFormattedCopyTimestamp(id: self.pluginID, enabled: toggle.isOn) } }
++        catch { self.tableView.reloadData() }
 +    }
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
@@ -72925,9 +72932,92 @@ index 00000000..35137a2f
 +        }
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuNativeTextTools.swift b/submodules/TelegramCore/Sources/AyuGram/AyuNativeTextTools.swift
+new file mode 100644
+index 00000000..a6cc9803
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuNativeTextTools.swift
+@@ -0,0 +1,77 @@
++import Foundation
++
++public struct AyuAdvancedSearchOptions: Equatable {
++    public enum Media: String, CaseIterable { case all, photos, videos, files, music, voice, gif }
++    public enum Author: Equatable { case any, user(Int64), username(String) }
++    public let author: Author
++    public let minimumDate: Int32?
++    public let maximumDate: Int32?
++    public let media: Media
++    public init(author: String, from: String, until: String, media: Media, timeZone: TimeZone = .current) throws {
++        let value = author.trimmingCharacters(in: .whitespacesAndNewlines)
++        if value.isEmpty { self.author = .any }
++        else if let id = Int64(value), id > 0, id <= 0x00ffffffffffffff { self.author = .user(id) }
++        else {
++            let name = value.hasPrefix("@") ? String(value.dropFirst()) : value
++            guard (4...32).contains(name.utf8.count), name.unicodeScalars.allSatisfy({ (65...90).contains($0.value) || (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" }), name.first?.isLetter == true else { throw AyuPluginError.invalidInput }
++            self.author = .username(name)
++        }
++        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
++        func timestamp(_ raw: String, end: Bool) throws -> Int32? {
++            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
++            if text.isEmpty { return nil }
++            let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.calendar = calendar; formatter.timeZone = timeZone; formatter.dateFormat = "yyyy-MM-dd"; formatter.isLenient = false
++            guard text.utf8.count == 10, let date = formatter.date(from: text), formatter.string(from: date) == text else { throw AyuPluginError.invalidInput }
++            let interval: TimeInterval
++            if end {
++                guard let next = calendar.date(byAdding: .day, value: 1, to: date) else { throw AyuPluginError.invalidInput }
++                interval = next.timeIntervalSince1970 - 1
++            } else { interval = date.timeIntervalSince1970 }
++            guard interval >= 0, interval <= Double(Int32.max) else { throw AyuPluginError.invalidInput }
++            return Int32(interval)
++        }
++        self.minimumDate = try timestamp(from, end: false)
++        self.maximumDate = try timestamp(until, end: true)
++        if let minimumDate = self.minimumDate, let maximumDate = self.maximumDate, minimumDate > maximumDate { throw AyuPluginError.invalidInput }
++        self.media = media
++    }
++}
++
++public struct AyuFormattedCopyRecord: Equatable {
++    public struct Quote: Equatable {
++        public var author: String
++        public var text: String
++        public init(author: String, text: String) { self.author = author; self.text = text }
++    }
++    public var timestamp: Int32
++    public var author: String
++    public var text: String
++    public var quote: Quote?
++    public init(timestamp: Int32, author: String, text: String, quote: Quote? = nil) {
++        self.timestamp = timestamp; self.author = author; self.text = text; self.quote = quote
++    }
++    public static func render(_ records: [Self], includeTimestamp: Bool, russian: Bool, timeZone: TimeZone = .current) throws -> String {
++        guard !records.isEmpty, records.count <= 100 else { throw AyuPluginError.invalidInput }
++        let date = DateFormatter(); date.locale = Locale(identifier: "en_US_POSIX"); date.timeZone = timeZone; date.dateFormat = "dd/MM/yyyy HH:mm:ss"
++        func singleLine(_ text: String) -> String { return text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") }
++        let unknown = russian ? "неизвестный автор" : "unknown author"
++        var output = ""
++        for record in records {
++            guard record.author.utf8.count <= 4096, record.text.utf8.count <= 1024 * 1024 else { throw AyuPluginError.invalidInput }
++            let author = singleLine(record.author)
++            let body = record.text.isEmpty ? (russian ? "[сообщение без текста]" : "[message without text]") : record.text
++            var row = includeTimestamp ? "[" + (record.timestamp > 0 ? date.string(from: Date(timeIntervalSince1970: Double(record.timestamp))) : (russian ? "неизвестная дата" : "unknown date")) + "] " : ""
++            row += (author.isEmpty ? unknown : author) + ":\n"
++            if let quote = record.quote {
++                guard quote.author.utf8.count <= 4096, quote.text.utf8.count <= 1024 * 1024 else { throw AyuPluginError.invalidInput }
++                let name = singleLine(quote.author)
++                row += "↳ " + (name.isEmpty ? unknown : name) + ": " + singleLine(quote.text) + "\n└ "
++            }
++            row += body
++            if !output.isEmpty { output += "\n\n" }
++            guard output.utf8.count + row.utf8.count <= 1024 * 1024 else { throw AyuPluginError.invalidInput }
++            output += row
++        }
++        return output
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift
 new file mode 100644
-index 00000000..58f174e9
+index 00000000..4a2e1ce2
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift
 @@ -0,0 +1,241 @@
@@ -72937,7 +73027,7 @@ index 00000000..58f174e9
 +public enum AyuPluginCatalogConfiguration {
 +    public static let marker = "ayugram/catalog-v1"
 +    public static let format = "ayugram-plugin-catalog-v1"
-+    public static let maximumAPI = 8
++    public static let maximumAPI = 9
 +    public static let adapterDomain = Data("AyuGram adapter v1\0".utf8)
 +    public static let catalogDomain = Data("AyuGram catalog v1\0".utf8)
 +    public static let maximumResponseBytes = 2 * 1024 * 1024
@@ -73174,10 +73264,10 @@ index 00000000..58f174e9
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..f4023d7a
+index 00000000..cdb949f1
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,499 @@
+@@ -0,0 +1,514 @@
 +import Foundation
 +import CryptoKit
 +
@@ -73206,7 +73296,7 @@ index 00000000..f4023d7a
 +
 +/// Versioned, declarative plugin ABI. No Android or Python code is executed.
 +public struct AyuPluginAction: Codable, Equatable {
-+    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip, chatColors, arcadeGame, unlimitedAccounts, groupMentions, petpet, reactionsTotal }
++    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip, chatColors, arcadeGame, unlimitedAccounts, groupMentions, petpet, reactionsTotal, formattedCopy }
 +    public var id: String
 +    public var title: String
 +    public var kind: Kind
@@ -73221,6 +73311,7 @@ index 00000000..f4023d7a
 +        self.prefix = prefix; self.condition = condition; self.replacementCount = replacementCount; self.program = program
 +    }
 +    public var permission: String {
++        if self.kind == .formattedCopy { return "messages.copy.formatted" }
 +        if self.kind == .reactionsTotal { return "messages.reactions.total" }
 +        if self.kind == .petpet { return "media.petpet.create" }
 +        if self.kind == .groupMentions { return "messages.mentions.expand" }
@@ -73286,14 +73377,14 @@ index 00000000..f4023d7a
 +    public var limitations: [String]
 +    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = [], catalogProof: AyuPluginCatalogProof? = nil) {
 +        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
-+        self.apiVersion = actions.contains(where: { $0.kind == .groupMentions || $0.kind == .petpet || $0.kind == .reactionsTotal }) ? 8 : catalogProof != nil ? 7 : actions.contains(where: { $0.program != nil }) ? 6 : actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
++        self.apiVersion = actions.contains(where: { $0.kind == .formattedCopy }) ? 9 : actions.contains(where: { $0.kind == .groupMentions || $0.kind == .petpet || $0.kind == .reactionsTotal }) ? 8 : catalogProof != nil ? 7 : actions.contains(where: { $0.program != nil }) ? 6 : actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
 +        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations; self.catalogProof = catalogProof
 +    }
 +    public func validate() throws {
 +        let validID: (String) -> Bool = { text in
 +            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
 +        }
-+        guard self.format == "ayugram-ios-plugin", (1...8).contains(self.apiVersion), validID(self.id),
++        guard self.format == "ayugram-ios-plugin", (1...9).contains(self.apiVersion), validID(self.id),
 +              !self.name.isEmpty, self.name.count <= 64, !self.author.isEmpty, self.author.count <= 128,
 +              !self.version.isEmpty, self.version.count <= 32, self.summary.count <= 2048,
 +              !self.actions.isEmpty, self.actions.count <= 8, Set(self.actions.map(\.id)).count == self.actions.count,
@@ -73308,6 +73399,7 @@ index 00000000..f4023d7a
 +                try program.validate()
 +                continue
 +            }
++            guard action.kind != .formattedCopy || self.apiVersion >= 9 else { throw AyuPluginError.invalidManifest }
 +            guard (action.kind != .groupMentions && action.kind != .petpet && action.kind != .reactionsTotal) || self.apiVersion >= 8 else { throw AyuPluginError.invalidManifest }
 +            guard (action.kind != .arcadeGame && action.kind != .unlimitedAccounts) || self.apiVersion >= 5 else { throw AyuPluginError.invalidManifest }
 +            guard action.kind != .arcadeGame || AyuArcadeGame(actionID: action.id) != nil else { throw AyuPluginError.invalidManifest }
@@ -73394,8 +73486,9 @@ index 00000000..f4023d7a
 +    public var arcadeSettings: AyuArcadeSettings?
 +    public var groupMentionSettings: AyuGroupMentionSettings?
 +    public var reactionTotalSettings: AyuReactionTotalSettings?
-+    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil, chatColorSettings: AyuChatColorSettings? = nil, arcadeSettings: AyuArcadeSettings? = nil, groupMentionSettings: AyuGroupMentionSettings? = nil, reactionTotalSettings: AyuReactionTotalSettings? = nil) {
-+        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings; self.chatColorSettings = chatColorSettings; self.arcadeSettings = arcadeSettings; self.groupMentionSettings = groupMentionSettings; self.reactionTotalSettings = reactionTotalSettings
++    public var formattedCopyTimestamp: Bool?
++    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil, chatColorSettings: AyuChatColorSettings? = nil, arcadeSettings: AyuArcadeSettings? = nil, groupMentionSettings: AyuGroupMentionSettings? = nil, reactionTotalSettings: AyuReactionTotalSettings? = nil, formattedCopyTimestamp: Bool? = nil) {
++        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings; self.chatColorSettings = chatColorSettings; self.arcadeSettings = arcadeSettings; self.groupMentionSettings = groupMentionSettings; self.reactionTotalSettings = reactionTotalSettings; self.formattedCopyTimestamp = formattedCopyTimestamp
 +    }
 +}
 +
@@ -73414,6 +73507,7 @@ index 00000000..f4023d7a
 +                guard plugin.manifest.actions.contains(where: { $0.kind == .cameraFlip }) else { throw AyuPluginError.invalidManifest }
 +                try settings.validate()
 +            }
++            if plugin.formattedCopyTimestamp != nil, !plugin.manifest.actions.contains(where: { $0.kind == .formattedCopy }) { throw AyuPluginError.invalidManifest }
 +            if let settings = plugin.reactionTotalSettings {
 +                guard plugin.manifest.actions.contains(where: { $0.kind == .reactionsTotal }) else { throw AyuPluginError.invalidManifest }
 +                try settings.validate()
@@ -73433,7 +73527,7 @@ index 00000000..f4023d7a
 +        let oldSettings = oldPlugin?.cameraFlipSettings
 +        var updated = self.installed.filter { $0.manifest.id != manifest.id }
 +        guard updated.count < 64 else { throw AyuPluginError.capacity }
-+        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil, chatColorSettings: manifest.actions.contains(where: { $0.kind == .chatColors }) ? oldPlugin?.chatColorSettings : nil, arcadeSettings: manifest.actions.contains(where: { $0.kind == .arcadeGame }) ? oldPlugin?.arcadeSettings : nil, groupMentionSettings: manifest.actions.contains(where: { $0.kind == .groupMentions }) ? oldPlugin?.groupMentionSettings : nil, reactionTotalSettings: manifest.actions.contains(where: { $0.kind == .reactionsTotal }) ? oldPlugin?.reactionTotalSettings : nil))
++        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil, chatColorSettings: manifest.actions.contains(where: { $0.kind == .chatColors }) ? oldPlugin?.chatColorSettings : nil, arcadeSettings: manifest.actions.contains(where: { $0.kind == .arcadeGame }) ? oldPlugin?.arcadeSettings : nil, groupMentionSettings: manifest.actions.contains(where: { $0.kind == .groupMentions }) ? oldPlugin?.groupMentionSettings : nil, reactionTotalSettings: manifest.actions.contains(where: { $0.kind == .reactionsTotal }) ? oldPlugin?.reactionTotalSettings : nil, formattedCopyTimestamp: manifest.actions.contains(where: { $0.kind == .formattedCopy }) ? oldPlugin?.formattedCopyTimestamp : nil))
 +        self.installed = updated
 +    }
 +    /// Settings of the first enabled Arcade Games provider.
@@ -73493,6 +73587,14 @@ index 00000000..f4023d7a
 +        try candidate.activate(prepared, expected: prepared)
 +        self = candidate
 +    }
++    public var activeFormattedCopyTimestamp: Bool? {
++        guard let plugin = self.installed.first(where: { $0.enabled && $0.manifest.actions.contains(where: { $0.kind == .formattedCopy }) }) else { return nil }
++        return plugin.formattedCopyTimestamp ?? true
++    }
++    public mutating func setFormattedCopyTimestamp(id: String, enabled: Bool) throws {
++        guard let index = self.installed.firstIndex(where: { $0.manifest.id == id }), self.installed[index].manifest.actions.contains(where: { $0.kind == .formattedCopy }) else { throw AyuPluginError.invalidManifest }
++        self.installed[index].formattedCopyTimestamp = enabled
++    }
 +    public var activeReactionTotal: AyuReactionTotalSettings? {
 +        guard let plugin = self.installed.first(where: { $0.enabled && $0.manifest.actions.contains(where: { $0.kind == .reactionsTotal }) }) else { return nil }
 +        return plugin.reactionTotalSettings ?? AyuReactionTotalSettings()
@@ -73550,7 +73652,7 @@ index 00000000..f4023d7a
 +        try prepared.validate()
 +        guard prepared == expected, let index = self.installed.firstIndex(where: { $0.manifest.id == expected.id }),
 +              self.installed[index].manifest == expected, !self.installed[index].enabled else { throw AyuPluginError.invalidManifest }
-+        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings, chatColorSettings: self.installed[index].chatColorSettings, arcadeSettings: self.installed[index].arcadeSettings, groupMentionSettings: self.installed[index].groupMentionSettings, reactionTotalSettings: self.installed[index].reactionTotalSettings)
++        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings, chatColorSettings: self.installed[index].chatColorSettings, arcadeSettings: self.installed[index].arcadeSettings, groupMentionSettings: self.installed[index].groupMentionSettings, reactionTotalSettings: self.installed[index].reactionTotalSettings, formattedCopyTimestamp: self.installed[index].formattedCopyTimestamp)
 +    }
 +    public mutating func remove(id: String) { self.installed.removeAll { $0.manifest.id == id } }
 +    public func action(pluginID: String, actionID: String) -> AyuPluginAction? {
@@ -73566,7 +73668,7 @@ index 00000000..f4023d7a
 +        guard prepared == manifest else { throw AyuPluginError.invalidManifest }
 +        for action in prepared.actions {
 +            switch action.kind {
-+            case .cameraFlip, .chatColors, .arcadeGame, .unlimitedAccounts, .groupMentions, .petpet, .reactionsTotal: break
++            case .cameraFlip, .chatColors, .arcadeGame, .unlimitedAccounts, .groupMentions, .petpet, .reactionsTotal, .formattedCopy: break
 +            case .search:
 +                guard try action.queries("AyuGram") == ["AyuGram"] else { throw AyuPluginError.invalidInput }
 +            case .searchTerms:
@@ -73622,6 +73724,9 @@ index 00000000..f4023d7a
 +        #endif
 +    }
 +    static func reviewedAdapter(sourceSHA256 hash: String) throws -> AyuPluginManifest {
++        if hash == "5ad0f526b0f2423da62d417bbdff002aa3a31d2a07c9d5063f441b4c04a64407" {
++            return AyuPluginManifest(id: "formatted_copy", name: "formatted copy", author: "@meatdisk", version: "1.0.0-ios.1", summary: "Copy messages with author, date/time, media labels and available reply quotes.", actions: [AyuPluginAction(id: "formatted_copy", title: "Copy with details", kind: .formattedCopy)], convertedFrom: "exteraGram formatted copy 1.0.0", sourceSHA256: hash, limitations: ["Uses a separate message/album menu action. For multiple selection, long-press Share or use its accessibility action. Standard Copy remains unchanged.", "Up to 100 ordinary cloud messages and 1 MB. Native copy protection is respected. Media markers and available voice transcripts are copied as plain text, not media files or rich clipboard content."])
++        }
 +        if hash == "53943d9bea39a302b07c159ef2d5e62e2b2b5f3d383d86a1721b2da5a395ce85" {
 +            return AyuPluginManifest(id: "reactions_total", name: "Reactions Total", author: "Daxo-Developer @Daxo_OS", version: "2.0.0-ios.1", summary: "Reaction totals in the message timestamp line, with compact counts, paid-reaction and channel filters.", actions: [AyuPluginAction(id: "reactions_total", title: "Reaction total settings", kind: .reactionsTotal)], convertedFrom: "exteraGram Reactions Total 2.0.0", sourceSHA256: hash, limitations: ["Count is added to the native timestamp line instead of mutating the message author signature. Saved Messages tags and non-cloud messages are excluded.", "Settings apply on the next cell update or when reopening the chat. The Android debug bulletin is not used."])
 +        }
@@ -75627,6 +75732,45 @@ index 3431d128..f18c545b 100644
                  if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
                      dateReactionsAndPeers = ([], [])
                  }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageSelectionInputPanelNode/Sources/ChatMessageSelectionInputPanelNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageSelectionInputPanelNode/Sources/ChatMessageSelectionInputPanelNode.swift
+index 01c8b818..768364e8 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageSelectionInputPanelNode/Sources/ChatMessageSelectionInputPanelNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageSelectionInputPanelNode/Sources/ChatMessageSelectionInputPanelNode.swift
+@@ -196,6 +196,24 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
+     
+     private let canDeleteMessagesDisposable = MetaDisposable()
+     
++    private var ayuCopyGesture: UILongPressGestureRecognizer?
++    public var ayuFormattedCopyTitle = "Copy with details"
++    public var ayuCopyFormatted: ((Set<EngineMessage.Id>) -> Void)? {
++        didSet {
++            self.ayuCopyGesture?.isEnabled = self.ayuCopyFormatted != nil
++            self.shareButton.accessibilityHint = self.ayuCopyFormatted == nil ? nil : self.ayuFormattedCopyTitle
++            self.shareButton.accessibilityCustomActions = self.ayuCopyFormatted == nil ? nil : [UIAccessibilityCustomAction(name: self.ayuFormattedCopyTitle, actionHandler: { [weak self] _ in
++                return self?.ayuCopySelectedMessages() ?? false
++            })]
++        }
++    }
++    private func ayuCopySelectedMessages() -> Bool {
++        guard !self.selectedMessages.isEmpty, let action = self.ayuCopyFormatted else { return false }
++        action(self.selectedMessages); return true
++    }
++    @objc private func ayuCopyLongPressed(_ gesture: UILongPressGestureRecognizer) {
++        if gesture.state == .began { _ = self.ayuCopySelectedMessages() }
++    }
+     public var selectedMessages = Set<EngineMessage.Id>() {
+         didSet {
+             if oldValue != self.selectedMessages {
+@@ -260,6 +278,9 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
+         self.reportButton.button.addTarget(self, action: #selector(self.reportButtonPressed), for: .touchUpInside)
+         self.forwardButton.button.addTarget(self, action: #selector(self.forwardButtonPressed), for: .touchUpInside)
+         self.shareButton.button.addTarget(self, action: #selector(self.shareButtonPressed), for: .touchUpInside)
++        let copyGesture = UILongPressGestureRecognizer(target: self, action: #selector(self.ayuCopyLongPressed(_:)))
++        copyGesture.isEnabled = false; self.ayuCopyGesture = copyGesture
++        self.shareButton.button.addGestureRecognizer(copyGesture)
+         self.tagButton.button.addTarget(self, action: #selector(self.tagButtonPressed), for: .touchUpInside)
+         self.tagEditButton.button.addTarget(self, action: #selector(self.tagButtonPressed), for: .touchUpInside)
+     }
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
 index 64699c7b..7e2dc75d 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
@@ -142575,6 +142719,96 @@ index 00000000..24b5f454
 +        })
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift
+new file mode 100644
+index 00000000..c2b3a03e
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFormattedCopy.swift
+@@ -0,0 +1,84 @@
++import Foundation
++import UIKit
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import ChatControllerInteraction
++import ChatPresentationInterfaceState
++import UndoUI
++
++func ayuCanCopyFormatted(_ message: EngineRawMessage) -> Bool {
++    return message.id.namespace == Namespaces.Message.Cloud && !message.isCopyProtected() && message.adAttribute == nil && !message.media.contains(where: { $0 is TelegramMediaExpiredContent })
++}
++
++private func ayuFormattedCopyBody(_ message: EngineRawMessage, russian: Bool) -> String {
++    var markers: [String] = []
++    for media in message.media {
++        let label: String?
++        if media is TelegramMediaImage { label = russian ? "[фото]" : "[photo]" }
++        else if let file = media as? TelegramMediaFile {
++            if file.isInstantVideo { label = russian ? "[кружок]" : "[video message]" }
++            else if file.isVoice { label = russian ? "[голосовое сообщение]" : "[voice message]" }
++            else if file.isSticker { label = russian ? "[стикер]" : "[sticker]" }
++            else if file.isAnimated { label = "[GIF]" }
++            else if file.isVideo { label = russian ? "[видео]" : "[video]" }
++            else if file.isMusic { label = russian ? "[аудио]" : "[audio]" }
++            else { label = russian ? "[файл]" : "[file]" }
++            markers.append((label ?? (russian ? "[медиа]" : "[media]")) + (file.fileName.map { " " + $0 } ?? ""))
++            continue
++        } else if media is TelegramMediaAction { label = russian ? "[служебное сообщение]" : "[service message]" }
++        else if media is TelegramMediaPoll { label = russian ? "[опрос]" : "[poll]" }
++        else if media is TelegramMediaContact { label = russian ? "[контакт]" : "[contact]" }
++        else if media is TelegramMediaMap { label = russian ? "[геопозиция]" : "[location]" }
++        else { label = nil }
++        if let label { markers.append(label) }
++    }
++    var body = markers.joined(separator: "\n")
++    if !message.text.isEmpty { body += (body.isEmpty ? "" : "\n") + message.text }
++    if message.text.isEmpty, let transcription = message.attributes.compactMap({ $0 as? AudioTranscriptionMessageAttribute }).first, !transcription.isPending, transcription.error == nil, !transcription.text.isEmpty {
++        body += (body.isEmpty ? "" : "\n") + transcription.text
++    }
++    return body
++}
++
++private func ayuFormattedCopyAuthor(_ message: EngineRawMessage) -> String {
++    if let signature = message.attributes.compactMap({ $0 as? AuthorSignatureMessageAttribute }).first, !signature.signature.isEmpty { return signature.signature }
++    return message.author?.debugDisplayTitle ?? message.peers[message.id.peerId]?.debugDisplayTitle ?? ""
++}
++
++extension ChatControllerImpl {
++    func ayuCopyFormattedMessages(_ ids: [EngineMessage.Id]) {
++        guard let includeTimestamp = self.context.account.network.ayuGhostMode.current.plugins.activeFormattedCopyTimestamp,
++              let peerId = self.chatLocation.peerId, !self.presentationInterfaceState.copyProtectionEnabled, !self.presentationInterfaceState.myCopyProtectionEnabled,
++              !ids.isEmpty, ids.count <= 100, ids.allSatisfy({ $0.peerId == peerId }) else { return }
++        let russian = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let unique = Set(ids)
++        self.ayuFormattedCopyDisposable.set((self.context.account.postbox.transaction { transaction -> Result<String, Error> in
++            return Result {
++                let messages = unique.compactMap { transaction.getMessage($0) }.sorted { $0.timestamp == $1.timestamp ? $0.id.id < $1.id.id : $0.timestamp < $1.timestamp }
++                guard messages.count == unique.count, messages.allSatisfy(ayuCanCopyFormatted) else { throw AyuPluginError.invalidInput }
++                let records = messages.map { message -> AyuFormattedCopyRecord in
++                    var quote: AyuFormattedCopyRecord.Quote?
++                    if let reply = message.attributes.compactMap({ $0 as? ReplyMessageAttribute }).first {
++                        if let source = message.associatedMessages[reply.messageId] ?? transaction.getMessage(reply.messageId), ayuCanCopyFormatted(source) {
++                            quote = .init(author: ayuFormattedCopyAuthor(source), text: ayuFormattedCopyBody(source, russian: russian))
++                        } else { quote = .init(author: "", text: russian ? "[исходное сообщение недоступно]" : "[original message unavailable]") }
++                    }
++                    return AyuFormattedCopyRecord(timestamp: message.timestamp, author: ayuFormattedCopyAuthor(message), text: ayuFormattedCopyBody(message, russian: russian), quote: quote)
++                }
++                return try AyuFormattedCopyRecord.render(records, includeTimestamp: includeTimestamp, russian: russian)
++            }
++        } |> deliverOnMainQueue).start(next: { [weak self] result in
++            guard let self, self.chatLocation.peerId == peerId, self.context.account.network.ayuGhostMode.current.plugins.activeFormattedCopyTimestamp != nil,
++                  !self.presentationInterfaceState.copyProtectionEnabled, !self.presentationInterfaceState.myCopyProtectionEnabled else { return }
++            switch result {
++            case let .success(text):
++                UIPasteboard.general.string = text
++                self.controllerInteraction?.displayUndo(.copy(text: self.presentationData.strings.Conversation_MessageCopied))
++            case .failure:
++                let alert = UIAlertController(title: russian ? "Копирование не выполнено" : "Copy did not complete", message: russian ? "Часть сообщений недоступна или превышен лимит: 100 сообщений и 1 МБ текста." : "Some messages are unavailable, or the limit of 100 messages / 1 MB was exceeded.", preferredStyle: .alert)
++                alert.addAction(UIAlertAction(title: "OK", style: .default)); self.context.sharedContext.applicationBindings.presentNativeController(alert)
++            }
++        }))
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift
 new file mode 100644
 index 00000000..b03bede5
@@ -142673,10 +142907,10 @@ index 00000000..2c07baa7
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
 new file mode 100644
-index 00000000..7c31677f
+index 00000000..d1ecf73a
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuPlugins.swift
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,282 @@
 +import Foundation
 +import UIKit
 +import AvatarNode
@@ -142757,6 +142991,10 @@ index 00000000..7c31677f
 +        }
 +        let command = self.commands[indexPath.row]
 +        guard self.available(command) else { return }
++        if command.1.kind == .searchTerms {
++            self.presentSearchMedia(command, sourceRect: tableView.rectForRow(at: indexPath))
++            return
++        }
 +        let prompt = command.1.kind == .searchTerms
 +            ? (self.russian ? "Фразы через |, максимум 6. Результаты объединяются без повторов. Поиск в текущем чате/теме, без автоматической загрузки следующих страниц." : "Up to 6 phrases separated by |. Results are merged without duplicates. Current chat/topic only; no automatic pagination.")
 +            : (self.russian ? "Введи текст. Отправка сообщений автоматически не выполняется." : "Enter text. Messages are never sent automatically.")
@@ -142804,14 +143042,79 @@ index 00000000..7c31677f
 +        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
 +        self.present(alert, animated: true)
 +    }
-+    private func search(_ queries: [String], command: (String, AyuPluginAction, String)) {
++    private func presentSearchMedia(_ command: (String, AyuPluginAction, String), sourceRect: CGRect) {
++        let alert = UIAlertController(title: self.russian ? "Тип сообщений" : "Message type", message: nil, preferredStyle: .actionSheet)
++        let titles = self.russian ? ["Все", "Фото", "Видео", "Файлы", "Музыка", "Голосовые и кружки", "GIF"] : ["All", "Photos", "Videos", "Files", "Music", "Voice and video messages", "GIF"]
++        for (index, media) in AyuAdvancedSearchOptions.Media.allCases.enumerated() {
++            alert.addAction(UIAlertAction(title: titles[index], style: .default, handler: { [weak self] _ in
++                guard let self, self.available(command) else { return }
++                self.presentSearchFields(command, media: media)
++            }))
++        }
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        alert.popoverPresentationController?.sourceView = self.tableView; alert.popoverPresentationController?.sourceRect = sourceRect
++        self.present(alert, animated: true)
++    }
++    private func presentSearchFields(_ command: (String, AyuPluginAction, String), media: AyuAdvancedSearchOptions.Media) {
++        let message = self.russian ? "До 6 фраз через |. Автор и даты необязательны. Даты: ГГГГ-ММ-ДД в часовом поясе телефона. Поиск в этом чате/теме, до 40 результатов на фразу." : "Up to 6 phrases separated by |. Author and dates are optional. Dates: YYYY-MM-DD in the phone’s time zone. Current chat/topic, up to 40 results per phrase."
++        let alert = UIAlertController(title: command.1.title, message: message, preferredStyle: .alert)
++        let placeholders = self.russian ? ["Фразы поиска", "Автор: @username или ID пользователя", "С даты: 2026-01-01", "По дату: 2026-12-31"] : ["Search phrases", "Author: @username or user ID", "From: 2026-01-01", "Until: 2026-12-31"]
++        for (index, placeholder) in placeholders.enumerated() {
++            alert.addTextField { field in field.placeholder = placeholder; field.autocorrectionType = .no; field.autocapitalizationType = .none; if index >= 2 { field.keyboardType = .numbersAndPunctuation } }
++        }
++        alert.addAction(UIAlertAction(title: self.russian ? "Найти" : "Search", style: .default, handler: { [weak self, weak alert] _ in
++            guard let self, self.available(command), let fields = alert?.textFields, fields.count == 4 else { return }
++            do {
++                let queries = try command.1.queries(fields[0].text ?? "")
++                let options = try AyuAdvancedSearchOptions(author: fields[1].text ?? "", from: fields[2].text ?? "", until: fields[3].text ?? "", media: media)
++                self.searchWithAuthor(queries, options: options, command: command)
++            } catch {
++                self.status = self.russian ? "Проверь фразы, автора и даты. Период должен идти от ранней даты к поздней; фразы — 1–128 символов, максимум 6." : "Check phrases, author and dates. Date range must be chronological; phrases: 1–128 characters, maximum 6."
++                self.tableView.reloadData()
++            }
++        }))
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++    }
++    private func searchWithAuthor(_ queries: [String], options: AyuAdvancedSearchOptions, command: (String, AyuPluginAction, String)) {
++        switch options.author {
++        case .any: self.search(queries, command: command, options: options)
++        case let .user(id): self.search(queries, command: command, options: options, authorId: EnginePeer.Id(namespace: Namespaces.Peer.CloudUser, id: EnginePeer.Id.Id._internalFromInt64Value(id)))
++        case let .username(name):
++            self.generation += 1
++            let generation = self.generation
++            self.messages = []; self.status = self.russian ? "Поиск автора…" : "Resolving author…"; self.tableView.reloadData()
++            self.request.set((self.context.engine.peers.resolvePeerByName(name: name, referrer: nil)
++            |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
++                if case let .result(peer) = result { return .single(peer) }
++                return .complete()
++            }
++            |> take(1)
++            |> timeout(15.0, queue: Queue.mainQueue(), alternate: .single(nil))
++            |> deliverOnMainQueue).start(next: { [weak self] peer in
++                guard let self, self.generation == generation, self.available(command) else { return }
++                guard let peer else { self.status = self.russian ? "Автор не найден или время ожидания истекло. Поиск без автора автоматически не запускается." : "Author not found or request timed out. An unfiltered search was not started."; self.tableView.reloadData(); return }
++                self.search(queries, command: command, options: options, authorId: peer.id)
++            }))
++        }
++    }
++    private func search(_ queries: [String], command: (String, AyuPluginAction, String), options: AyuAdvancedSearchOptions? = nil, authorId: EnginePeer.Id? = nil) {
 +        self.generation += 1
 +        let generation = self.generation
 +        self.messages = []
 +        self.status = self.russian ? "Поиск…" : "Searching…"
 +        self.tableView.reloadData()
++        let tags: EngineMessage.Tags?
++        switch options?.media ?? .all {
++        case .all: tags = nil
++        case .photos: tags = .photo
++        case .videos: tags = .video
++        case .files: tags = .file
++        case .music: tags = .music
++        case .voice: tags = .voiceOrInstantVideo
++        case .gif: tags = .gif
++        }
 +        let signals: [Signal<[EngineMessage], NoError>] = queries.map { query in
-+            return self.context.engine.messages.searchMessages(location: .peer(peerId: self.peerId, fromId: nil, tags: nil, reactions: nil, threadId: self.threadId, minDate: nil, maxDate: nil), query: query, state: nil, limit: 40)
++            return self.context.engine.messages.searchMessages(location: .peer(peerId: self.peerId, fromId: authorId, tags: tags, reactions: nil, threadId: self.threadId, minDate: options?.minimumDate, maxDate: options?.maximumDate), query: query, state: nil, limit: 40)
 +            |> take(1)
 +            |> map { result in result.0.messages.map { EngineMessage($0) } }
 +        }
@@ -143168,10 +143471,29 @@ index 00000000..5703373c
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
-index 5bf77c1b..fb452084 100644
+index 5bf77c1b..cd7bb16e 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
-@@ -128,7 +128,7 @@ extension ChatControllerImpl {
+@@ -72,6 +72,18 @@ extension ChatControllerImpl {
+                     break
+                 }
+                 
++                if self.context.account.network.ayuGhostMode.current.plugins.activeFormattedCopyTimestamp != nil,
++                   !self.presentationInterfaceState.copyProtectionEnabled, !self.presentationInterfaceState.myCopyProtectionEnabled,
++                   updatedMessages.count <= 100, updatedMessages.allSatisfy(ayuCanCopyFormatted), case let .list(items) = actions.content {
++                    let ids = updatedMessages.map(\.id)
++                    let title = self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Копировать с автором и датой" : "Copy with author and date"
++                    actions.content = .list(items + [.action(ContextMenuActionItem(text: title, icon: { theme in
++                        return UIImage(systemName: "doc.on.doc")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { [weak self] _, finish in
++                        finish(.default)
++                        self?.ayuCopyFormattedMessages(ids)
++                    }))])
++                }
+                 if allowedReactions != nil, case let .customChatContents(customChatContents) = self.presentationInterfaceState.subject {
+                     if case let .hashTagSearch(publicPosts) = customChatContents.kind, publicPosts {
+                         allowedReactions = nil
+@@ -128,7 +140,7 @@ extension ChatControllerImpl {
                  actions.context = self.context
                  actions.animationCache = self.controllerInteraction?.presentationContext.animationCache
                                                           
@@ -143268,16 +143590,17 @@ index face5ae7..34bbb294 100644
      selfController.updateSlowmodeStatus()
      
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..851a3d0c 100644
+index 5fe58bbf..8c2f255a 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
-@@ -310,6 +310,15 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -310,6 +310,16 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      var leftNavigationButton: ChatNavigationButton?
      var rightNavigationButton: ChatNavigationButton?
      var secondaryRightNavigationButton: ChatNavigationButton?
 +    var ayuGhostBarButton = UIBarButtonItem()
 +    var ayuGhostButtonEnabled: Bool?
 +    let ayuGhostSettingsDisposable = MetaDisposable()
++    let ayuFormattedCopyDisposable = MetaDisposable()
 +    weak var ayuMediaConfirmationController: ViewController?
 +    var ayuApprovedMediaSend: AyuMediaSendSettings.Kind?
 +    var ayuMessageShotInProgress = false
@@ -143287,7 +143610,7 @@ index 5fe58bbf..851a3d0c 100644
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
-@@ -725,7 +734,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -725,7 +735,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          
          self.stickerSettings = ChatInterfaceStickerSettings()
          
@@ -143296,7 +143619,7 @@ index 5fe58bbf..851a3d0c 100644
          
          if case let .customChatContents(customChatContents) = subject {
              switch customChatContents.kind {
-@@ -768,6 +777,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -768,6 +778,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
          self.ready.set(.never())
@@ -143304,7 +143627,7 @@ index 5fe58bbf..851a3d0c 100644
          
          self.chatBackgroundNode.contentStatsUpdated = { [weak self] in
              guard let self else {
-@@ -2408,6 +2418,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2408,6 +2419,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -143315,7 +143638,7 @@ index 5fe58bbf..851a3d0c 100644
              var attributes: [MessageAttribute] = []
              if let query = query {
                  attributes.append(EmojiSearchQueryMessageAttribute(query: query))
-@@ -2681,6 +2695,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2681,6 +2696,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                      }
                  }
                  
@@ -143326,7 +143649,7 @@ index 5fe58bbf..851a3d0c 100644
                  strongSelf.presentPaidMessageAlertIfNeeded(completion: { [weak self] postpone in
                      guard let strongSelf = self else {
                          return
-@@ -2737,6 +2755,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2737,6 +2756,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -143337,7 +143660,7 @@ index 5fe58bbf..851a3d0c 100644
              strongSelf.enqueueChatContextResult(collection, result, hideVia: true, closeMediaInput: true, silentPosting: silentPosting, resetTextInputState: resetTextInputState)
              
              return true
-@@ -6450,6 +6472,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -6450,6 +6473,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              }
          }
          self.moreBarButton.addTarget(self, action: #selector(self.moreButtonPressed), forControlEvents: .touchUpInside)
@@ -143350,15 +143673,16 @@ index 5fe58bbf..851a3d0c 100644
          
          self.navigationItem.titleView = self.chatTitleView
          self.chatTitleView?.tapAction = { [weak self] in
-@@ -7082,6 +7110,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7082,6 +7111,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
  
      deinit {
 +        self.ayuGhostSettingsDisposable.dispose()
++        self.ayuFormattedCopyDisposable.dispose()
          let _ = ChatControllerCount.modify { value in
              return value - 1
          }
-@@ -8639,6 +8668,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8639,6 +8670,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              self.navigationButtonAction(button.action)
          }
      }
@@ -143377,7 +143701,7 @@ index 5fe58bbf..851a3d0c 100644
      
      @objc func moreButtonPressed() {
          self.moreBarButton.play()
-@@ -11200,7 +11241,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -11200,7 +11243,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          guard let contentData = self.contentData else {
              return
          }
@@ -143388,10 +143712,32 @@ index 5fe58bbf..851a3d0c 100644
      
      func displayGiveawayStatusInfo(messageId: EngineMessage.Id, giveawayInfo: PremiumGiveawayInfo) {
 diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
-index ee583844..5d2f319f 100644
+index ee583844..746df90e 100644
 --- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
-@@ -5086,8 +5086,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+@@ -37,6 +37,7 @@ import ReplyAccessoryPanelNode
+ import SuggestPostAccessoryPanelNode
+ import ChatMessageItemView
+ import ChatMessageBubbleItemNode
++import ChatMessageSelectionInputPanelNode
+ import ChatMessageSelectionNode
+ import ManagedDiceAnimationNode
+ import ChatMessageTransitionNode
+@@ -1883,6 +1884,13 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+         let inputPanelSideInsets = sideColumnBandInsets(layout: layout, bandMinY: inputPanelBandMinY, bandMaxY: inputPanelBandMaxY, column: sideColumnExtent)
+         
+         if let inputPanelNode = inputPanelNodes.primary, !previewing {
++            if let selectionPanel = inputPanelNode as? ChatMessageSelectionInputPanelNode {
++                selectionPanel.ayuFormattedCopyTitle = self.chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru") ? "Копировать с автором и датой" : "Copy with author and date"
++                if self.context.account.network.ayuGhostMode.current.plugins.activeFormattedCopyTimestamp != nil {
++                    selectionPanel.ayuCopyFormatted = { [weak self] ids in self?.controller?.ayuCopyFormattedMessages(Array(ids)) }
++                } else { selectionPanel.ayuCopyFormatted = nil }
++            }
++
+             if inputPanelNode !== self.inputPanelNode {
+                 if let inputTextPanelNode = self.inputPanelNode as? ChatTextInputPanelNode {
+                     if inputTextPanelNode.isFocused {
+@@ -5086,8 +5094,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
              let effectiveInputText: NSAttributedString
              let composeContent = effectivePresentationInterfaceState.interfaceState.composeInputState.content
              let isNewMessage = effectivePresentationInterfaceState.interfaceState.editMessage == nil
@@ -143403,7 +143749,7 @@ index ee583844..5d2f319f 100644
                  && !composeContent.isEmpty
                  && !composeContent.isEntityExpressible(options: [])
              let peerSpecificEmojiPack = (self.controller?.contentData?.state.peerView?.cachedData as? CachedChannelData)?.emojiPack
-@@ -5265,6 +5267,21 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+@@ -5265,6 +5275,21 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
              
              let trimmedInputText = effectiveInputText.string.trimmingCharacters(in: .whitespacesAndNewlines)
              let peerId = effectivePresentationInterfaceState.chatLocation.peerId
@@ -143839,10 +144185,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..6b0b94a5
+index 00000000..94027abb
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,1019 @@
+@@ -0,0 +1,1059 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -144319,7 +144665,7 @@ index 00000000..6b0b94a5
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data(repeating: 0, count: AyuPluginImporter.maximumFileBytes + 1), filename: "test.plugin") }, "File size checked before parsing")
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data("__id__ = 'search_plus'\nraise Exception()".utf8), filename: "test.plugin") }, "Spoofed Android metadata must not select the reviewed adapter or execute code")
 +var invalidPlugin = plugin
-+invalidPlugin.apiVersion = 9
++invalidPlugin.apiVersion = 10
 +check(pluginThrows { try invalidPlugin.validate() }, "Unknown plugin ABI rejected")
 +invalidPlugin = plugin; invalidPlugin.id = "../escape"
 +check(pluginThrows { try invalidPlugin.validate() }, "Path-like IDs rejected")
@@ -144862,6 +145208,46 @@ index 00000000..6b0b94a5
 +var oldPetpet = preparedPetpet; oldPetpet.apiVersion = 7
 +check(pluginThrows { try oldPetpet.validate() }, "A media capability cannot be smuggled into an older engine ABI")
 +print("PASS: \(checks) native model checks including reaction totals, media capability and expanded registry")
++
++let utc = TimeZone(secondsFromGMT: 0)!
++let leapSearch = try AyuAdvancedSearchOptions(author: "@Alice", from: "2024-02-29", until: "2024-02-29", media: .photos, timeZone: utc)
++check(leapSearch.author == .username("Alice") && leapSearch.maximumDate! - leapSearch.minimumDate! == 86399, "Advanced search validates leap days and includes the complete local end date")
++let idSearch = try AyuAdvancedSearchOptions(author: "1234567890", from: "", until: "", media: .all, timeZone: utc)
++check(idSearch.author == .user(1234567890) && idSearch.minimumDate == nil && idSearch.maximumDate == nil, "User-ID filters retain an absent date range")
++check(pluginThrows { _ = try AyuAdvancedSearchOptions(author: "9223372036854775807", from: "", until: "", media: .all) }, "User-ID input is bounded to the pinned Postbox peer ID representation before construction")
++check(pluginThrows { _ = try AyuAdvancedSearchOptions(author: "@bad name", from: "", until: "", media: .all) }, "Invalid author input does not silently start an unfiltered search")
++check(pluginThrows { _ = try AyuAdvancedSearchOptions(author: "", from: "2025-02-29", until: "", media: .all) }, "Impossible dates reject rather than normalize into a different month")
++check(pluginThrows { _ = try AyuAdvancedSearchOptions(author: "", from: "2026-12-31", until: "2026-01-01", media: .all) }, "Reversed search ranges reject")
++check(pluginThrows { _ = try AyuAdvancedSearchOptions(author: "", from: "2040-01-01", until: "", media: .all) }, "Dates outside the native Int32 API range reject before conversion")
++let dstSearch = try AyuAdvancedSearchOptions(author: "", from: "2026-03-08", until: "2026-03-08", media: .all, timeZone: TimeZone(identifier: "America/New_York")!)
++check(dstSearch.maximumDate! - dstSearch.minimumDate! == 82799, "End-of-day calculation uses the calendar across a 23-hour DST day")
++let copyRow = AyuFormattedCopyRecord(timestamp: 1, author: "Alice\nAdmin", text: "Hello\nworld", quote: .init(author: "Bob", text: "Two\nlines"))
++let renderedCopy = try AyuFormattedCopyRecord.render([copyRow], includeTimestamp: true, russian: false, timeZone: utc)
++check(renderedCopy == "[01/01/1970 00:00:01] Alice Admin:\n↳ Bob: Two lines\n└ Hello\nworld", "Formatted copying preserves body line breaks while preventing author/quote header injection")
++let noDateCopy = try AyuFormattedCopyRecord.render([copyRow], includeTimestamp: false, russian: false, timeZone: utc)
++check(noDateCopy.hasPrefix("Alice Admin:"), "The timestamp preference omits the whole date prefix")
++let emptyCopy = try AyuFormattedCopyRecord.render([.init(timestamp: 0, author: "", text: "")], includeTimestamp: true, russian: true, timeZone: utc)
++check(emptyCopy.contains("неизвестный автор") && emptyCopy.contains("сообщение без текста"), "Missing copy metadata uses explicit readable fallbacks")
++check(pluginThrows { _ = try AyuFormattedCopyRecord.render([], includeTimestamp: true, russian: false) }, "Empty copy requests reject")
++check(pluginThrows { _ = try AyuFormattedCopyRecord.render(Array(repeating: copyRow, count: 101), includeTimestamp: true, russian: false) }, "Oversized selection rejects without partial clipboard output")
++check(pluginThrows { _ = try AyuFormattedCopyRecord.render([.init(timestamp: 1, author: "A", text: String(repeating: "x", count: 1048576))], includeTimestamp: true, russian: false) }, "Copy output including metadata is bounded instead of silently truncated")
++
++let copyManifest = try AyuPluginImporter.reviewedAdapter(sourceSHA256: "5ad0f526b0f2423da62d417bbdff002aa3a31d2a07c9d5063f441b4c04a64407")
++check(copyManifest.apiVersion == 9 && copyManifest.permissions == ["messages.copy.formatted"], "Formatted copying requires its own native capability and minimum engine version")
++var copyRegistry = AyuPluginRegistry()
++try copyRegistry.installAndActivate(AyuPluginActivation.prepare(copyManifest))
++check(copyRegistry.activeFormattedCopyTimestamp == true, "Enabled formatted-copy plugins default to including timestamps")
++try copyRegistry.setFormattedCopyTimestamp(id: "formatted_copy", enabled: false)
++let restoredCopy = try JSONDecoder().decode(AyuPluginRegistry.self, from: JSONEncoder().encode(copyRegistry))
++try restoredCopy.validate()
++check(restoredCopy.activeFormattedCopyTimestamp == false, "False timestamp preferences survive persistence and do not disable the feature")
++try copyRegistry.installAndActivate(copyManifest)
++check(copyRegistry.activeFormattedCopyTimestamp == false, "Updating the adapter preserves the copy preference")
++copyRegistry.setEnabled(id: "formatted_copy", enabled: false)
++check(copyRegistry.activeFormattedCopyTimestamp == nil, "Disabled formatted-copy providers expose no native copy action")
++var downgradedCopy = copyManifest; downgradedCopy.apiVersion = 8
++check(pluginThrows { try downgradedCopy.validate() }, "Older engine schemas cannot claim formatted-copy support")
++print("PASS: \(checks) native model checks including advanced search filters and formatted-copy semantics")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

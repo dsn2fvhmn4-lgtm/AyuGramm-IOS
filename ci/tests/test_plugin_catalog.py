@@ -109,3 +109,10 @@ class PluginCatalogTests(unittest.TestCase):
             self.assertEqual(manifest['apiVersion'], 8)
             self.assertEqual(manifest['id'], row['metadata']['__id__'])
             self.assertEqual(native_manifest(manifest), manifest)
+
+    def test_formatted_copy_requires_engine9_while_existing_capabilities_keep_their_abi(self):
+        value = self.manifest()
+        value['actions'] = [{'id': 'copy', 'title': 'Copy with details', 'kind': 'formattedCopy'}]
+        manifest = native_manifest(value)
+        self.assertEqual(manifest['apiVersion'], 9)
+        self.assertEqual(manifest['actions'][0]['kind'], 'formattedCopy')

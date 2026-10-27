@@ -77688,54 +77688,11 @@ index 75245702..ceb5318b 100644
          "//third-party/recaptcha:RecaptchaEnterprise",
          "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
          "//submodules/SSignalKit/SSignalKit:SSignalKit",
-diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/AyuDiceButtonLayout.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/AyuDiceButtonLayout.swift
-new file mode 100644
-index 00000000..f1254835
---- /dev/null
-+++ b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/AyuDiceButtonLayout.swift
-@@ -0,0 +1,19 @@
-+import Foundation
-+import CoreGraphics
-+
-+/// Try the right side first, then the left. Never cover the dice or leave the usable width.
-+func ayuDiceButtonFrame(image: CGRect, horizontalRange: ClosedRange<CGFloat>, avoiding: CGRect?) -> CGRect? {
-+    let side: CGFloat = 44.0
-+    guard image.width > 0.0, image.height >= side, horizontalRange.upperBound - horizontalRange.lowerBound >= side else { return nil }
-+    let middle = image.midY - side / 2.0
-+    let ys = [middle, image.minY, image.maxY - side]
-+    for x in [image.maxX + 8.0, image.minX - side - 8.0] {
-+        guard x >= horizontalRange.lowerBound, x + side <= horizontalRange.upperBound else { continue }
-+        for y in ys {
-+            let rect = CGRect(x: x, y: y, width: side, height: side)
-+            if let avoiding, rect.intersects(avoiding.insetBy(dx: -4.0, dy: -4.0)) { continue }
-+            return rect
-+        }
-+    }
-+    return nil
-+}
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
-index 63df27a6..83c3c608 100644
+index 63df27a6..25f0a555 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
-@@ -108,6 +108,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
-     private var selectionNode: ChatMessageSelectionNode?
-     private var deliveryFailedNode: ChatMessageDeliveryFailedNode?
-     private var shareButtonNode: ChatMessageShareButton?
-+    private var ayuDiceButton: UIButton?
-     
-     public var telegramFile: TelegramMediaFile?
-     public var emojiFile: TelegramMediaFile?
-@@ -276,6 +277,9 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
-         let recognizer = TapLongTapOrDoubleTapGestureRecognizer(target: self, action: #selector(self.tapLongTapOrDoubleTapGesture(_:)))
-         recognizer.tapActionAtPoint = { [weak self] point in
-             if let strongSelf = self {
-+                if let button = strongSelf.ayuDiceButton, !button.isHidden, button.frame.contains(point) {
-+                    return .fail
-+                }
-                 if let shareButtonNode = strongSelf.shareButtonNode, shareButtonNode.frame.contains(point) {
-                     return .fail
-                 }
-@@ -1113,7 +1117,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
+@@ -1113,7 +1113,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
              var dateReplies = 0
              var starsCount: Int64?
              var tonAmount: Int64?
@@ -77744,7 +77701,7 @@ index 63df27a6..83c3c608 100644
              if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
                  dateReactionsAndPeers = ([], [])
              }
-@@ -1408,7 +1412,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
+@@ -1408,7 +1408,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
              if shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions) {
                  reactions = ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
              } else {
@@ -77753,44 +77710,7 @@ index 63df27a6..83c3c608 100644
              }
              var reactionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode))?
              if !reactions.reactions.isEmpty {
-@@ -1693,12 +1697,46 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
-                         shareButtonNode.removeFromSupernode()
-                         strongSelf.shareButtonNode = nil
-                     }
-+
-+                    let ordinaryDice = item.message.media.contains { media in
-+                        guard let dice = media as? TelegramMediaDice else { return false }
-+                        return dice.emoji == "🎲" && dice.tonAmount == nil && dice.gameOutcome == nil
-+                    }
-+                    let lower = params.leftInset + 8.0
-+                    let upper = max(lower, params.width - params.rightInset - 8.0)
-+                    if ordinaryDice, item.message.id.peerId.namespace != Namespaces.Peer.SecretChat,
-+                       item.chatLocation.peerId == item.message.id.peerId, item.controllerInteraction.ayuChooseDice != nil,
-+                       let frame = ayuDiceButtonFrame(image: updatedImageFrame, horizontalRange: lower ... upper, avoiding: strongSelf.shareButtonNode?.frame) {
-+                        let button: UIButton
-+                        if let current = strongSelf.ayuDiceButton {
-+                            button = current
-+                        } else {
-+                            button = UIButton(type: .system)
-+                            button.setImage(UIImage(systemName: "die.face.6", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21.0, weight: .semibold)), for: .normal)
-+                            button.layer.cornerRadius = 22.0
-+                            button.accessibilityIdentifier = "ayu.chooseDice"
-+                            button.addTarget(strongSelf, action: #selector(ChatMessageAnimatedStickerItemNode.ayuChooseDicePressed), for: .touchUpInside)
-+                            strongSelf.ayuDiceButton = button
-+                            strongSelf.view.addSubview(button)
-+                        }
-+                        button.backgroundColor = item.presentationData.theme.theme.list.itemBlocksBackgroundColor
-+                        button.tintColor = item.presentationData.theme.theme.list.itemAccentColor
-+                        button.accessibilityLabel = item.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Выбрать число кубика" : "Choose dice value"
-+                        button.frame = frame
-+                        button.isHidden = item.controllerInteraction.selectionState != nil
-+                    } else if let button = strongSelf.ayuDiceButton {
-+                        button.removeFromSuperview()
-+                        strongSelf.ayuDiceButton = nil
-+                    }
-                     
-                     let dateAndStatusFrame = CGRect(origin: CGPoint(x: max(displayLeftInset, updatedImageFrame.maxX - dateAndStatusSize.width - 4.0), y: updatedImageFrame.maxY - dateAndStatusSize.height - 4.0 + imageBottomPadding), size: dateAndStatusSize)
-                     animation.animator.updateFrame(layer: strongSelf.dateAndStatusNode.layer, frame: dateAndStatusFrame, completion: nil)
+@@ -1699,6 +1699,9 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
                      dateAndStatusApply(animation)
                      if case .customChatContents = item.associatedData.subject {
                          strongSelf.dateAndStatusNode.isHidden = true
@@ -77800,40 +77720,6 @@ index 63df27a6..83c3c608 100644
                      }
  
                      if needsReplyBackground {
-@@ -2596,6 +2634,15 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
-         return nil
-     }
-     
-+    @objc private func ayuChooseDicePressed() {
-+        guard let item = self.item, item.controllerInteraction.selectionState == nil,
-+              item.message.media.contains(where: { media in
-+                  guard let dice = media as? TelegramMediaDice else { return false }
-+                  return dice.emoji == "🎲" && dice.tonAmount == nil && dice.gameOutcome == nil
-+              }) else { return }
-+        item.controllerInteraction.ayuChooseDice?(item.message.id)
-+    }
-+
-     @objc private func shareButtonPressed() {
-         if let item = self.item {
-             if case .pinnedMessages = item.associatedData.subject {
-@@ -2759,6 +2806,9 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
-     }
-     
-     override public func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-+        if let button = self.ayuDiceButton, !button.isHidden, button.frame.contains(point) {
-+            return button.hitTest(self.view.convert(point, to: button), with: event)
-+        }
-         if let shareButtonNode = self.shareButtonNode, shareButtonNode.frame.contains(point) {
-             return shareButtonNode.view.hitTest(self.view.convert(point, to: shareButtonNode.view), with: event)
-         }
-@@ -2784,6 +2834,7 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
- 
-         let transition: ContainedViewLayoutTransition = animated ? .animated(duration: 0.2, curve: .easeInOut) : .immediate
-         let panelsAlpha: CGFloat = item.controllerInteraction.selectionState == nil ? 1.0 : 0.0
-+        self.ayuDiceButton?.isHidden = item.controllerInteraction.selectionState != nil
-         if let replyInfoNode = self.replyInfoNode {
-             transition.updateAlpha(node: replyInfoNode, alpha: panelsAlpha)
-         }
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift
 index e25e0195..faea175b 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageAttachedContentNode/Sources/ChatMessageAttachedContentNode.swift
@@ -78380,18 +78266,6 @@ index 1875e7fe..e60152fc 100644
                  if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
                      dateReactionsAndPeers = ([], [])
                  }
-diff --git a/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift b/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift
-index 7da91425..80445d68 100644
---- a/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift
-+++ b/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift
-@@ -203,6 +203,7 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol
-     }
-     
-     public let openMessage: (EngineRawMessage, OpenMessageParams) -> Bool
-+    public var ayuChooseDice: ((EngineMessage.Id) -> Void)? = nil
-     public let openPeer: (EnginePeer, ChatControllerInteractionNavigateToPeer, MessageReference?, OpenPeerSource) -> Void
-     public let openPeerMention: (String, Promise<Bool>?) -> Void
-     public let openMessageContextMenu: (EngineRawMessage, Bool, ASDisplayNode, CGRect, UIGestureRecognizer?, CGPoint?) -> Void
 diff --git a/submodules/TelegramUI/Components/EmojiStatusSelectionComponent/Sources/EmojiStatusSelectionComponent.swift b/submodules/TelegramUI/Components/EmojiStatusSelectionComponent/Sources/EmojiStatusSelectionComponent.swift
 index bb5a8c8a..f402ab6c 100644
 --- a/submodules/TelegramUI/Components/EmojiStatusSelectionComponent/Sources/EmojiStatusSelectionComponent.swift
@@ -145285,6 +145159,25 @@ index 00000000..662c8032
 +        self.disposable.dispose()
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/Chat/AyuDiceButtonLayout.swift b/submodules/TelegramUI/Sources/Chat/AyuDiceButtonLayout.swift
+new file mode 100644
+index 00000000..b7f751de
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/Chat/AyuDiceButtonLayout.swift
+@@ -0,0 +1,13 @@
++import Foundation
++import CoreGraphics
++
++/// Keep the floating picker at the right side of the visible chat, below navigation and above input.
++func ayuDicePickerFrame(size: CGSize, topInset: CGFloat, bottomInset: CGFloat, leftInset: CGFloat, rightInset: CGFloat) -> CGRect? {
++    let side: CGFloat = 44.0
++    let left = max(0.0, leftInset) + 8.0
++    let right = size.width - max(0.0, rightInset) - 8.0
++    let top = max(0.0, topInset) + 12.0
++    let bottom = size.height - max(0.0, bottomInset) - 12.0
++    guard right - left >= side, bottom - top >= side else { return nil }
++    return CGRect(x: right - side, y: top + (bottom - top - side) / 2.0, width: side, height: side)
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
 new file mode 100644
 index 00000000..e912d793
@@ -145415,10 +145308,10 @@ index 00000000..e912d793
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift
 new file mode 100644
-index 00000000..24bad0c8
+index 00000000..b3cf3087
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,185 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -145550,6 +145443,49 @@ index 00000000..24bad0c8
 +}
 +
 +extension ChatControllerImpl {
++    func ayuUpdateFloatingDiceButton(layout: ContainerViewLayout, navigationBottom: CGFloat, isPreviewing: Bool, transition: ContainedViewLayoutTransition) {
++        guard self.isNodeLoaded, !isPreviewing,
++              let peerId = self.chatLocation.peerId,
++              [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
++              canSendMessagesToChat(self.presentationInterfaceState),
++              self.presentationInterfaceState.interfaceState.selectionState == nil,
++              self.presentationInterfaceState.interfaceState.editMessage == nil,
++              let frame = ayuDicePickerFrame(size: layout.size,
++                  topInset: max(navigationBottom, layout.safeInsets.top),
++                  bottomInset: max(layout.inputHeight ?? 0.0, max(layout.intrinsicInsets.bottom, layout.safeInsets.bottom)) + 64.0,
++                  leftInset: layout.safeInsets.left, rightInset: layout.safeInsets.right) else {
++            self.ayuDicePickerButton?.isHidden = true
++            return
++        }
++        let button: UIButton
++        if let current = self.ayuDicePickerButton {
++            button = current
++        } else {
++            button = UIButton(type: .system)
++            button.setImage(UIImage(systemName: "die.face.6", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21.0, weight: .semibold)), for: .normal)
++            button.layer.cornerRadius = 22.0
++            button.layer.shadowColor = UIColor.black.cgColor
++            button.layer.shadowOpacity = 0.15
++            button.layer.shadowRadius = 4.0
++            button.layer.shadowOffset = CGSize(width: 0.0, height: 2.0)
++            button.accessibilityIdentifier = "ayu.chooseDice"
++            button.addTarget(self, action: #selector(self.ayuFloatingDicePressed), for: .touchUpInside)
++            button.frame = frame
++            self.ayuDicePickerButton = button
++            self.view.addSubview(button)
++        }
++        button.isHidden = false
++        button.backgroundColor = self.presentationData.theme.list.itemBlocksBackgroundColor
++        button.tintColor = self.presentationData.theme.list.itemAccentColor
++        button.accessibilityLabel = self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Выбрать число кубика" : "Choose dice value"
++        transition.updateFrame(view: button, frame: frame)
++        self.view.bringSubviewToFront(button)
++    }
++
++    @objc private func ayuFloatingDicePressed() {
++        self.ayuOpenPreparedDice()
++    }
++
 +    func ayuOpenPreparedDice() {
 +        guard let peerId = self.chatLocation.peerId, peerId.namespace != Namespaces.Peer.SecretChat,
 +              canSendMessagesToChat(self.presentationInterfaceState), self.presentationInterfaceState.interfaceState.editMessage == nil else { return }
@@ -146547,7 +146483,7 @@ index face5ae7..34bbb294 100644
      selfController.updateSlowmodeStatus()
      
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 5fe58bbf..5978a536 100644
+index 5fe58bbf..3007633f 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
 @@ -310,6 +310,16 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
@@ -146567,7 +146503,15 @@ index 5fe58bbf..5978a536 100644
      var chatInfoNavigationButton: ChatNavigationButton?
      
      var moreBarButton: MoreHeaderButton
-@@ -725,7 +735,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -324,6 +334,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+ 
+     let chatBackgroundNode: WallpaperBackgroundNode
+     public private(set) var controllerInteraction: ChatControllerInteraction?
++    var ayuDicePickerButton: UIButton?
+     var interfaceInteraction: ChatPanelInterfaceInteraction?
+     
+     let messageContextDisposable = MetaDisposable()
+@@ -725,7 +736,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          
          self.stickerSettings = ChatInterfaceStickerSettings()
          
@@ -146576,7 +146520,7 @@ index 5fe58bbf..5978a536 100644
          
          if case let .customChatContents(customChatContents) = subject {
              switch customChatContents.kind {
-@@ -768,6 +778,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -768,6 +779,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
          
          self.ready.set(.never())
@@ -146584,7 +146528,7 @@ index 5fe58bbf..5978a536 100644
          
          self.chatBackgroundNode.contentStatsUpdated = { [weak self] in
              guard let self else {
-@@ -2408,6 +2419,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2408,6 +2420,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -146595,7 +146539,7 @@ index 5fe58bbf..5978a536 100644
              var attributes: [MessageAttribute] = []
              if let query = query {
                  attributes.append(EmojiSearchQueryMessageAttribute(query: query))
-@@ -2681,6 +2696,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2681,6 +2697,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                      }
                  }
                  
@@ -146606,7 +146550,7 @@ index 5fe58bbf..5978a536 100644
                  strongSelf.presentPaidMessageAlertIfNeeded(completion: { [weak self] postpone in
                      guard let strongSelf = self else {
                          return
-@@ -2737,6 +2756,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -2737,6 +2757,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                  }
              }
              
@@ -146617,18 +146561,7 @@ index 5fe58bbf..5978a536 100644
              strongSelf.enqueueChatContextResult(collection, result, hideVia: true, closeMediaInput: true, silentPosting: silentPosting, resetTextInputState: resetTextInputState)
              
              return true
-@@ -6052,6 +6075,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
-         }, automaticMediaDownloadSettings: self.automaticMediaDownloadSettings, pollActionState: ChatInterfacePollActionState(), stickerSettings: self.stickerSettings, presentationContext: ChatPresentationContext(context: context, backgroundNode: self.chatBackgroundNode))
-         controllerInteraction.enableFullTranslucency = context.sharedContext.energyUsageSettings.fullTranslucency
-         
-+        controllerInteraction.ayuChooseDice = { [weak self] id in
-+            guard let self, self.chatLocation.peerId == id.peerId else { return }
-+            self.ayuOpenPreparedDice()
-+        }
-         self.controllerInteraction = controllerInteraction
-         controllerInteraction.requestWalletTransferArrival = { [weak self] message in
-             self?.walletTransferAnimationCoordinator().requestArrival(message)
-@@ -6450,6 +6477,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -6450,6 +6474,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              }
          }
          self.moreBarButton.addTarget(self, action: #selector(self.moreButtonPressed), forControlEvents: .touchUpInside)
@@ -146641,7 +146574,7 @@ index 5fe58bbf..5978a536 100644
          
          self.navigationItem.titleView = self.chatTitleView
          self.chatTitleView?.tapAction = { [weak self] in
-@@ -7082,6 +7115,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7082,6 +7112,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
  
      deinit {
@@ -146650,7 +146583,23 @@ index 5fe58bbf..5978a536 100644
          let _ = ChatControllerCount.modify { value in
              return value - 1
          }
-@@ -8639,6 +8674,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8517,6 +8549,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             self.applyNavigationBarLayout(suspendedNavigationBarLayout, navigationLayout: self.navigationLayout(layout: layout), additionalBackgroundHeight: self.additionalNavigationBarBackgroundHeight, transition: navigationBarTransition)
+         }
+         self.navigationBar?.additionalContentNode.hitTestSlop = UIEdgeInsets(top: 0.0, left: 0.0, bottom: self.additionalNavigationBarHitTestSlop, right: 0.0)
++        self.ayuUpdateFloatingDiceButton(layout: layout, navigationBottom: self.navigationLayout(layout: layout).navigationFrame.maxY, isPreviewing: self.isPreviewingMode, transition: transition)
+     }
+     
+     func updateChatPresentationInterfaceState(animated: Bool = true, interactive: Bool, saveInterfaceState: Bool = false, _ f: (ChatPresentationInterfaceState) -> ChatPresentationInterfaceState, completion: @escaping (ContainedViewLayoutTransition) -> Void = { _ in }) {
+@@ -8536,6 +8569,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+     }
+     
+     func updateItemNodesSelectionStates(animated: Bool) {
++        if let layout = self.validLayout { self.ayuUpdateFloatingDiceButton(layout: layout, navigationBottom: self.navigationLayout(layout: layout).navigationFrame.maxY, isPreviewing: self.isPreviewingMode, transition: .immediate) }
+         self.chatDisplayNode.historyNode.forEachItemNode { itemNode in
+             if let itemNode = itemNode as? ChatMessageItemView {
+                 itemNode.updateSelectionState(animated: animated)
+@@ -8639,6 +8673,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              self.navigationButtonAction(button.action)
          }
      }
@@ -146669,7 +146618,7 @@ index 5fe58bbf..5978a536 100644
      
      @objc func moreButtonPressed() {
          self.moreBarButton.play()
-@@ -11200,7 +11247,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -11200,7 +11246,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
          guard let contentData = self.contentData else {
              return
          }
@@ -146680,7 +146629,7 @@ index 5fe58bbf..5978a536 100644
      
      func displayGiveawayStatusInfo(messageId: EngineMessage.Id, giveawayInfo: PremiumGiveawayInfo) {
 diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
-index ee583844..48571724 100644
+index ee583844..a536fcbc 100644
 --- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
 @@ -37,6 +37,7 @@ import ReplyAccessoryPanelNode
@@ -146705,7 +146654,17 @@ index ee583844..48571724 100644
              if inputPanelNode !== self.inputPanelNode {
                  if let inputTextPanelNode = self.inputPanelNode as? ChatTextInputPanelNode {
                      if inputTextPanelNode.isFocused {
-@@ -5086,8 +5094,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+@@ -4437,6 +4445,9 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+     }
+     
+     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
++        if let button = self.controller?.ayuDicePickerButton, !button.isHidden, button.frame.contains(point) {
++            return button.hitTest(self.view.convert(point, to: button), with: event)
++        }
+         switch self.chatPresentationInterfaceState.mode {
+         case .standard(.previewing):
+             if let subject = self.controller?.subject, case let .messageOptions(_, _, info) = subject, case .reply = info {
+@@ -5086,8 +5097,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
              let effectiveInputText: NSAttributedString
              let composeContent = effectivePresentationInterfaceState.interfaceState.composeInputState.content
              let isNewMessage = effectivePresentationInterfaceState.interfaceState.editMessage == nil
@@ -146717,7 +146676,7 @@ index ee583844..48571724 100644
                  && !composeContent.isEmpty
                  && !composeContent.isEntityExpressible(options: [])
              let peerSpecificEmojiPack = (self.controller?.contentData?.state.peerView?.cachedData as? CachedChannelData)?.emojiPack
-@@ -5265,6 +5275,21 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+@@ -5265,6 +5278,21 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
              
              let trimmedInputText = effectiveInputText.string.trimmingCharacters(in: .whitespacesAndNewlines)
              let peerId = effectivePresentationInterfaceState.chatLocation.peerId
@@ -147121,10 +147080,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/dice-button/main.swift b/tools/ayu-tests/dice-button/main.swift
 new file mode 100644
-index 00000000..141a8eca
+index 00000000..d5764666
 --- /dev/null
 +++ b/tools/ayu-tests/dice-button/main.swift
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,35 @@
 +import Foundation
 +import CoreGraphics
 +
@@ -147132,33 +147091,34 @@ index 00000000..141a8eca
 +    if !condition() { fatalError(message) }
 +}
 +
-+let incoming = CGRect(x: 48, y: 40, width: 160, height: 160)
-+let right = ayuDiceButtonFrame(image: incoming, horizontalRange: 8 ... 367, avoiding: nil)!
-+check(right.minX > incoming.maxX, "Incoming dice: button belongs on the right")
-+check(right.width == 44 && right.height == 44, "Minimum accessible touch target")
-+let outgoing = CGRect(x: 168, y: 40, width: 160, height: 160)
-+let left = ayuDiceButtonFrame(image: outgoing, horizontalRange: 8 ... 367, avoiding: nil)!
-+check(left.maxX < outgoing.minX, "Outgoing dice: use left side instead of crossing the edge")
-+let share = CGRect(x: right.minX, y: right.minY, width: 44, height: 44)
-+let separated = ayuDiceButtonFrame(image: incoming, horizontalRange: 8 ... 367, avoiding: share)!
-+check(!separated.intersects(share.insetBy(dx: -4, dy: -4)), "Share and number controls must not overlap")
-+check(ayuDiceButtonFrame(image: CGRect(x: 8, y: 0, width: 359, height: 160), horizontalRange: 8 ... 367, avoiding: nil) == nil, "Hide the control when neither side fits")
-+check(ayuDiceButtonFrame(image: .zero, horizontalRange: 8 ... 367, avoiding: nil) == nil, "Empty images have no floating button")
-+
-+var count = 5
-+for width in [CGFloat(320.0), 375.0, 414.0, 768.0] {
-+    for x in stride(from: 8.0, through: width-8.0, by: 13.0) {
-+        let image = CGRect(x: x, y: 20, width: 160, height: 160)
-+        if let button = ayuDiceButtonFrame(image: image, horizontalRange: 8 ... CGFloat(width-8), avoiding: share) {
-+            check(button.minX >= 8 && button.maxX <= width-8, "Button escaped usable width")
-+            check(button.minY >= image.minY && button.maxY <= image.maxY, "Button escaped vertical media bounds")
-+            check(!button.intersects(image), "Button covered dice media")
-+            check(!button.intersects(share.insetBy(dx: -4, dy: -4)), "Button covered share control")
-+            count += 4
++let portrait = CGSize(width: 375, height: 812)
++let normal = ayuDicePickerFrame(size: portrait, topInset: 88, bottomInset: 98, leftInset: 0, rightInset: 0)!
++check(normal.width == 44 && normal.height == 44, "44-point touch target")
++check(normal.maxX == portrait.width-8, "Always at the right side of the chat")
++let keyboard = ayuDicePickerFrame(size: portrait, topInset: 88, bottomInset: 355, leftInset: 0, rightInset: 0)!
++check(keyboard.midY < normal.midY, "Move above the keyboard")
++check(keyboard.maxY <= portrait.height-355, "Do not cover keyboard or composer")
++check(ayuDicePickerFrame(size: CGSize(width: 40,height: 100), topInset: 0,bottomInset: 0,leftInset: 0,rightInset: 0) == nil, "Reject unusable width")
++check(ayuDicePickerFrame(size: portrait, topInset: 88,bottomInset: 750,leftInset: 0,rightInset: 0) == nil, "Hide when input occupies the viewport")
++var count = 6
++for size in [CGSize(width: 320,height: 600), CGSize(width: 375,height: 812), CGSize(width: 414,height: 896), CGSize(width: 812,height: 375), CGSize(width: 1024,height: 768)] {
++    for top in [CGFloat(44),88,140] {
++        for bottom in [CGFloat(34),98,355] {
++            for side in [CGFloat(0),44] {
++                if let rect = ayuDicePickerFrame(size: size,topInset: top,bottomInset: bottom,leftInset: side,rightInset: side) {
++                    check(rect.minX >= side+8 && rect.maxX <= size.width-side-8, "Respect side safe areas")
++                    check(rect.minY >= top+12 && rect.maxY <= size.height-bottom-12, "Respect navigation and input")
++                    check(rect.width == 44 && rect.height == 44, "Stable accessible size")
++                    count += 3
++                } else {
++                    check(size.height-bottom-top-24 < 44 || size.width-side*2-16 < 44, "Hide only when usable area is too small")
++                    count += 1
++                }
++            }
 +        }
 +    }
 +}
-+print("PASS: \(count) dice-button placement checks")
++print("PASS: \(count) floating dice-button placement checks")
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
 index 00000000..bad12843

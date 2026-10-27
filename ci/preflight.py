@@ -83,6 +83,7 @@ def main():
     # implementations before the expensive full Telegram build.
     sdk_sources = [source / 'submodules/TelegramUI/Sources' / name for name in (
         'Chat/AyuMessageShotCanvas.swift', 'AyuStartupStorage.swift', 'AyuStartupFailureController.swift')]
+    sdk_sources.append(source / 'submodules/Display/Source/AyuPetpetController.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuPluginAvatar.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuArcadeGameController.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuChatColorPickerController.swift')
@@ -106,7 +107,7 @@ def main():
         if manager.exists():
             ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
             models = [ayu / name for name in (
-                'AyuPythonRuntime.swift', 'AyuGroupMentions.swift', 'AyuPluginCatalog.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
+                'AyuPythonRuntime.swift', 'AyuReactionTotalSettings.swift', 'AyuGroupMentions.swift', 'AyuPluginCatalog.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
                 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotSettings.swift',
                 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuRegexSettings.swift')]
             with tempfile.TemporaryDirectory(prefix='ayu-plugin-sdk-') as directory:

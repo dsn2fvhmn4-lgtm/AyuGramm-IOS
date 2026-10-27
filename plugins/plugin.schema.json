@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AyuGramm-IOS plugin API 1 through 7",
+  "title": "AyuGramm-IOS plugin API 1 through 8",
   "type": "object",
   "required": [
     "format",
@@ -25,7 +25,8 @@
         4,
         5,
         6,
-        7
+        7,
+        8
       ]
     },
     "id": {
@@ -103,7 +104,8 @@
               "cameraFlip",
               "chatColors",
               "arcadeGame",
-              "unlimitedAccounts"
+              "unlimitedAccounts",
+              "groupMentions"
             ]
           },
           "find": {
@@ -497,11 +499,35 @@
     },
     {
       "if": {
-        "properties": {
-          "apiVersion": {
-            "const": 7
+        "anyOf": [
+          {
+            "properties": {
+              "apiVersion": {
+                "const": 7
+              }
+            }
+          },
+          {
+            "required": [
+              "convertedFrom"
+            ],
+            "properties": {
+              "convertedFrom": {
+                "const": "ayugram/catalog-v1"
+              }
+            }
+          },
+          {
+            "required": [
+              "catalogProof"
+            ],
+            "properties": {
+              "catalogProof": {
+                "type": "object"
+              }
+            }
           }
-        }
+        ]
       },
       "then": {
         "required": [
@@ -529,6 +555,38 @@
           "convertedFrom": {
             "not": {
               "const": "ayugram/catalog-v1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "apiVersion": {
+            "enum": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actions": {
+            "items": {
+              "properties": {
+                "kind": {
+                  "not": {
+                    "const": "groupMentions"
+                  }
+                }
+              }
             }
           }
         }

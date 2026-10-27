@@ -68252,6 +68252,107 @@ index 00000000..ba3acdfe
 +    }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuGroupMentionsController.swift b/submodules/SettingsUI/Sources/AyuGroupMentionsController.swift
+new file mode 100644
+index 00000000..22a0d655
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuGroupMentionsController.swift
+@@ -0,0 +1,95 @@
++import UIKit
++import TelegramCore
++
++final class AyuGroupMentionsController: UITableViewController {
++    private let store: AyuGhostModeStore
++    private let pluginID: String
++    private let russian: Bool
++    private var settings: AyuGroupMentionSettings {
++        return self.store.current.plugins.installed.first(where: { $0.manifest.id == self.pluginID })?.groupMentionSettings ?? AyuGroupMentionSettings()
++    }
++    init(store: AyuGhostModeStore, pluginID: String, russian: Bool) {
++        self.store = store; self.pluginID = pluginID; self.russian = russian
++        super.init(style: .insetGrouped)
++        self.title = "Group Mentions"
++    }
++    required init?(coder: NSCoder) { return nil }
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(self.addGroup))
++        self.tableView.rowHeight = UITableView.automaticDimension
++        self.tableView.estimatedRowHeight = 60
++    }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? 3 : self.settings.groups.count }
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        return section == 0 ? (self.russian ? "Где применять" : "Apply in") : (self.russian ? "Группы упоминаний" : "Mention groups")
++    }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        if section == 0 { return self.russian ? "Каналы, секретные чаты, запланированные и форматированные сообщения исключены. Для каждого чата кулдаун 60 секунд. Поддерживаются обычный текст и неформатированные подписи." : "Broadcasts, secret chats, scheduled and formatted messages are excluded. Each chat has a 60-second cooldown. Supports plain text and unformatted captions." }
++        return self.russian ? "До 5 групп, по 7 юзернеймов. Команда заменяется целиком: например, команда друзья → @alice @bob. Включи плагин на предыдущем экране." : "Up to 5 groups with 7 usernames each. Whole commands are expanded: friends → @alice @bob. Enable the plugin on the previous screen."
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
++        let settings = self.settings
++        if indexPath.section == 0 {
++            let titles = self.russian ? ["Личные чаты", "Группы", "Учитывать регистр"] : ["Private chats", "Groups", "Case sensitive"]
++            cell.textLabel?.text = titles[indexPath.row]
++            let toggle = UISwitch(); toggle.tag = indexPath.row
++            toggle.isOn = [settings.enabledPrivate, settings.enabledGroups, settings.caseSensitive][indexPath.row]
++            toggle.addTarget(self, action: #selector(self.toggleChanged(_:)), for: .valueChanged)
++            cell.accessoryView = toggle
++        } else if settings.groups.indices.contains(indexPath.row) {
++            let group = settings.groups[indexPath.row]
++            cell.textLabel?.text = group.command
++            cell.detailTextLabel?.text = group.usernames.map { "@" + $0 }.joined(separator: " ")
++            cell.accessoryType = .disclosureIndicator
++        }
++        return cell
++    }
++    @objc private func toggleChanged(_ toggle: UISwitch) {
++        self.save { settings in
++            switch toggle.tag {
++            case 0: settings.enabledPrivate = toggle.isOn
++            case 1: settings.enabledGroups = toggle.isOn
++            default: settings.caseSensitive = toggle.isOn
++            }
++        }
++    }
++    private func save(_ change: (inout AyuGroupMentionSettings) -> Void) {
++        var settings = self.settings; change(&settings)
++        do {
++            try self.store.update { try $0.plugins.setGroupMentionSettings(id: self.pluginID, settings: settings) }
++        } catch {
++            let alert = UIAlertController(title: self.russian ? "Проверь группу" : "Check the group", message: self.russian ? "Нужны уникальная команда до 64 символов и 1–7 юзернеймов до 32 символов. Максимум 5 групп. При смене регистра команды тоже должны оставаться уникальными." : "Use a unique command up to 64 characters and 1–7 usernames up to 32 characters. Maximum 5 groups. Commands must remain unique when changing case sensitivity.", preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
++        }
++        self.tableView.reloadData()
++    }
++    @objc private func addGroup() { self.edit(nil) }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard indexPath.section == 1, self.settings.groups.indices.contains(indexPath.row) else { return }
++        self.edit(self.settings.groups[indexPath.row])
++    }
++    private func edit(_ group: AyuMentionGroup?) {
++        let alert = UIAlertController(title: self.russian ? "Группа упоминаний" : "Mention group", message: nil, preferredStyle: .alert)
++        alert.addTextField { field in field.placeholder = self.russian ? "Команда" : "Command"; field.text = group?.command; field.autocorrectionType = .no; field.autocapitalizationType = .none }
++        alert.addTextField { field in field.placeholder = "@alice @bob"; field.text = group?.usernames.joined(separator: " "); field.autocorrectionType = .no; field.autocapitalizationType = .none }
++        alert.addAction(UIAlertAction(title: self.russian ? "Сохранить" : "Save", style: .default, handler: { [weak self, weak alert] _ in
++            guard let self, let fields = alert?.textFields else { return }
++            let command = (fields[0].text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++            let users = AyuGroupMentionSettings.usernames(fields[1].text ?? "")
++            self.save { settings in
++                let value = AyuMentionGroup(id: group?.id ?? UUID().uuidString, command: command, usernames: users)
++                if let index = settings.groups.firstIndex(where: { $0.id == group?.id }) { settings.groups[index] = value }
++                else { settings.groups.append(value) }
++            }
++        }))
++        if let group {
++            alert.addAction(UIAlertAction(title: self.russian ? "Удалить группу" : "Delete group", style: .destructive, handler: { [weak self] _ in self?.save { $0.groups.removeAll { $0.id == group.id } } }))
++        }
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift b/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift
 new file mode 100644
 index 00000000..77b19608
@@ -68358,10 +68459,10 @@ index 00000000..77b19608
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
-index 00000000..62d73661
+index 00000000..362b2730
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,266 @@
 +import UIKit
 +import Display
 +import TelegramCore
@@ -68379,7 +68480,7 @@ index 00000000..62d73661
 +
 +final class AyuPluginDetailsController: UITableViewController {
 +    private enum Row: Equatable {
-+        case enable, cameraGesture, cameraHaptic, chatColors
++        case enable, cameraGesture, cameraHaptic, chatColors, mentionGroups
 +        case game(AyuArcadeGame)
 +        case arcadeCloseButton, arcadeConfirmExit, arcadeKeepScreenOn, arcadeReset
 +        case export, remove
@@ -68411,6 +68512,7 @@ index 00000000..62d73661
 +        var settings: [Row] = [.enable]
 +        if self.has(.cameraFlip) { settings += [.cameraGesture, .cameraHaptic] }
 +        if self.has(.chatColors) { settings.append(.chatColors) }
++        if self.has(.groupMentions) { settings.append(.mentionGroups) }
 +        if self.has(.arcadeGame) { settings += [.arcadeCloseButton, .arcadeConfirmExit, .arcadeKeepScreenOn] }
 +        var result = [settings]
 +        if self.has(.arcadeGame) {
@@ -68509,6 +68611,9 @@ index 00000000..62d73661
 +                toggle.accessibilityLabel = cell.textLabel?.text
 +                toggle.addTarget(self, action: #selector(self.toggle(_:)), for: .valueChanged); cell.accessoryView = toggle
 +            }
++        case .mentionGroups:
++            cell.textLabel?.text = self.russian ? "Группы упоминаний" : "Mention groups"
++            cell.accessoryType = .disclosureIndicator
 +        case .cameraGesture:
 +            cell.textLabel?.text = self.russian ? "Как переключать камеру" : "Switch camera gesture"
 +            cell.detailTextLabel?.text = self.cameraModes.indices.contains(self.cameraSettings.trigger) ? self.cameraModes[self.cameraSettings.trigger] : nil
@@ -68583,6 +68688,8 @@ index 00000000..62d73661
 +        switch row {
 +        case .chatColors:
 +            if let controller = self.settingsController?(self.pluginID) { self.navigationController?.pushViewController(controller, animated: true) }
++        case .mentionGroups:
++            self.navigationController?.pushViewController(AyuGroupMentionsController(store: self.store, pluginID: self.pluginID, russian: self.russian), animated: true)
 +        case .cameraGesture:
 +            let alert = UIAlertController(title: self.russian ? "Жест" : "Gesture", message: nil, preferredStyle: .actionSheet)
 +            for (index, title) in self.cameraModes.enumerated() {
@@ -71413,6 +71520,97 @@ index 00000000..0099243c
 +        self.observers.removeValue(forKey: id)
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGroupMentions.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGroupMentions.swift
+new file mode 100644
+index 00000000..9d93e9f3
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGroupMentions.swift
+@@ -0,0 +1,85 @@
++import Foundation
++
++public struct AyuMentionGroup: Codable, Equatable {
++    public var id: String
++    public var command: String
++    public var usernames: [String]
++    public init(id: String = UUID().uuidString, command: String, usernames: [String]) {
++        self.id = id; self.command = command; self.usernames = usernames
++    }
++}
++
++public struct AyuGroupMentionSettings: Codable, Equatable {
++    public var groups: [AyuMentionGroup] = []
++    public var caseSensitive = false
++    public var enabledPrivate = true
++    public var enabledGroups = true
++    public init() {}
++    public static func usernames(_ input: String) -> [String] {
++        let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;"))
++        var seen = Set<String>()
++        return input.components(separatedBy: separators).compactMap { token in
++            let value = token.trimmingCharacters(in: CharacterSet(charactersIn: "@.,;"))
++            guard !value.isEmpty, value.utf8.count <= 32, value.unicodeScalars.allSatisfy({
++                (65...90).contains($0.value) || (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_"
++            }), seen.insert(value.lowercased()).inserted else { return nil }
++            return value
++        }
++    }
++    public func validate() throws {
++        guard self.groups.count <= 5, Set(self.groups.map(\.id)).count == self.groups.count else { throw AyuPluginError.invalidInput }
++        var commands = Set<String>()
++        for group in self.groups {
++            guard !group.id.isEmpty, group.id.utf8.count <= 64,
++                  !group.command.isEmpty, group.command.count <= 64,
++                  group.command == group.command.trimmingCharacters(in: .whitespacesAndNewlines),
++                  group.command.rangeOfCharacter(from: .controlCharacters) == nil,
++                  commands.insert(self.caseSensitive ? group.command : group.command.lowercased()).inserted,
++                  !group.usernames.isEmpty, group.usernames.count <= 7,
++                  Self.usernames(group.usernames.joined(separator: " ")) == group.usernames else { throw AyuPluginError.invalidInput }
++        }
++    }
++    /// No repeated replacement: inserted mentions are never interpreted as commands.
++    public func expanded(_ text: String, maximumLength: Int = 4096) -> String {
++        guard text.utf8.count <= 8192, !self.groups.isEmpty, (try? self.validate()) != nil else { return text }
++        let sorted = self.groups.sorted { $0.command.count > $1.command.count }
++        let pattern = sorted.map { group -> String in
++            let first = group.command.first!, last = group.command.last!
++            let word: (Character) -> Bool = { $0.isLetter || $0.isNumber || $0 == "_" }
++            let left = word(first) ? "(?<![\\w@])" : "(?<![\\w" + NSRegularExpression.escapedPattern(for: String(first)) + "])"
++            let right = word(last) ? "(?!\\w)" : "(?![\\w" + NSRegularExpression.escapedPattern(for: String(last)) + "])"
++            return left + NSRegularExpression.escapedPattern(for: group.command) + right
++        }.joined(separator: "|")
++        guard let regex = try? NSRegularExpression(pattern: pattern, options: self.caseSensitive ? [] : [.caseInsensitive]) else { return text }
++        let source = text as NSString
++        let matches = regex.matches(in: text, range: NSRange(location: 0, length: source.length))
++        var cursor = 0, output = ""
++        for match in matches {
++            let token = source.substring(with: match.range)
++            guard let group = sorted.first(where: { self.caseSensitive ? $0.command == token : $0.command.lowercased() == token.lowercased() }) else { continue }
++            output += source.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
++            output += group.usernames.map { "@" + $0 }.joined(separator: " ")
++            cursor = NSMaxRange(match.range)
++            guard output.utf16.count <= maximumLength, output.utf8.count <= 8192 else { return text }
++        }
++        output += source.substring(from: cursor)
++        guard output.utf16.count <= maximumLength, output.utf8.count <= 8192 else { return text }
++        return output
++    }
++}
++
++/// Transient cooldown is intentionally absent from exported plugin manifests.
++public final class AyuGroupMentionCooldown {
++    public static let shared = AyuGroupMentionCooldown()
++    private let lock = NSLock()
++    private var sent: [String: TimeInterval] = [:]
++    public init() {}
++    public func consume(key: String, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
++        self.lock.lock(); defer { self.lock.unlock() }
++        if let previous = self.sent[key], now - previous < 60 { return false }
++        if self.sent.count >= 4096 { self.sent = self.sent.filter { now - $0.value < 60 } }
++        if self.sent.count >= 4096 { return false }
++        self.sent[key] = now
++        return true
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuHiddenMessages.swift b/submodules/TelegramCore/Sources/AyuGram/AyuHiddenMessages.swift
 new file mode 100644
 index 00000000..aecdcbd7
@@ -72419,7 +72617,7 @@ index 00000000..35137a2f
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift
 new file mode 100644
-index 00000000..fa15166c
+index 00000000..58f174e9
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPluginCatalog.swift
 @@ -0,0 +1,241 @@
@@ -72429,7 +72627,7 @@ index 00000000..fa15166c
 +public enum AyuPluginCatalogConfiguration {
 +    public static let marker = "ayugram/catalog-v1"
 +    public static let format = "ayugram-plugin-catalog-v1"
-+    public static let maximumAPI = 7
++    public static let maximumAPI = 8
 +    public static let adapterDomain = Data("AyuGram adapter v1\0".utf8)
 +    public static let catalogDomain = Data("AyuGram catalog v1\0".utf8)
 +    public static let maximumResponseBytes = 2 * 1024 * 1024
@@ -72463,7 +72661,7 @@ index 00000000..fa15166c
 +        guard key.isValidSignature(self.signature, for: AyuPluginCatalogConfiguration.adapterDomain + self.manifestData) else { throw AyuPluginCatalogError.invalidSignature }
 +        let signed = try JSONDecoder().decode(AyuPluginManifest.self, from: self.manifestData)
 +        guard signed.catalogProof == nil, signed.convertedFrom == AyuPluginCatalogConfiguration.marker,
-+              signed.apiVersion == 7, let hash = signed.sourceSHA256, ayuCatalogValidHash(hash) else { throw AyuPluginCatalogError.invalidCatalog }
++              (7...AyuPluginCatalogConfiguration.maximumAPI).contains(signed.apiVersion), let hash = signed.sourceSHA256, ayuCatalogValidHash(hash) else { throw AyuPluginCatalogError.invalidCatalog }
 +        var plain = manifest
 +        plain.catalogProof = nil
 +        let encoder = JSONEncoder()
@@ -72666,10 +72864,10 @@ index 00000000..fa15166c
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
 new file mode 100644
-index 00000000..1007932d
+index 00000000..2713b536
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPlugins.swift
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,477 @@
 +import Foundation
 +import CryptoKit
 +
@@ -72698,7 +72896,7 @@ index 00000000..1007932d
 +
 +/// Versioned, declarative plugin ABI. No Android or Python code is executed.
 +public struct AyuPluginAction: Codable, Equatable {
-+    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip, chatColors, arcadeGame, unlimitedAccounts }
++    public enum Kind: String, Codable { case search, searchTerms, replaceText, outgoingReplace, cameraFlip, chatColors, arcadeGame, unlimitedAccounts, groupMentions }
 +    public var id: String
 +    public var title: String
 +    public var kind: Kind
@@ -72713,6 +72911,7 @@ index 00000000..1007932d
 +        self.prefix = prefix; self.condition = condition; self.replacementCount = replacementCount; self.program = program
 +    }
 +    public var permission: String {
++        if self.kind == .groupMentions { return "messages.mentions.expand" }
 +        if self.kind == .arcadeGame { return "web.games.open" }
 +        if self.kind == .unlimitedAccounts { return "accounts.limit.local" }
 +        if self.kind == .chatColors { return "chatlist.appearance.modify" }
@@ -72775,14 +72974,14 @@ index 00000000..1007932d
 +    public var limitations: [String]
 +    public init(id: String, name: String, author: String, version: String, summary: String, actions: [AyuPluginAction], convertedFrom: String? = nil, sourceSHA256: String? = nil, limitations: [String] = [], catalogProof: AyuPluginCatalogProof? = nil) {
 +        self.id = id; self.name = name; self.author = author; self.version = version; self.summary = summary
-+        self.apiVersion = catalogProof != nil ? 7 : actions.contains(where: { $0.program != nil }) ? 6 : actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
++        self.apiVersion = actions.contains(where: { $0.kind == .groupMentions }) ? 8 : catalogProof != nil ? 7 : actions.contains(where: { $0.program != nil }) ? 6 : actions.contains(where: { $0.kind == .arcadeGame || $0.kind == .unlimitedAccounts }) ? 5 : actions.contains(where: { $0.kind == .chatColors }) ? 4 : actions.contains(where: { $0.kind == .cameraFlip }) ? 3 : (actions.contains(where: { $0.condition != nil || $0.replacementCount != nil }) ? 2 : 1)
 +        self.actions = actions; self.convertedFrom = convertedFrom; self.sourceSHA256 = sourceSHA256; self.limitations = limitations; self.catalogProof = catalogProof
 +    }
 +    public func validate() throws {
 +        let validID: (String) -> Bool = { text in
 +            return !text.isEmpty && text.utf8.count <= 64 && text.unicodeScalars.allSatisfy { (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "_" || $0 == "-" }
 +        }
-+        guard self.format == "ayugram-ios-plugin", (1...7).contains(self.apiVersion), validID(self.id),
++        guard self.format == "ayugram-ios-plugin", (1...8).contains(self.apiVersion), validID(self.id),
 +              !self.name.isEmpty, self.name.count <= 64, !self.author.isEmpty, self.author.count <= 128,
 +              !self.version.isEmpty, self.version.count <= 32, self.summary.count <= 2048,
 +              !self.actions.isEmpty, self.actions.count <= 8, Set(self.actions.map(\.id)).count == self.actions.count,
@@ -72797,6 +72996,7 @@ index 00000000..1007932d
 +                try program.validate()
 +                continue
 +            }
++            guard action.kind != .groupMentions || self.apiVersion >= 8 else { throw AyuPluginError.invalidManifest }
 +            guard (action.kind != .arcadeGame && action.kind != .unlimitedAccounts) || self.apiVersion >= 5 else { throw AyuPluginError.invalidManifest }
 +            guard action.kind != .arcadeGame || AyuArcadeGame(actionID: action.id) != nil else { throw AyuPluginError.invalidManifest }
 +            guard action.kind != .chatColors || self.apiVersion >= 4 else { throw AyuPluginError.invalidManifest }
@@ -72818,7 +73018,7 @@ index 00000000..1007932d
 +            } else if action.prefix != nil || action.condition != nil || action.replacementCount != nil { throw AyuPluginError.invalidManifest }
 +        }
 +        if self.apiVersion == 7 || self.convertedFrom == AyuPluginCatalogConfiguration.marker || self.catalogProof != nil {
-+            guard self.apiVersion == 7, self.convertedFrom == AyuPluginCatalogConfiguration.marker, let proof = self.catalogProof else { throw AyuPluginError.invalidManifest }
++            guard (7...AyuPluginCatalogConfiguration.maximumAPI).contains(self.apiVersion), self.convertedFrom == AyuPluginCatalogConfiguration.marker, let proof = self.catalogProof else { throw AyuPluginError.invalidManifest }
 +            try proof.verify(manifest: self)
 +        }
 +    }
@@ -72880,8 +73080,9 @@ index 00000000..1007932d
 +    public var cameraFlipSettings: AyuCameraFlipSettings?
 +    public var chatColorSettings: AyuChatColorSettings?
 +    public var arcadeSettings: AyuArcadeSettings?
-+    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil, chatColorSettings: AyuChatColorSettings? = nil, arcadeSettings: AyuArcadeSettings? = nil) {
-+        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings; self.chatColorSettings = chatColorSettings; self.arcadeSettings = arcadeSettings
++    public var groupMentionSettings: AyuGroupMentionSettings?
++    public init(manifest: AyuPluginManifest, enabled: Bool = false, cameraFlipSettings: AyuCameraFlipSettings? = nil, chatColorSettings: AyuChatColorSettings? = nil, arcadeSettings: AyuArcadeSettings? = nil, groupMentionSettings: AyuGroupMentionSettings? = nil) {
++        self.manifest = manifest; self.enabled = enabled; self.cameraFlipSettings = cameraFlipSettings; self.chatColorSettings = chatColorSettings; self.arcadeSettings = arcadeSettings; self.groupMentionSettings = groupMentionSettings
 +    }
 +}
 +
@@ -72900,6 +73101,10 @@ index 00000000..1007932d
 +                guard plugin.manifest.actions.contains(where: { $0.kind == .cameraFlip }) else { throw AyuPluginError.invalidManifest }
 +                try settings.validate()
 +            }
++            if let settings = plugin.groupMentionSettings {
++                guard plugin.manifest.actions.contains(where: { $0.kind == .groupMentions }) else { throw AyuPluginError.invalidManifest }
++                try settings.validate()
++            }
 +            if plugin.arcadeSettings != nil {
 +                guard plugin.manifest.actions.contains(where: { $0.kind == .arcadeGame }) else { throw AyuPluginError.invalidManifest }
 +            }
@@ -72911,7 +73116,7 @@ index 00000000..1007932d
 +        let oldSettings = oldPlugin?.cameraFlipSettings
 +        var updated = self.installed.filter { $0.manifest.id != manifest.id }
 +        guard updated.count < 12 else { throw AyuPluginError.capacity }
-+        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil, chatColorSettings: manifest.actions.contains(where: { $0.kind == .chatColors }) ? oldPlugin?.chatColorSettings : nil, arcadeSettings: manifest.actions.contains(where: { $0.kind == .arcadeGame }) ? oldPlugin?.arcadeSettings : nil))
++        updated.append(AyuInstalledPlugin(manifest: manifest, cameraFlipSettings: manifest.actions.contains(where: { $0.kind == .cameraFlip }) ? oldSettings : nil, chatColorSettings: manifest.actions.contains(where: { $0.kind == .chatColors }) ? oldPlugin?.chatColorSettings : nil, arcadeSettings: manifest.actions.contains(where: { $0.kind == .arcadeGame }) ? oldPlugin?.arcadeSettings : nil, groupMentionSettings: manifest.actions.contains(where: { $0.kind == .groupMentions }) ? oldPlugin?.groupMentionSettings : nil))
 +        self.installed = updated
 +    }
 +    /// Settings of the first enabled Arcade Games provider.
@@ -72971,6 +73176,21 @@ index 00000000..1007932d
 +        try candidate.activate(prepared, expected: prepared)
 +        self = candidate
 +    }
++    public mutating func setGroupMentionSettings(id: String, settings: AyuGroupMentionSettings) throws {
++        try settings.validate()
++        guard let index = self.installed.firstIndex(where: { $0.manifest.id == id }), self.installed[index].manifest.actions.contains(where: { $0.kind == .groupMentions }) else { throw AyuPluginError.invalidManifest }
++        self.installed[index].groupMentionSettings = settings
++    }
++    public func groupMentionText(_ text: String, isGroup: Bool, key: String, maximumLength: Int = 4096) -> String {
++        var result = text
++        for plugin in self.installed where plugin.enabled && plugin.manifest.actions.contains(where: { $0.kind == .groupMentions }) {
++            let settings = plugin.groupMentionSettings ?? AyuGroupMentionSettings()
++            guard isGroup ? settings.enabledGroups : settings.enabledPrivate else { continue }
++            let expanded = settings.expanded(result, maximumLength: maximumLength)
++            if !expanded.utf8.elementsEqual(result.utf8), AyuGroupMentionCooldown.shared.consume(key: key + ":" + plugin.manifest.id) { result = expanded }
++        }
++        return result
++    }
 +    public func outgoingText(_ text: String) -> String {
 +        var result = text
 +        for plugin in self.installed where plugin.enabled {
@@ -73004,7 +73224,7 @@ index 00000000..1007932d
 +        try prepared.validate()
 +        guard prepared == expected, let index = self.installed.firstIndex(where: { $0.manifest.id == expected.id }),
 +              self.installed[index].manifest == expected, !self.installed[index].enabled else { throw AyuPluginError.invalidManifest }
-+        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings, chatColorSettings: self.installed[index].chatColorSettings, arcadeSettings: self.installed[index].arcadeSettings)
++        self.installed[index] = AyuInstalledPlugin(manifest: prepared, enabled: true, cameraFlipSettings: self.installed[index].cameraFlipSettings, chatColorSettings: self.installed[index].chatColorSettings, arcadeSettings: self.installed[index].arcadeSettings, groupMentionSettings: self.installed[index].groupMentionSettings)
 +    }
 +    public mutating func remove(id: String) { self.installed.removeAll { $0.manifest.id == id } }
 +    public func action(pluginID: String, actionID: String) -> AyuPluginAction? {
@@ -73020,7 +73240,7 @@ index 00000000..1007932d
 +        guard prepared == manifest else { throw AyuPluginError.invalidManifest }
 +        for action in prepared.actions {
 +            switch action.kind {
-+            case .cameraFlip, .chatColors, .arcadeGame, .unlimitedAccounts: break
++            case .cameraFlip, .chatColors, .arcadeGame, .unlimitedAccounts, .groupMentions: break
 +            case .search:
 +                guard try action.queries("AyuGram") == ["AyuGram"] else { throw AyuPluginError.invalidInput }
 +            case .searchTerms:
@@ -73076,6 +73296,9 @@ index 00000000..1007932d
 +        #endif
 +    }
 +    static func reviewedAdapter(sourceSHA256 hash: String) throws -> AyuPluginManifest {
++        if hash == "99165621c9de2680f2801fb7323829aa3ed48162544059b7a17e174b4f3047ea" {
++            return AyuPluginManifest(id: "group_mentions", name: "Group Mentions", author: "@Hikerys", version: "1.2-ios.1", summary: "Saved username groups expanded by whole-word commands, with per-chat cooldown and private/group settings.", actions: [AyuPluginAction(id: "mention_groups", title: "Mention groups", kind: .groupMentions)], convertedFrom: "exteraGram Group Mentions 1.2", sourceSHA256: hash, limitations: ["Up to five groups of seven usernames; a 60-second cooldown per account/chat. Configure groups on the plugin page.", "Plain text and unformatted captions only. Broadcasts, secret chats, formatted text and scheduled messages are excluded to preserve entities and delayed-send semantics."])
++        }
 +        if hash == "421911448e6fe62b3292b43b8593ebb24056b238278bab002576381d541238bc" {
 +            return AyuPluginManifest(id: "game_arcade", name: "Arcade Games", author: "@Art_727 & @lerowplug", version: "1.1", summary: "Легендарные игры 2048, Flappy Bird и Chrome Dino прямо в клиенте. Сделан на основе плагина Flappy Bird, автор @hijut", actions: AyuArcadeGame.allCases.map { AyuPluginAction(id: $0.rawValue, title: $0.title, kind: .arcadeGame) }, convertedFrom: "exteraGram Arcade Games 1.1", sourceSHA256: hash, limitations: [
 +                "Games open in a full-screen web view from the plugin page, the chat Plugins menu or the .2048, .flappy and .dino chat commands, which are not sent.",
@@ -73804,10 +74027,10 @@ index 7a8db1d8..9a9c1f95 100644
          self.baseTcpConnectionInterfaceFactory = baseTcpConnectionInterfaceFactory
          self.isAppExtension = isAppExtension
 diff --git a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
-index 9cb3108a..dd443778 100644
+index 9cb3108a..bbac6670 100644
 --- a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
 +++ b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
-@@ -728,11 +728,40 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
+@@ -728,15 +728,62 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
  }
  
  public func enqueueMessages(account: Account, peerId: PeerId, messages: [EnqueueMessage]) -> Signal<[MessageId?], NoError> {
@@ -73850,6 +74073,28 @@ index 9cb3108a..dd443778 100644
      }
      return signal
      |> mapToSignal { messages -> Signal<[MessageId?], NoError> in
+         return account.postbox.transaction { transaction -> ([MessageId?], [MessageId]) in
++            // Resolve the actual peer inside Postbox; never expand in broadcasts or secret chats.
++            let mentionPeer = transaction.getPeer(peerId)
++            let mentionAllowed: Bool
++            if let channel = mentionPeer as? TelegramChannel, case .broadcast = channel.info { mentionAllowed = false }
++            else { mentionAllowed = mentionPeer != nil && peerId.namespace != Namespaces.Peer.SecretChat }
++            let mentionGroup = mentionPeer is TelegramGroup || mentionPeer is TelegramChannel
++            let mentionPlugins = account.network.ayuGhostMode.current.plugins
++            let messages = messages.map { transformed, item -> (Bool, EnqueueMessage) in
++                guard mentionAllowed,
++                      case let .message(text, attributes, stickers, media, thread, reply, story, grouping, correlation, bubble) = item,
++                      stickers.isEmpty, !attributes.contains(where: { attribute in
++                          if let entities = attribute as? TextEntitiesMessageAttribute { return !entities.entities.isEmpty }
++                          return attribute is OutgoingScheduleInfoMessageAttribute
++                      }) else { return (transformed, item) }
++                let expanded = mentionPlugins.groupMentionText(text, isGroup: mentionGroup, key: "\(account.peerId.toInt64()):\(peerId.toInt64())", maximumLength: media == nil ? 4096 : 1024)
++                guard !expanded.utf8.elementsEqual(text.utf8) else { return (transformed, item) }
++                return (transformed, .message(text: expanded, attributes: attributes, inlineStickers: stickers, mediaReference: media, threadId: thread, replyToMessageId: reply, replyToStoryId: story, localGroupingKey: grouping, correlationId: correlation, bubbleUpEmojiOrStickersets: bubble))
++            }
+             var resultIds = Array<MessageId?>(repeating: nil, count: messages.count)
+             var ephemeralMessageIds: [MessageId] = []
+             var normalMessages: [(Bool, EnqueueMessage)] = []
 diff --git a/submodules/TelegramCore/Sources/PendingMessages/RequestEditMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/RequestEditMessage.swift
 index 5d933383..36f11df6 100644
 --- a/submodules/TelegramCore/Sources/PendingMessages/RequestEditMessage.swift
@@ -143173,10 +143418,10 @@ index 3d13bc4d..3ca0e6c7 100644
          #else
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..9263419d
+index 00000000..cc9e25f2
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,959 @@
+@@ -0,0 +1,992 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -143653,7 +143898,7 @@ index 00000000..9263419d
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data(repeating: 0, count: AyuPluginImporter.maximumFileBytes + 1), filename: "test.plugin") }, "File size checked before parsing")
 +check(pluginThrows { _ = try AyuPluginImporter.parse(Data("__id__ = 'search_plus'\nraise Exception()".utf8), filename: "test.plugin") }, "Spoofed Android metadata must not select the reviewed adapter or execute code")
 +var invalidPlugin = plugin
-+invalidPlugin.apiVersion = 8
++invalidPlugin.apiVersion = 9
 +check(pluginThrows { try invalidPlugin.validate() }, "Unknown plugin ABI rejected")
 +invalidPlugin = plugin; invalidPlugin.id = "../escape"
 +check(pluginThrows { try invalidPlugin.validate() }, "Path-like IDs rejected")
@@ -144136,6 +144381,39 @@ index 00000000..9263419d
 +    check(batchRestored == batchPrepared && batchRegistry.action(pluginID: "camera_flip", actionID: batchPrepared.actions[0].id)?.kind == .cameraFlip, "Signed camera_flip adapter activates, persists its proof and exports offline")
 +} else { check(false, "Production catalog is missing camera_flip") }
 +print("PASS: \(checks) model checks including all four supplied batch catalog adapters")
++
++var mentionSettings = AyuGroupMentionSettings()
++mentionSettings.groups = [AyuMentionGroup(id: "one", command: "team", usernames: ["Alice", "bob"]), AyuMentionGroup(id: "two", command: "team plus", usernames: ["Carol"])]
++try mentionSettings.validate()
++check(mentionSettings.expanded("TEAM plus and team!") == "@Carol and @Alice @bob!", "Mention groups prefer longest whole commands and ignore case by default")
++check(mentionSettings.expanded("steam @team team2 #team") == "steam @team team2 #@Alice @bob", "Mention commands do not expand inside words or existing usernames")
++check(AyuGroupMentionSettings.usernames("@Alice, BOB; alice @bad-name") == ["Alice", "BOB"], "Mention username parsing deduplicates and rejects malformed usernames")
++check(mentionSettings.expanded("team", maximumLength: 5) == "team", "Mention expansion preserves the original text when output exceeds the caption/message limit")
++mentionSettings.caseSensitive = true
++check(mentionSettings.expanded("TEAM") == "TEAM", "Case-sensitive mention groups retain unmatched input")
++var duplicateMentions = mentionSettings
++var duplicateMention = duplicateMentions.groups[0]; duplicateMention.id = "duplicate"
++duplicateMentions.groups.append(duplicateMention)
++check(pluginThrows { try duplicateMentions.validate() }, "Duplicate mention commands reject instead of ambiguous matching")
++let mentionCooldown = AyuGroupMentionCooldown()
++check(mentionCooldown.consume(key: "account/chat", now: 100) && !mentionCooldown.consume(key: "account/chat", now: 159) && mentionCooldown.consume(key: "account/chat", now: 160), "Mention cooldown enforces the exact 60-second boundary")
++check(mentionCooldown.consume(key: "account/other-chat", now: 101), "Mention cooldown isolates different chats")
++let groupManifest = try AyuPluginImporter.reviewedAdapter(sourceSHA256: "99165621c9de2680f2801fb7323829aa3ed48162544059b7a17e174b4f3047ea")
++check(groupManifest.apiVersion == 8, "Mention actions require the updated native engine")
++var groupRegistry = AyuPluginRegistry()
++try groupRegistry.installAndActivate(AyuPluginActivation.prepare(groupManifest))
++try groupRegistry.setGroupMentionSettings(id: "group_mentions", settings: mentionSettings)
++let restoredGroupRegistry = try JSONDecoder().decode(AyuPluginRegistry.self, from: JSONEncoder().encode(groupRegistry))
++try restoredGroupRegistry.validate()
++check(restoredGroupRegistry.installed[0].groupMentionSettings == mentionSettings, "Per-account mention groups survive settings persistence")
++check(restoredGroupRegistry.groupMentionText("team", isGroup: true, key: "test-mention-chat") == "@Alice @bob", "Native mention registry expands enabled group commands")
++check(restoredGroupRegistry.groupMentionText("team", isGroup: true, key: "test-mention-chat") == "team", "Registry applies per-chat cooldown before sending a second expansion")
++var disabledMentions = mentionSettings; disabledMentions.enabledPrivate = false
++try groupRegistry.setGroupMentionSettings(id: "group_mentions", settings: disabledMentions)
++check(groupRegistry.groupMentionText("team", isGroup: false, key: "private") == "team", "Private-chat preference prevents mention expansion")
++try groupRegistry.installAndActivate(groupManifest)
++check(groupRegistry.installed[0].groupMentionSettings == disabledMentions, "Plugin replacement preserves mention groups")
++print("PASS: \(checks) native model checks including group mention semantics, persistence and cooldown")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

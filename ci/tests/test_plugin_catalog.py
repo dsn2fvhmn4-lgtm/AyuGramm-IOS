@@ -71,7 +71,7 @@ class PluginCatalogTests(unittest.TestCase):
         envelope = json.loads((ROOT / 'plugin-catalog/catalog.json').read_text(encoding='utf-8'))
         payload = json.loads(base64.b64decode(envelope['payload']))
         entries = {json.loads(base64.b64decode(item['manifestData']))['sourceSHA256']: json.loads(base64.b64decode(item['manifestData'])) for item in payload['adapters']}
-        self.assertEqual(len(report['plugins']), 28)
+        self.assertEqual(len(report['plugins']), 29)
         supported = [row for row in report['plugins'] if row['status'] == 'supported_native_adapter']
         self.assertEqual(len(supported), 4)
         for row in supported:
@@ -96,3 +96,16 @@ class PluginCatalogTests(unittest.TestCase):
             manifest = native_manifest(value)
             self.assertEqual(manifest['apiVersion'], 8)
             self.assertEqual(manifest['actions'][0]['kind'], kind)
+
+    def test_engine8_adapters_match_the_audited_sources_and_do_not_downgrade_the_abi(self):
+        report = json.loads((ROOT / 'docs/PLUGIN_BATCH_STATUS.json').read_text(encoding='utf-8'))
+        envelope = json.loads((ROOT / 'plugin-catalog/catalog.json').read_text(encoding='utf-8'))
+        payload = json.loads(base64.b64decode(envelope['payload']))
+        entries = {json.loads(base64.b64decode(item['manifestData']))['sourceSHA256']: json.loads(base64.b64decode(item['manifestData'])) for item in payload['adapters']}
+        new = [row for row in report['plugins'] if row['status'] in ('native_engine8', 'partial_engine8')]
+        self.assertEqual(len(new), 3)
+        for row in new:
+            manifest = entries[row['sha256']]
+            self.assertEqual(manifest['apiVersion'], 8)
+            self.assertEqual(manifest['id'], row['metadata']['__id__'])
+            self.assertEqual(native_manifest(manifest), manifest)

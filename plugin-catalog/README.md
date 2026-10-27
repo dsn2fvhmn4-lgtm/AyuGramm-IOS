@@ -52,3 +52,7 @@ client reports entries that require a newer app API. A new adapter for a changed
 source file must use that changed file's exact hash.
 
 Current supplied-plugin compatibility and device OTA test: [Russian batch report](../docs/PLUGIN_BATCH_STATUS_RU.md).
+
+## Engine API 8
+
+The updated base IPA adds native Group Mentions, configurable Reactions Total and a partial petpet GIF composer, and raises the installed-plugin cap to 64. Their catalog manifests declare API 8. Existing API 7 clients keep their previous seven entries and report these three as requiring a newer app. The remaining plugins in the batch are not implemented yet. See [the engine update notes](../docs/PLUGIN_ENGINE8_RU.md) for usage and exact limitations.

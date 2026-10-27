@@ -75957,10 +75957,10 @@ index 00000000..cdb949f1
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift
 new file mode 100644
-index 00000000..099f681d
+index 00000000..e81433a5
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPreparedDice.swift
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,122 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -75969,7 +75969,7 @@ index 00000000..099f681d
 +
 +public enum AyuPreparedDiceError: Error {
 +    case invalidRequest, unsupportedResponse, forwardingChangesValue, attemptsExhausted
-+    case expired, server(String)
++    case authorNotHidden, expired, server(String)
 +}
 +
 +/// A real server-issued roll in Saved Messages, never a client-supplied dice value.
@@ -75984,27 +75984,33 @@ index 00000000..099f681d
 +    }
 +}
 +
++/// The actual server acknowledgement, including attribution that a recipient may see.
++public struct AyuPreparedDiceSendResult {
++    public let value: Int32
++    public let hasForwardHeader: Bool
++}
++
 +public enum AyuPreparedDiceEvent {
 +    case progress(attempt: Int, lastValue: Int32?)
 +    case ready(AyuPreparedDice)
 +}
 +
-+private func ayuServerDice(_ updates: Api.Updates) -> (id: Int32, value: Int32)? {
++private func ayuServerDice(_ updates: Api.Updates) -> (id: Int32, value: Int32, hasForwardHeader: Bool)? {
 +    // A short acknowledgement without the media is deliberately not treated as proof.
-+    let dice: [(Int32, Int32)] = updates.messages.compactMap { message in
++    let dice: [(Int32, Int32, Bool)] = updates.messages.compactMap { message in
 +        guard case let .message(data) = message,
 +              case let .messageMediaDice(media)? = data.media,
 +              media.emoticon == "🎲", (1 ... 6).contains(media.value), data.id > 0 else { return nil }
-+        return (data.id, media.value)
++        return (data.id, media.value, data.fwdFrom != nil)
 +    }
 +    guard dice.count == 1 else { return nil }
 +    return dice[0]
 +}
 +
-+private func ayuDiceResult(account: Account, request: Signal<Api.Updates, MTRpcError>) -> Signal<(id: Int32, value: Int32), AyuPreparedDiceError> {
++private func ayuDiceResult(account: Account, request: Signal<Api.Updates, MTRpcError>) -> Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError> {
 +    return request
 +    |> mapError { error -> AyuPreparedDiceError in .server(error.errorDescription) }
-+    |> mapToSignal { updates -> Signal<(id: Int32, value: Int32), AyuPreparedDiceError> in
++    |> mapToSignal { updates -> Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError> in
 +        account.stateManager.addUpdates(updates)
 +        account.network.ayuReassertOfflineAfterSending()
 +        guard let result = ayuServerDice(updates) else { return .fail(.unsupportedResponse) }
@@ -76012,7 +76018,7 @@ index 00000000..099f681d
 +    }
 +}
 +
-+private func ayuForwardPreparedDice(account: Account, id: Int32, to peer: Api.InputPeer, threadId: Int32?) -> Signal<(id: Int32, value: Int32), AyuPreparedDiceError> {
++private func ayuForwardPreparedDice(account: Account, id: Int32, to peer: Api.InputPeer, threadId: Int32?) -> Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError> {
 +    var flags: Int32 = 1 << 11 // drop_author; the payload remains a forwarded server roll.
 +    if threadId != nil { flags |= 1 << 9 }
 +    return ayuDiceResult(account: account, request: account.network.request(Api.functions.messages.forwardMessages(
@@ -76036,14 +76042,15 @@ index 00000000..099f681d
 +        ), automaticFloodWait: false)
 +        return ayuDiceResult(account: account, request: request)
 +        |> mapToSignal { result -> Signal<AyuPreparedDiceEvent, AyuPreparedDiceError> in
-+            let verified: Signal<(id: Int32, value: Int32), AyuPreparedDiceError>
++            let verified: Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError>
 +            if tested && result.value != value {
 +                verified = .single(result)
 +            } else {
 +                // Test this exact forwarding API against Saved Messages before any recipient send.
 +                verified = ayuForwardPreparedDice(account: account, id: result.id, to: .inputPeerSelf, threadId: nil)
-+                |> mapToSignal { forwarded -> Signal<(id: Int32, value: Int32), AyuPreparedDiceError> in
++                |> mapToSignal { forwarded -> Signal<(id: Int32, value: Int32, hasForwardHeader: Bool), AyuPreparedDiceError> in
 +                    guard forwarded.value == result.value else { return .fail(.forwardingChangesValue) }
++                    guard !forwarded.hasForwardHeader else { return .fail(.authorNotHidden) }
 +                    return .single(result)
 +                }
 +            }
@@ -76061,7 +76068,7 @@ index 00000000..099f681d
 +}
 +
 +/// Caller must obtain explicit confirmation: a recipient send may still be rejected or rerolled.
-+public func ayuSendPreparedDice(account: Account, dice: AyuPreparedDice, peerId: EnginePeer.Id, threadId: Int64?) -> Signal<Int32, AyuPreparedDiceError> {
++public func ayuSendPreparedDice(account: Account, dice: AyuPreparedDice, peerId: EnginePeer.Id, threadId: Int64?) -> Signal<AyuPreparedDiceSendResult, AyuPreparedDiceError> {
 +    guard dice.accountId == account.peerId, Date().timeIntervalSince(dice.createdAt) < 600 else { return .fail(.expired) }
 +    guard [Namespaces.Peer.CloudUser, Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel].contains(peerId.namespace),
 +          threadId == nil || (threadId! > 0 && threadId! <= Int64(Int32.max)) else { return .fail(.invalidRequest) }
@@ -76070,10 +76077,10 @@ index 00000000..099f681d
 +        return apiInputPeerOrSelf(peer, accountPeerId: account.peerId)
 +    }
 +    |> castError(AyuPreparedDiceError.self)
-+    |> mapToSignal { input -> Signal<Int32, AyuPreparedDiceError> in
++    |> mapToSignal { input -> Signal<AyuPreparedDiceSendResult, AyuPreparedDiceError> in
 +        guard let input else { return .fail(.invalidRequest) }
 +        return ayuForwardPreparedDice(account: account, id: dice.messageId, to: input, threadId: threadId.map { Int32($0) })
-+        |> map { $0.value }
++        |> map { AyuPreparedDiceSendResult(value: $0.value, hasForwardHeader: $0.hasForwardHeader) }
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPythonRuntime.swift
@@ -145242,10 +145249,10 @@ index 00000000..e912d793
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift
 new file mode 100644
-index 00000000..b215485e
+index 00000000..24bad0c8
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuDice.swift
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,142 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -145290,17 +145297,13 @@ index 00000000..b215485e
 +            self.generation += 1; self.request.set(nil)
 +        }
 +    }
-+    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? 6 : (self.prepared == nil ? 0 : 1) }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 1 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return 6 }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? { return section == 0 ? self.status : nil }
 +    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
 +        let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
 +        cell.textLabel?.numberOfLines = 0
-+        if indexPath.section == 0 {
-+            cell.textLabel?.text = (self.russian ? "Подготовить " : "Prepare ") + String(indexPath.row + 1)
-+        } else if let dice = self.prepared {
-+            cell.textLabel?.text = (self.russian ? "Переслать готовый бросок: " : "Forward prepared roll: ") + String(dice.value)
-+        }
++        cell.textLabel?.text = (self.russian ? "Отправить " : "Send ") + String(indexPath.row + 1)
 +        cell.isUserInteractionEnabled = !self.busy
 +        cell.textLabel?.textColor = self.busy ? .secondaryLabel : self.view.tintColor
 +        return cell
@@ -145308,21 +145311,22 @@ index 00000000..b215485e
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
 +        guard !self.busy else { return }
-+        let preparing = indexPath.section == 0
 +        let value = Int32(indexPath.row + 1)
-+        let alert = UIAlertController(title: self.title, message: preparing
-+            ? (self.russian ? "До 24 случайных бросков и проверочная пересылка в Избранном. Сообщения останутся там. Если сервер меняет число, подбор остановится. Блокировка аккаунта не исключена." : "Up to 24 random rolls and a test forward in Saved Messages. These messages remain there. Preparation stops if forwarding changes the value. Account restrictions remain possible.")
-+            : (self.russian ? "Переслать выбранный готовый бросок в этот чат? Даже после проверки Telegram может изменить результат или отклонить отправку." : "Forward this prepared roll to this chat? Telegram may still change the result or reject the send after the self-test."), preferredStyle: .alert)
++        let alert = UIAlertController(title: (self.russian ? "Отправить " : "Send ") + String(value), message: self.russian
++            ? "До 24 случайных бросков и проверочная пересылка в Избранном. После проверки числа и отсутствия автора приложение само отправит кубик в этот чат. Сообщения в Избранном останутся. Telegram может отклонить отправку или изменить результат; ограничения аккаунта не исключены."
++            : "Up to 24 random rolls and a test forward in Saved Messages. After checking the value and absence of attribution, the app sends the dice to this chat automatically. Saved Messages are retained. Telegram may reject the send or change the result; account restrictions remain possible.", preferredStyle: .alert)
 +        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
-+        alert.addAction(UIAlertAction(title: preparing ? (self.russian ? "Подготовить" : "Prepare") : (self.russian ? "Переслать" : "Forward"), style: .default, handler: { [weak self] _ in
++        alert.addAction(UIAlertAction(title: self.russian ? "Отправить" : "Send", style: .default, handler: { [weak self] _ in
 +            guard let self, !self.busy else { return }
-+            if preparing { self.prepare(value) } else { self.send() }
++            self.prepare(value)
 +        }))
 +        self.present(alert, animated: true)
 +    }
 +    private func failed(_ error: AyuPreparedDiceError) {
 +        self.busy = false
 +        switch error {
++        case .authorNotHidden:
++            self.status = self.russian ? "Telegram сохранил «Переслано от» при проверке. Отправка в чат остановлена: скрытие автора не подтверждено." : "Telegram retained attribution during the self-test. Recipient sending stopped: author removal was not confirmed."
 +        case .forwardingChangesValue:
 +            self.status = self.russian ? "Telegram изменил число при проверочной пересылке. Собеседнику ничего не отправлено." : "Telegram changed the value during the test forward. Nothing was sent to the recipient."
 +        case .attemptsExhausted:
@@ -145347,8 +145351,13 @@ index 00000000..b215485e
 +            case let .progress(attempt, last):
 +                self.status = (self.russian ? "Попыток: " : "Attempts: ") + "\(attempt)/24" + (last.map { (self.russian ? ". Выпало: " : ". Last roll: ") + String($0) } ?? "")
 +            case let .ready(dice):
-+                self.prepared = dice; self.busy = false
-+                self.status = (self.russian ? "Готово: " : "Ready: ") + "\(dice.value). " + (self.russian ? "Проверочная пересылка сохранила число. Подтверди отправку ниже." : "The test forward preserved the value. Confirm forwarding below.")
++                self.prepared = dice
++                self.status = self.russian ? "Число и скрытие автора проверены. Отправка…" : "Value and author removal checked. Sending…"
++                // Defer subscribing until the preparation subscription has been assigned.
++                Queue.mainQueue().async { [weak self] in
++                    guard let self, self.generation == generation else { return }
++                    self.send()
++                }
 +            }
 +            self.tableView.reloadData()
 +        }, error: { [weak self] error in
@@ -145363,9 +145372,11 @@ index 00000000..b215485e
 +        self.request.set((ayuSendPreparedDice(account: self.context.account, dice: dice, peerId: self.peerId, threadId: self.threadId) |> deliverOnMainQueue).start(next: { [weak self] actual in
 +            guard let self, self.generation == generation else { return }
 +            self.busy = false
-+            self.status = (self.russian ? "Сервер подтвердил отправку: " : "Server-confirmed sent value: ") + String(actual)
-+            if actual != dice.value { self.status += self.russian ? ". Telegram изменил число. Повторная отправка отключена." : ". Telegram changed the value. No automatic resend." }
++            self.status = (self.russian ? "Сервер подтвердил отправку: " : "Server-confirmed sent value: ") + String(actual.value)
++            if actual.value != dice.value { self.status += self.russian ? ". Telegram изменил число. Повторная отправка отключена." : ". Telegram changed the value. No automatic resend." }
++            if actual.hasForwardHeader { self.status += self.russian ? ". Сервер оставил «Переслано от» у отправленного сообщения. Повторной отправки не будет." : ". The sent message retained server attribution. No resend will occur." }
 +            self.tableView.reloadData()
++            if actual.value == dice.value && !actual.hasForwardHeader { self.dismiss(animated: true) }
 +        }, error: { [weak self] error in
 +            guard let self, self.generation == generation else { return }; self.failed(error)
 +        }))
@@ -145376,9 +145387,10 @@ index 00000000..b215485e
 +    func ayuOpenPreparedDice() {
 +        guard let peerId = self.chatLocation.peerId, peerId.namespace != Namespaces.Peer.SecretChat,
 +              canSendMessagesToChat(self.presentationInterfaceState), self.presentationInterfaceState.interfaceState.editMessage == nil else { return }
-+        let controller = AyuDiceController(context: self.context, peerId: peerId, threadId: self.chatLocation.threadId, russian: self.presentationData.strings.baseLanguageCode.hasPrefix("ru"), maySend: { [weak self] in
++        let threadId = self.chatLocation.threadId
++        let controller = AyuDiceController(context: self.context, peerId: peerId, threadId: threadId, russian: self.presentationData.strings.baseLanguageCode.hasPrefix("ru"), maySend: { [weak self] in
 +            guard let self else { return false }
-+            return self.chatLocation.peerId == peerId && canSendMessagesToChat(self.presentationInterfaceState) && self.presentationInterfaceState.interfaceState.editMessage == nil
++            return self.chatLocation.peerId == peerId && self.chatLocation.threadId == threadId && canSendMessagesToChat(self.presentationInterfaceState) && self.presentationInterfaceState.interfaceState.editMessage == nil
 +        })
 +        self.context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: controller))
 +    }

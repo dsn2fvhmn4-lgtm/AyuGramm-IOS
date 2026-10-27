@@ -66127,138 +66127,34 @@ index 509d3bd2..aa199597 100644
          "//submodules/TemporaryCachedPeerDataManager:TemporaryCachedPeerDataManager",
 diff --git a/submodules/AccountContext/Sources/AyuAdvancedControllers.swift b/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
 new file mode 100644
-index 00000000..c9106cda
+index 00000000..ebe53753
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,73 @@
 +import UIKit
 +import Display
 +import TelegramCore
 +import SwiftSignalKit
 +
-+public enum AyuAdvancedPage { case sending, translation, cosmetics }
++/// The AyuGram translation and chat-export sheets live in SettingsUI, which chats and
++/// profiles cannot import; it installs them here at startup (`ayuRegisterToolScreens`).
++/// The UIKit versions below remain as the fallback.
++public var ayuTranslationScreenFactory: ((AccountContext, String) -> Void)?
++public var ayuChatExportScreenFactory: ((AccountContext, EnginePeer.Id) -> Void)?
++
 +private func ayuPresentNative(_ controller: UIViewController, context: AccountContext) {
 +    let navigation = UINavigationController(rootViewController: controller)
 +    navigation.overrideUserInterfaceStyle = context.sharedContext.currentPresentationData.with { $0 }.theme.overallDarkAppearance ? .dark : .light
 +    context.sharedContext.applicationBindings.presentNativeController(navigation)
 +}
-+public func ayuPresentAdvancedSettings(context: AccountContext, page: AyuAdvancedPage) { ayuPresentNative(AyuAdvancedSettingsController(context: context, page: page), context: context) }
-+public func ayuPresentTranslation(context: AccountContext, text: String) { ayuPresentNative(AyuTranslationController(context: context, text: text), context: context) }
-+public func ayuPresentChatExport(context: AccountContext, peerId: EnginePeer.Id) { ayuPresentNative(AyuChatExportController(context: context, peerId: peerId), context: context) }
-+public func ayuPresentMediaArchive(context: AccountContext) { ayuPresentNative(AyuMediaArchiveController(context: context), context: context) }
-+
-+private final class AyuAdvancedSettingsController: UITableViewController {
-+    private let context: AccountContext
-+    private let page: AyuAdvancedPage
-+    private var settings: AyuAdvancedSettings { return self.context.account.network.ayuGhostMode.current.advanced }
-+    private var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
-+    init(context: AccountContext, page: AyuAdvancedPage) { self.context = context; self.page = page; super.init(style: .insetGrouped) }
-+    required init?(coder: NSCoder) { return nil }
-+    override func viewDidLoad() {
-+        super.viewDidLoad()
-+        switch self.page { case .sending: self.title = "Ghost Mode+"; case .translation: self.title = self.ru ? "Переводчики" : "Translation providers"; case .cosmetics: self.title = self.ru ? "Локальный Premium" : "Local Premium" }
-+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
-+    }
-+    override func viewWillAppear(_ animated: Bool) { super.viewWillAppear(animated); self.tableView.reloadData() }
-+    @objc private func done() { self.dismiss(animated: true) }
-+    private func update(_ transform: (inout AyuAdvancedSettings) -> Void) {
-+        do { try self.context.account.network.ayuGhostMode.update { transform(&$0.advanced) } }
-+        catch { self.error() }
-+        self.tableView.reloadData()
-+    }
-+    private func error() {
-+        let alert = UIAlertController(title: "AyuGram", message: self.ru ? "Настройки не сохранены. Проверь адрес HTTPS, код языка и доступ к Keychain." : "Settings were not saved. Check the HTTPS URL, language code and Keychain access.", preferredStyle: .alert)
-+        alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
-+    }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { switch self.page { case .sending: return 4; case .cosmetics: return 5; case .translation: return 6 } }
-+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-+        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
-+        cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
-+        var toggleValue: Bool?
-+        switch self.page {
-+        case .sending:
-+            cell.textLabel?.text = self.ru ? ["Отправлять через отложенные", "Прочитать после успешной отправки", "Задержка отправки", "Область действия"][indexPath.row] : ["Send through scheduling", "Mark read after accepted send", "Scheduling delay", "Scope"][indexPath.row]
-+            switch indexPath.row {
-+            case 0: toggleValue = self.settings.scheduleOutgoing
-+            case 1: toggleValue = self.settings.markReadAfterSend
-+            case 2: cell.detailTextLabel?.text = "\(self.settings.scheduleDelay) s"
-+            default: cell.detailTextLabel?.text = self.ru ? "Отложенная отправка: обычный облачный текст без медиа и тем, пока включён призрак. Прочитать после отправки: только принятые сервером обычные облачные сообщения, без тем и секретных чатов; отправляет квитанцию даже при скрытии прочтений. Режимы исключают друг друга." : "Scheduling: plain cloud text without media/topics while Ghost Mode is active. Read after send: accepted ordinary cloud sends without topics/secret chats; explicitly sends a receipt even when read receipts are hidden. Modes are mutually exclusive."
-+            }
-+        case .cosmetics:
-+            cell.textLabel?.text = self.ru ? ["Локальный Telegram Premium β", "Локальный статус в своём профиле", "Повторять анимацию", "Убрать выбранное эмодзи", "Как это работает"][indexPath.row] : ["Local Telegram Premium β", "Local status in own profile", "Loop animation", "Clear selected emoji", "How it works"][indexPath.row]
-+            if indexPath.row == 0 { toggleValue = self.settings.localPremium }
-+            else if indexPath.row == 1 { toggleValue = self.settings.localEmojiStatusEnabled }
-+            else if indexPath.row == 2 { toggleValue = self.settings.animateLocalEmoji }
-+            else if indexPath.row == 4 { cell.detailTextLabel?.text = self.ru ? "Локальный Premium открывает в этом клиенте Premium-оформление: значок, эмодзи-статусы, Premium-эмодзи и стикеры. Подписка, лимиты и проверки сервера не меняются. Premium-эмодзи без подписки отправляются ссылками tg://emoji — в AyuGram они видны как эмодзи, в других клиентах как обычные эмодзи-ссылки. В Избранном эмодзи отправляются как есть. Часть экранов обновится после перезапуска приложения.\n\nЛокальный статус: включи опцию, открой свой профиль/настройки и нажми на значок рядом с именем. Статус виден только в этом клиенте. Без повтора анимация проигрывается один раз." : "Local Premium unlocks Premium presentation in this client: badge, emoji statuses, Premium emoji and stickers. Subscription, limits and server checks are unchanged. Without a subscription, Premium emoji are sent as tg://emoji links: AyuGram shows them as emoji, other clients as plain emoji links. Saved Messages keep them as is. Some screens update after restarting the app.\n\nLocal status: enable it, open your own profile/settings and tap the icon beside your name. It is visible in this client only. Disabling loop plays the animation once." }
-+        case .translation:
-+            cell.textLabel?.text = self.ru ? ["Провайдер AyuGram", "Язык перевода", "HTTPS-адрес LibreTranslate", "Добавить/заменить API-ключ", "Удалить API-ключ", "Использование"][indexPath.row] : ["AyuGram provider", "Target language", "LibreTranslate HTTPS URL", "Add/replace API key", "Remove API key", "Usage"][indexPath.row]
-+            switch indexPath.row {
-+            case 0: cell.detailTextLabel?.text = self.providerNames[self.settings.translationProvider] ?? "Telegram"
-+            case 1: cell.detailTextLabel?.text = self.settings.translationTarget
-+            case 2: cell.detailTextLabel?.text = self.settings.libreTranslateURL.isEmpty ? "—" : self.settings.libreTranslateURL
-+            case 3, 4: cell.detailTextLabel?.text = self.ru ? "Keychain · отдельный ключ для аккаунта и сервера" : "Keychain · scoped to account and endpoint"
-+            default: cell.detailTextLabel?.text = self.ru ? "Меню сообщения → AyuGram · Перевести. Telegram работает без отдельного ключа. LibreTranslate требует свой адрес, DeepL — свой API-ключ. Внешний перевод выполняется только после нажатия «Перевести». Встроенный перевод Telegram остаётся отдельным." : "Message menu → AyuGram · Translate. Telegram needs no separate key. LibreTranslate needs your endpoint, DeepL your API key. External requests run only after tapping Translate. Built-in Telegram translation remains separate."
-+            }
-+        }
-+        if let value = toggleValue {
-+            let toggle = UISwitch(); toggle.isOn = value; toggle.tag = indexPath.row
-+            toggle.accessibilityLabel = cell.textLabel?.text
-+            toggle.addTarget(self, action: #selector(self.toggle(_:)), for: .valueChanged); cell.accessoryView = toggle; cell.selectionStyle = .none
-+        }
-+        return cell
-+    }
-+    @objc private func toggle(_ toggle: UISwitch) {
-+        self.update { value in
-+            switch self.page {
-+            case .sending: if toggle.tag == 0 { value.setScheduling(toggle.isOn) } else { value.setReadAfterSend(toggle.isOn) }
-+            case .cosmetics: if toggle.tag == 0 { value.localPremium = toggle.isOn } else if toggle.tag == 1 { value.localEmojiStatusEnabled = toggle.isOn } else { value.animateLocalEmoji = toggle.isOn }
-+            case .translation: break
-+            }
-+        }
-+    }
-+    private var providerNames: [AyuAdvancedSettings.TranslationProvider: String] { return [.telegram: "Telegram", .libreTranslate: "LibreTranslate", .deepLFree: "DeepL API Free", .deepLPro: "DeepL API Pro"] }
-+    private func field(title: String, value: String, secure: Bool = false, save: @escaping (String) -> Void) {
-+        let alert = UIAlertController(title: title, message: nil, preferredStyle: .alert)
-+        alert.addTextField { field in field.text = secure ? nil : value; field.isSecureTextEntry = secure; field.autocorrectionType = .no; field.autocapitalizationType = .none }
-+        alert.addAction(UIAlertAction(title: self.ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
-+            guard let value = alert?.textFields?.first?.text else { return }
-+            alert?.dismiss(animated: true, completion: { save(value.trimmingCharacters(in: .whitespacesAndNewlines)) })
-+        }))
-+        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
-+    }
-+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-+        tableView.deselectRow(at: indexPath, animated: true)
-+        switch self.page {
-+        case .sending:
-+            guard indexPath.row == 2 else { return }
-+            let alert = UIAlertController(title: self.title, message: nil, preferredStyle: .actionSheet)
-+            for delay in [Int32(10), 30, 60, 300, 3600] { alert.addAction(UIAlertAction(title: "\(delay) s", style: .default, handler: { [weak self] _ in self?.update { $0.scheduleDelay = delay } })) }
-+            alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); alert.popoverPresentationController?.sourceView = tableView; alert.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath); self.present(alert, animated: true)
-+        case .cosmetics: if indexPath.row == 3 { self.update { $0.localEmojiFileId = nil } }
-+        case .translation:
-+            switch indexPath.row {
-+            case 0:
-+                let alert = UIAlertController(title: self.ru ? "Провайдер" : "Provider", message: nil, preferredStyle: .actionSheet)
-+                for provider in AyuAdvancedSettings.TranslationProvider.allCases { alert.addAction(UIAlertAction(title: self.providerNames[provider], style: .default, handler: { [weak self] _ in self?.update { $0.translationProvider = provider } })) }
-+                alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); alert.popoverPresentationController?.sourceView = tableView; alert.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath); self.present(alert, animated: true)
-+            case 1: self.field(title: self.ru ? "Код языка: ru, en, uk…" : "Language code: ru, en, uk…", value: self.settings.translationTarget) { [weak self] value in self?.update { $0.translationTarget = value } }
-+            case 2: self.field(title: "LibreTranslate HTTPS URL", value: self.settings.libreTranslateURL) { [weak self] value in self?.update { $0.libreTranslateURL = value } }
-+            case 3:
-+                let settings = self.settings
-+                guard settings.translationProvider != .telegram else { return }
-+                self.field(title: "API key", value: "", secure: true) { [weak self] key in
-+                    guard let self else { return }
-+                    do { guard !key.isEmpty else { throw AyuTranslationError.configuration }; try AyuTranslationKeys.write(accountId: self.context.account.id.int64, settings: settings, key: key) } catch { self.error() }
-+                }
-+            case 4:
-+                guard self.settings.translationProvider != .telegram else { return }
-+                do { try AyuTranslationKeys.write(accountId: self.context.account.id.int64, settings: self.settings, key: "") } catch { self.error() }
-+            default: break
-+            }
-+        }
-+    }
++public func ayuPresentTranslation(context: AccountContext, text: String) {
++    if let factory = ayuTranslationScreenFactory { factory(context, text); return }
++    ayuPresentNative(AyuTranslationController(context: context, text: text), context: context)
 +}
-+
++public func ayuPresentChatExport(context: AccountContext, peerId: EnginePeer.Id) {
++    if let factory = ayuChatExportScreenFactory { factory(context, peerId); return }
++    ayuPresentNative(AyuChatExportController(context: context, peerId: peerId), context: context)
++}
 +private final class AyuTranslationController: UITableViewController {
 +    private let context: AccountContext
 +    private let text: String
@@ -66332,10 +66228,10 @@ index 00000000..c063b4cf
 +}
 diff --git a/submodules/AccountContext/Sources/AyuExportControllers.swift b/submodules/AccountContext/Sources/AyuExportControllers.swift
 new file mode 100644
-index 00000000..4e1bda8c
+index 00000000..8e13cc63
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuExportControllers.swift
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,105 @@
 +import UIKit
 +import Display
 +import SwiftSignalKit
@@ -66440,91 +66336,6 @@ index 00000000..4e1bda8c
 +        let picker = UIDocumentPickerViewController(forExporting: [directory], asCopy: true); picker.delegate = self; self.present(picker, animated: true)
 +    }
 +    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { self.status = self.ru ? "Экспорт передан выбранному хранилищу." : "Export handed to the selected storage provider."; self.tableView.reloadData() }
-+}
-+
-+final class AyuMediaArchiveController: UITableViewController, UIDocumentPickerDelegate {
-+    private let context: AccountContext
-+    private let observation = MetaDisposable()
-+    private let operation = MetaDisposable()
-+    private var state = AyuMessageHistoryState()
-+    private var files: [AyuArchivedAttachment] = []
-+    private var status = ""
-+    private var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
-+    init(context: AccountContext) { self.context = context; super.init(style: .insetGrouped); self.title = "AyuGram · Media Archive" }
-+    required init?(coder: NSCoder) { return nil }
-+    deinit { self.observation.dispose(); self.operation.dispose() }
-+    override func viewDidLoad() {
-+        super.viewDidLoad(); self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
-+        self.observation.set((self.context.engine.messages.ayuMessageHistory() |> deliverOnMainQueue).startStrict(next: { [weak self] state in
-+            guard let self else { return }; self.state = state
-+            var seen = Set<String>(); self.files = state.records.flatMap { $0.attachments ?? [] }.filter { seen.insert($0.id).inserted }; self.tableView.reloadData()
-+        }))
-+    }
-+    @objc private func done() { self.dismiss(animated: true) }
-+    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
-+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? 4 : max(1, self.files.count) }
-+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
-+        return section == 0 ? (self.ru ? "Отдельные архивные копии фото, файлов, видео и голосовых, доступных в кэше при сохранении истории. Срок 7 дней и 100 записей истории сохраняется. Уменьшение квоты не удаляет старое. Удаление медиа не удаляет текстовую историю.\n" : "Separate cached photo/file/video/voice copies captured with local history. Seven-day/100-record retention remains. Lowering quota does not delete old files. Removing media preserves text history.\n") + self.status : nil
-+    }
-+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-+        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil); cell.textLabel?.numberOfLines = 0; cell.detailTextLabel?.numberOfLines = 0
-+        if indexPath.section == 0 {
-+            cell.textLabel?.text = self.ru ? ["Использование", "Лимиты архива", "Экспортировать все файлы", "Удалить все архивные медиа"][indexPath.row] : ["Usage", "Archive limits", "Export all files", "Remove all archived media"][indexPath.row]
-+            if indexPath.row == 0 { cell.detailTextLabel?.text = "\(self.files.count) · " + ByteCountFormatter.string(fromByteCount: self.files.reduce(Int64(0)) { $0 + $1.byteCount }, countStyle: .file) }
-+            if indexPath.row == 1 { cell.detailTextLabel?.text = "\(self.state.mediaFileLimitMB) MB/file · \(self.state.mediaQuotaMB) MB total" }
-+            if indexPath.row == 3 { cell.textLabel?.textColor = .systemRed }
-+        } else if self.files.isEmpty { cell.textLabel?.text = self.ru ? "Архив пуст" : "Archive empty" }
-+        else { let file = self.files[indexPath.row]; cell.textLabel?.text = file.displayName; cell.detailTextLabel?.text = ByteCountFormatter.string(fromByteCount: file.byteCount, countStyle: .file); cell.accessoryType = .disclosureIndicator }
-+        return cell
-+    }
-+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-+        tableView.deselectRow(at: indexPath, animated: true)
-+        if indexPath.section == 0 {
-+            if indexPath.row == 1 { self.limits() }
-+            else if indexPath.row == 2 { self.export(ids: Set(self.files.map { $0.id })) }
-+            else if indexPath.row == 3 { self.remove(ids: Set(self.files.map { $0.id })) }
-+            return
-+        }
-+        guard self.files.indices.contains(indexPath.row) else { return }
-+        let file = self.files[indexPath.row]
-+        let alert = UIAlertController(title: file.displayName, message: nil, preferredStyle: .actionSheet)
-+        alert.addAction(UIAlertAction(title: self.ru ? "Экспортировать" : "Export", style: .default, handler: { [weak self] _ in self?.export(ids: Set([file.id])) }))
-+        alert.addAction(UIAlertAction(title: self.ru ? "Удалить копию" : "Remove copy", style: .destructive, handler: { [weak self] _ in self?.remove(ids: Set([file.id])) }))
-+        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); alert.popoverPresentationController?.sourceView = tableView; alert.popoverPresentationController?.sourceRect = tableView.rectForRow(at: indexPath); self.present(alert, animated: true)
-+    }
-+    private func limits() {
-+        let alert = UIAlertController(title: self.ru ? "Лимиты, МБ" : "Limits, MB", message: "File: 1…250 · total: 25…2000", preferredStyle: .alert)
-+        alert.addTextField { $0.keyboardType = .numberPad; $0.text = String(self.state.mediaFileLimitMB) }
-+        alert.addTextField { $0.keyboardType = .numberPad; $0.text = String(self.state.mediaQuotaMB) }
-+        alert.addAction(UIAlertAction(title: self.ru ? "Сохранить" : "Save", style: .default, handler: { [weak self, weak alert] _ in
-+            guard let self, let first = alert?.textFields?[0].text, let second = alert?.textFields?[1].text, let a = Int32(first), let b = Int32(second) else { return }
-+            self.operation.set((self.context.engine.messages.ayuSetMediaArchiveLimits(fileMB: a, quotaMB: b) |> deliverOnMainQueue).startStrict(next: { [weak self] accepted in self?.status = accepted ? "" : "Invalid limits"; self?.tableView.reloadData() }))
-+        }))
-+        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
-+    }
-+    private func remove(ids: Set<String>) {
-+        guard !ids.isEmpty else { return }
-+        if let presented = self.presentedViewController {
-+            presented.dismiss(animated: true, completion: { [weak self] in self?.remove(ids: ids) }); return
-+        }
-+        let alert = UIAlertController(title: self.ru ? "Удалить архивные копии?" : "Remove archive copies?", message: "\(ids.count)", preferredStyle: .alert)
-+        alert.addAction(UIAlertAction(title: self.ru ? "Удалить" : "Remove", style: .destructive, handler: { [weak self] _ in
-+            guard let self else { return }; self.operation.set(self.context.engine.messages.ayuRemoveArchivedMedia(ids: ids).startStrict())
-+        }))
-+        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel)); self.present(alert, animated: true)
-+    }
-+    private func export(ids: Set<String>) {
-+        guard !ids.isEmpty else { return }
-+        self.operation.set((self.context.engine.messages.ayuArchivedMediaFiles() |> deliverOnMainQueue).startStrict(next: { [weak self] files in
-+            guard let self else { return }
-+            let selected = files.filter { ids.contains($0.0.id) }
-+            let urls = selected.compactMap { $0.1 }
-+            self.status = self.ru ? "Доступно файлов: \(urls.count)/\(ids.count)" : "Available files: \(urls.count)/\(ids.count)"
-+            self.tableView.reloadData(); guard !urls.isEmpty else { return }
-+            let picker = UIDocumentPickerViewController(forExporting: urls, asCopy: true); picker.delegate = self
-+            if let presented = self.presentedViewController { presented.dismiss(animated: true, completion: { [weak self] in self?.present(picker, animated: true) }) } else { self.present(picker, animated: true) }
-+        }))
-+    }
 +}
 diff --git a/submodules/AccountContext/Sources/AyuReactionDisplay.swift b/submodules/AccountContext/Sources/AyuReactionDisplay.swift
 new file mode 100644
@@ -69159,6 +68970,85 @@ index 00000000..77b19608
 +    }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
+new file mode 100644
+index 00000000..5e9d5afd
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
+@@ -0,0 +1,73 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++import TelegramPresentationData
++import AccountContext
++
++/// Shows a UIKit screen stack (the plugin list, its details and plugin settings) as a page of
++/// Telegram's navigation stack instead of a sheet: pushed and popped like any settings page,
++/// with the UIKit navigation bar painted in the list's colours.
++final class AyuHostedNavigationScreen: ViewController {
++    private let hosted: UINavigationController
++
++    init(context: AccountContext, root: UIViewController) {
++        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
++        let theme = presentationData.theme
++        self.hosted = UINavigationController(rootViewController: root)
++        self.hosted.overrideUserInterfaceStyle = theme.overallDarkAppearance ? .dark : .light
++
++        let appearance = UINavigationBarAppearance()
++        appearance.configureWithOpaqueBackground()
++        appearance.backgroundColor = theme.list.blocksBackgroundColor
++        appearance.shadowColor = .clear
++        appearance.titleTextAttributes = [.foregroundColor: theme.list.itemPrimaryTextColor, .font: UIFont.systemFont(ofSize: 17.0, weight: .semibold)]
++        self.hosted.navigationBar.standardAppearance = appearance
++        self.hosted.navigationBar.scrollEdgeAppearance = appearance
++        self.hosted.navigationBar.compactAppearance = appearance
++        self.hosted.navigationBar.tintColor = theme.list.itemAccentColor
++
++        super.init(navigationBarPresentationData: nil)
++        self.statusBar.statusBarStyle = theme.rootController.statusBarStyle.style
++    }
++
++    required init(coder aDecoder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func loadDisplayNode() {
++        self.displayNode = ASDisplayNode()
++        self.displayNodeDidLoad()
++        self.addChild(self.hosted)
++        self.displayNode.view.addSubview(self.hosted.view)
++        self.hosted.didMove(toParent: self)
++    }
++
++    override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
++        super.containerLayoutUpdated(layout, transition: transition)
++        self.hosted.view.frame = CGRect(origin: CGPoint(), size: layout.size)
++    }
++}
++
++/// Opens the plugin list as a page; `fileURL` imports a .plugin file opened from elsewhere.
++public func ayuImportPlugin(context: AccountContext, fileURL: URL?, filename: String?) {
++    let data = context.sharedContext.currentPresentationData.with { $0 }
++    let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
++    let initialImport: (URL, String)?
++    if let fileURL, let filename { initialImport = (fileURL, filename) } else { initialImport = nil }
++    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, initialImport: initialImport, settingsController: { id in AyuChatColorsController(context: context, pluginID: id) }, keepAwake: {
++        let disposable = context.sharedContext.applicationBindings.pushIdleTimerExtension()
++        return { disposable.dispose() }
++    })
++    guard let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController else {
++        let navigation = UINavigationController(rootViewController: plugins)
++        navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
++        context.sharedContext.applicationBindings.presentNativeController(navigation)
++        return
++    }
++    let screen = AyuHostedNavigationScreen(context: context, root: plugins)
++    plugins.close = { [weak screen] in
++        screen?.navigationController?.popViewController(animated: true)
++    }
++    navigationController.pushViewController(screen)
++}
 diff --git a/submodules/SettingsUI/Sources/AyuMediaArchiveScreen.swift b/submodules/SettingsUI/Sources/AyuMediaArchiveScreen.swift
 new file mode 100644
 index 00000000..d26020e0
@@ -69598,10 +69488,10 @@ index 00000000..d26020e0
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
-index 00000000..12d332af
+index 00000000..d3f99a8f
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,278 @@
 +import UIKit
 +import Display
 +import TelegramCore
@@ -69636,7 +69526,7 @@ index 00000000..12d332af
 +    private var exportDirectory: URL?
 +    init(store: AyuGhostModeStore, pluginID: String, russian: Bool, palette: AyuPreferencesPalette? = nil, settingsController: ((String) -> UIViewController?)? = nil, keepAwake: (() -> (() -> Void))? = nil) {
 +        self.store = store; self.pluginID = pluginID; self.russian = russian; self.palette = palette; self.settingsController = settingsController; self.keepAwake = keepAwake
-+        super.init(style: .grouped)
++        super.init(style: .insetGrouped)
 +        self.title = russian ? "Плагин" : "Plugin"
 +    }
 +    required init?(coder: NSCoder) { return nil }
@@ -69700,7 +69590,7 @@ index 00000000..12d332af
 +    }
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
-+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        // Pushed inside the plugin stack: the back button leaves, viewWillDisappear cancels work.
 +        self.tableView.rowHeight = UITableView.automaticDimension; self.tableView.estimatedRowHeight = 56
 +        self.tableView.backgroundColor = self.palette?.background ?? .systemGroupedBackground
 +        if let plugin = self.plugin {
@@ -69712,7 +69602,6 @@ index 00000000..12d332af
 +        super.viewWillDisappear(animated)
 +        if self.isMovingFromParent || self.isBeingDismissed || self.navigationController?.isBeingDismissed == true { self.generation += 1; self.preparing = false }
 +    }
-+    @objc private func done() { self.generation += 1; self.dismiss(animated: true) }
 +    override func numberOfSections(in tableView: UITableView) -> Int { return self.sections.count }
 +    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return self.sections.indices.contains(section) ? self.sections[section].count : 0 }
 +    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -69883,10 +69772,10 @@ index 00000000..12d332af
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..e8d248a7
+index 00000000..698439ae
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,322 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -69909,16 +69798,27 @@ index 00000000..e8d248a7
 +    private var preparingIDs = Set<String>()
 +    private let settingsController: ((String) -> UIViewController?)?
 +    private let keepAwake: (() -> (() -> Void))?
++    /// Set when the list is a page of the settings stack: the left button goes back with it
++    /// instead of dismissing a sheet.
++    var close: (() -> Void)?
 +    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil, initialImport: (URL, String)? = nil, settingsController: ((String) -> UIViewController?)? = nil, keepAwake: (() -> (() -> Void))? = nil) {
 +        self.store = store; self.russian = russian; self.palette = palette
 +        self.initialImport = initialImport; self.settingsController = settingsController; self.keepAwake = keepAwake
-+        super.init(style: .grouped)
++        super.init(style: .insetGrouped)
 +        self.title = russian ? "Плагины" : "Plugins"
++    }
++    private func makeCloseItem() -> UIBarButtonItem {
++        guard self.close != nil else {
++            return UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        }
++        let item = UIBarButtonItem(image: UIImage(systemName: "chevron.backward", withConfiguration: UIImage.SymbolConfiguration(weight: .semibold)), style: .plain, target: self, action: #selector(self.done))
++        item.accessibilityLabel = self.russian ? "Назад" : "Back"
++        return item
 +    }
 +    required init?(coder: NSCoder) { return nil }
 +    override func viewDidLoad() {
 +        super.viewDidLoad()
-+        self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++        self.navigationItem.leftBarButtonItem = self.makeCloseItem()
 +        let install = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(self.installTapped))
 +        install.accessibilityLabel = self.russian ? "Установить плагин" : "Install plugin"
 +        let refresh = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(self.updateCatalogTapped))
@@ -70017,14 +69917,16 @@ index 00000000..e8d248a7
 +        super.viewDidAppear(animated)
 +        if let initial = self.initialImport { self.initialImport = nil; self.readImport(initial.0, filename: initial.1) }
 +    }
-+    @objc private func done() { self.dismiss(animated: true) }
++    @objc private func done() {
++        if let close = self.close { close() } else { self.dismiss(animated: true) }
++    }
 +    override func numberOfSections(in tableView: UITableView) -> Int { return 1 }
 +    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
 +        return self.items.count
 +    }
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
 +        guard !self.items.isEmpty else { return nil }
-+        return self.russian ? "Нажмите на плагин, чтобы открыть его настройки. Действия в чате: меню сообщения → Плагины." : "Tap a plugin to open its settings. In-chat actions: message menu → Plugins."
++        return self.russian ? "Нажми на плагин, чтобы открыть его настройки." : "Tap a plugin to open its settings."
 +    }
 +    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
 +        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
@@ -70141,7 +70043,7 @@ index 00000000..e8d248a7
 +                guard let self else { return }
 +                self.reading = false
 +                self.updateCatalogControls()
-+                self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++                self.navigationItem.leftBarButtonItem = self.makeCloseItem()
 +                let complete: () -> Void = { [weak self] in
 +                    guard let self else { return }
 +                    switch result {
@@ -70180,7 +70082,7 @@ index 00000000..e8d248a7
 +                guard let self else { return }
 +                self.applying = false
 +                self.updateCatalogControls()
-+                self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.done))
++                self.navigationItem.leftBarButtonItem = self.makeCloseItem()
 +                self.isModalInPresentation = false
 +                self.navigationController?.isModalInPresentation = false
 +                do {
@@ -70372,10 +70274,10 @@ index 00000000..8b28f3d2
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..f6cff607
+index 00000000..58ac6a5a
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,1102 @@
+@@ -0,0 +1,1088 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -70843,20 +70745,6 @@ index 00000000..f6cff607
 +    ayuImportPlugin(context: context, fileURL: nil, filename: nil)
 +}
 +
-+public func ayuImportPlugin(context: AccountContext, fileURL: URL?, filename: String?) {
-+    let data = context.sharedContext.currentPresentationData.with { $0 }
-+    let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
-+    let initialImport: (URL, String)?
-+    if let fileURL, let filename { initialImport = (fileURL, filename) } else { initialImport = nil }
-+    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, initialImport: initialImport, settingsController: { id in AyuChatColorsController(context: context, pluginID: id) }, keepAwake: {
-+        let disposable = context.sharedContext.applicationBindings.pushIdleTimerExtension()
-+        return { disposable.dispose() }
-+    })
-+    let navigation = UINavigationController(rootViewController: plugins)
-+    navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
-+    context.sharedContext.applicationBindings.presentNativeController(navigation)
-+}
-+
 +private func ayuPresentAppIcons(context: AccountContext) {
 +    let data = context.sharedContext.currentPresentationData.with { $0 }
 +    let ru = data.strings.baseLanguageCode.hasPrefix("ru")
@@ -70906,7 +70794,7 @@ index 00000000..f6cff607
 +        case 9: push?(ayuReactionSettingsController(context: context))
 +        case 20: ayuPresentAppIcons(context: context)
 +        case 50: push?(ayuGhostModePlusController(context: context))
-+        case 51: ayuPresentAdvancedSettings(context: context, page: .translation)
++        case 51: push?(ayuTranslationSettingsController(context: context))
 +        case 52: push?(ayuLocalPremiumController(context: context))
 +        case 53: push?(AyuMediaArchiveScreen(context: context))
 +        default: break
@@ -70997,7 +70885,7 @@ index 00000000..f6cff607
 +    var presentError: (() -> Void)?
 +    let arguments = AyuSectionedArguments(open: { id in
 +        switch id {
-+        case 31: ayuPresentAdvancedSettings(context: context, page: .translation)
++        case 31: push?(ayuTranslationSettingsController(context: context))
 +        case 32: push?(ayuChatOptionsController(context: context, regex: false))
 +        case 33: push?(ayuInterfaceSettingsController(context: context))
 +        case 34: push?(ayuInterfaceSettingsController(context: context, contextMenu: true))
@@ -72031,6 +71919,543 @@ index 00000000..c5aaa9de
 +            symbol("arrow.up", in: CGRect(x: panel.maxX - 40.0, y: panel.midY - 8.0, width: 16.0, height: 16.0), color: .white)
 +        }
 +    }
++}
+diff --git a/submodules/SettingsUI/Sources/AyuToolScreens.swift b/submodules/SettingsUI/Sources/AyuToolScreens.swift
+new file mode 100644
+index 00000000..3886592a
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuToolScreens.swift
+@@ -0,0 +1,331 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++import UndoUI
++
++private struct AyuToolArguments {
++    let open: (Int32) -> Void
++    let toggle: (Int32, Bool) -> Void
++}
++
++/// Rows of the AyuGram tool sheets (translation result, chat export): headed blocks of
++/// selectable text, values, switches and actions.
++private enum AyuToolEntry: ItemListNodeEntry {
++    case header(Int32, Int32, String)
++    case text(Int32, Int32, String)
++    case value(Int32, Int32, String, String)
++    case toggle(Int32, Int32, String, Bool, Bool)
++    case action(Int32, Int32, String, Bool)
++    case info(Int32, Int32, String)
++
++    var section: ItemListSectionId {
++        switch self {
++        case let .header(section, _, _), let .text(section, _, _), let .value(section, _, _, _), let .toggle(section, _, _, _, _), let .action(section, _, _, _), let .info(section, _, _):
++            return section
++        }
++    }
++
++    var stableId: Int32 {
++        switch self {
++        case let .header(_, id, _), let .text(_, id, _), let .value(_, id, _, _), let .toggle(_, id, _, _, _), let .action(_, id, _, _), let .info(_, id, _):
++            return id
++        }
++    }
++
++    static func < (lhs: AyuToolEntry, rhs: AyuToolEntry) -> Bool { return lhs.stableId < rhs.stableId }
++
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! AyuToolArguments
++        switch self {
++        case let .header(_, _, text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .text(_, _, text):
++            return ItemListMultilineTextItem(presentationData: presentationData, text: text, enabledEntityTypes: [], sectionId: self.section, style: .blocks)
++        case let .value(_, id, title, value):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: value, sectionId: self.section, style: .blocks, action: { arguments.open(id) })
++        case let .toggle(_, id, title, value, enabled):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, enabled: enabled, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
++        case let .action(_, id, title, destructive):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: destructive ? .destructive : .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: { arguments.open(id) })
++        case let .info(_, _, text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        }
++    }
++}
++
++private func ayuPushModal(_ controller: ViewController, context: AccountContext) {
++    controller.navigationPresentation = .modal
++    if let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController {
++        navigationController.pushViewController(controller)
++    }
++}
++
++// MARK: - Translation
++
++private enum AyuTranslationStatus: Equatable {
++    case running
++    case done(String)
++    case failed(String)
++}
++
++/// "AyuGram · Translate": the original and its translation by the chosen provider, as a sheet.
++private func ayuTranslationResultController(context: AccountContext, text: String) -> ViewController {
++    let status = ValuePromise<AyuTranslationStatus>(.running, ignoreRepeated: true)
++    let request = MetaDisposable()
++    let lastResult = Atomic<String>(value: "")
++    var dismiss: (() -> Void)?
++    var showCopied: (() -> Void)?
++    let translate: () -> Void = {
++        status.set(.running)
++        request.set((context.engine.messages.ayuTranslate(text: text)
++        |> timeout(45.0, queue: Queue.mainQueue(), alternate: .fail(.network))
++        |> deliverOnMainQueue).start(next: { result in
++            let _ = lastResult.swap(result)
++            status.set(.done(result))
++        }, error: { error in
++            status.set(.failed(String(describing: error)))
++        }))
++    }
++    let arguments = AyuToolArguments(open: { id in
++        switch id {
++        case 20:
++            let result = lastResult.with { $0 }
++            guard !result.isEmpty else { return }
++            UIPasteboard.general.string = result
++            showCopied?()
++        case 21:
++            translate()
++        default:
++            break
++        }
++    }, toggle: { _, _ in })
++    let signal = combineLatest(context.sharedContext.presentationData, status.get())
++    |> deliverOnMainQueue
++    |> map { presentationData, status -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let advanced = context.account.network.ayuGhostMode.current.advanced
++        var entries: [AyuToolEntry] = [
++            .header(0, 0, ru ? "ОРИГИНАЛ" : "ORIGINAL"),
++            .text(0, 1, text),
++            .header(1, 10, (ru ? "ПЕРЕВОД · " : "TRANSLATION · ") + advanced.translationTarget.uppercased())
++        ]
++        switch status {
++        case .running:
++            entries.append(.text(1, 11, ru ? "Перевожу…" : "Translating…"))
++        case let .done(result):
++            entries.append(.text(1, 11, result))
++            entries.append(.action(1, 20, ru ? "Скопировать перевод" : "Copy translation", false))
++        case let .failed(message):
++            entries.append(.text(1, 11, (ru ? "Не получилось: " : "Failed: ") + message))
++            entries.append(.action(1, 21, ru ? "Повторить" : "Try again", false))
++        }
++        entries.append(.info(1, 30, ru ? "Переводчик меняется в exteraGram → Основные → Переводчик." : "Change the translator in exteraGram → General → Translator."))
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Перевод" : "Translation"), leftNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Close), style: .regular, enabled: true, action: { dismiss?() }), rightNavigationButton: nil, backNavigationButton: nil)
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++    }
++    |> afterDisposed {
++        request.dispose()
++    }
++    let controller = ItemListController(context: context, state: signal)
++    dismiss = { [weak controller] in controller?.dismiss() }
++    showCopied = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        controller?.present(UndoOverlayController(presentationData: data, content: .copy(text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Перевод скопирован" : "Translation copied"), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .current)
++    }
++    translate()
++    return controller
++}
++
++// MARK: - Chat export
++
++private struct AyuExportState: Equatable {
++    var options = AyuChatExportOptions()
++    var running = false
++    var status = ""
++    var folder: URL?
++}
++
++/// "Export chat / Saved Messages": a dated HTML + JSON export of the chat, or forwarding it
++/// to Saved Messages, as a sheet.
++private func ayuChatExportController(context: AccountContext, peerId: EnginePeer.Id) -> ViewController {
++    let state = ValuePromise(AyuExportState(), ignoreRepeated: true)
++    let stateValue = Atomic(value: AyuExportState())
++    let updateState: ((inout AyuExportState) -> Void) -> Void = { transform in
++        state.set(stateValue.modify { current in
++            var current = current
++            transform(&current)
++            return current
++        })
++    }
++    let request = MetaDisposable()
++    var dismiss: (() -> Void)?
++    var presentController: ((ViewController) -> Void)?
++    let generation = Atomic<Int>(value: 0)
++    let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++
++    let formatter: () -> DateFormatter = {
++        let formatter = DateFormatter()
++        formatter.locale = Locale(identifier: "en_US_POSIX")
++        formatter.timeZone = TimeZone(secondsFromGMT: 0)
++        formatter.dateFormat = "yyyy-MM-dd"
++        formatter.isLenient = false
++        return formatter
++    }
++    let start: (Bool) -> Void = { forward in
++        if let folder = stateValue.with({ $0.folder }) {
++            try? FileManager.default.removeItem(at: folder)
++        }
++        var options = stateValue.with { $0.options }
++        options.forwardToSaved = forward
++        let current = generation.modify { $0 + 1 }
++        updateState { $0.running = true; $0.folder = nil; $0.status = ru ? "Подготовка…" : "Preparing…" }
++        request.set((ayuExportChat(account: context.account, peerId: peerId, options: options) |> deliverOnMainQueue).start(next: { event in
++            guard generation.with({ $0 }) == current else { return }
++            updateState { value in
++                switch event {
++                case let .progress(messages, bytes):
++                    value.status = (ru ? "Собрано сообщений: " : "Collected messages: ") + "\(messages) · " + ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
++                case let .forwarding(messages, total):
++                    value.status = (ru ? "Пересылка: " : "Forwarding: ") + "\(messages) / \(total)"
++                case let .completed(url):
++                    value.running = false
++                    value.folder = url
++                    value.status = ru ? "Готово. Сохрани папку кнопкой ниже." : "Done. Save the folder with the button below."
++                case let .savedToSelf(messages, partial):
++                    value.running = false
++                    value.status = (ru ? "Переслано в Избранное: " : "Forwarded to Saved Messages: ") + "\(messages)" + (partial ? (ru ? " (достигнут лимит)" : " (limit reached)") : "")
++                }
++            }
++        }, error: { error in
++            guard generation.with({ $0 }) == current else { return }
++            updateState { $0.running = false; $0.status = (ru ? "Не получилось: " : "Failed: ") + String(describing: error) }
++        }))
++    }
++    let editValue: (Int32) -> Void = { id in
++        let options = stateValue.with { $0.options }
++        let isLimit = id == 3
++        let alert = UIAlertController(title: isLimit ? (ru ? "Сколько сообщений" : "How many messages") : (ru ? "Дата (UTC)" : "Date (UTC)"), message: isLimit ? "1 – 1 000 000" : (ru ? "ГГГГ-ММ-ДД. Пусто — без ограничения." : "YYYY-MM-DD. Empty for no bound."), preferredStyle: .alert)
++        alert.addTextField { field in
++            field.autocorrectionType = .no
++            field.keyboardType = isLimit ? .numberPad : .numbersAndPunctuation
++            if isLimit {
++                field.text = String(options.maximumMessages)
++            } else {
++                let value = id == 1 ? options.fromTimestamp : options.untilTimestamp
++                if value != 0 && value != Int32.max {
++                    field.text = formatter().string(from: Date(timeIntervalSince1970: Double(value)))
++                }
++            }
++        }
++        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++            let raw = (alert?.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++            var updated = options
++            if isLimit {
++                updated.maximumMessages = Int(raw) ?? 0
++            } else if raw.isEmpty {
++                if id == 1 { updated.fromTimestamp = 0 } else { updated.untilTimestamp = Int32.max }
++            } else if let date = formatter().date(from: raw), formatter().string(from: date) == raw {
++                let value = Int64(date.timeIntervalSince1970) + (id == 2 ? 86399 : 0)
++                guard value >= 0, value <= Int64(Int32.max) else { return }
++                if id == 1 { updated.fromTimestamp = Int32(value) } else { updated.untilTimestamp = Int32(value) }
++            } else {
++                updateState { $0.status = ru ? "Неверная дата" : "Invalid date" }
++                return
++            }
++            if (try? updated.validate()) != nil {
++                updateState { $0.options = updated; $0.status = "" }
++            } else {
++                updateState { $0.status = ru ? "Неверный период или лимит" : "Invalid range or limit" }
++            }
++        }))
++        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(alert)
++    }
++    let arguments = AyuToolArguments(open: { id in
++        guard !stateValue.with({ $0.running }) || id == 23 else { return }
++        switch id {
++        case 1, 2, 3:
++            editValue(id)
++        case 20:
++            start(false)
++        case 21:
++            let presentationData = context.sharedContext.currentPresentationData.with { $0 }
++            let limit = stateValue.with { $0.options.maximumMessages }
++            presentController?(textAlertController(context: context, title: ru ? "Переслать в Избранное?" : "Forward to Saved Messages?", text: ru ? "До \(limit) сообщений за выбранный период. Повторная пересылка создаст дубликаты." : "Up to \(limit) messages from the chosen period. Repeating creates duplicates.", actions: [
++                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
++                TextAlertAction(type: .defaultAction, title: ru ? "Переслать" : "Forward", action: { start(true) })
++            ]))
++        case 22:
++            if let folder = stateValue.with({ $0.folder }) {
++                context.sharedContext.applicationBindings.presentNativeController(UIDocumentPickerViewController(forExporting: [folder], asCopy: true))
++            }
++        case 23:
++            let _ = generation.modify { $0 + 1 }
++            request.set(nil)
++            updateState { $0.running = false; $0.status = ru ? "Остановлено. Уже пересланное остаётся в Избранном." : "Stopped. Already forwarded messages stay in Saved Messages." }
++        default:
++            break
++        }
++    }, toggle: { id, value in
++        if id == 4 { updateState { $0.options.includeCachedMedia = value } }
++    })
++    let signal = combineLatest(context.sharedContext.presentationData, state.get())
++    |> deliverOnMainQueue
++    |> map { presentationData, state -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let format: (Int32, Bool) -> String = { value, isEnd in
++            if (!isEnd && value == 0) || (isEnd && value == Int32.max) {
++                return ru ? "Без ограничения" : "Any"
++            }
++            return formatter().string(from: Date(timeIntervalSince1970: Double(value)))
++        }
++        var entries: [AyuToolEntry] = [
++            .header(0, 0, ru ? "ПЕРИОД (UTC)" : "PERIOD (UTC)"),
++            .value(0, 1, ru ? "С даты" : "From", format(state.options.fromTimestamp, false)),
++            .value(0, 2, ru ? "По дату" : "Until", format(state.options.untilTimestamp, true)),
++            .value(0, 3, ru ? "Не больше сообщений" : "At most messages", "\(state.options.maximumMessages)"),
++            .toggle(0, 4, ru ? "Приложить медиа из кэша" : "Include cached media", state.options.includeCachedMedia, !state.running),
++            .info(0, 5, ru ? "Медиа берутся только уже загруженные: до 250 МБ на файл и 1 ГБ всего." : "Only already-downloaded media: up to 250 MB per file and 1 GB in total."),
++            .action(1, 20, ru ? "Экспорт в HTML и JSON" : "Export to HTML and JSON", false),
++            .action(1, 21, ru ? "Переслать в Избранное" : "Forward to Saved Messages", false)
++        ]
++        if state.folder != nil {
++            entries.append(.action(1, 22, ru ? "Сохранить папку" : "Save folder", false))
++        }
++        if state.running {
++            entries.append(.action(1, 23, ru ? "Остановить" : "Stop", true))
++        }
++        if !state.status.isEmpty {
++            entries.append(.info(1, 30, state.status))
++        }
++        let data = ItemListPresentationData(presentationData)
++        let controllerState = ItemListControllerState(presentationData: data, title: .text(ru ? "Экспорт чата" : "Export Chat"), leftNavigationButton: ItemListNavigationButton(content: .text(presentationData.strings.Common_Close), style: .regular, enabled: true, action: { dismiss?() }), rightNavigationButton: nil, backNavigationButton: nil)
++        return (controllerState, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++    }
++    |> afterDisposed {
++        request.dispose()
++        if let folder = stateValue.with({ $0.folder }) {
++            try? FileManager.default.removeItem(at: folder)
++        }
++    }
++    let controller = ItemListController(context: context, state: signal)
++    dismiss = { [weak controller] in controller?.dismiss() }
++    presentController = { [weak controller] in controller?.present($0, in: .window(.root)) }
++    return controller
++}
++
++/// Lets chats and profiles (which cannot import SettingsUI) open these sheets.
++public func ayuRegisterToolScreens() {
++    ayuTranslationScreenFactory = { context, text in
++        ayuPushModal(ayuTranslationResultController(context: context, text: text), context: context)
++    }
++    ayuChatExportScreenFactory = { context, peerId in
++        ayuPushModal(ayuChatExportController(context: context, peerId: peerId), context: context)
++    }
++}
+diff --git a/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift b/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift
+new file mode 100644
+index 00000000..befc5725
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift
+@@ -0,0 +1,194 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++private struct AyuTranslationSettingsArguments {
++    let selectProvider: (AyuAdvancedSettings.TranslationProvider) -> Void
++    let open: (Int32) -> Void
++}
++
++private enum AyuTranslationSettingsEntry: ItemListNodeEntry {
++    case header(Int32, Int32, String)
++    case provider(Int32, AyuAdvancedSettings.TranslationProvider, String, Bool)
++    case link(Int32, Int32, String, String)
++    case remove(Int32, String)
++    case info(Int32, Int32, String)
++
++    var section: ItemListSectionId {
++        switch self {
++        case let .header(section, _, _), let .link(section, _, _, _), let .info(section, _, _): return section
++        case .provider: return 0
++        case let .remove(section, _): return section
++        }
++    }
++
++    var stableId: Int32 {
++        switch self {
++        case let .header(_, id, _), let .link(_, id, _, _), let .info(_, id, _): return id
++        case let .provider(id, _, _, _): return id
++        case .remove: return 30
++        }
++    }
++
++    static func < (lhs: AyuTranslationSettingsEntry, rhs: AyuTranslationSettingsEntry) -> Bool { return lhs.stableId < rhs.stableId }
++
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! AyuTranslationSettingsArguments
++        switch self {
++        case let .header(_, _, text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .provider(_, provider, title, checked):
++            return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: title, style: .right, checked: checked, zeroSeparatorInsets: false, sectionId: self.section, action: { arguments.selectProvider(provider) })
++        case let .link(_, id, title, label):
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.open(id) })
++        case let .remove(_, title):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: { arguments.open(30) })
++        case let .info(_, _, text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        }
++    }
++}
++
++private let ayuTranslationLanguages: [(code: String, ru: String, en: String)] = [
++    ("ru", "Русский", "Russian"), ("en", "Английский", "English"), ("uk", "Украинский", "Ukrainian"),
++    ("de", "Немецкий", "German"), ("es", "Испанский", "Spanish"), ("fr", "Французский", "French"),
++    ("it", "Итальянский", "Italian"), ("pt", "Португальский", "Portuguese"), ("pl", "Польский", "Polish"),
++    ("tr", "Турецкий", "Turkish"), ("ja", "Японский", "Japanese"), ("zh", "Китайский", "Chinese"),
++    ("ko", "Корейский", "Korean"), ("ar", "Арабский", "Arabic")
++]
++
++private func ayuTranslationLanguageName(_ code: String, ru: Bool) -> String {
++    if let language = ayuTranslationLanguages.first(where: { $0.code == code.lowercased() }) {
++        return ru ? language.ru : language.en
++    }
++    return code
++}
++
++private func ayuTranslationProviderName(_ provider: AyuAdvancedSettings.TranslationProvider) -> String {
++    switch provider {
++    case .telegram: return "Telegram"
++    case .libreTranslate: return "LibreTranslate"
++    case .deepLFree: return "DeepL API Free"
++    case .deepLPro: return "DeepL API Pro"
++    }
++}
++
++/// The AyuGram translator: provider, target language, LibreTranslate server and the API key
++/// (written to and removed from the Keychain only; the page never reads a stored key back).
++func ayuTranslationSettingsController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var presentError: (() -> Void)?
++    var presentController: ((ViewController) -> Void)?
++    let update: ((inout AyuAdvancedSettings) -> Void) -> Void = { transform in
++        do {
++            try store.update { transform(&$0.advanced) }
++        } catch { presentError?() }
++    }
++    let prompt: (String, String?, String, Bool, UIKeyboardType, @escaping (String) -> Void) -> Void = { title, message, value, secure, keyboard, save in
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
++        alert.addTextField { field in
++            field.text = value
++            field.isSecureTextEntry = secure
++            field.keyboardType = keyboard
++            field.autocorrectionType = .no
++            field.autocapitalizationType = .none
++        }
++        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++            save((alert?.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
++        }))
++        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(alert)
++    }
++    let arguments = AyuTranslationSettingsArguments(selectProvider: { provider in
++        update { $0.translationProvider = provider }
++    }, open: { id in
++        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let settings = store.current.advanced
++        switch id {
++        case 11:
++            let actionSheet = ActionSheetController(presentationData: presentationData)
++            var items: [ActionSheetItem] = [ActionSheetTextItem(title: ru ? "Переводить на" : "Translate to")]
++            for language in ayuTranslationLanguages {
++                items.append(ActionSheetButtonItem(title: ru ? language.ru : language.en, color: .accent, action: { [weak actionSheet] in
++                    actionSheet?.dismissAnimated()
++                    update { $0.translationTarget = language.code }
++                }))
++            }
++            items.append(ActionSheetButtonItem(title: ru ? "Другой код языка…" : "Other language code…", color: .accent, action: { [weak actionSheet] in
++                actionSheet?.dismissAnimated()
++                prompt(ru ? "Код языка" : "Language code", ru ? "Например: ru, en, pt-BR" : "For example: ru, en, pt-BR", settings.translationTarget, false, .asciiCapable, { value in
++                    update { $0.translationTarget = value }
++                })
++            }))
++            actionSheet.setItemGroups([ActionSheetItemGroup(items: items), ActionSheetItemGroup(items: [
++                ActionSheetButtonItem(title: presentationData.strings.Common_Cancel, color: .accent, font: .bold, action: { [weak actionSheet] in
++                    actionSheet?.dismissAnimated()
++                })
++            ])])
++            presentController?(actionSheet)
++        case 12:
++            prompt(ru ? "Адрес сервера" : "Server address", ru ? "HTTPS-адрес твоего LibreTranslate" : "HTTPS address of your LibreTranslate", settings.libreTranslateURL, false, .URL, { value in
++                update { $0.libreTranslateURL = value }
++            })
++        case 13:
++            prompt(ru ? "API-ключ" : "API key", ru ? "Хранится в Keychain этого устройства, отдельно для аккаунта и сервера." : "Kept in this device's Keychain, per account and server.", "", true, .asciiCapable, { key in
++                do {
++                    guard !key.isEmpty else { throw AyuTranslationError.configuration }
++                    try AyuTranslationKeys.write(accountId: context.account.id.int64, settings: store.current.advanced, key: key)
++                } catch { presentError?() }
++            })
++        case 30:
++            do {
++                try AyuTranslationKeys.write(accountId: context.account.id.int64, settings: settings, key: "")
++            } catch { presentError?() }
++        default:
++            break
++        }
++    })
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let advanced = settings.advanced
++        let provider = advanced.translationProvider
++        var entries: [AyuTranslationSettingsEntry] = [.header(0, 0, ru ? "ПЕРЕВОДЧИК" : "TRANSLATOR")]
++        for (index, value) in AyuAdvancedSettings.TranslationProvider.allCases.enumerated() {
++            entries.append(.provider(Int32(1 + index), value, ayuTranslationProviderName(value), value == provider))
++        }
++        let providerInfo: String
++        switch provider {
++        case .telegram: providerInfo = ru ? "Встроенный перевод Telegram, ключ не нужен." : "Telegram's built-in translation, no key needed."
++        case .libreTranslate: providerInfo = ru ? "Нужен адрес твоего сервера LibreTranslate и, если он требует, API-ключ." : "Needs your LibreTranslate server address and, if it asks for one, an API key."
++        case .deepLFree, .deepLPro: providerInfo = ru ? "Нужен API-ключ DeepL из личного кабинета deepl.com." : "Needs a DeepL API key from your deepl.com account."
++        }
++        entries.append(.info(0, 9, providerInfo))
++        entries.append(.link(1, 11, ru ? "Язык перевода" : "Translate to", ayuTranslationLanguageName(advanced.translationTarget, ru: ru)))
++        if provider == .libreTranslate {
++            entries.append(.link(1, 12, ru ? "Адрес сервера" : "Server address", advanced.libreTranslateURL.isEmpty ? (ru ? "Не задан" : "Not set") : (URL(string: advanced.libreTranslateURL)?.host ?? advanced.libreTranslateURL)))
++        }
++        if provider != .telegram {
++            entries.append(.link(1, 13, ru ? "API-ключ" : "API key", ru ? "Задать" : "Set"))
++            entries.append(.remove(1, ru ? "Удалить API-ключ" : "Remove API key"))
++        }
++        entries.append(.info(1, 40, ru ? "Перевод — в меню сообщения: «AyuGram · Перевести». Текст уходит переводчику только после нажатия." : "Translate from the message menu: \"AyuGram · Translate\". Text is sent to the translator only when you tap it."))
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Переводчик" : "Translator"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    presentController = { [weak controller] in controller?.present($0, in: .window(.root)) }
++    presentError = { [weak controller] in
++        let data = context.sharedContext.currentPresentationData.with { $0 }
++        let ru = data.strings.baseLanguageCode.hasPrefix("ru")
++        controller?.present(textAlertController(context: context, title: "AyuGram", text: ru ? "Не сохранилось. Проверь, что адрес начинается с https://, а код языка — латиницей (ru, en, pt-BR)." : "Not saved. Check that the address starts with https:// and the language code is in Latin letters (ru, en, pt-BR).", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++    }
++    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift b/submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift
 index 588fc00b..e64473ce 100644
@@ -145910,7 +146335,7 @@ index 0fb1ee10..26809c39 100644
                  let lastHeaderId = filteredEntries.last.flatMap { listMessageDateHeaderId(timestamp: $0.index.timestamp) } ?? 0
                  let processedView = ChatHistoryView(originalView: view, filteredEntries: filteredEntries, associatedData: associatedData, lastHeaderId: lastHeaderId, id: id, locationInput: update.2, ignoreMessagesInTimestampRange: update.3, ignoreMessageIds: update.4)
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 1ade8c01..0b2ab3c7 100644
+index 1ade8c01..09a9b43d 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -51,6 +51,7 @@ private struct MessageContextMenuData {
@@ -145958,7 +146383,7 @@ index 1ade8c01..0b2ab3c7 100644
              if !actions.isEmpty {
                  actions.insert(.separator, at: 0)
              }
-@@ -2479,6 +2485,54 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2479,6 +2485,64 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
@@ -145978,6 +146403,16 @@ index 1ade8c01..0b2ab3c7 100644
 +            if !message.text.isEmpty, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
 +                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Перевести" : "AyuGram · Translate", icon: { theme in UIImage(systemName: "character.bubble")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal) }, action: { controller, _ in
 +                    controller?.dismiss(completion: { ayuPresentTranslation(context: context, text: message.text) })
++                })))
++            }
++            // Plugins belong to exteraGram: this opens the enabled plugins' actions for this chat.
++            if context.account.network.ayuGhostMode.current.plugins.installed.contains(where: { $0.enabled }), chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, message.id.peerId.namespace != Namespaces.Peer.SecretChat, EngineMessage(message).adAttribute == nil {
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "exteraGram · Плагины" : "exteraGram · Plugins", icon: { theme in
++                    return UIImage(systemName: "puzzlepiece.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                }, action: { controller, _ in
++                    controller?.dismiss(completion: {
++                        (interfaceInteraction.chatController() as? ChatControllerImpl)?.ayuOpenPlugins()
++                    })
 +                })))
 +            }
 +            if ayuInterface.showCopyMessageIds, EngineMessage(message).adAttribute == nil {
@@ -146059,6 +146494,19 @@ index c46cc951..b3430c9a 100644
                  if immediateShare {
                      let controller = params.context.sharedContext.makeShareScreen(context: params.context, params: ShareControllerParams(subject: .media(.standalone(media: file), nil), immediateExternalShare: true))
                      params.present(controller, nil, .window(.root))
+diff --git a/submodules/TelegramUI/Sources/SharedAccountContext.swift b/submodules/TelegramUI/Sources/SharedAccountContext.swift
+index 759614ca..c2616c21 100644
+--- a/submodules/TelegramUI/Sources/SharedAccountContext.swift
++++ b/submodules/TelegramUI/Sources/SharedAccountContext.swift
+@@ -324,6 +324,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+         
+         self.appDelegate = appDelegate
+         self.mainWindow = mainWindow
++        // AyuGram: translation and chat-export sheets for chats and profiles.
++        ayuRegisterToolScreens()
+         self.applicationBindings = applicationBindings
+         self.sharedContainerPath = sharedContainerPath
+         self.basePath = basePath
 diff --git a/submodules/TextFormat/Sources/StringWithAppliedEntities.swift b/submodules/TextFormat/Sources/StringWithAppliedEntities.swift
 index d0ec7066..1f116055 100644
 --- a/submodules/TextFormat/Sources/StringWithAppliedEntities.swift

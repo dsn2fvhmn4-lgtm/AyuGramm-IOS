@@ -62,6 +62,9 @@ class IOSPlugPackagingTests(unittest.TestCase):
         self.assertEqual(expected, {path.name for path in cards})
         for row in report["plugins"]:
             self.assertTrue(row.get("limitations") or row.get("reason"))
+            if row["status"] == "not_ported":
+                self.assertIsInstance(row["required_entrypoints"], list)
+                self.assertTrue(all(isinstance(value, str) for value in row["required_entrypoints"]))
         for path in cards:
             self.assertLessEqual(path.stat().st_size, PACKAGER.CARD_LIMIT)
             card = PACKAGER.read_json(path)

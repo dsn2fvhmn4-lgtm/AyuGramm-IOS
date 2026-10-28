@@ -58,8 +58,13 @@ def package(source, destination, registry=None, catalog=None):
             filename = manifest["id"] + ".iosplug"
             row.update(status="reviewed_native_adapter", minimum_app="iosplug engine 2", limitations=manifest["limitations"])
         else:
+            required = known.get("required_entrypoints", [])
+            if isinstance(required, str):
+                required = [required]
+            if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
+                raise ValueError("Invalid entrypoint notes for " + names[0])
             row.update(status="not_ported", reason=known.get("reason", "Unknown source version: native implementation must be reviewed."),
-                       required_entrypoints=known.get("required_entrypoints", []))
+                       required_entrypoints=required)
             rows.append(row)
             continue
         if Path(filename).name != filename or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789_-." for c in filename):

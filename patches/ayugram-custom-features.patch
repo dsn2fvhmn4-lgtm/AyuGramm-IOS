@@ -1917,6 +1917,1086 @@ index 6680052..a16188b 100644
      var result: [(AnyHashable, [PeerInfoScreenItem])] = []
      for section in Section.allCases {
          if let sectionItems = items[section], !sectionItems.isEmpty {
+diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
+new file mode 100644
+index 00000000..f750cd1e
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
+@@ -0,0 +1,176 @@
++import Foundation
++import SwiftSignalKit
++
++/// One line of time-synced lyrics.
++struct AyuLyricsLine: Equatable {
++    let time: Double
++    let text: String
++}
++
++enum AyuLyrics: Equatable {
++    /// Lines with timestamps, sorted by time; highlighted as the track plays.
++    case synced([AyuLyricsLine])
++    /// Lyrics without timing, shown as static text.
++    case plain(String)
++    case instrumental
++    case notFound
++}
++
++/// Parses LRC text ("[mm:ss.xx] line"); a line may carry several time tags.
++func ayuParseLrc(_ text: String) -> [AyuLyricsLine] {
++    var lines: [AyuLyricsLine] = []
++    for rawLine in text.components(separatedBy: .newlines) {
++        var rest = Substring(rawLine)
++        var times: [Double] = []
++        while rest.hasPrefix("["), let close = rest.firstIndex(of: "]") {
++            let tag = rest[rest.index(after: rest.startIndex) ..< close]
++            let parts = tag.split(separator: ":")
++            if parts.count == 2, let minutes = Double(parts[0]), let seconds = Double(parts[1].replacingOccurrences(of: ",", with: ".")) {
++                times.append(minutes * 60.0 + seconds)
++            }
++            rest = rest[rest.index(after: close)...]
++        }
++        let lineText = rest.trimmingCharacters(in: .whitespaces)
++        for time in times {
++            lines.append(AyuLyricsLine(time: time, text: lineText))
++        }
++    }
++    return lines.sorted(by: { $0.time < $1.time })
++}
++
++/// Looks lyrics up on LRCLIB (lrclib.net), an open lyrics database. Only the track title,
++/// artist and duration are sent, and only when the user opens the lyrics view.
++func ayuFetchLyrics(title: String, artist: String?, duration: Double) -> Signal<AyuLyrics, NoError> {
++    return Signal { subscriber in
++        let request = AyuLyricsRequest(title: title, artist: artist, duration: duration, completion: { result in
++            subscriber.putNext(result)
++            subscriber.putCompletion()
++        })
++        request.start()
++        return ActionDisposable {
++            request.cancel()
++        }
++    }
++}
++
++private final class AyuLyricsRequest {
++    private let title: String
++    private let artist: String?
++    private let duration: Double
++    private let completion: (AyuLyrics) -> Void
++    private let session = URLSession(configuration: .ephemeral)
++    private let lock = NSLock()
++    private var cancelled = false
++
++    init(title: String, artist: String?, duration: Double, completion: @escaping (AyuLyrics) -> Void) {
++        self.title = title
++        self.artist = artist
++        self.duration = duration
++        self.completion = completion
++    }
++
++    func start() {
++        var components = URLComponents(string: "https://lrclib.net/api/get")
++        var items = [URLQueryItem(name: "track_name", value: self.title)]
++        if let artist = self.artist, !artist.isEmpty {
++            items.append(URLQueryItem(name: "artist_name", value: artist))
++        }
++        if self.duration > 0.0 {
++            items.append(URLQueryItem(name: "duration", value: "\(Int(self.duration.rounded()))"))
++        }
++        components?.queryItems = items
++        guard let url = components?.url, self.artist != nil else {
++            self.search()
++            return
++        }
++        self.load(url, completion: { [weak self] json in
++            guard let self else {
++                return
++            }
++            if let record = json as? [String: Any], let result = AyuLyricsRequest.lyrics(from: record) {
++                self.finish(result)
++            } else {
++                self.search()
++            }
++        })
++    }
++
++    func cancel() {
++        self.lock.lock()
++        self.cancelled = true
++        self.lock.unlock()
++        self.session.invalidateAndCancel()
++    }
++
++    private var isCancelled: Bool {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.cancelled
++    }
++
++    private func finish(_ result: AyuLyrics) {
++        if !self.isCancelled {
++            self.completion(result)
++        }
++    }
++
++    private func search() {
++        var components = URLComponents(string: "https://lrclib.net/api/search")
++        components?.queryItems = [URLQueryItem(name: "q", value: [self.artist, self.title].compactMap { $0 }.joined(separator: " "))]
++        guard let url = components?.url else {
++            self.finish(.notFound)
++            return
++        }
++        let duration = self.duration
++        self.load(url, completion: { [weak self] json in
++            guard let self else {
++                return
++            }
++            let records = json as? [[String: Any]] ?? []
++            // Prefer synced lyrics whose length matches the track.
++            let ranked = records.sorted(by: { lhs, rhs in
++                let lhsSynced = lhs["syncedLyrics"] is String
++                let rhsSynced = rhs["syncedLyrics"] is String
++                if lhsSynced != rhsSynced {
++                    return lhsSynced
++                }
++                let lhsDelta = abs((lhs["duration"] as? Double ?? 0.0) - duration)
++                let rhsDelta = abs((rhs["duration"] as? Double ?? 0.0) - duration)
++                return lhsDelta < rhsDelta
++            })
++            self.finish(ranked.lazy.compactMap(AyuLyricsRequest.lyrics(from:)).first ?? .notFound)
++        })
++    }
++
++    private func load(_ url: URL, completion: @escaping (Any?) -> Void) {
++        if self.isCancelled {
++            return
++        }
++        var request = URLRequest(url: url)
++        request.timeoutInterval = 15.0
++        request.setValue("AyuGramm-IOS (https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS)", forHTTPHeaderField: "User-Agent")
++        self.session.dataTask(with: request, completionHandler: { data, response, _ in
++            guard let http = response as? HTTPURLResponse, http.statusCode == 200, let data else {
++                completion(nil)
++                return
++            }
++            completion(try? JSONSerialization.jsonObject(with: data))
++        }).resume()
++    }
++
++    private static func lyrics(from record: [String: Any]) -> AyuLyrics? {
++        if let synced = record["syncedLyrics"] as? String {
++            let lines = ayuParseLrc(synced)
++            if !lines.isEmpty {
++                return .synced(lines)
++            }
++        }
++        if let plain = record["plainLyrics"] as? String, !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
++            return .plain(plain)
++        }
++        if record["instrumental"] as? Bool == true {
++            return .instrumental
++        }
++        return nil
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+new file mode 100644
+index 00000000..6957eba2
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -0,0 +1,892 @@
++import Foundation
++import UIKit
++import AVKit
++import MediaPlayer
++import AsyncDisplayKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import TelegramUIPreferences
++import UniversalMediaPlayer
++import AccountContext
++import PhotoResources
++
++/// Full-screen music player in the style of Apple Music: blurred artwork backdrop, large cover,
++/// scrubber, transport controls, system volume, AirPlay, and time-synced lyrics. The queue
++/// button opens Telegram's playlist screen, which keeps track picking and saved-music editing.
++final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerController {
++    private let context: AccountContext
++    private let chatLocation: ChatLocation
++    private let type: MediaManagerPlayerType
++    private let initialMessageId: EngineMessage.Id
++    private let initialOrder: MusicPlaybackSettingsOrder
++    private let playlistLocation: SharedMediaPlaylistLocation?
++    private weak var parentNavigationController: NavigationController?
++
++    private var playerView: AyuMusicPlayerView?
++    private var animatedIn = false
++    private var accountInUseDisposable: Disposable?
++
++    init(
++        context: AccountContext,
++        chatLocation: ChatLocation,
++        type: MediaManagerPlayerType,
++        initialMessageId: EngineMessage.Id,
++        initialOrder: MusicPlaybackSettingsOrder,
++        playlistLocation: SharedMediaPlaylistLocation?,
++        parentNavigationController: NavigationController?
++    ) {
++        self.context = context
++        self.chatLocation = chatLocation
++        self.type = type
++        self.initialMessageId = initialMessageId
++        self.initialOrder = initialOrder
++        self.playlistLocation = playlistLocation
++        self.parentNavigationController = parentNavigationController
++
++        super.init(navigationBarPresentationData: nil)
++
++        self.statusBar.statusBarStyle = .White
++        self.accountInUseDisposable = context.sharedContext.setAccountUserInterfaceInUse(context.account.id)
++    }
++
++    required init(coder aDecoder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        self.accountInUseDisposable?.dispose()
++    }
++
++    override func loadDisplayNode() {
++        self.displayNode = ASDisplayNode()
++        self.displayNode.backgroundColor = .clear
++        self.displayNodeDidLoad()
++
++        let playerView = AyuMusicPlayerView(context: self.context, type: self.type)
++        playerView.requestDismiss = { [weak self] in
++            self?.dismiss()
++        }
++        playerView.openQueue = { [weak self] in
++            self?.openQueue()
++        }
++        self.playerView = playerView
++        self.displayNode.view.addSubview(playerView)
++    }
++
++    override func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++        if !self.animatedIn {
++            self.animatedIn = true
++            self.playerView?.animateIn()
++        }
++    }
++
++    override func dismiss(completion: (() -> Void)? = nil) {
++        guard let playerView = self.playerView else {
++            self.finishDismiss(completion: completion)
++            return
++        }
++        playerView.animateOut(completion: { [weak self] in
++            self?.finishDismiss(completion: completion)
++        })
++    }
++
++    private func finishDismiss(completion: (() -> Void)?) {
++        if let _ = self.navigationController {
++            self.dismiss(animated: false, completion: nil)
++        } else {
++            self.presentingViewController?.dismiss(animated: false, completion: nil)
++        }
++        completion?()
++    }
++
++    override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
++        super.containerLayoutUpdated(layout, transition: transition)
++        guard let playerView = self.playerView else {
++            return
++        }
++        playerView.frame = CGRect(origin: CGPoint(), size: layout.size)
++        playerView.safeInsets = UIEdgeInsets(top: max(layout.statusBarHeight ?? 0.0, layout.safeInsets.top), left: layout.safeInsets.left, bottom: max(layout.intrinsicInsets.bottom, layout.safeInsets.bottom), right: layout.safeInsets.right)
++        playerView.setNeedsLayout()
++    }
++
++    /// Telegram's own playlist screen, for picking another track from the chat.
++    private func openQueue() {
++        guard let navigationController = self.parentNavigationController ?? (self.navigationController as? NavigationController) else {
++            return
++        }
++        let queue = OverlayAudioPlayerControllerImpl(
++            context: self.context,
++            chatLocation: self.chatLocation,
++            type: self.type,
++            initialMessageId: self.initialMessageId,
++            initialOrder: self.initialOrder,
++            playlistLocation: self.playlistLocation,
++            parentNavigationController: navigationController
++        )
++        queue.navigationPresentation = .flatModal
++        navigationController.pushViewController(queue)
++    }
++}
++
++private func ayuFormatTime(_ seconds: Double) -> String {
++    let total = max(0, Int(seconds.isFinite ? seconds.rounded(.down) : 0.0))
++    let hours = total / 3600
++    let minutes = (total % 3600) / 60
++    let secs = total % 60
++    if hours > 0 {
++        return String(format: "%d:%02d:%02d", hours, minutes, secs)
++    }
++    return String(format: "%d:%02d", minutes, secs)
++}
++
++private func ayuSymbol(_ name: String, size: CGFloat, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
++    return UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: weight))
++}
++
++final class AyuMusicPlayerView: UIView {
++    private let context: AccountContext
++    private let type: MediaManagerPlayerType
++    private let russian: Bool
++
++    var requestDismiss: (() -> Void)?
++    var openQueue: (() -> Void)?
++    var safeInsets = UIEdgeInsets()
++
++    private let backdropNode = TransformImageNode()
++    private let backdropBlur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
++    private let backdropDim = UIView()
++    private let grabber = UIView()
++
++    private let artworkShadow = UIView()
++    private let artworkNode = TransformImageNode()
++
++    private let titleLabel = UILabel()
++    private let artistLabel = UILabel()
++
++    private let scrubber = AyuMusicScrubber()
++    private let elapsedLabel = UILabel()
++    private let remainingLabel = UILabel()
++
++    private let previousButton = UIButton(type: .system)
++    private let playPauseButton = UIButton(type: .system)
++    private let nextButton = UIButton(type: .system)
++
++    private let volumeView = MPVolumeView()
++    private let volumeMinIcon = UIImageView()
++    private let volumeMaxIcon = UIImageView()
++
++    private let lyricsButton = UIButton(type: .system)
++    private let routePicker = AVRoutePickerView()
++    private let queueButton = UIButton(type: .system)
++
++    private let lyricsView = AyuLyricsView()
++
++    private var stateDisposable: Disposable?
++    private var lyricsDisposable: Disposable?
++    private var displayLink: CADisplayLink?
++
++    private var status: MediaPlayerStatus?
++    private var isPaused = true
++    private var trackKey: String?
++    private var hadState = false
++    private var title: String = ""
++    private var artist: String?
++    private var lyricsTrackKey: String?
++    private var showsLyrics = false
++    private var isScrubbing = false
++    private var dragOffset: CGFloat = 0.0
++
++    init(context: AccountContext, type: MediaManagerPlayerType) {
++        self.context = context
++        self.type = type
++        self.russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        super.init(frame: CGRect())
++
++        self.backgroundColor = UIColor(white: 0.08, alpha: 1.0)
++        self.clipsToBounds = true
++
++        self.addSubview(self.backdropNode.view)
++        self.addSubview(self.backdropBlur)
++        self.backdropDim.backgroundColor = UIColor(white: 0.0, alpha: 0.28)
++        self.addSubview(self.backdropDim)
++
++        self.grabber.backgroundColor = UIColor(white: 1.0, alpha: 0.35)
++        self.grabber.layer.cornerRadius = 2.5
++        self.addSubview(self.grabber)
++
++        self.artworkShadow.layer.shadowColor = UIColor.black.cgColor
++        self.artworkShadow.layer.shadowOpacity = 0.35
++        self.artworkShadow.layer.shadowRadius = 24.0
++        self.artworkShadow.layer.shadowOffset = CGSize(width: 0.0, height: 12.0)
++        self.artworkShadow.addSubview(self.artworkNode.view)
++        self.addSubview(self.artworkShadow)
++
++        self.titleLabel.font = .systemFont(ofSize: 21.0, weight: .bold)
++        self.titleLabel.textColor = .white
++        self.artistLabel.font = .systemFont(ofSize: 21.0, weight: .regular)
++        self.artistLabel.textColor = UIColor(white: 1.0, alpha: 0.6)
++        self.addSubview(self.titleLabel)
++        self.addSubview(self.artistLabel)
++
++        self.lyricsView.alpha = 0.0
++        self.lyricsView.isHidden = true
++        self.lyricsView.seek = { [weak self] time in
++            self?.control(.seek(time))
++        }
++        self.addSubview(self.lyricsView)
++
++        self.addSubview(self.scrubber)
++        for label in [self.elapsedLabel, self.remainingLabel] {
++            label.font = .monospacedDigitSystemFont(ofSize: 12.0, weight: .medium)
++            label.textColor = UIColor(white: 1.0, alpha: 0.55)
++            self.addSubview(label)
++        }
++        self.remainingLabel.textAlignment = .right
++        self.scrubber.onScrub = { [weak self] fraction in
++            self?.scrubbed(to: fraction, finished: false)
++        }
++        self.scrubber.onSeek = { [weak self] fraction in
++            self?.scrubbed(to: fraction, finished: true)
++        }
++
++        self.previousButton.setImage(ayuSymbol("backward.fill", size: 30.0), for: .normal)
++        self.nextButton.setImage(ayuSymbol("forward.fill", size: 30.0), for: .normal)
++        self.playPauseButton.setImage(ayuSymbol("play.fill", size: 44.0), for: .normal)
++        for button in [self.previousButton, self.playPauseButton, self.nextButton, self.lyricsButton, self.queueButton] {
++            button.tintColor = .white
++            self.addSubview(button)
++        }
++        self.previousButton.accessibilityLabel = self.russian ? "Предыдущий трек" : "Previous track"
++        self.nextButton.accessibilityLabel = self.russian ? "Следующий трек" : "Next track"
++        self.previousButton.addTarget(self, action: #selector(self.previousPressed), for: .touchUpInside)
++        self.playPauseButton.addTarget(self, action: #selector(self.playPausePressed), for: .touchUpInside)
++        self.nextButton.addTarget(self, action: #selector(self.nextPressed), for: .touchUpInside)
++
++        self.volumeView.tintColor = .white
++        self.volumeView.setVolumeThumbImage(generateFilledCircleImage(diameter: 10.0, color: .white), for: .normal)
++        self.addSubview(self.volumeView)
++        self.volumeMinIcon.image = ayuSymbol("speaker.fill", size: 12.0)
++        self.volumeMaxIcon.image = ayuSymbol("speaker.wave.3.fill", size: 12.0)
++        for icon in [self.volumeMinIcon, self.volumeMaxIcon] {
++            icon.tintColor = UIColor(white: 1.0, alpha: 0.55)
++            icon.contentMode = .center
++            self.addSubview(icon)
++        }
++
++        self.lyricsButton.accessibilityLabel = self.russian ? "Слова" : "Lyrics"
++        self.lyricsButton.addTarget(self, action: #selector(self.lyricsPressed), for: .touchUpInside)
++        self.queueButton.setImage(ayuSymbol("list.bullet", size: 19.0, weight: .medium), for: .normal)
++        self.queueButton.accessibilityLabel = self.russian ? "Очередь" : "Queue"
++        self.queueButton.addTarget(self, action: #selector(self.queuePressed), for: .touchUpInside)
++        self.routePicker.tintColor = UIColor(white: 1.0, alpha: 0.75)
++        self.routePicker.activeTintColor = .white
++        self.addSubview(self.routePicker)
++        self.updateLyricsButton()
++
++        let pan = UIPanGestureRecognizer(target: self, action: #selector(self.dismissPan(_:)))
++        self.addGestureRecognizer(pan)
++
++        self.stateDisposable = (context.sharedContext.mediaManager.musicMediaPlayerState
++        |> deliverOnMainQueue).startStrict(next: { [weak self] value in
++            self?.update(state: value)
++        })
++
++        let displayLink = CADisplayLink(target: AyuWeakTarget(self), selector: #selector(AyuWeakTarget.tick))
++        displayLink.preferredFramesPerSecond = 30
++        displayLink.add(to: .main, forMode: .common)
++        self.displayLink = displayLink
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        self.stateDisposable?.dispose()
++        self.lyricsDisposable?.dispose()
++        self.displayLink?.invalidate()
++    }
++
++    // MARK: State
++
++    private func update(state value: (Account, SharedMediaPlayerItemPlaybackStateOrLoading, MediaManagerPlayerType)?) {
++        guard let (account, stateOrLoading, _) = value, account.id == self.context.account.id else {
++            // Playback stopped after a track was shown: close, like the header panel does.
++            if value == nil && self.hadState {
++                self.requestDismiss?()
++            }
++            return
++        }
++        guard case let .state(state) = stateOrLoading else {
++            return
++        }
++        self.hadState = true
++
++        self.status = state.status
++        let isPaused: Bool
++        switch state.status.status {
++        case .playing:
++            isPaused = false
++        case .paused:
++            isPaused = true
++        case let .buffering(_, whilePlaying, _, _):
++            isPaused = !whilePlaying
++        }
++        if isPaused != self.isPaused {
++            self.isPaused = isPaused
++            self.playPauseButton.setImage(ayuSymbol(isPaused ? "play.fill" : "pause.fill", size: 44.0), for: .normal)
++            self.playPauseButton.accessibilityLabel = isPaused ? (self.russian ? "Воспроизвести" : "Play") : (self.russian ? "Пауза" : "Pause")
++            self.updateArtworkScale(animated: true)
++        }
++
++        var title: String?
++        var performer: String?
++        var albumArt: SharedMediaPlaybackAlbumArt?
++        if let displayData = state.item.displayData, case let .music(titleValue, performerValue, albumArtValue, _, _) = displayData {
++            title = titleValue
++            performer = performerValue
++            albumArt = albumArtValue
++        }
++        var fileReference: FileMediaReference?
++        if let source = state.item.playbackData?.source, case let .telegramFile(reference, _, _) = source {
++            fileReference = reference
++            if title == nil {
++                title = reference.media.fileName
++            }
++        }
++
++        let trackKey = "\(state.item.stableId.hashValue)-\(title ?? "")-\(performer ?? "")"
++        if trackKey != self.trackKey {
++            self.trackKey = trackKey
++            self.title = title ?? (self.russian ? "Неизвестный трек" : "Unknown Track")
++            self.artist = performer
++            self.titleLabel.text = self.title
++            self.artistLabel.text = performer ?? (self.russian ? "Неизвестный исполнитель" : "Unknown Artist")
++            let emptyColor = UIColor(white: 0.22, alpha: 1.0)
++            self.artworkNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: false, emptyColor: emptyColor))
++            self.backdropNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: true, emptyColor: emptyColor, drawPlaceholderWhenEmpty: false))
++            if self.showsLyrics {
++                self.loadLyrics()
++            } else {
++                self.lyricsView.set(lyrics: nil, loading: false, russian: self.russian)
++                self.lyricsTrackKey = nil
++            }
++            self.setNeedsLayout()
++        }
++        self.tick()
++    }
++
++    private func currentTimestamp() -> Double {
++        guard let status = self.status else {
++            return 0.0
++        }
++        var timestamp = status.timestamp
++        if status.generationTimestamp > 0.0, case .playing = status.status {
++            timestamp += (CACurrentMediaTime() - status.generationTimestamp) * status.baseRate
++        }
++        return max(0.0, min(timestamp, status.duration > 0.0 ? status.duration : timestamp))
++    }
++
++    @objc fileprivate func tick() {
++        guard let status = self.status else {
++            return
++        }
++        let timestamp = self.currentTimestamp()
++        if !self.isScrubbing {
++            self.scrubber.progress = status.duration > 0.0 ? CGFloat(timestamp / status.duration) : 0.0
++            self.elapsedLabel.text = ayuFormatTime(timestamp)
++            self.remainingLabel.text = "-" + ayuFormatTime(max(0.0, status.duration - timestamp))
++        }
++        if self.showsLyrics {
++            self.lyricsView.update(timestamp: timestamp)
++        }
++    }
++
++    private func control(_ action: SharedMediaPlayerControlAction) {
++        self.context.sharedContext.mediaManager.playlistControl(action, type: self.type)
++    }
++
++    private func scrubbed(to fraction: CGFloat, finished: Bool) {
++        guard let status = self.status, status.duration > 0.0 else {
++            return
++        }
++        let timestamp = Double(fraction) * status.duration
++        self.isScrubbing = !finished
++        self.elapsedLabel.text = ayuFormatTime(timestamp)
++        self.remainingLabel.text = "-" + ayuFormatTime(max(0.0, status.duration - timestamp))
++        if finished {
++            self.control(.seek(timestamp))
++        }
++    }
++
++    // MARK: Actions
++
++    @objc private func previousPressed() {
++        self.control(.previous)
++    }
++
++    @objc private func playPausePressed() {
++        self.control(.playback(.togglePlayPause))
++    }
++
++    @objc private func nextPressed() {
++        self.control(.next)
++    }
++
++    @objc private func queuePressed() {
++        self.openQueue?()
++    }
++
++    @objc private func lyricsPressed() {
++        self.showsLyrics = !self.showsLyrics
++        self.updateLyricsButton()
++        if self.showsLyrics {
++            self.loadLyrics()
++            self.lyricsView.isHidden = false
++        }
++        UIView.animate(withDuration: 0.45, delay: 0.0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0.0, options: [.beginFromCurrentState], animations: {
++            self.lyricsView.alpha = self.showsLyrics ? 1.0 : 0.0
++            self.layoutContent()
++        }, completion: { _ in
++            if !self.showsLyrics {
++                self.lyricsView.isHidden = true
++            }
++        })
++        self.tick()
++    }
++
++    private func updateLyricsButton() {
++        self.lyricsButton.setImage(ayuSymbol(self.showsLyrics ? "quote.bubble.fill" : "quote.bubble", size: 19.0, weight: .medium), for: .normal)
++        self.lyricsButton.tintColor = self.showsLyrics ? .white : UIColor(white: 1.0, alpha: 0.75)
++    }
++
++    private func loadLyrics() {
++        guard let trackKey = self.trackKey, self.lyricsTrackKey != trackKey else {
++            return
++        }
++        self.lyricsTrackKey = trackKey
++        self.lyricsView.set(lyrics: nil, loading: true, russian: self.russian)
++        let duration = self.status?.duration ?? 0.0
++        self.lyricsDisposable?.dispose()
++        self.lyricsDisposable = (ayuFetchLyrics(title: self.title, artist: self.artist, duration: duration)
++        |> deliverOnMainQueue).startStrict(next: { [weak self] lyrics in
++            guard let self, self.lyricsTrackKey == trackKey else {
++                return
++            }
++            self.lyricsView.set(lyrics: lyrics, loading: false, russian: self.russian)
++            self.tick()
++        })
++    }
++
++    // MARK: Layout
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        self.layoutContent()
++    }
++
++    private func updateArtworkScale(animated: Bool) {
++        // Apple Music shrinks the cover while paused.
++        let scale: CGFloat = (self.isPaused && !self.showsLyrics) ? 0.82 : 1.0
++        let apply = {
++            self.artworkShadow.transform = CGAffineTransform(scaleX: scale, y: scale)
++            self.artworkShadow.layer.shadowOpacity = self.isPaused ? 0.15 : 0.35
++        }
++        if animated {
++            UIView.animate(withDuration: 0.5, delay: 0.0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
++        } else {
++            apply()
++        }
++    }
++
++    private func layoutContent() {
++        let size = self.bounds.size
++        guard size.width > 0.0 else {
++            return
++        }
++        let insets = self.safeInsets
++        let side: CGFloat = 28.0
++        let contentWidth = size.width - insets.left - insets.right - side * 2.0
++        let left = insets.left + side
++
++        let bounds = CGRect(origin: CGPoint(), size: size)
++        self.backdropNode.view.frame = bounds.insetBy(dx: -size.width * 0.25, dy: -size.height * 0.1)
++        let backdropSize = self.backdropNode.view.frame.size
++        let applyBackdrop = self.backdropNode.asyncLayout()(TransformImageArguments(corners: ImageCorners(), imageSize: CGSize(width: max(backdropSize.width, backdropSize.height), height: max(backdropSize.width, backdropSize.height)), boundingSize: backdropSize, intrinsicInsets: UIEdgeInsets()))
++        applyBackdrop()
++        self.backdropBlur.frame = bounds
++        self.backdropDim.frame = bounds
++
++        self.grabber.frame = CGRect(x: floor((size.width - 36.0) / 2.0), y: insets.top + 6.0, width: 36.0, height: 5.0)
++
++        // Bottom-up: utility row, volume, transport, scrubber, title.
++        let bottomRowY = size.height - insets.bottom - 16.0 - 44.0
++        let rowCenters: [CGFloat] = [left + contentWidth * 0.12, left + contentWidth * 0.5, left + contentWidth * 0.88]
++        self.lyricsButton.frame = CGRect(x: rowCenters[0] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
++        self.routePicker.frame = CGRect(x: rowCenters[1] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
++        self.queueButton.frame = CGRect(x: rowCenters[2] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
++
++        let volumeY = bottomRowY - 46.0
++        self.volumeMinIcon.frame = CGRect(x: left - 4.0, y: volumeY, width: 20.0, height: 34.0)
++        self.volumeMaxIcon.frame = CGRect(x: left + contentWidth - 18.0, y: volumeY, width: 24.0, height: 34.0)
++        self.volumeView.frame = CGRect(x: left + 24.0, y: volumeY + 5.0, width: contentWidth - 50.0, height: 34.0)
++
++        let transportCenterY = volumeY - 62.0
++        let transportSpacing = min(110.0, contentWidth / 3.0)
++        self.playPauseButton.frame = CGRect(x: left + contentWidth / 2.0 - 36.0, y: transportCenterY - 36.0, width: 72.0, height: 72.0)
++        self.previousButton.frame = CGRect(x: left + contentWidth / 2.0 - transportSpacing - 30.0, y: transportCenterY - 30.0, width: 60.0, height: 60.0)
++        self.nextButton.frame = CGRect(x: left + contentWidth / 2.0 + transportSpacing - 30.0, y: transportCenterY - 30.0, width: 60.0, height: 60.0)
++
++        let scrubberY = transportCenterY - 82.0
++        self.scrubber.frame = CGRect(x: left, y: scrubberY, width: contentWidth, height: 24.0)
++        self.elapsedLabel.frame = CGRect(x: left, y: scrubberY + 24.0, width: contentWidth / 2.0, height: 16.0)
++        self.remainingLabel.frame = CGRect(x: left + contentWidth / 2.0, y: scrubberY + 24.0, width: contentWidth / 2.0, height: 16.0)
++
++        let artworkTop = insets.top + 34.0
++        if self.showsLyrics {
++            // Compact header: small cover with title beside it, lyrics below.
++            let small: CGFloat = 64.0
++            self.setArtworkFrame(CGRect(x: left, y: artworkTop, width: small, height: small), cornerRadius: 6.0)
++            let textX = left + small + 14.0
++            let textWidth = contentWidth - small - 14.0
++            self.titleLabel.font = .systemFont(ofSize: 17.0, weight: .bold)
++            self.artistLabel.font = .systemFont(ofSize: 17.0, weight: .regular)
++            self.titleLabel.frame = CGRect(x: textX, y: artworkTop + 10.0, width: textWidth, height: 22.0)
++            self.artistLabel.frame = CGRect(x: textX, y: artworkTop + 33.0, width: textWidth, height: 22.0)
++            let lyricsTop = artworkTop + small + 12.0
++            self.lyricsView.frame = CGRect(x: insets.left, y: lyricsTop, width: size.width - insets.left - insets.right, height: max(0.0, scrubberY - 8.0 - lyricsTop))
++        } else {
++            let titleY = scrubberY - 64.0
++            self.titleLabel.font = .systemFont(ofSize: 21.0, weight: .bold)
++            self.artistLabel.font = .systemFont(ofSize: 21.0, weight: .regular)
++            self.titleLabel.frame = CGRect(x: left, y: titleY, width: contentWidth, height: 26.0)
++            self.artistLabel.frame = CGRect(x: left, y: titleY + 27.0, width: contentWidth, height: 26.0)
++            let artworkSide = max(80.0, min(contentWidth, titleY - 28.0 - artworkTop))
++            self.setArtworkFrame(CGRect(x: left + floor((contentWidth - artworkSide) / 2.0), y: artworkTop + max(0.0, floor((titleY - 28.0 - artworkTop - artworkSide) / 2.0)), width: artworkSide, height: artworkSide), cornerRadius: 12.0)
++            self.lyricsView.frame = CGRect(x: insets.left, y: artworkTop, width: size.width - insets.left - insets.right, height: max(0.0, scrubberY - 8.0 - artworkTop))
++        }
++        self.updateArtworkScale(animated: false)
++    }
++
++    private func setArtworkFrame(_ frame: CGRect, cornerRadius: CGFloat) {
++        let transform = self.artworkShadow.transform
++        self.artworkShadow.transform = .identity
++        self.artworkShadow.frame = frame
++        self.artworkShadow.transform = transform
++        self.artworkShadow.layer.shadowPath = UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: frame.size), cornerRadius: cornerRadius).cgPath
++        self.artworkNode.view.frame = CGRect(origin: CGPoint(), size: frame.size)
++        let applyArtwork = self.artworkNode.asyncLayout()(TransformImageArguments(corners: ImageCorners(radius: cornerRadius), imageSize: frame.size, boundingSize: frame.size, intrinsicInsets: UIEdgeInsets(), emptyColor: UIColor(white: 0.22, alpha: 1.0)))
++        applyArtwork()
++    }
++
++    // MARK: Presentation
++
++    func animateIn() {
++        self.layer.animatePosition(from: CGPoint(x: 0.0, y: self.bounds.height), to: CGPoint(), duration: 0.45, timingFunction: kCAMediaTimingFunctionSpring, additive: true)
++    }
++
++    func animateOut(completion: @escaping () -> Void) {
++        let offset = self.bounds.height - self.dragOffset
++        self.layer.animatePosition(from: CGPoint(), to: CGPoint(x: 0.0, y: offset), duration: 0.3, timingFunction: CAMediaTimingFunctionName.easeIn.rawValue, removeOnCompletion: false, additive: true, completion: { _ in
++            completion()
++        })
++    }
++
++    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
++        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else {
++            return true
++        }
++        let location = pan.location(in: self)
++        if self.scrubber.frame.insetBy(dx: 0.0, dy: -10.0).contains(location) || self.volumeView.frame.insetBy(dx: 0.0, dy: -10.0).contains(location) {
++            return false
++        }
++        if self.showsLyrics && self.lyricsView.frame.contains(location) {
++            return false
++        }
++        let velocity = pan.velocity(in: self)
++        return velocity.y > abs(velocity.x)
++    }
++
++    @objc private func dismissPan(_ recognizer: UIPanGestureRecognizer) {
++        let translation = max(0.0, recognizer.translation(in: self).y)
++        switch recognizer.state {
++        case .changed:
++            self.dragOffset = translation
++            self.transform = CGAffineTransform(translationX: 0.0, y: translation)
++        case .ended, .cancelled:
++            let velocity = recognizer.velocity(in: self).y
++            if translation > 120.0 || velocity > 900.0 {
++                self.requestDismiss?()
++            } else {
++                self.dragOffset = 0.0
++                UIView.animate(withDuration: 0.35, delay: 0.0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.0, options: [.beginFromCurrentState], animations: {
++                    self.transform = .identity
++                })
++            }
++        default:
++            break
++        }
++    }
++}
++
++/// CADisplayLink retains its target; this breaks the cycle with the player view.
++private final class AyuWeakTarget: NSObject {
++    private weak var view: AyuMusicPlayerView?
++
++    init(_ view: AyuMusicPlayerView) {
++        self.view = view
++    }
++
++    @objc func tick() {
++        self.view?.tick()
++    }
++}
++
++/// Thin Apple Music style progress bar that thickens while dragged.
++private final class AyuMusicScrubber: UIView {
++    var onScrub: ((CGFloat) -> Void)?
++    var onSeek: ((CGFloat) -> Void)?
++
++    private let track = UIView()
++    private let fill = UIView()
++    private var dragging = false
++    private var dragProgress: CGFloat = 0.0
++
++    var progress: CGFloat = 0.0 {
++        didSet {
++            if !self.dragging {
++                self.layoutBar()
++            }
++        }
++    }
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        self.track.backgroundColor = UIColor(white: 1.0, alpha: 0.22)
++        self.fill.backgroundColor = UIColor(white: 1.0, alpha: 0.8)
++        self.track.clipsToBounds = true
++        self.track.addSubview(self.fill)
++        self.addSubview(self.track)
++        let pan = UIPanGestureRecognizer(target: self, action: #selector(self.panned(_:)))
++        self.addGestureRecognizer(pan)
++        let tap = UITapGestureRecognizer(target: self, action: #selector(self.tapped(_:)))
++        self.addGestureRecognizer(tap)
++        self.isAccessibilityElement = true
++        self.accessibilityTraits = .adjustable
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        self.layoutBar()
++    }
++
++    private func layoutBar() {
++        let height: CGFloat = self.dragging ? 11.0 : 7.0
++        self.track.frame = CGRect(x: 0.0, y: floor((self.bounds.height - height) / 2.0), width: self.bounds.width, height: height)
++        self.track.layer.cornerRadius = height / 2.0
++        let value = max(0.0, min(1.0, self.dragging ? self.dragProgress : self.progress))
++        self.fill.frame = CGRect(x: 0.0, y: 0.0, width: self.bounds.width * value, height: height)
++        self.fill.backgroundColor = UIColor(white: 1.0, alpha: self.dragging ? 1.0 : 0.8)
++    }
++
++    private func fraction(at point: CGPoint) -> CGFloat {
++        guard self.bounds.width > 0.0 else {
++            return 0.0
++        }
++        return max(0.0, min(1.0, point.x / self.bounds.width))
++    }
++
++    @objc private func panned(_ recognizer: UIPanGestureRecognizer) {
++        switch recognizer.state {
++        case .began:
++            self.dragging = true
++            self.dragProgress = self.progress
++            UIView.animate(withDuration: 0.2, animations: { self.layoutBar() })
++        case .changed:
++            let delta = recognizer.translation(in: self).x / max(1.0, self.bounds.width)
++            recognizer.setTranslation(CGPoint(), in: self)
++            self.dragProgress = max(0.0, min(1.0, self.dragProgress + delta))
++            self.layoutBar()
++            self.onScrub?(self.dragProgress)
++        case .ended, .cancelled:
++            self.progress = self.dragProgress
++            self.onSeek?(self.dragProgress)
++            self.dragging = false
++            UIView.animate(withDuration: 0.25, animations: { self.layoutBar() })
++        default:
++            break
++        }
++    }
++
++    @objc private func tapped(_ recognizer: UITapGestureRecognizer) {
++        let value = self.fraction(at: recognizer.location(in: self))
++        self.progress = value
++        self.onSeek?(value)
++    }
++
++    override func accessibilityIncrement() {
++        let value = min(1.0, self.progress + 0.05)
++        self.progress = value
++        self.onSeek?(value)
++    }
++
++    override func accessibilityDecrement() {
++        let value = max(0.0, self.progress - 0.05)
++        self.progress = value
++        self.onSeek?(value)
++    }
++}
++
++/// Lyrics list: the current line is bright and kept near the top third, earlier and later
++/// lines are dimmed, and tapping a synced line seeks to it.
++private final class AyuLyricsView: UIView {
++    var seek: ((Double) -> Void)?
++
++    private let scrollView = UIScrollView()
++    private let statusLabel = UILabel()
++    private var lineLabels: [UILabel] = []
++    private var lines: [AyuLyricsLine] = []
++    private var currentIndex: Int?
++    private var userScrollUntil: Double = 0.0
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        self.scrollView.showsVerticalScrollIndicator = false
++        self.scrollView.alwaysBounceVertical = true
++        self.scrollView.delegate = nil
++        self.addSubview(self.scrollView)
++        self.statusLabel.font = .systemFont(ofSize: 17.0, weight: .semibold)
++        self.statusLabel.textColor = UIColor(white: 1.0, alpha: 0.6)
++        self.statusLabel.textAlignment = .center
++        self.statusLabel.numberOfLines = 0
++        self.addSubview(self.statusLabel)
++        self.scrollView.panGestureRecognizer.addTarget(self, action: #selector(self.userScrolled))
++        // Fade lines out at the top and bottom edges.
++        let mask = CAGradientLayer()
++        mask.colors = [UIColor.clear.cgColor, UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
++        mask.locations = [0.0, 0.08, 0.85, 1.0]
++        self.layer.mask = mask
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    @objc private func userScrolled() {
++        self.userScrollUntil = CACurrentMediaTime() + 3.0
++    }
++
++    func set(lyrics: AyuLyrics?, loading: Bool, russian: Bool) {
++        for label in self.lineLabels {
++            label.removeFromSuperview()
++        }
++        self.lineLabels = []
++        self.lines = []
++        self.currentIndex = nil
++        self.scrollView.contentOffset = CGPoint()
++
++        var status: String?
++        var texts: [String] = []
++        if loading {
++            status = russian ? "Ищем слова…" : "Looking for lyrics…"
++        } else if let lyrics {
++            switch lyrics {
++            case let .synced(lines):
++                self.lines = lines
++                texts = lines.map { $0.text.isEmpty ? "♪" : $0.text }
++            case let .plain(text):
++                texts = text.components(separatedBy: .newlines)
++            case .instrumental:
++                status = russian ? "Инструментальная композиция" : "Instrumental"
++            case .notFound:
++                status = russian ? "Слова для этого трека не найдены" : "No lyrics found for this track"
++            }
++        }
++        self.statusLabel.text = status
++        self.statusLabel.isHidden = status == nil
++        let synced = !self.lines.isEmpty
++        for (index, text) in texts.enumerated() {
++            let label = UILabel()
++            label.text = text
++            label.numberOfLines = 0
++            label.font = .systemFont(ofSize: synced ? 30.0 : 24.0, weight: .bold)
++            label.textColor = UIColor(white: 1.0, alpha: synced ? 0.32 : 0.85)
++            label.tag = index
++            if synced {
++                label.isUserInteractionEnabled = true
++                label.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.lineTapped(_:))))
++            }
++            self.scrollView.addSubview(label)
++            self.lineLabels.append(label)
++        }
++        self.setNeedsLayout()
++    }
++
++    @objc private func lineTapped(_ recognizer: UITapGestureRecognizer) {
++        guard let index = recognizer.view?.tag, index >= 0, index < self.lines.count else {
++            return
++        }
++        self.userScrollUntil = 0.0
++        self.seek?(self.lines[index].time)
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        self.layer.mask?.frame = self.bounds
++        self.scrollView.frame = self.bounds
++        self.statusLabel.frame = self.bounds.insetBy(dx: 32.0, dy: 0.0)
++        let side: CGFloat = 28.0
++        let width = self.bounds.width - side * 2.0
++        var y: CGFloat = self.bounds.height * 0.2
++        for label in self.lineLabels {
++            let size = label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
++            label.bounds = CGRect(origin: CGPoint(), size: CGSize(width: width, height: ceil(size.height)))
++            label.center = CGPoint(x: side + width / 2.0, y: y + ceil(size.height) / 2.0)
++            y += ceil(size.height) + (self.lines.isEmpty ? 6.0 : 22.0)
++        }
++        self.scrollView.contentSize = CGSize(width: self.bounds.width, height: y + self.bounds.height * 0.5)
++    }
++
++    func update(timestamp: Double) {
++        guard !self.lines.isEmpty else {
++            return
++        }
++        var index: Int?
++        for (i, line) in self.lines.enumerated() {
++            if line.time <= timestamp + 0.15 {
++                index = i
++            } else {
++                break
++            }
++        }
++        guard index != self.currentIndex else {
++            return
++        }
++        let previous = self.currentIndex
++        self.currentIndex = index
++        UIView.animate(withDuration: 0.35, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
++            if let previous, previous < self.lineLabels.count {
++                self.lineLabels[previous].textColor = UIColor(white: 1.0, alpha: 0.32)
++                self.lineLabels[previous].transform = .identity
++            }
++            if let index, index < self.lineLabels.count {
++                self.lineLabels[index].textColor = .white
++                self.lineLabels[index].transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
++            }
++        })
++        if let index, index < self.lineLabels.count, CACurrentMediaTime() > self.userScrollUntil {
++            let label = self.lineLabels[index]
++            let targetY = max(0.0, min(label.frame.minY - self.bounds.height * 0.25, self.scrollView.contentSize.height - self.bounds.height))
++            UIView.animate(withDuration: 0.6, delay: 0.0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
++                self.scrollView.contentOffset = CGPoint(x: 0.0, y: targetY)
++            })
++        }
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
 index 17f21b6..0ab035e 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
@@ -1969,3 +3049,18 @@ index 09a9b43..99a31b6 100644
          canPin = false
      }
      var loadStickerSaveStatusSignal: Signal<Bool?, NoError> = .single(nil)
+diff --git a/submodules/TelegramUI/Sources/SharedAccountContext.swift b/submodules/TelegramUI/Sources/SharedAccountContext.swift
+index b433d647..7b2459b6 100644
+--- a/submodules/TelegramUI/Sources/SharedAccountContext.swift
++++ b/submodules/TelegramUI/Sources/SharedAccountContext.swift
+@@ -1860,6 +1860,10 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+     }
+     
+     public func makeOverlayAudioPlayerController(context: AccountContext, chatLocation: ChatLocation, type: MediaManagerPlayerType, initialMessageId: EngineMessage.Id, initialOrder: MusicPlaybackSettingsOrder, playlistLocation: SharedMediaPlaylistLocation?, parentNavigationController: NavigationController?) -> ViewController & OverlayAudioPlayerController {
++        if case .music = type {
++            // AyuGram: Apple Music style player; voice and video messages keep Telegram's.
++            return AyuMusicPlayerController(context: context, chatLocation: chatLocation, type: type, initialMessageId: initialMessageId, initialOrder: initialOrder, playlistLocation: playlistLocation, parentNavigationController: parentNavigationController)
++        }
+         return OverlayAudioPlayerControllerImpl(context: context, chatLocation: chatLocation, type: type, initialMessageId: initialMessageId, initialOrder: initialOrder, playlistLocation: playlistLocation, parentNavigationController: parentNavigationController)
+     }
+     

@@ -70117,10 +70117,10 @@ index 00000000..8105fdc9
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
 new file mode 100644
-index 00000000..331453f9
+index 00000000..2c7a77ab
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,132 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -70169,6 +70169,33 @@ index 00000000..331453f9
 +        self.addChild(self.hosted)
 +        self.displayNode.view.addSubview(self.hosted.view)
 +        self.hosted.didMove(toParent: self)
++    }
++
++    // Telegram's navigation calls these directly, which UIKit does not pass on to child
++    // controllers: without forwarding, the plugin list never saw viewDidAppear and never read
++    // the file it was opened with.
++    override var shouldAutomaticallyForwardAppearanceMethods: Bool {
++        return false
++    }
++
++    override func viewWillAppear(_ animated: Bool) {
++        super.viewWillAppear(animated)
++        self.hosted.beginAppearanceTransition(true, animated: animated)
++    }
++
++    override func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++        self.hosted.endAppearanceTransition()
++    }
++
++    override func viewWillDisappear(_ animated: Bool) {
++        super.viewWillDisappear(animated)
++        self.hosted.beginAppearanceTransition(false, animated: animated)
++    }
++
++    override func viewDidDisappear(_ animated: Bool) {
++        super.viewDidDisappear(animated)
++        self.hosted.endAppearanceTransition()
 +    }
 +
 +    override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
@@ -79972,10 +79999,10 @@ index 00000000..73b546fa
 +}
 diff --git a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
 new file mode 100644
-index 00000000..d20587a3
+index 00000000..59a4322a
 --- /dev/null
 +++ b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,139 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -80064,6 +80091,20 @@ index 00000000..d20587a3
 +
 +    /// The Plugins icon (the Solar puzzle on blue, as on the exteraGram Plugins row) at any size,
 +    /// for plugin lists and headers. It keeps the 30 pt tile's proportions: 8 pt corners, 20 pt glyph.
++    /// The plugin glyph alone, white, for places that draw their own background (the file
++    /// bubble of a .plugin or .iosplug).
++    public static func pluginGlyph(size: CGFloat) -> UIImage? {
++        guard let image = UIImage(bundleImageName: "AyuGram/Plugins")?.withTintColor(.white, renderingMode: .alwaysOriginal) else {
++            return nil
++        }
++        return generateImage(CGSize(width: size, height: size), rotatedContext: { size, context in
++            context.clear(CGRect(origin: CGPoint(), size: size))
++            UIGraphicsPushContext(context)
++            image.draw(in: CGRect(origin: CGPoint(), size: size))
++            UIGraphicsPopContext()
++        })
++    }
++
 +    public static func plugin(size: CGFloat) -> UIImage? {
 +        let side = max(20.0, size)
 +        return generateImage(CGSize(width: side, height: side), rotatedContext: { size, context in
@@ -80460,7 +80501,7 @@ index 0d9792e7..a0727e86 100644
              
              var reactionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode))?
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
-index 21291a56..b4f6a1ab 100644
+index 21291a56..12b0e5be 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode/Sources/ChatMessageInteractiveFileNode.swift
 @@ -903,7 +903,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
@@ -80478,7 +80519,7 @@ index 21291a56..b4f6a1ab 100644
                      
 -                    fileIconImage = arguments.incoming ? principalGraphics.radialIndicatorFileIconIncoming : principalGraphics.radialIndicatorFileIconOutgoing
 +                    if let fileName = arguments.file.fileName?.lowercased(), fileName.hasSuffix(".plugin") || fileName.hasSuffix(".iosplug") {
-+                        fileIconImage = UIImage(systemName: "puzzlepiece.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22.0, weight: .semibold))?.withTintColor(.white, renderingMode: .alwaysOriginal)
++                        fileIconImage = AyuSettingsIcons.pluginGlyph(size: 26.0)
 +                    } else {
 +                        fileIconImage = arguments.incoming ? principalGraphics.radialIndicatorFileIconIncoming : principalGraphics.radialIndicatorFileIconOutgoing
 +                    }

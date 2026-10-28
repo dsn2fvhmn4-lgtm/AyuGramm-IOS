@@ -127,7 +127,8 @@ def main():
                     result = subprocess.run([*flags, '-emit-module', '-module-name', 'Display',
                                              '-emit-module-path', str(Path(directory) / 'Display.swiftmodule'),
                                              str(source / 'submodules/Display/Source/AyuPluginAvatar.swift'),
-                                             str(source / 'submodules/Display/Source/AyuArcadeGameController.swift')], capture_output=True, text=True)
+                                             str(source / 'submodules/Display/Source/AyuArcadeGameController.swift'),
+                                             str(source / 'submodules/Display/Source/AyuNativePlugins.swift')], capture_output=True, text=True)
                     if result.returncode:
                         errors.append(f'Actual plugin avatar SDK harness:\n{result.stdout}{result.stderr}')
                     else:

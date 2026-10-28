@@ -87,10 +87,10 @@ index 786127b..4716128 100644
              .header(4, 30, AyuStrings.links.text(ru)),
              link(4, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-index f41ddcf..c8567d6 100644
+index d0e6ae2a..58937fbd 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -578,6 +578,9 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+@@ -584,9 +584,13 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
                  case 23: $0.interface.disableGreetingSticker = value
                  case 24: $0.interface.disableOpenLinkWarning = value
                  case 25: $0.interface.unlimitedRecentStickers = value
@@ -100,7 +100,11 @@ index f41ddcf..c8567d6 100644
                  case 31: $0.interface.spoofWebAppAsAndroid = value
                  case 32: $0.interface.streamerMode = value
                  case 33: $0.interface.backgroundNotifications = value
-@@ -605,6 +608,9 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
++                case 41: $0.interface.voiceMemosPlayer = value
+                 default: break
+                 }
+             }
+@@ -611,9 +615,13 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
          23: icon("hand.wave.fill", 0xFFCC00),
          24: icon("link", 0x007AFF),
          25: icon("clock.arrow.circlepath", 0x34C759),
@@ -109,8 +113,13 @@ index f41ddcf..c8567d6 100644
 +        28: icon("paperplane.fill", 0x007AFF),
          31: icon("square.grid.2x2.fill", 0x32ADE6),
          32: icon("video.slash.fill", 0xFF3B30),
-         33: icon("bell.badge.fill", 0xFF9500)
-@@ -635,7 +641,10 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+-        33: icon("bell.badge.fill", 0xFF9500)
++        33: icon("bell.badge.fill", 0xFF9500),
++        41: icon("waveform", 0xFF3B30)
+     ]
+     let signal = combineLatest(context.sharedContext.presentationData, store.signal)
+     |> deliverOnMainQueue
+@@ -641,12 +649,18 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
              .toggle(2, 23, icons[23] ?? nil, AyuStrings.noGreetingSticker.text(ru), nil, value.disableGreetingSticker),
              .toggle(2, 24, icons[24] ?? nil, AyuStrings.openLinksWithoutAsking.text(ru), nil, value.disableOpenLinkWarning),
              .toggle(2, 25, icons[25] ?? nil, AyuStrings.moreRecentStickers.text(ru), nil, value.unlimitedRecentStickers),
@@ -122,39 +131,52 @@ index f41ddcf..c8567d6 100644
              .header(3, 30, AyuStrings.other2.text(ru)),
              .toggle(3, 31, icons[31] ?? nil, AyuStrings.miniAppsAsAndroid.text(ru), nil, value.spoofWebAppAsAndroid),
              .toggle(3, 32, icons[32] ?? nil, AyuStrings.streamerMode.text(ru), nil, value.streamerMode),
+             .toggle(3, 33, icons[33] ?? nil, AyuStrings.backgroundNotifications.text(ru), nil, value.backgroundNotifications),
+-            .info(3, 34, AyuStrings.streamerModeKeepsAyugramOutScreenshots.text(ru))
++            .info(3, 34, AyuStrings.streamerModeKeepsAyugramOutScreenshots.text(ru)),
++            .header(4, 40, ru ? "Голосовые сообщения" : "Voice Messages"),
++            .toggle(4, 41, icons[41] ?? nil, ru ? "Плеер в стиле «Диктофона»" : "Voice Memos Style Player", nil, value.voiceMemosPlayer),
++            .info(4, 42, ru ? "Голосовые, открытые из панели воспроизведения, показываются с крупной волной, ±15 секунд и скоростью, как в «Диктофоне»." : "Voice messages opened from the playback bar show a large waveform, ±15 s skips and speed, like Voice Memos.")
+         ]
+         let data = ItemListPresentationData(presentationData)
+         let state = ItemListControllerState(presentationData: data, title: .text(AyuStrings.interface.text(ru)), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-index 86b4e0d..326c986 100644
+index 86b4e0dc..79cb2d0b 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -42,6 +42,9 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+@@ -42,6 +42,11 @@ public struct AyuInterfaceSettings: Codable, Equatable {
      public var addCommaAfterMention = false
      /// Keeps video messages level against the phone's roll (gyroscope counter-rotation).
      public var horizonLockVideoMessages = false
 +    public var autoQuoteReplies = true
 +    public var replyToDeletedMessages = true
 +    public var showSupporterBadges = true
++    /// Opens voice messages in the Voice Memos style player instead of Telegram's.
++    public var voiceMemosPlayer = false
      public init() {}
  
      private enum CodingKeys: String, CodingKey {
-@@ -55,6 +58,7 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+@@ -55,6 +60,8 @@ public struct AyuInterfaceSettings: Codable, Equatable {
          case disableNumberRounding, hidePhoneNumber, disableUnarchiveSwipe
          case hideStickerTime, disableJumpToNextChannel, hideKeyboardOnScroll, addCommaAfterMention
          case horizonLockVideoMessages
 +        case autoQuoteReplies, replyToDeletedMessages, showSupporterBadges
++        case voiceMemosPlayer
      }
      public init(from decoder: Decoder) throws {
          let values = try decoder.container(keyedBy: CodingKeys.self)
-@@ -94,6 +98,9 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+@@ -94,6 +101,10 @@ public struct AyuInterfaceSettings: Codable, Equatable {
          self.hideKeyboardOnScroll = try values.decodeIfPresent(Bool.self, forKey: .hideKeyboardOnScroll) ?? false
          self.addCommaAfterMention = try values.decodeIfPresent(Bool.self, forKey: .addCommaAfterMention) ?? false
          self.horizonLockVideoMessages = try values.decodeIfPresent(Bool.self, forKey: .horizonLockVideoMessages) ?? false
 +        self.autoQuoteReplies = try values.decodeIfPresent(Bool.self, forKey: .autoQuoteReplies) ?? true
 +        self.replyToDeletedMessages = try values.decodeIfPresent(Bool.self, forKey: .replyToDeletedMessages) ?? true
 +        self.showSupporterBadges = try values.decodeIfPresent(Bool.self, forKey: .showSupporterBadges) ?? true
++        self.voiceMemosPlayer = try values.decodeIfPresent(Bool.self, forKey: .voiceMemosPlayer) ?? false
      }
  }
  
-@@ -109,3 +116,89 @@ public enum AyuPeerIdFormat {
+@@ -109,3 +120,89 @@ public enum AyuPeerIdFormat {
          }
      }
  }
@@ -290,6 +312,114 @@ index bbac667..b6a6358 100644
                      }
                      if let replyToStoryId = replyToStoryId {
                          attributes.append(ReplyStoryAttribute(storyId: replyToStoryId))
+diff --git a/submodules/TelegramUI/Components/Calls/CallScreen/Sources/AyuCallBackdrop.swift b/submodules/TelegramUI/Components/Calls/CallScreen/Sources/AyuCallBackdrop.swift
+new file mode 100644
+index 00000000..305d8b64
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Calls/CallScreen/Sources/AyuCallBackdrop.swift
+@@ -0,0 +1,43 @@
++import Foundation
++import UIKit
++import CoreImage
++import Display
++
++/// FaceTime-style call backdrop: the peer's avatar blurred across the whole screen. `glass`
++/// is the lighter copy shown through the frosted call buttons.
++func ayuCallBackdropImage(_ image: UIImage, glass: Bool) -> UIImage? {
++    // Avatars arrive round; zoom into the middle so the transparent corners never show.
++    let side: CGFloat = 96.0
++    guard let square = generateImage(CGSize(width: side, height: side), opaque: true, scale: 1.0, rotatedContext: { size, context in
++        context.setFillColor(UIColor(white: 0.12, alpha: 1.0).cgColor)
++        context.fill(CGRect(origin: CGPoint(), size: size))
++        let zoom: CGFloat = 1.5
++        let drawSize = CGSize(width: size.width * zoom, height: size.height * zoom)
++        UIGraphicsPushContext(context)
++        image.draw(in: CGRect(x: (size.width - drawSize.width) / 2.0, y: (size.height - drawSize.height) / 2.0, width: drawSize.width, height: drawSize.height))
++        UIGraphicsPopContext()
++    }), let squareCgImage = square.cgImage else {
++        return nil
++    }
++
++    let extent = CGRect(origin: CGPoint(), size: CGSize(width: side, height: side))
++    guard let blur = CIFilter(name: "CIGaussianBlur") else {
++        return nil
++    }
++    blur.setValue(CIImage(cgImage: squareCgImage).clampedToExtent(), forKey: kCIInputImageKey)
++    blur.setValue(14.0, forKey: kCIInputRadiusKey)
++    guard let blurred = blur.outputImage?.cropped(to: extent), let blurredCgImage = CIContext().createCGImage(blurred, from: extent) else {
++        return nil
++    }
++    let blurredImage = UIImage(cgImage: blurredCgImage)
++
++    return generateImage(CGSize(width: side, height: side), opaque: true, scale: 1.0, rotatedContext: { size, context in
++        let bounds = CGRect(origin: CGPoint(), size: size)
++        UIGraphicsPushContext(context)
++        blurredImage.draw(in: bounds)
++        UIGraphicsPopContext()
++        // Dim the backdrop so white text stays readable; lighten the glass copy.
++        context.setFillColor(glass ? UIColor(white: 1.0, alpha: 0.22).cgColor : UIColor(white: 0.0, alpha: 0.4).cgColor)
++        context.fill(bounds)
++    })
++}
+diff --git a/submodules/TelegramUI/Components/Calls/CallScreen/Sources/PrivateCallScreen.swift b/submodules/TelegramUI/Components/Calls/CallScreen/Sources/PrivateCallScreen.swift
+index 1f0d0ea4..9a6e49f6 100644
+--- a/submodules/TelegramUI/Components/Calls/CallScreen/Sources/PrivateCallScreen.swift
++++ b/submodules/TelegramUI/Components/Calls/CallScreen/Sources/PrivateCallScreen.swift
+@@ -189,6 +189,10 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
+     private var params: Params?
+     
+     private let backgroundLayer: CallBackgroundLayer
++    /// AyuGram: blurred avatar backdrop (FaceTime style) and its lighter copy for the glass buttons.
++    private let ayuBackdropLayer: SimpleLayer
++    private let ayuGlassBackdropLayer: SimpleLayer
++    private weak var ayuBackdropSource: UIImage?
+     private let overlayContentsView: UIView
+     private let buttonGroupView: ButtonGroupView
+     private let blobTransformLayer: SimpleLayer
+@@ -266,6 +270,13 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
+         self.overlayContentsView.isUserInteractionEnabled = false
+         
+         self.backgroundLayer = CallBackgroundLayer()
++        self.ayuBackdropLayer = SimpleLayer()
++        self.ayuGlassBackdropLayer = SimpleLayer()
++        for layer in [self.ayuBackdropLayer, self.ayuGlassBackdropLayer] {
++            layer.contentsGravity = .resizeAspectFill
++            layer.masksToBounds = true
++            layer.opacity = 0.0
++        }
+         
+         self.buttonGroupView = ButtonGroupView()
+         
+@@ -292,7 +303,9 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
+         self.clipsToBounds = true
+         
+         self.layer.addSublayer(self.backgroundLayer)
++        self.layer.addSublayer(self.ayuBackdropLayer)
+         self.overlayContentsView.layer.addSublayer(self.backgroundLayer.blurredLayer)
++        self.overlayContentsView.layer.addSublayer(self.ayuGlassBackdropLayer)
+         
+         self.overlayContentsView.addSubview(self.overlayContentsVideoContainerBackgroundView)
+         
+@@ -764,6 +777,19 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
+         transition.setFrame(layer: self.backgroundLayer, frame: visualBackgroundFrame)
+         transition.setFrame(layer: self.backgroundLayer.blurredLayer, frame: visualBackgroundFrame)
+         transition.setFrame(layer: self.blobBackgroundLayer, frame: visualBackgroundFrame)
++        transition.setFrame(layer: self.ayuBackdropLayer, frame: visualBackgroundFrame)
++        transition.setFrame(layer: self.ayuGlassBackdropLayer, frame: visualBackgroundFrame)
++        if self.ayuBackdropSource !== params.state.avatarImage {
++            self.ayuBackdropSource = params.state.avatarImage
++            self.ayuBackdropLayer.contents = params.state.avatarImage.flatMap { ayuCallBackdropImage($0, glass: false) }?.cgImage
++            self.ayuGlassBackdropLayer.contents = params.state.avatarImage.flatMap { ayuCallBackdropImage($0, glass: true) }?.cgImage
++        }
++        // With an avatar backdrop the call looks like FaceTime: no gradient blobs behind the avatar.
++        let ayuHasBackdrop = self.ayuBackdropLayer.contents != nil
++        let ayuBackdropAlpha: CGFloat = (ayuHasBackdrop && !self.isAnimatedOutToGroupCall) ? 1.0 : 0.0
++        genericAlphaTransition.setAlpha(layer: self.ayuBackdropLayer, alpha: ayuBackdropAlpha)
++        genericAlphaTransition.setAlpha(layer: self.ayuGlassBackdropLayer, alpha: ayuBackdropAlpha)
++        genericAlphaTransition.setAlpha(layer: self.blobBackgroundLayer, alpha: ayuHasBackdrop ? 0.0 : 1.0)
+         
+         let backgroundStateIndex: Int
+         switch params.state.lifecycleState {
 diff --git a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift
 index eadd3a1..3b9c391 100644
 --- a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift
@@ -369,6 +499,23 @@ index ecd7a3c..505ace7 100644
          case let .emojiStatus(emojiStatus):
              titleVerifiedContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: self.theme.list.mediaPlaceholderColor, themeColor: self.theme.list.itemAccentColor, loopMode: .count(2))
          }
+diff --git a/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaPlaybackHeaderPanelComponent.swift b/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaPlaybackHeaderPanelComponent.swift
+index 8acf74a3..39837836 100644
+--- a/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaPlaybackHeaderPanelComponent.swift
++++ b/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaPlaybackHeaderPanelComponent.swift
+@@ -369,6 +369,12 @@ public final class MediaPlaybackHeaderPanelComponent: Component {
+                                 default:
+                                     break
+                                 }
++                            } else if case .voice = component.data.kind, let displayData = component.data.item.displayData, case .voice = displayData, component.context.account.network.ayuGhostMode.current.interface.voiceMemosPlayer {
++                                // AyuGram: open voice messages in the Voice Memos style player when enabled.
++                                let playerController = component.context.sharedContext.makeOverlayAudioPlayerController(context: component.context, chatLocation: .peer(id: id.messageId.peerId), type: .voice, initialMessageId: id.messageId, initialOrder: component.data.playbackOrder, playlistLocation: nil, parentNavigationController: navigationController)
++                                self.window?.endEditing(true)
++                                playerController.navigationPresentation = .flatModal
++                                controller.push(playerController)
+                             } else {
+                                 component.context.sharedContext.navigateToChat(accountId: component.context.account.id, peerId: id.messageId.peerId, messageId: id.messageId)
+                             }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift
 index 42205b2..d4c1680 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift
@@ -3113,6 +3260,570 @@ index 00000000..3c373203
 +        }
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/AyuVoicePlayerController.swift b/submodules/TelegramUI/Sources/AyuVoicePlayerController.swift
+new file mode 100644
+index 00000000..86c79446
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuVoicePlayerController.swift
+@@ -0,0 +1,558 @@
++import Foundation
++import UIKit
++import AsyncDisplayKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import TelegramUIPreferences
++import UniversalMediaPlayer
++import AccountContext
++import AudioWaveform
++import LocalizedPeerData
++
++/// Voice message player in the style of Apple's Voice Memos: the waveform scrolls under a
++/// fixed red playhead and can be dragged to scrub, with a large timer, ±15 s skips and a
++/// playback-speed button. Off by default; enabled under AyuGram → Interface.
++final class AyuVoicePlayerController: ViewController, OverlayAudioPlayerController {
++    private let context: AccountContext
++    private let type: MediaManagerPlayerType
++    private var playerView: AyuVoicePlayerView?
++    private var animatedIn = false
++    private var accountInUseDisposable: Disposable?
++
++    init(context: AccountContext, type: MediaManagerPlayerType) {
++        self.context = context
++        self.type = type
++        super.init(navigationBarPresentationData: nil)
++        self.statusBar.statusBarStyle = .White
++        self.accountInUseDisposable = context.sharedContext.setAccountUserInterfaceInUse(context.account.id)
++    }
++
++    required init(coder aDecoder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        self.accountInUseDisposable?.dispose()
++    }
++
++    override func loadDisplayNode() {
++        self.displayNode = ASDisplayNode()
++        self.displayNode.backgroundColor = .clear
++        self.displayNodeDidLoad()
++
++        let playerView = AyuVoicePlayerView(context: self.context, type: self.type)
++        playerView.requestDismiss = { [weak self] in
++            self?.dismiss()
++        }
++        self.playerView = playerView
++        self.displayNode.view.addSubview(playerView)
++    }
++
++    override func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++        if !self.animatedIn {
++            self.animatedIn = true
++            self.playerView?.animateIn()
++        }
++    }
++
++    override func dismiss(completion: (() -> Void)? = nil) {
++        guard let playerView = self.playerView else {
++            self.finishDismiss(completion: completion)
++            return
++        }
++        playerView.animateOut(completion: { [weak self] in
++            self?.finishDismiss(completion: completion)
++        })
++    }
++
++    private func finishDismiss(completion: (() -> Void)?) {
++        if let _ = self.navigationController {
++            self.dismiss(animated: false, completion: nil)
++        } else {
++            self.presentingViewController?.dismiss(animated: false, completion: nil)
++        }
++        completion?()
++    }
++
++    override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
++        super.containerLayoutUpdated(layout, transition: transition)
++        guard let playerView = self.playerView else {
++            return
++        }
++        playerView.frame = CGRect(origin: CGPoint(), size: layout.size)
++        playerView.safeInsets = UIEdgeInsets(top: max(layout.statusBarHeight ?? 0.0, layout.safeInsets.top), left: layout.safeInsets.left, bottom: max(layout.intrinsicInsets.bottom, layout.safeInsets.bottom), right: layout.safeInsets.right)
++        playerView.setNeedsLayout()
++    }
++}
++
++private func ayuVoiceTime(_ seconds: Double, fraction: Bool) -> String {
++    let value = max(0.0, seconds.isFinite ? seconds : 0.0)
++    let total = Int(value)
++    let minutes = total / 60
++    let secs = total % 60
++    if fraction {
++        let hundredths = Int((value - Double(total)) * 100.0)
++        return String(format: "%02d:%02d,%02d", minutes, secs, hundredths)
++    }
++    return String(format: "%d:%02d", minutes, secs)
++}
++
++private func ayuVoiceSymbol(_ name: String, size: CGFloat, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
++    return UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: weight))
++}
++
++final class AyuVoicePlayerView: UIView {
++    private let context: AccountContext
++    private let type: MediaManagerPlayerType
++    private let russian: Bool
++
++    var requestDismiss: (() -> Void)?
++    var safeInsets = UIEdgeInsets()
++
++    private let grabber = UIView()
++    private let titleLabel = UILabel()
++    private let subtitleLabel = UILabel()
++    private let waveformView = AyuVoiceWaveformView()
++    private let timeLabel = UILabel()
++    private let durationLabel = UILabel()
++    private let backButton = UIButton(type: .system)
++    private let playPauseButton = UIButton(type: .system)
++    private let forwardButton = UIButton(type: .system)
++    private let rateButton = UIButton(type: .system)
++
++    private var stateDisposable: Disposable?
++    private var displayLink: CADisplayLink?
++    private var status: MediaPlayerStatus?
++    private var isPaused = true
++    private var hadState = false
++    private var itemKey: AnyHashable?
++    private var rate: AudioPlaybackRate = .x1
++    private var scrubTimestamp: Double?
++    private var dragOffset: CGFloat = 0.0
++
++    init(context: AccountContext, type: MediaManagerPlayerType) {
++        self.context = context
++        self.type = type
++        self.russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        super.init(frame: CGRect())
++
++        self.backgroundColor = UIColor(rgb: 0x1C1C1E)
++        self.clipsToBounds = true
++
++        self.grabber.backgroundColor = UIColor(white: 1.0, alpha: 0.3)
++        self.grabber.layer.cornerRadius = 2.5
++        self.addSubview(self.grabber)
++
++        self.titleLabel.font = .systemFont(ofSize: 24.0, weight: .bold)
++        self.titleLabel.textColor = .white
++        self.titleLabel.textAlignment = .center
++        self.subtitleLabel.font = .systemFont(ofSize: 15.0)
++        self.subtitleLabel.textColor = UIColor(white: 1.0, alpha: 0.5)
++        self.subtitleLabel.textAlignment = .center
++        self.subtitleLabel.text = self.russian ? "Голосовое сообщение" : "Voice Message"
++        self.addSubview(self.titleLabel)
++        self.addSubview(self.subtitleLabel)
++
++        self.addSubview(self.waveformView)
++        self.waveformView.onScrub = { [weak self] delta in
++            self?.scrub(by: delta)
++        }
++        self.waveformView.onScrubEnded = { [weak self] in
++            self?.finishScrub()
++        }
++
++        self.timeLabel.font = .monospacedDigitSystemFont(ofSize: 44.0, weight: .light)
++        self.timeLabel.textColor = .white
++        self.timeLabel.textAlignment = .center
++        self.durationLabel.font = .monospacedDigitSystemFont(ofSize: 15.0, weight: .regular)
++        self.durationLabel.textColor = UIColor(white: 1.0, alpha: 0.5)
++        self.durationLabel.textAlignment = .center
++        self.addSubview(self.timeLabel)
++        self.addSubview(self.durationLabel)
++
++        self.backButton.setImage(ayuVoiceSymbol("gobackward.15", size: 28.0), for: .normal)
++        self.forwardButton.setImage(ayuVoiceSymbol("goforward.15", size: 28.0), for: .normal)
++        self.playPauseButton.setImage(ayuVoiceSymbol("play.fill", size: 40.0), for: .normal)
++        self.backButton.accessibilityLabel = self.russian ? "Назад на 15 секунд" : "Back 15 seconds"
++        self.forwardButton.accessibilityLabel = self.russian ? "Вперёд на 15 секунд" : "Forward 15 seconds"
++        for button in [self.backButton, self.playPauseButton, self.forwardButton, self.rateButton] {
++            button.tintColor = .white
++            self.addSubview(button)
++        }
++        self.rateButton.titleLabel?.font = .systemFont(ofSize: 15.0, weight: .semibold)
++        self.rateButton.layer.cornerRadius = 15.0
++        self.rateButton.backgroundColor = UIColor(white: 1.0, alpha: 0.12)
++        self.rateButton.accessibilityLabel = self.russian ? "Скорость" : "Speed"
++        self.updateRateButton()
++
++        self.backButton.addTarget(self, action: #selector(self.backPressed), for: .touchUpInside)
++        self.forwardButton.addTarget(self, action: #selector(self.forwardPressed), for: .touchUpInside)
++        self.playPauseButton.addTarget(self, action: #selector(self.playPausePressed), for: .touchUpInside)
++        self.rateButton.addTarget(self, action: #selector(self.ratePressed), for: .touchUpInside)
++
++        let pan = UIPanGestureRecognizer(target: self, action: #selector(self.dismissPan(_:)))
++        self.addGestureRecognizer(pan)
++
++        self.stateDisposable = (context.sharedContext.mediaManager.musicMediaPlayerState
++        |> deliverOnMainQueue).startStrict(next: { [weak self] value in
++            self?.update(state: value)
++        })
++
++        let displayLink = CADisplayLink(target: AyuVoiceWeakTarget(self), selector: #selector(AyuVoiceWeakTarget.tick))
++        displayLink.preferredFramesPerSecond = 60
++        displayLink.add(to: .main, forMode: .common)
++        self.displayLink = displayLink
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        self.stateDisposable?.dispose()
++        self.displayLink?.invalidate()
++    }
++
++    private func update(state value: (Account, SharedMediaPlayerItemPlaybackStateOrLoading, MediaManagerPlayerType)?) {
++        guard let (account, stateOrLoading, _) = value, account.id == self.context.account.id else {
++            if value == nil && self.hadState {
++                self.requestDismiss?()
++            }
++            return
++        }
++        guard case let .state(state) = stateOrLoading else {
++            return
++        }
++        self.hadState = true
++        self.status = state.status
++        if self.rate == .x1, state.status.baseRate > 1.75 {
++            self.rate = .x2
++            self.updateRateButton()
++        } else if self.rate == .x1, state.status.baseRate > 1.25 {
++            self.rate = .x1_5
++            self.updateRateButton()
++        }
++
++        let isPaused: Bool
++        switch state.status.status {
++        case .playing:
++            isPaused = false
++        case .paused:
++            isPaused = true
++        case let .buffering(_, whilePlaying, _, _):
++            isPaused = !whilePlaying
++        }
++        if isPaused != self.isPaused {
++            self.isPaused = isPaused
++            self.playPauseButton.setImage(ayuVoiceSymbol(isPaused ? "play.fill" : "pause.fill", size: 40.0), for: .normal)
++            self.playPauseButton.accessibilityLabel = isPaused ? (self.russian ? "Воспроизвести" : "Play") : (self.russian ? "Пауза" : "Pause")
++        }
++
++        if self.itemKey != state.item.stableId {
++            self.itemKey = state.item.stableId
++            let presentationData = self.context.sharedContext.currentPresentationData.with { $0 }
++            var author: EnginePeer?
++            if let displayData = state.item.displayData {
++                switch displayData {
++                case let .voice(authorValue, _):
++                    author = authorValue
++                case let .instantVideo(authorValue, _, _):
++                    author = authorValue
++                case .music:
++                    break
++                }
++            }
++            self.titleLabel.text = author?.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder) ?? (self.russian ? "Голосовое сообщение" : "Voice Message")
++            var samples: [CGFloat] = []
++            if let source = state.item.playbackData?.source, case let .telegramFile(reference, _, _) = source {
++                for attribute in reference.media.attributes {
++                    if case let .Audio(_, _, _, _, waveform) = attribute, let waveform {
++                        let decoded = AudioWaveform(bitstream: waveform, bitsPerSample: 5)
++                        decoded.samples.withUnsafeBytes { bytes in
++                            for value in bytes.bindMemory(to: Int16.self) {
++                                samples.append(CGFloat(value) / 31.0)
++                            }
++                        }
++                    }
++                }
++            }
++            self.waveformView.samples = samples
++        }
++        self.waveformView.duration = state.status.duration
++        self.tick()
++    }
++
++    private func currentTimestamp() -> Double {
++        guard let status = self.status else {
++            return 0.0
++        }
++        var timestamp = status.timestamp
++        if status.generationTimestamp > 0.0, case .playing = status.status {
++            timestamp += (CACurrentMediaTime() - status.generationTimestamp) * status.baseRate
++        }
++        return max(0.0, status.duration > 0.0 ? min(timestamp, status.duration) : timestamp)
++    }
++
++    @objc fileprivate func tick() {
++        let duration = self.status?.duration ?? 0.0
++        let timestamp = self.scrubTimestamp ?? self.currentTimestamp()
++        self.waveformView.timestamp = timestamp
++        self.timeLabel.text = ayuVoiceTime(timestamp, fraction: true)
++        self.durationLabel.text = ayuVoiceTime(duration, fraction: false)
++    }
++
++    private func control(_ action: SharedMediaPlayerControlAction) {
++        self.context.sharedContext.mediaManager.playlistControl(action, type: self.type)
++    }
++
++    private func scrub(by delta: Double) {
++        let duration = self.status?.duration ?? 0.0
++        let start = self.scrubTimestamp ?? self.currentTimestamp()
++        self.scrubTimestamp = max(0.0, min(duration, start + delta))
++        self.tick()
++    }
++
++    private func finishScrub() {
++        if let timestamp = self.scrubTimestamp {
++            self.control(.seek(timestamp))
++        }
++        self.scrubTimestamp = nil
++    }
++
++    @objc private func backPressed() {
++        self.control(.seek(max(0.0, self.currentTimestamp() - 15.0)))
++    }
++
++    @objc private func forwardPressed() {
++        let duration = self.status?.duration ?? 0.0
++        self.control(.seek(min(max(0.0, duration - 0.1), self.currentTimestamp() + 15.0)))
++    }
++
++    @objc private func playPausePressed() {
++        self.control(.playback(.togglePlayPause))
++    }
++
++    @objc private func ratePressed() {
++        switch self.rate {
++        case .x1:
++            self.rate = .x1_5
++        case .x1_5:
++            self.rate = .x2
++        default:
++            self.rate = .x1
++        }
++        self.updateRateButton()
++        self.control(.setBaseRate(self.rate))
++    }
++
++    private func updateRateButton() {
++        let title: String
++        switch self.rate {
++        case .x1_5:
++            title = "1,5×"
++        case .x2:
++            title = "2×"
++        default:
++            title = "1×"
++        }
++        self.rateButton.setTitle(title, for: .normal)
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        let size = self.bounds.size
++        let insets = self.safeInsets
++        let side: CGFloat = 24.0
++        let width = size.width - insets.left - insets.right - side * 2.0
++        let left = insets.left + side
++
++        self.grabber.frame = CGRect(x: floor((size.width - 36.0) / 2.0), y: insets.top + 6.0, width: 36.0, height: 5.0)
++        self.titleLabel.frame = CGRect(x: left, y: insets.top + 40.0, width: width, height: 30.0)
++        self.subtitleLabel.frame = CGRect(x: left, y: insets.top + 72.0, width: width, height: 20.0)
++
++        let controlsY = size.height - insets.bottom - 70.0
++        self.playPauseButton.frame = CGRect(x: floor((size.width - 72.0) / 2.0), y: controlsY - 36.0, width: 72.0, height: 72.0)
++        self.backButton.frame = CGRect(x: self.playPauseButton.frame.minX - 96.0, y: controlsY - 28.0, width: 56.0, height: 56.0)
++        self.forwardButton.frame = CGRect(x: self.playPauseButton.frame.maxX + 40.0, y: controlsY - 28.0, width: 56.0, height: 56.0)
++        self.rateButton.frame = CGRect(x: floor((size.width - 64.0) / 2.0), y: controlsY - 36.0 - 52.0, width: 64.0, height: 30.0)
++
++        let timeY = self.rateButton.frame.minY - 90.0
++        self.timeLabel.frame = CGRect(x: left, y: timeY, width: width, height: 52.0)
++        self.durationLabel.frame = CGRect(x: left, y: timeY + 52.0, width: width, height: 20.0)
++
++        let waveTop = insets.top + 112.0
++        self.waveformView.frame = CGRect(x: 0.0, y: waveTop, width: size.width, height: max(80.0, timeY - 24.0 - waveTop))
++    }
++
++    func animateIn() {
++        self.layer.animatePosition(from: CGPoint(x: 0.0, y: self.bounds.height), to: CGPoint(), duration: 0.45, timingFunction: kCAMediaTimingFunctionSpring, additive: true)
++    }
++
++    func animateOut(completion: @escaping () -> Void) {
++        let offset = self.bounds.height - self.dragOffset
++        self.layer.animatePosition(from: CGPoint(), to: CGPoint(x: 0.0, y: offset), duration: 0.3, timingFunction: CAMediaTimingFunctionName.easeIn.rawValue, removeOnCompletion: false, additive: true, completion: { _ in
++            completion()
++        })
++    }
++
++    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
++        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, pan.view === self else {
++            return super.gestureRecognizerShouldBegin(gestureRecognizer)
++        }
++        if self.waveformView.frame.contains(pan.location(in: self)) {
++            return false
++        }
++        let velocity = pan.velocity(in: self)
++        return velocity.y > abs(velocity.x)
++    }
++
++    @objc private func dismissPan(_ recognizer: UIPanGestureRecognizer) {
++        let translation = max(0.0, recognizer.translation(in: self).y)
++        switch recognizer.state {
++        case .changed:
++            self.dragOffset = translation
++            self.transform = CGAffineTransform(translationX: 0.0, y: translation)
++        case .ended, .cancelled:
++            if translation > 120.0 || recognizer.velocity(in: self).y > 900.0 {
++                self.requestDismiss?()
++            } else {
++                self.dragOffset = 0.0
++                UIView.animate(withDuration: 0.35, delay: 0.0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.0, options: [.beginFromCurrentState], animations: {
++                    self.transform = .identity
++                })
++            }
++        default:
++            break
++        }
++    }
++}
++
++private final class AyuVoiceWeakTarget: NSObject {
++    private weak var view: AyuVoicePlayerView?
++
++    init(_ view: AyuVoicePlayerView) {
++        self.view = view
++    }
++
++    @objc func tick() {
++        self.view?.tick()
++    }
++}
++
++/// Voice Memos waveform: bars scroll right-to-left past a red playhead fixed in the middle;
++/// played bars are white, the rest grey. Dragging sideways scrubs.
++private final class AyuVoiceWaveformView: UIView {
++    var onScrub: ((Double) -> Void)?
++    var onScrubEnded: (() -> Void)?
++
++    private static let barWidth: CGFloat = 3.0
++    private static let barSpacing: CGFloat = 2.0
++    private static let pointsPerSecond: CGFloat = 40.0
++
++    var samples: [CGFloat] = [] {
++        didSet {
++            self.setNeedsDisplay()
++        }
++    }
++    var duration: Double = 0.0
++    var timestamp: Double = 0.0 {
++        didSet {
++            if oldValue != self.timestamp {
++                self.setNeedsDisplay()
++            }
++        }
++    }
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        self.backgroundColor = .clear
++        self.isOpaque = false
++        self.contentMode = .redraw
++        self.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(self.panned(_:))))
++        self.isAccessibilityElement = true
++        self.accessibilityTraits = .adjustable
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    @objc private func panned(_ recognizer: UIPanGestureRecognizer) {
++        switch recognizer.state {
++        case .changed:
++            let dx = recognizer.translation(in: self).x
++            recognizer.setTranslation(CGPoint(), in: self)
++            // Dragging the waveform left moves forward in time, like Voice Memos.
++            self.onScrub?(Double(-dx / AyuVoiceWaveformView.pointsPerSecond))
++        case .ended, .cancelled:
++            self.onScrubEnded?()
++        default:
++            break
++        }
++    }
++
++    override func accessibilityIncrement() {
++        self.onScrub?(5.0)
++        self.onScrubEnded?()
++    }
++
++    override func accessibilityDecrement() {
++        self.onScrub?(-5.0)
++        self.onScrubEnded?()
++    }
++
++    /// Height (0…1) of the bar at a moment of the recording.
++    private func level(at time: Double) -> CGFloat {
++        guard !self.samples.isEmpty, self.duration > 0.0 else {
++            return 0.15
++        }
++        let position = max(0.0, min(1.0, time / self.duration)) * Double(self.samples.count - 1)
++        let index = Int(position)
++        let next = min(index + 1, self.samples.count - 1)
++        let fraction = CGFloat(position - Double(index))
++        return self.samples[index] * (1.0 - fraction) + self.samples[next] * fraction
++    }
++
++    override func draw(_ rect: CGRect) {
++        guard let context = UIGraphicsGetCurrentContext() else {
++            return
++        }
++        let size = self.bounds.size
++        let midX = size.width / 2.0
++        let midY = size.height / 2.0
++        let maxHeight = size.height * 0.8
++        let step = AyuVoiceWaveformView.barWidth + AyuVoiceWaveformView.barSpacing
++        let secondsPerBar = Double(step / AyuVoiceWaveformView.pointsPerSecond)
++
++        // Faint grid line across the middle.
++        context.setFillColor(UIColor(white: 1.0, alpha: 0.08).cgColor)
++        context.fill(CGRect(x: 0.0, y: midY - 0.5, width: size.width, height: 1.0))
++
++        if self.duration > 0.0 {
++            let barCount = Int(ceil(self.duration / secondsPerBar))
++            let firstVisible = max(0, Int(floor((self.timestamp - Double(midX / AyuVoiceWaveformView.pointsPerSecond)) / secondsPerBar)) - 1)
++            let lastVisible = min(barCount - 1, Int(ceil((self.timestamp + Double(midX / AyuVoiceWaveformView.pointsPerSecond)) / secondsPerBar)) + 1)
++            if firstVisible <= lastVisible {
++                for bar in firstVisible ... lastVisible {
++                    let barTime = Double(bar) * secondsPerBar
++                    let x = midX + CGFloat(barTime - self.timestamp) * AyuVoiceWaveformView.pointsPerSecond
++                    let height = max(3.0, self.level(at: barTime) * maxHeight)
++                    let color = barTime <= self.timestamp ? UIColor.white : UIColor(white: 1.0, alpha: 0.3)
++                    context.setFillColor(color.cgColor)
++                    let barRect = CGRect(x: x, y: midY - height / 2.0, width: AyuVoiceWaveformView.barWidth, height: height)
++                    context.addPath(UIBezierPath(roundedRect: barRect, cornerRadius: AyuVoiceWaveformView.barWidth / 2.0).cgPath)
++                    context.fillPath()
++                }
++            }
++        }
++
++        // Red playhead with a dot on top, as in Voice Memos.
++        let playheadColor = UIColor(rgb: 0xFF453A)
++        context.setFillColor(playheadColor.cgColor)
++        context.fill(CGRect(x: midX - 1.0, y: 6.0, width: 2.0, height: size.height - 6.0))
++        context.fillEllipse(in: CGRect(x: midX - 5.0, y: 0.0, width: 10.0, height: 10.0))
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
 index 17f21b6..0ab035e 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
@@ -3166,13 +3877,17 @@ index 09a9b43..99a31b6 100644
      }
      var loadStickerSaveStatusSignal: Signal<Bool?, NoError> = .single(nil)
 diff --git a/submodules/TelegramUI/Sources/SharedAccountContext.swift b/submodules/TelegramUI/Sources/SharedAccountContext.swift
-index b433d647..7b2459b6 100644
+index b433d647..0e23ec68 100644
 --- a/submodules/TelegramUI/Sources/SharedAccountContext.swift
 +++ b/submodules/TelegramUI/Sources/SharedAccountContext.swift
-@@ -1860,6 +1860,10 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+@@ -1860,6 +1860,14 @@ public final class SharedAccountContextImpl: SharedAccountContext {
      }
      
      public func makeOverlayAudioPlayerController(context: AccountContext, chatLocation: ChatLocation, type: MediaManagerPlayerType, initialMessageId: EngineMessage.Id, initialOrder: MusicPlaybackSettingsOrder, playlistLocation: SharedMediaPlaylistLocation?, parentNavigationController: NavigationController?) -> ViewController & OverlayAudioPlayerController {
++        if case .voice = type, context.account.network.ayuGhostMode.current.interface.voiceMemosPlayer {
++            // AyuGram: optional Voice Memos style player for voice messages.
++            return AyuVoicePlayerController(context: context, type: type)
++        }
 +        if case .music = type {
 +            // AyuGram: Apple Music style player; voice and video messages keep Telegram's.
 +            return AyuMusicPlayerController(context: context, chatLocation: chatLocation, type: type, initialMessageId: initialMessageId, initialOrder: initialOrder, playlistLocation: playlistLocation, parentNavigationController: parentNavigationController)

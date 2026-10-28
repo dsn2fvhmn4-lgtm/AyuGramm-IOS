@@ -21,6 +21,12 @@ def run(source: Path):
                         str(source / 'tools/ayu-tests/startup/main.swift'),
                         '-o', str(output / 'startup-tests')], check=True)
         subprocess.run([str(output / 'startup-tests')], check=True)
+        subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
+                        str(source / 'submodules/Display/Source/AyuNativePlugins.swift'),
+                        str(source / 'tools/ayu-tests/iosplug-native/main.swift'),
+                        '-o', str(output / 'native-iosplug-tests')], check=True)
+        subprocess.run([str(output / 'native-iosplug-tests'),
+                        str(Path(__file__).resolve().parents[1] / 'plugins/iosplug')], check=True)
         murmur = source / 'submodules/MurMurHash32'
         header = murmur / 'PublicHeaders/MurMurHash32/MurMurHash32.h'
         (output / 'module.modulemap').write_text(
@@ -40,7 +46,7 @@ def run(source: Path):
                         *map(str, codec), str(output / 'murmur.o'),
                         '-o', str(output / 'libPostbox.dylib')], check=True)
         ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
-        models = [ayu / name for name in ('AyuNativeTextTools.swift', 'AyuReactionTotalSettings.swift', 'AyuGroupMentions.swift', 'AyuPluginCatalog.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuTextToolsPolicy.swift', 'AyuRegexSettings.swift',
+        models = [ayu / name for name in ('AyuIOSPluginEnvelope.swift', 'AyuNativeTextTools.swift', 'AyuReactionTotalSettings.swift', 'AyuGroupMentions.swift', 'AyuPluginCatalog.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuTextToolsPolicy.swift', 'AyuRegexSettings.swift',
                                          'AyuArchiveFileStore.swift', 'AyuMessageHistoryState.swift')]
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
                         '-D', 'AYU_POSTBOX_TESTS', '-I', str(output), '-L', str(output), '-lPostbox',

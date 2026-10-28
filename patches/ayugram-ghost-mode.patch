@@ -67791,10 +67791,10 @@ index 00000000..9f1a3573
 +}
 diff --git a/submodules/Display/Source/AyuNativePlugins.swift b/submodules/Display/Source/AyuNativePlugins.swift
 new file mode 100644
-index 00000000..89fc5c7b
+index 00000000..7f7cdf00
 --- /dev/null
 +++ b/submodules/Display/Source/AyuNativePlugins.swift
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,252 @@
 +import Foundation
 +
 +/// Plugins rewritten for iOS and built into the app. A `.iosplug` file carries only a plugin
@@ -67806,6 +67806,8 @@ index 00000000..89fc5c7b
 +    case autoArchive = "smart_auto_archiver"
 +    case hideAttachButtons = "hide_attach_buttons"
 +    case albumCoverDownloader = "acd"
++    case pillLabels = "pill_labels"
++    case miniAvatar = "mini_avatar"
 +
 +    public var version: String {
 +        return "1.0"
@@ -67814,6 +67816,8 @@ index 00000000..89fc5c7b
 +    /// The original plugin's author; the iOS version is the port's own code.
 +    public var author: String {
 +        switch self {
++        case .pillLabels: return "@Persik_dll & claude"
++        case .miniAvatar: return "@KUNSESHBOY"
 +        case .deleteMyMessages:
 +            return "@akresik"
 +        case .serviceCleaner:
@@ -67829,6 +67833,8 @@ index 00000000..89fc5c7b
 +
 +    public func title(_ ru: Bool) -> String {
 +        switch self {
++        case .pillLabels: return "Pill Labels"
++        case .miniAvatar: return "Mini Avatar"
 +        case .deleteMyMessages:
 +            return ru ? "Удалить мои сообщения" : "Delete My Messages"
 +        case .serviceCleaner:
@@ -67844,6 +67850,10 @@ index 00000000..89fc5c7b
 +
 +    public func summary(_ ru: Bool) -> String {
 +        switch self {
++        case .pillLabels:
++            return ru ? "Обводка и фон у подписей полей профиля. Шесть цветов в настройках плагина." : "Outlined pill backgrounds around profile-field labels. Six colors in plugin settings."
++        case .miniAvatar:
++            return ru ? "Уменьшает аватары около сообщений до 18–34 точек. Горизонтальное положение пузырьков не меняет." : "Resizes message avatars to 18–34 points. Does not reposition message bubbles."
 +        case .deleteMyMessages:
 +            return ru ? "Удаляет все ваши сообщения в текущем чате у всех участников. Долгое нажатие на сообщение → «Удалить мои сообщения»." : "Deletes all your messages in the current chat for everyone. Long-press a message → Delete My Messages."
 +        case .serviceCleaner:
@@ -67879,6 +67889,23 @@ index 00000000..89fc5c7b
 +    private static let hiddenAttachKey = "ayu.nativePlugins.hideAttach"
 +    private static let autoArchiveDaysKey = "ayu.nativePlugins.autoArchiveDays"
 +    private static let autoArchiveLastRunKey = "ayu.nativePlugins.autoArchiveLastRun"
++    private static let pillColorKey = "ayu.nativePlugins.pillColor"
++    private static let miniAvatarSizeKey = "ayu.nativePlugins.miniAvatarSize"
++
++    public static var pillColorIndex: Int {
++        get { return min(5, max(0, defaults.integer(forKey: pillColorKey))) }
++        set {
++            defaults.set(min(5, max(0, newValue)), forKey: pillColorKey)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++    public static var miniAvatarSize: Int {
++        get { return defaults.object(forKey: miniAvatarSizeKey) == nil ? 22 : min(34, max(18, defaults.integer(forKey: miniAvatarSizeKey))) }
++        set {
++            defaults.set(min(34, max(18, newValue)), forKey: miniAvatarSizeKey)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
 +
 +    public static let didChangeNotification = Notification.Name("AyuNativePluginsDidChange")
 +
@@ -70692,10 +70719,10 @@ index 00000000..c24de81d
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuNativePluginSettingsController.swift b/submodules/SettingsUI/Sources/AyuNativePluginSettingsController.swift
 new file mode 100644
-index 00000000..1b794b31
+index 00000000..afc96188
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuNativePluginSettingsController.swift
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,296 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -70755,8 +70782,14 @@ index 00000000..1b794b31
 +        case attachButton(AyuAttachButtonKey)
 +        case archiveDays
 +        case archiveNow
++        case pillColor
++        case avatarSize
 +        case export
 +        case remove
++        var isPillColor: Bool {
++            if case .pillColor = self { return true }
++            return false
++        }
 +    }
 +
 +    private let plugin: AyuNativePlugin
@@ -70825,6 +70858,10 @@ index 00000000..1b794b31
 +        let ru = self.russian
 +        var sections: [(title: String?, footer: String?, rows: [Row])] = [(nil, nil, [.enabled])]
 +        switch self.plugin {
++        case .pillLabels:
++            sections.append((ru ? "Оформление" : "Appearance", nil, [.pillColor]))
++        case .miniAvatar:
++            sections.append((ru ? "Размер аватара" : "Avatar size", ru ? "Применяется при следующем открытии чата. Смещение пузырьков не изменяется." : "Applies the next time a chat opens. Bubble offsets are unchanged.", [.avatarSize]))
 +        case .hideAttachButtons:
 +            sections.append((ru ? "Скрывать" : "Hide", ru ? "Галерея остаётся всегда." : "The gallery always stays.", AyuAttachButtonKey.allCases.map { Row.attachButton($0) }))
 +        case .autoArchive:
@@ -70865,6 +70902,18 @@ index 00000000..1b794b31
 +        cell.detailTextLabel?.textColor = self.palette?.secondary ?? .secondaryLabel
 +        cell.selectionStyle = .none
 +        switch self.sections[indexPath.section].rows[indexPath.row] {
++        case .pillColor, .avatarSize:
++            let isColor = self.sections[indexPath.section].rows[indexPath.row].isPillColor
++            cell.textLabel?.text = isColor ? (ru ? "Цвет обводки" : "Outline color") : (ru ? "Размер, точки" : "Size, points")
++            let value = isColor ? AyuNativePlugins.pillColorIndex : AyuNativePlugins.miniAvatarSize
++            cell.detailTextLabel?.text = isColor ? [ru ? "Тема" : "Theme", ru ? "Синий" : "Blue", ru ? "Фиолетовый" : "Purple", ru ? "Зелёный" : "Green", ru ? "Оранжевый" : "Orange", ru ? "Красный" : "Red"][value] : "\(value)"
++            let stepper = UIStepper()
++            stepper.minimumValue = isColor ? 0 : 18
++            stepper.maximumValue = isColor ? 5 : 34
++            stepper.value = Double(value)
++            stepper.accessibilityIdentifier = isColor ? "pillColor" : "avatarSize"
++            stepper.addTarget(self, action: #selector(self.appearanceChanged(_:)), for: .valueChanged)
++            cell.accessoryView = stepper
 +        case .enabled:
 +            cell.textLabel?.text = ru ? "Включён" : "Enabled"
 +            let toggle = AyuMaterialControls.makeSwitch()
@@ -70918,6 +70967,12 @@ index 00000000..1b794b31
 +
 +    @objc private func daysChanged(_ stepper: UIStepper) {
 +        AyuNativePlugins.autoArchiveDays = Int(stepper.value)
++        self.rebuild()
++    }
++
++    @objc private func appearanceChanged(_ stepper: UIStepper) {
++        if stepper.accessibilityIdentifier == "pillColor" { AyuNativePlugins.pillColorIndex = Int(stepper.value) }
++        else { AyuNativePlugins.miniAvatarSize = Int(stepper.value) }
 +        self.rebuild()
 +    }
 +
@@ -71246,7 +71301,7 @@ index 00000000..22fd855c
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
-index 00000000..a7ae0dcb
+index 00000000..c4eb6ae4
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 @@ -0,0 +1,280 @@
@@ -71436,7 +71491,7 @@ index 00000000..a7ae0dcb
 +            cell.imageView?.tintColor = .systemRed
 +        case .export, .remove:
 +            let export = row == .export
-+            cell.textLabel?.text = export ? (self.russian ? "Экспортировать .plugin" : "Export .plugin") : (self.russian ? "Удалить плагин" : "Remove plugin")
++            cell.textLabel?.text = export ? (self.russian ? "Экспортировать .iosplug" : "Export .iosplug") : (self.russian ? "Удалить плагин" : "Remove plugin")
 +            cell.textLabel?.textColor = export ? .systemBlue : .systemRed
 +            cell.imageView?.image = UIImage(systemName: export ? "square.and.arrow.up" : "trash")
 +            cell.imageView?.tintColor = cell.textLabel?.textColor
@@ -71513,8 +71568,8 @@ index 00000000..a7ae0dcb
 +                if let directory = self.exportDirectory { try? FileManager.default.removeItem(at: directory) }
 +                let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ayu-plugin-export-" + UUID().uuidString, isDirectory: true)
 +                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true); self.exportDirectory = directory
-+                let file = directory.appendingPathComponent(self.pluginID + ".plugin")
-+                try AyuPluginImporter.export(plugin.manifest).write(to: file, options: .atomic)
++                let file = directory.appendingPathComponent(self.pluginID + ".iosplug")
++                try AyuIOSPluginEnvelope.export(plugin.manifest).write(to: file, options: .atomic)
 +                self.present(UIDocumentPickerViewController(forExporting: [file], asCopy: true), animated: true)
 +            } catch { self.showError() }
 +        case .remove:
@@ -71532,10 +71587,10 @@ index 00000000..a7ae0dcb
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..48a49832
+index 00000000..68765ad1
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,530 @@
+@@ -0,0 +1,557 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -71984,34 +72039,61 @@ index 00000000..48a49832
 +            }
 +        }
 +    }
-+    /// A `.iosplug` card names a plugin built into the app; the file brings no code.
++    /// Accepts built-in cards (v1) and signed declarative adapter packages (v2).
 +    private func readNativeCard(_ url: URL, picker: UIViewController?) {
-+        let scoped = url.startAccessingSecurityScopedResource()
-+        let data = try? Data(contentsOf: url, options: .mappedIfSafe)
-+        if scoped { url.stopAccessingSecurityScopedResource() }
-+        let complete: () -> Void = { [weak self] in
-+            guard let self else { return }
-+            guard let data, let card = AyuNativePluginCard.parse(data) else {
-+                self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: self.russian ? "Это не файл плагина AyuGram." : "This is not an AyuGram plugin file.")
-+                return
++        self.reading = true
++        self.updateCatalogControls()
++        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
++            let scoped = url.startAccessingSecurityScopedResource()
++            var data: Data?
++            if let stream = InputStream(url: url) {
++                stream.open()
++                var bytes = Data()
++                var buffer = [UInt8](repeating: 0, count: 8192)
++                while true {
++                    let count = stream.read(&buffer, maxLength: buffer.count)
++                    if count == 0 { data = bytes; break }
++                    guard count > 0, bytes.count + count <= AyuNativePluginCard.maximumFileBytes else { break }
++                    bytes.append(contentsOf: buffer.prefix(count))
++                }
++                stream.close()
 +            }
-+            guard let plugin = card.plugin else {
-+                self.alert(title: card.name, message: self.russian ? "Этого плагина нет в вашей версии AyuGram. Обновите приложение." : "This plugin is not in your version of AyuGram. Update the app.")
-+                return
++            if scoped { url.stopAccessingSecurityScopedResource() }
++            let importedData = data
++            DispatchQueue.main.async { [weak self] in
++                guard let self else { return }
++                self.reading = false
++                self.updateCatalogControls()
++                let complete: () -> Void = { [weak self] in
++                    guard let self else { return }
++                    if let data = importedData, AyuIOSPluginEnvelope.recognizes(data) {
++                        do { self.confirmInstall(try AyuIOSPluginEnvelope.parse(data)) }
++                        catch { self.error(error) }
++                        return
++                    }
++                    guard let data = importedData, let card = AyuNativePluginCard.parse(data) else {
++                        self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: self.russian ? "Некорректный или слишком большой .iosplug (не более 64 КБ)." : "Invalid or oversized .iosplug (maximum 64 KB).")
++                        return
++                    }
++                    guard let plugin = card.plugin else {
++                        self.alert(title: card.name, message: self.russian ? "Этого плагина нет в вашей версии AyuGram. Обновите приложение." : "This plugin is not in your version of AyuGram. Update the app.")
++                        return
++                    }
++                    let installed = AyuNativePlugins.isInstalled(plugin)
++                    let title = installed ? (self.russian ? "Обновить плагин?" : "Update plugin?") : (self.russian ? "Установить плагин?" : "Install plugin?")
++                    let message = "\(plugin.title(self.russian))\n\(card.version) · \(plugin.author)\n\n\(plugin.summary(self.russian))"
++                    self.showAlert(title: title, message: message, actions: [
++                        AyuPluginAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel, handler: nil),
++                        AyuPluginAlertAction(title: installed ? (self.russian ? "Обновить" : "Update") : (self.russian ? "Установить" : "Install"), style: .default, handler: { [weak self] in
++                            AyuNativePlugins.install(plugin)
++                            self?.reload()
++                        })
++                    ])
++                }
++                if let picker, picker.presentingViewController != nil, !picker.isBeingDismissed { picker.dismiss(animated: true, completion: complete) }
++                else { self.whenNothingPresented(complete) }
 +            }
-+            let installed = AyuNativePlugins.isInstalled(plugin)
-+            let title = installed ? (self.russian ? "Обновить плагин?" : "Update plugin?") : (self.russian ? "Установить плагин?" : "Install plugin?")
-+            let message = "\(plugin.title(self.russian))\n\(card.version) · \(plugin.author)\n\n\(plugin.summary(self.russian))"
-+            self.showAlert(title: title, message: message, actions: [
-+                AyuPluginAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel, handler: nil),
-+                AyuPluginAlertAction(title: installed ? (self.russian ? "Обновить" : "Update") : (self.russian ? "Установить" : "Install"), style: .default, handler: { [weak self] in
-+                    AyuNativePlugins.install(plugin)
-+                    self?.reload()
-+                })
-+            ])
 +        }
-+        if let picker, picker.presentingViewController != nil, !picker.isBeingDismissed { picker.dismiss(animated: true, completion: complete) }
-+        else { self.whenNothingPresented(complete) }
 +    }
 +    /// Runs `action` once no controller is presented over this one, for at most two seconds.
 +    private func whenNothingPresented(_ action: @escaping () -> Void, attempts: Int = 20) {
@@ -76812,6 +76894,66 @@ index 00000000..ae6b26ad
 +    }
 +    public mutating func restoreAll() { self.references.removeAll() }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuIOSPluginEnvelope.swift b/submodules/TelegramCore/Sources/AyuGram/AyuIOSPluginEnvelope.swift
+new file mode 100644
+index 00000000..77ee47b2
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuIOSPluginEnvelope.swift
+@@ -0,0 +1,54 @@
++import Foundation
++
++public enum AyuIOSPluginEnvelopeError: LocalizedError {
++    case invalidFile, newerEngine
++    public var errorDescription: String? {
++        switch self {
++        case .invalidFile: return "Invalid .iosplug adapter package."
++        case .newerEngine: return "This .iosplug requires a newer AyuGram plugin engine. Update the app."
++        }
++    }
++}
++
++/// A portable package of existing, validated native actions. Contains no executable source.
++public struct AyuIOSPluginEnvelope: Codable, Equatable {
++    public static let formatName = "ayu-iosplug-2"
++    public static let engineVersion = 2
++    public static let maximumFileBytes = 64 * 1024
++    public let format: String
++    public let minimumEngineVersion: Int
++    public let adapter: AyuPluginManifest
++
++    public init(adapter: AyuPluginManifest) {
++        self.format = Self.formatName
++        self.minimumEngineVersion = Self.engineVersion
++        self.adapter = adapter
++    }
++
++    public static func recognizes(_ data: Data) -> Bool {
++        guard data.count <= self.maximumFileBytes,
++              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
++        return object["format"] as? String == self.formatName
++    }
++
++    public static func parse(_ data: Data) throws -> AyuPluginManifest {
++        guard !data.isEmpty, data.count <= self.maximumFileBytes,
++              let envelope = try? JSONDecoder().decode(Self.self, from: data),
++              envelope.format == self.formatName, envelope.minimumEngineVersion > 0 else {
++            throw AyuIOSPluginEnvelopeError.invalidFile
++        }
++        guard envelope.minimumEngineVersion <= self.engineVersion else { throw AyuIOSPluginEnvelopeError.newerEngine }
++        // Includes permissions, API bounds, action-specific limits and catalog signatures.
++        try envelope.adapter.validate()
++        return envelope.adapter
++    }
++
++    public static func export(_ adapter: AyuPluginManifest) throws -> Data {
++        try adapter.validate()
++        let encoder = JSONEncoder()
++        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
++        let data = try encoder.encode(Self(adapter: adapter))
++        guard data.count <= self.maximumFileBytes else { throw AyuIOSPluginEnvelopeError.invalidFile }
++        return data
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 new file mode 100644
 index 00000000..86b4e0dc
@@ -80539,6 +80681,19 @@ index 627ad4db..eabdd2bb 100644
              if item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 }) {
                  dateReactionsAndPeers = ([], [])
              }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageItemImpl/Sources/ChatMessageDateHeader.swift b/submodules/TelegramUI/Components/Chat/ChatMessageItemImpl/Sources/ChatMessageDateHeader.swift
+index 1fd892e6..6abdd135 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageItemImpl/Sources/ChatMessageDateHeader.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageItemImpl/Sources/ChatMessageDateHeader.swift
+@@ -875,7 +875,7 @@ public final class ChatMessageDateHeaderNodeImpl: ListViewItemHeaderNode, ChatMe
+ }
+ 
+ private func avatarHeaderSize() -> CGFloat {
+-    return 34.0
++    return AyuNativePlugins.isEnabled(.miniAvatar) ? CGFloat(AyuNativePlugins.miniAvatarSize) : 34.0
+ }
+ 
+ public final class ChatMessageAvatarHeader: ListViewItemHeader {
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/BUILD
 index 60173b7e..41e1ea1d 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageMapBubbleContentNode/BUILD
@@ -80851,6 +81006,32 @@ index cc748ae6..49bb700c 100644
              labelFont = Font.medium(11.0)
          } else if case .labelBadge = item.label {
              labelColorValue = presentationData.theme.list.itemCheckColors.foregroundColor
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift
+index 42205b2a..ee52c7fc 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift
+@@ -504,6 +504,13 @@ private final class PeerInfoScreenLabeledValueItemNode: PeerInfoScreenItemNode {
+         self.expandNode.attributedText = NSAttributedString(string: presentationData.strings.PeerInfo_BioExpand, font: Font.regular(17.0), textColor: presentationData.theme.list.itemAccentColor)
+         let expandSize = self.expandNode.updateLayout(CGSize(width: width, height: 100.0))
+         
++        let pillEnabled = AyuNativePlugins.isEnabled(.pillLabels) && !item.label.isEmpty
++        let pillColors: [UIColor] = [presentationData.theme.list.itemAccentColor, .systemBlue, .systemPurple, .systemGreen, .systemOrange, .systemRed]
++        let pillColor = pillColors[AyuNativePlugins.pillColorIndex]
++        self.labelNode.insets = pillEnabled ? UIEdgeInsets(top: 3.0, left: 8.0, bottom: 3.0, right: 8.0) : .zero
++        self.labelNode.backgroundColor = pillEnabled ? pillColor.withAlphaComponent(0.12) : .clear
++        self.labelNode.layer.borderColor = pillEnabled ? pillColor.withAlphaComponent(0.5).cgColor : UIColor.clear.cgColor
++        self.labelNode.layer.borderWidth = pillEnabled ? 1.0 : 0.0
+         self.labelNode.attributedText = NSAttributedString(string: item.label, font: Font.regular(14.0), textColor: presentationData.theme.list.itemPrimaryTextColor)
+         
+         self.rightLabelNode.attributedText = NSAttributedString(string: item.rightLabel ?? "", font: Font.regular(14.0), textColor: presentationData.theme.list.itemSecondaryTextColor)
+@@ -688,6 +695,7 @@ private final class PeerInfoScreenLabeledValueItemNode: PeerInfoScreenItemNode {
+         self.expandBackgroundNode.image = generateExpandBackground(size: expandBackgroundFrame.size, color: presentationData.theme.list.itemBlocksBackgroundColor)
+         
+         transition.updateFrame(node: self.labelNode, frame: labelFrame)
++        self.labelNode.layer.cornerRadius = pillEnabled ? labelFrame.height / 2.0 : 0.0
+         transition.updateFrame(node: self.rightLabelNode, frame: rightLabelFrame)
+         
+         var textTransition = transition
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
 index fdc996cb..0e6ead75 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
@@ -149698,12 +149879,36 @@ index 3d13bc4d..3ca0e6c7 100644
          #if os(macOS)
          return nil
          #else
+diff --git a/tools/ayu-tests/iosplug-native/main.swift b/tools/ayu-tests/iosplug-native/main.swift
+new file mode 100644
+index 00000000..2af7ed0e
+--- /dev/null
++++ b/tools/ayu-tests/iosplug-native/main.swift
+@@ -0,0 +1,18 @@
++import Foundation
++
++guard CommandLine.arguments.count == 2 else { fatalError("Pass the actual .iosplug folder") }
++let directory = URL(fileURLWithPath: CommandLine.arguments[1])
++var checked = 0
++for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where file.pathExtension == "iosplug" {
++    let data = try Data(contentsOf: file)
++    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], object["format"] as? String == AyuNativePluginCard.formatName else { continue }
++    guard let card = AyuNativePluginCard.parse(data), let plugin = card.plugin else { fatalError("Missing native handler for \(file.lastPathComponent)") }
++    guard card.id == plugin.rawValue, !plugin.title(false).isEmpty, !plugin.summary(false).isEmpty else { fatalError("Incomplete native plugin metadata") }
++    let roundTrip = try JSONEncoder().encode(card)
++    guard AyuNativePluginCard.parse(roundTrip) == card else { fatalError("Native card did not round-trip") }
++    checked += 1
++}
++guard checked == 7 else { fatalError("Expected seven implemented native plugin cards") }
++guard AyuNativePluginCard.parse(Data(repeating: 32, count: 65537)) == nil else { fatalError("Oversized native card accepted") }
++guard AyuNativePluginCard.parse(Data("{}".utf8)) == nil else { fatalError("Invalid native card accepted") }
++print("PASS: \(checked) actual native .iosplug cards matched to compiled handlers")
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 new file mode 100644
-index 00000000..bad12843
+index 00000000..7a3e37dd
 --- /dev/null
 +++ b/tools/ayu-tests/main.swift
-@@ -0,0 +1,1069 @@
+@@ -0,0 +1,1098 @@
 +import Foundation
 +#if AYU_POSTBOX_TESTS
 +import Postbox
@@ -150773,6 +150978,35 @@ index 00000000..bad12843
 +    check(pluginThrows { try missingCopyProof.validate() }, "API 9 catalog adapters still require their portable signature")
 +} else { check(false, "The production catalog contains the new signed formatted-copy adapter") }
 +print("PASS: \(checks) native model checks including API 9 signed adapter activation")
++
++// Exercise the actual v2 importer, signature verification and offline export path.
++let iosplugFixtures = pluginFixtures.appendingPathComponent("iosplug")
++var iosplugPackageChecks = 0
++for url in try FileManager.default.contentsOfDirectory(at: iosplugFixtures, includingPropertiesForKeys: nil) where url.pathExtension == "iosplug" {
++    let data = try Data(contentsOf: url)
++    guard AyuIOSPluginEnvelope.recognizes(data) else { continue }
++    let adapter = try AyuIOSPluginEnvelope.parse(data)
++    let prepared = try AyuPluginActivation.prepare(adapter)
++    check(prepared == adapter, "A packaged adapter activates with its real native handlers")
++    let exported = try AyuIOSPluginEnvelope.export(prepared)
++    let reimported = try AyuIOSPluginEnvelope.parse(exported)
++    check(reimported == adapter, "Offline .iosplug export keeps the portable adapter proof")
++    var forged = try JSONSerialization.jsonObject(with: data) as! [String: Any]
++    var changedAdapter = forged["adapter"] as! [String: Any]
++    changedAdapter["name"] = "Tampered package"
++    forged["adapter"] = changedAdapter
++    let forgedData = try JSONSerialization.data(withJSONObject: forged)
++    check(pluginThrows { _ = try AyuIOSPluginEnvelope.parse(forgedData) }, "Changing signed adapter metadata is rejected")
++    var future = try JSONSerialization.jsonObject(with: data) as! [String: Any]
++    future["minimumEngineVersion"] = 999
++    let futureData = try JSONSerialization.data(withJSONObject: future)
++    check(pluginThrows { _ = try AyuIOSPluginEnvelope.parse(futureData) }, "A future engine requirement fails before installation")
++    iosplugPackageChecks += 1
++}
++check(iosplugPackageChecks == 9, "All nine reviewed source adapters have tested .iosplug packages")
++check(pluginThrows { _ = try AyuIOSPluginEnvelope.parse(Data(repeating: 32, count: 65537)) }, "Oversized packages fail before JSON decoding")
++check(pluginThrows { _ = try AyuIOSPluginEnvelope.parse(Data("{}".utf8)) }, "Missing package fields are rejected")
++print("PASS: \(iosplugPackageChecks) actual signed .iosplug import/activation/export/tamper scenarios; \(checks) total model checks")
 diff --git a/tools/ayu-tests/startup/main.swift b/tools/ayu-tests/startup/main.swift
 new file mode 100644
 index 00000000..11c5756d

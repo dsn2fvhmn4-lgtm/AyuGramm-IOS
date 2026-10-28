@@ -1919,17 +1919,24 @@ index 6680052..a16188b 100644
          if let sectionItems = items[section], !sectionItems.isEmpty {
 diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
 new file mode 100644
-index 00000000..f750cd1e
+index 00000000..102449e7
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,240 @@
 +import Foundation
 +import SwiftSignalKit
 +
-+/// One line of time-synced lyrics.
++/// One word of a synced line with the moment it starts.
++struct AyuLyricsWord: Equatable {
++    let time: Double
++    let text: String
++}
++
++/// One line of time-synced lyrics, split into timed words for word-by-word highlighting.
 +struct AyuLyricsLine: Equatable {
 +    let time: Double
 +    let text: String
++    let words: [AyuLyricsWord]
 +}
 +
 +enum AyuLyrics: Equatable {
@@ -1941,26 +1948,83 @@ index 00000000..f750cd1e
 +    case notFound
 +}
 +
-+/// Parses LRC text ("[mm:ss.xx] line"); a line may carry several time tags.
++private func ayuParseLrcTime(_ tag: Substring) -> Double? {
++    let parts = tag.split(separator: ":")
++    guard parts.count == 2, let minutes = Double(parts[0]), let seconds = Double(parts[1].replacingOccurrences(of: ",", with: ".")) else {
++        return nil
++    }
++    return minutes * 60.0 + seconds
++}
++
++/// Splits a line body into words. Enhanced LRC ("<mm:ss.xx>word") gives each word its own
++/// time; plain words get nil and are timed later from the line's length.
++private func ayuParseLrcWords(_ body: Substring) -> [(time: Double?, text: String)] {
++    var result: [(time: Double?, text: String)] = []
++    var pendingTime: Double?
++    var current = ""
++    func flush() {
++        let trimmed = current.trimmingCharacters(in: .whitespaces)
++        if !trimmed.isEmpty {
++            for (index, piece) in trimmed.split(separator: " ", omittingEmptySubsequences: true).enumerated() {
++                result.append((time: index == 0 ? pendingTime : nil, text: String(piece)))
++            }
++        }
++        current = ""
++        pendingTime = nil
++    }
++    var rest = body
++    while let first = rest.first {
++        if first == "<", let close = rest.firstIndex(of: ">"), let time = ayuParseLrcTime(rest[rest.index(after: rest.startIndex) ..< close]) {
++            flush()
++            pendingTime = time
++            rest = rest[rest.index(after: close)...]
++        } else {
++            current.append(first)
++            rest = rest.dropFirst()
++        }
++    }
++    flush()
++    return result
++}
++
++/// Parses LRC text ("[mm:ss.xx] line"); a line may carry several time tags, and words may
++/// carry enhanced "<mm:ss.xx>" tags. Words without their own time are spread over the line,
++/// longer words taking longer, until the next line starts.
 +func ayuParseLrc(_ text: String) -> [AyuLyricsLine] {
-+    var lines: [AyuLyricsLine] = []
++    var raw: [(time: Double, words: [(time: Double?, text: String)])] = []
 +    for rawLine in text.components(separatedBy: .newlines) {
 +        var rest = Substring(rawLine)
 +        var times: [Double] = []
 +        while rest.hasPrefix("["), let close = rest.firstIndex(of: "]") {
-+            let tag = rest[rest.index(after: rest.startIndex) ..< close]
-+            let parts = tag.split(separator: ":")
-+            if parts.count == 2, let minutes = Double(parts[0]), let seconds = Double(parts[1].replacingOccurrences(of: ",", with: ".")) {
-+                times.append(minutes * 60.0 + seconds)
++            if let time = ayuParseLrcTime(rest[rest.index(after: rest.startIndex) ..< close]) {
++                times.append(time)
 +            }
 +            rest = rest[rest.index(after: close)...]
 +        }
-+        let lineText = rest.trimmingCharacters(in: .whitespaces)
++        let words = ayuParseLrcWords(rest)
 +        for time in times {
-+            lines.append(AyuLyricsLine(time: time, text: lineText))
++            raw.append((time: time, words: words))
 +        }
 +    }
-+    return lines.sorted(by: { $0.time < $1.time })
++    raw.sort(by: { $0.time < $1.time })
++
++    var lines: [AyuLyricsLine] = []
++    for (index, line) in raw.enumerated() {
++        let nextTime = index + 1 < raw.count ? raw[index + 1].time : line.time + 5.0
++        // Sing the line in at most 90% of the gap, and no slower than ~0.6 s per word.
++        let span = max(0.3, min((nextTime - line.time) * 0.9, Double(max(1, line.words.count)) * 0.6))
++        let weights = line.words.map { Double($0.text.count + 2) }
++        let totalWeight = max(1.0, weights.reduce(0.0, +))
++        var words: [AyuLyricsWord] = []
++        var cursor = line.time
++        for (wordIndex, word) in line.words.enumerated() {
++            let time = word.time ?? cursor
++            words.append(AyuLyricsWord(time: time, text: word.text))
++            cursor = max(cursor, time) + span * weights[wordIndex] / totalWeight
++        }
++        lines.append(AyuLyricsLine(time: line.time, text: line.words.map { $0.text }.joined(separator: " "), words: words))
++    }
++    return lines
 +}
 +
 +/// Looks lyrics up on LRCLIB (lrclib.net), an open lyrics database. Only the track title,
@@ -2101,10 +2165,10 @@ index 00000000..f750cd1e
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
 new file mode 100644
-index 00000000..6957eba2
+index 00000000..3c373203
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
-@@ -0,0 +1,892 @@
+@@ -0,0 +1,944 @@
 +import Foundation
 +import UIKit
 +import AVKit
@@ -2375,8 +2439,8 @@ index 00000000..6957eba2
 +        self.volumeView.tintColor = .white
 +        self.volumeView.setVolumeThumbImage(generateFilledCircleImage(diameter: 10.0, color: .white), for: .normal)
 +        self.addSubview(self.volumeView)
-+        self.volumeMinIcon.image = ayuSymbol("speaker.fill", size: 12.0)
-+        self.volumeMaxIcon.image = ayuSymbol("speaker.wave.3.fill", size: 12.0)
++        self.volumeMinIcon.image = ayuSymbol("speaker.fill", size: 13.0)
++        self.volumeMaxIcon.image = ayuSymbol("speaker.wave.3.fill", size: 13.0)
 +        for icon in [self.volumeMinIcon, self.volumeMaxIcon] {
 +            icon.tintColor = UIColor(white: 1.0, alpha: 0.55)
 +            icon.contentMode = .center
@@ -2637,9 +2701,16 @@ index 00000000..6957eba2
 +        self.queueButton.frame = CGRect(x: rowCenters[2] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
 +
 +        let volumeY = bottomRowY - 46.0
-+        self.volumeMinIcon.frame = CGRect(x: left - 4.0, y: volumeY, width: 20.0, height: 34.0)
-+        self.volumeMaxIcon.frame = CGRect(x: left + contentWidth - 18.0, y: volumeY, width: 24.0, height: 34.0)
-+        self.volumeView.frame = CGRect(x: left + 24.0, y: volumeY + 5.0, width: contentWidth - 50.0, height: 34.0)
++        self.volumeView.frame = CGRect(x: left + 26.0, y: volumeY, width: contentWidth - 52.0, height: 34.0)
++        // MPVolumeView does not centre its slider; line the speakers up with the actual track.
++        self.volumeView.layoutIfNeeded()
++        var volumeTrackY = self.volumeView.frame.midY
++        if let slider = self.volumeView.subviews.first(where: { $0 is UISlider }) as? UISlider {
++            let track = slider.trackRect(forBounds: slider.bounds)
++            volumeTrackY = self.volumeView.frame.minY + slider.convert(CGPoint(x: 0.0, y: track.midY), to: self.volumeView).y
++        }
++        self.volumeMinIcon.frame = CGRect(x: left, y: volumeTrackY - 12.0, width: 18.0, height: 24.0)
++        self.volumeMaxIcon.frame = CGRect(x: left + contentWidth - 22.0, y: volumeTrackY - 12.0, width: 22.0, height: 24.0)
 +
 +        let transportCenterY = volumeY - 62.0
 +        let transportSpacing = min(110.0, contentWidth / 3.0)
@@ -2861,7 +2932,9 @@ index 00000000..6957eba2
 +    private var lineLabels: [UILabel] = []
 +    private var lines: [AyuLyricsLine] = []
 +    private var currentIndex: Int?
++    private var currentLitWords: Int?
 +    private var userScrollUntil: Double = 0.0
++    private let dimColor = UIColor(white: 1.0, alpha: 0.32)
 +
 +    override init(frame: CGRect) {
 +        super.init(frame: frame)
@@ -2897,6 +2970,7 @@ index 00000000..6957eba2
 +        self.lineLabels = []
 +        self.lines = []
 +        self.currentIndex = nil
++        self.currentLitWords = nil
 +        self.scrollView.contentOffset = CGPoint()
 +
 +        var status: String?
@@ -2932,8 +3006,28 @@ index 00000000..6957eba2
 +            }
 +            self.scrollView.addSubview(label)
 +            self.lineLabels.append(label)
++            if synced {
++                label.attributedText = self.attributedLine(index, litWords: 0)
++            }
 +        }
 +        self.setNeedsLayout()
++    }
++
++    /// A synced line with its first `litWords` words lit and the rest dimmed.
++    private func attributedLine(_ index: Int, litWords: Int) -> NSAttributedString {
++        let font = self.lineLabels[index].font ?? .systemFont(ofSize: 30.0, weight: .bold)
++        let words = self.lines[index].words
++        if words.isEmpty {
++            return NSAttributedString(string: "♪", attributes: [.font: font, .foregroundColor: litWords > 0 ? UIColor.white : self.dimColor])
++        }
++        let result = NSMutableAttributedString()
++        for (wordIndex, word) in words.enumerated() {
++            if wordIndex > 0 {
++                result.append(NSAttributedString(string: " ", attributes: [.font: font]))
++            }
++            result.append(NSAttributedString(string: word.text, attributes: [.font: font, .foregroundColor: wordIndex < litWords ? UIColor.white : self.dimColor]))
++        }
++        return result
 +    }
 +
 +    @objc private func lineTapped(_ recognizer: UITapGestureRecognizer) {
@@ -2973,26 +3067,48 @@ index 00000000..6957eba2
 +                break
 +            }
 +        }
-+        guard index != self.currentIndex else {
++        if index != self.currentIndex {
++            let previous = self.currentIndex
++            self.currentIndex = index
++            self.currentLitWords = nil
++            if let previous, previous < self.lineLabels.count {
++                self.lineLabels[previous].attributedText = self.attributedLine(previous, litWords: 0)
++            }
++            UIView.animate(withDuration: 0.35, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
++                if let previous, previous < self.lineLabels.count {
++                    self.lineLabels[previous].transform = .identity
++                }
++                if let index, index < self.lineLabels.count {
++                    self.lineLabels[index].transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
++                }
++            })
++            if let index, index < self.lineLabels.count, CACurrentMediaTime() > self.userScrollUntil {
++                let label = self.lineLabels[index]
++                let targetY = max(0.0, min(label.frame.minY - self.bounds.height * 0.25, self.scrollView.contentSize.height - self.bounds.height))
++                UIView.animate(withDuration: 0.6, delay: 0.0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
++                    self.scrollView.contentOffset = CGPoint(x: 0.0, y: targetY)
++                })
++            }
++        }
++        // Light the current line word by word as each word is sung.
++        guard let index, index < self.lineLabels.count else {
 +            return
 +        }
-+        let previous = self.currentIndex
-+        self.currentIndex = index
-+        UIView.animate(withDuration: 0.35, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
-+            if let previous, previous < self.lineLabels.count {
-+                self.lineLabels[previous].textColor = UIColor(white: 1.0, alpha: 0.32)
-+                self.lineLabels[previous].transform = .identity
++        let words = self.lines[index].words
++        var litWords = words.isEmpty ? 1 : 0
++        for word in words {
++            if word.time <= timestamp + 0.05 {
++                litWords += 1
++            } else {
++                break
 +            }
-+            if let index, index < self.lineLabels.count {
-+                self.lineLabels[index].textColor = .white
-+                self.lineLabels[index].transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
-+            }
-+        })
-+        if let index, index < self.lineLabels.count, CACurrentMediaTime() > self.userScrollUntil {
++        }
++        if litWords != self.currentLitWords {
++            self.currentLitWords = litWords
 +            let label = self.lineLabels[index]
-+            let targetY = max(0.0, min(label.frame.minY - self.bounds.height * 0.25, self.scrollView.contentSize.height - self.bounds.height))
-+            UIView.animate(withDuration: 0.6, delay: 0.0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
-+                self.scrollView.contentOffset = CGPoint(x: 0.0, y: targetY)
++            let text = self.attributedLine(index, litWords: litWords)
++            UIView.transition(with: label, duration: 0.15, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
++                label.attributedText = text
 +            })
 +        }
 +    }

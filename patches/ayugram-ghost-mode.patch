@@ -69859,16 +69859,17 @@ index 00000000..8105fdc9
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
 new file mode 100644
-index 00000000..829f0d8f
+index 00000000..42f1a03c
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,99 @@
 +import Foundation
 +import UIKit
 +import Display
 +import AsyncDisplayKit
 +import TelegramPresentationData
 +import AccountContext
++import PresentationDataUtils
 +
 +/// Shows a UIKit screen stack (the plugin list, its details and plugin settings) as a page of
 +/// Telegram's navigation stack instead of a sheet: pushed and popped like any settings page,
@@ -69938,6 +69939,9 @@ index 00000000..829f0d8f
 +        let disposable = context.sharedContext.applicationBindings.pushIdleTimerExtension()
 +        return { disposable.dispose() }
 +    })
++    plugins.pluginIcon = { size in
++        return AyuSettingsIcons.plugin(size: size)
++    }
 +    guard let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController else {
 +        let navigation = UINavigationController(rootViewController: plugins)
 +        navigation.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
@@ -69947,6 +69951,14 @@ index 00000000..829f0d8f
 +    let screen = AyuHostedNavigationScreen(context: context, root: plugins)
 +    plugins.close = { [weak screen] in
 +        screen?.navigationController?.popViewController(animated: true)
++    }
++    plugins.presentAlert = { title, message, actions in
++        let alertActions = actions.map { action in
++            TextAlertAction(type: action.style == .cancel ? .genericAction : .defaultAction, title: action.title, action: {
++                action.handler?()
++            })
++        }
++        context.sharedContext.mainWindow?.present(textAlertController(context: context, title: title, text: message, actions: alertActions), on: .root)
 +    }
 +    navigationController.pushViewController(screen)
 +}
@@ -70669,14 +70681,13 @@ index 00000000..22fd855c
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
 new file mode 100644
-index 00000000..32d568ec
+index 00000000..a7ae0dcb
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,280 @@
 +import UIKit
 +import Display
 +import TelegramCore
-+import TelegramPresentationData
 +
 +extension AyuPluginManifest {
 +    /// Version as the original plugin states it, without the port's adapter suffix.
@@ -70706,6 +70717,8 @@ index 00000000..32d568ec
 +    private let keepAwake: (() -> (() -> Void))?
 +    private var generation = 0
 +    private var exportDirectory: URL?
++    /// Set by the plugin list to the icon its rows use.
++    var pluginIcon: (CGFloat) -> UIImage? = { ayuPluginAvatar(size: $0) }
 +    init(store: AyuGhostModeStore, pluginID: String, russian: Bool, palette: AyuPreferencesPalette? = nil, settingsController: ((String) -> UIViewController?)? = nil, keepAwake: (() -> (() -> Void))? = nil) {
 +        self.store = store; self.pluginID = pluginID; self.russian = russian; self.palette = palette; self.settingsController = settingsController; self.keepAwake = keepAwake
 +        super.init(style: .insetGrouped)
@@ -70776,7 +70789,7 @@ index 00000000..32d568ec
 +        self.tableView.rowHeight = UITableView.automaticDimension; self.tableView.estimatedRowHeight = 56
 +        self.tableView.backgroundColor = self.palette?.background ?? .systemGroupedBackground
 +        if let plugin = self.plugin {
-+            self.tableView.tableHeaderView = AyuPreferencesHeaderView(image: AyuSettingsIcons.plugin(size: 88.0), title: plugin.manifest.name, subtitle: "\(plugin.manifest.displayVersion) · \(plugin.manifest.displayAuthor)", text: plugin.manifest.summary, palette: self.palette)
++            self.tableView.tableHeaderView = AyuPreferencesHeaderView(image: self.pluginIcon(88.0), title: plugin.manifest.name, subtitle: "\(plugin.manifest.displayVersion) · \(plugin.manifest.displayAuthor)", text: plugin.manifest.summary, palette: self.palette)
 +        }
 +    }
 +    override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); ayuFitPreferencesHeader(self.tableView) }
@@ -70954,16 +70967,15 @@ index 00000000..32d568ec
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 new file mode 100644
-index 00000000..a52483bd
+index 00000000..ede0594e
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,436 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
 +import TelegramCore
 +import Display
-+import TelegramPresentationData
 +
 +/// Separate constrained labels keep the title, author and switch from overlapping.
 +private final class AyuPluginListCell: UITableViewCell {
@@ -71002,6 +71014,17 @@ index 00000000..a52483bd
 +    required init?(coder: NSCoder) { return nil }
 +}
 +
++struct AyuPluginAlertAction {
++    enum Style {
++        case `default`
++        case cancel
++    }
++
++    let title: String
++    let style: Style
++    let handler: (() -> Void)?
++}
++
 +/// The plugin list, laid out like exteraGram's PluginsActivity: a searchable list where each
 +/// plugin shows its name, version, author and description with an on/off switch, and "+"
 +/// installs a .plugin file.
@@ -71022,6 +71045,13 @@ index 00000000..a52483bd
 +    /// Set when the list is a page of the settings stack: the left button goes back with it
 +    /// instead of dismissing a sheet.
 +    var close: (() -> Void)?
++    /// Set when the list is a page of the settings stack: alerts go through the app's own
++    /// presentation. Telegram's window routes touches only to the presentation layers it
++    /// knows, so a UIKit alert over a hosted page could show without taking taps.
++    var presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?
++    /// The plugin icon at a size; the host passes the settings icon. This file only sees
++    /// UIKit and Display so CI can type-check it before the full build.
++    var pluginIcon: (CGFloat) -> UIImage? = { ayuPluginAvatar(size: $0) }
 +    init(store: AyuGhostModeStore, russian: Bool, palette: AyuPreferencesPalette? = nil, initialImport: (URL, String)? = nil, settingsController: ((String) -> UIViewController?)? = nil, keepAwake: (() -> (() -> Void))? = nil) {
 +        self.store = store; self.russian = russian; self.palette = palette
 +        self.initialImport = initialImport; self.settingsController = settingsController; self.keepAwake = keepAwake
@@ -71185,7 +71215,7 @@ index 00000000..a52483bd
 +    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
 +        let cell = AyuPluginListCell()
 +        cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
-+        cell.iconView.image = AyuSettingsIcons.plugin(size: 32.0)
++        cell.iconView.image = self.pluginIcon(32.0)
 +        let item = self.items[indexPath.row]
 +        let primary = self.palette?.text ?? .label
 +        let secondary = self.palette?.secondary ?? .secondaryLabel
@@ -71249,8 +71279,17 @@ index 00000000..a52483bd
 +        self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: message + (detail.map { "\n\n" + String($0.prefix(512)) } ?? ""))
 +    }
 +    private func alert(title: String, message: String) {
++        self.showAlert(title: title, message: message, actions: [AyuPluginAlertAction(title: "OK", style: .default, handler: nil)])
++    }
++    private func showAlert(title: String?, message: String, actions: [AyuPluginAlertAction]) {
++        if let presentAlert = self.presentAlert {
++            presentAlert(title, message, actions)
++            return
++        }
 +        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-+        alert.addAction(UIAlertAction(title: "OK", style: .default))
++        for action in actions {
++            alert.addAction(UIAlertAction(title: action.title, style: action.style == .cancel ? .cancel : .default, handler: { _ in action.handler?() }))
++        }
 +        self.present(alert, animated: true)
 +    }
 +    private func details(_ manifest: AyuPluginManifest) -> String {
@@ -71262,7 +71301,12 @@ index 00000000..a52483bd
 +        let items = self.items
 +        guard indexPath.row < items.count else { return }
 +        let plugin = items[indexPath.row]
-+        self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: plugin.manifest.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController, keepAwake: self.keepAwake), animated: true)
++        self.navigationController?.pushViewController(self.makeDetailsController(pluginID: plugin.manifest.id), animated: true)
++    }
++    private func makeDetailsController(pluginID: String) -> AyuPluginDetailsController {
++        let controller = AyuPluginDetailsController(store: self.store, pluginID: pluginID, russian: self.russian, palette: self.palette, settingsController: self.settingsController, keepAwake: self.keepAwake)
++        controller.pluginIcon = self.pluginIcon
++        return controller
 +    }
 +    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
 +        guard let url = urls.first, !self.reading else { return }
@@ -71303,22 +71347,35 @@ index 00000000..a52483bd
 +                    case let .success(manifest): self.confirmInstall(manifest)
 +                    }
 +                }
-+                if let picker, picker.presentingViewController != nil { picker.dismiss(animated: true, completion: complete) }
-+                else { complete() }
++                // The document picker dismisses itself after a pick; dismissing it again
++                // never calls the completion, so wait until it is gone instead.
++                if let picker, picker.presentingViewController != nil, !picker.isBeingDismissed { picker.dismiss(animated: true, completion: complete) }
++                else { self.whenNothingPresented(complete) }
 +            }
++        }
++    }
++    /// Runs `action` once no controller is presented over this one, for at most two seconds.
++    private func whenNothingPresented(_ action: @escaping () -> Void, attempts: Int = 20) {
++        if self.presentedViewController == nil || attempts <= 0 {
++            action()
++            return
++        }
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
++            self?.whenNothingPresented(action, attempts: attempts - 1)
 +        }
 +    }
 +    private func confirmInstall(_ manifest: AyuPluginManifest) {
 +        let expected = self.store.current.plugins.installed.first(where: { $0.manifest.id == manifest.id })
-+        let alert = UIAlertController(title: expected == nil ? (self.russian ? "Установить плагин?" : "Install plugin?") : (self.russian ? "Обновить плагин?" : "Update plugin?"), message: self.details(manifest), preferredStyle: .alert)
-+        alert.addAction(UIAlertAction(title: expected == nil ? (self.russian ? "Установить" : "Install") : (self.russian ? "Обновить" : "Update"), style: .default, handler: { [weak self] _ in
-+            guard let self else { return }
-+            let begin: () -> Void = { [weak self] in self?.apply(manifest, expected: expected) }
-+            if let presented = self.presentedViewController { presented.dismiss(animated: true, completion: begin) }
-+            else { begin() }
-+        }))
-+        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
-+        self.present(alert, animated: true)
++        let title = expected == nil ? (self.russian ? "Установить плагин?" : "Install plugin?") : (self.russian ? "Обновить плагин?" : "Update plugin?")
++        let confirm = expected == nil ? (self.russian ? "Установить" : "Install") : (self.russian ? "Обновить" : "Update")
++        // The handler runs while the alert is already being dismissed: dismissing it again
++        // never completes, which left Install and Update doing nothing.
++        self.showAlert(title: title, message: self.details(manifest), actions: [
++            AyuPluginAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel, handler: nil),
++            AyuPluginAlertAction(title: confirm, style: .default, handler: { [weak self] in
++                self?.apply(manifest, expected: expected)
++            })
++        ])
 +    }
 +    private func apply(_ manifest: AyuPluginManifest, expected: AyuInstalledPlugin?) {
 +        guard !self.applying else { return }
@@ -71344,7 +71401,7 @@ index 00000000..a52483bd
 +                        try $0.plugins.installAndActivate(prepared)
 +                    }
 +                    self.reload()
-+                    self.navigationController?.pushViewController(AyuPluginDetailsController(store: self.store, pluginID: prepared.id, russian: self.russian, palette: self.palette, settingsController: self.settingsController, keepAwake: self.keepAwake), animated: true)
++                    self.navigationController?.pushViewController(self.makeDetailsController(pluginID: prepared.id), animated: true)
 +                } catch { self.error(error) }
 +            }
 +        }

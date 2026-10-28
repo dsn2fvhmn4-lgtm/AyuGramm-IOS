@@ -70144,10 +70144,10 @@ index 00000000..8105fdc9
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
 new file mode 100644
-index 00000000..2c7a77ab
+index 00000000..a0c8273f
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,139 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -70245,6 +70245,13 @@ index 00000000..2c7a77ab
 +public func ayuImportPlugin(context: AccountContext, fileURL: URL?, filename: String?) {
 +    let data = context.sharedContext.currentPresentationData.with { $0 }
 +    let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
++    if ayuPluginsTemporarilyLocked {
++        // A .plugin file opened from a chat or another app must not bypass the locked row.
++        let ru = data.strings.baseLanguageCode.hasPrefix("ru")
++        let text = ru ? "Плагины временно недоступны в этой сборке и вернутся в следующей." : "Plugins are temporarily unavailable in this build and will return in the next one."
++        context.sharedContext.mainWindow?.present(textAlertController(context: context, title: nil, text: text, actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), on: .root)
++        return
++    }
 +    let initialImport: (URL, String)?
 +    if let fileURL, let filename { initialImport = (fileURL, filename) } else { initialImport = nil }
 +    let plugins = AyuPluginManagerController(store: context.account.network.ayuGhostMode, russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette, initialImport: initialImport, settingsController: { id in AyuChatColorsController(context: context, pluginID: id) }, keepAwake: {
@@ -72324,10 +72331,10 @@ index 00000000..8b28f3d2
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 new file mode 100644
-index 00000000..f41ddcff
+index 00000000..d0e6ae2a
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -0,0 +1,704 @@
+@@ -0,0 +1,710 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -72340,6 +72347,10 @@ index 00000000..f41ddcff
 +import AccountContext
 +import TextFormat
 +import PeerNameColorScreen
++
++/// Closes the Plugins category for one build: the row is greyed out with a lock and cannot be
++/// opened. Installed plugins keep working. Set to `false` to open it again.
++let ayuPluginsTemporarilyLocked = true
 +
 +// The exteraGram pages: the main page, General, Chats, Interface, Message Menu, MessageShot, Other.
 +
@@ -72394,7 +72405,9 @@ index 00000000..f41ddcff
 +            .link(1, ExteraGramRow.general.rawValue, icons[.general] ?? nil, AyuStrings.general.text(ru), ""),
 +            .link(1, ExteraGramRow.appearance.rawValue, icons[.appearance] ?? nil, AyuStrings.appearance.text(ru), ""),
 +            .link(1, ExteraGramRow.chats.rawValue, icons[.chats] ?? nil, AyuStrings.chats.text(ru), ""),
-+            .badgedLink(1, ExteraGramRow.plugins.rawValue, icons[.plugins] ?? nil, AyuStrings.plugins.text(ru), "ALPHA", 0xFF453A),
++            ayuPluginsTemporarilyLocked
++                ? .lockedLink(1, ExteraGramRow.plugins.rawValue, AyuSettingsIcons.glyph("AyuGram/Plugins", color: UIColor(rgb: 0x8E8E93).withAlphaComponent(0.55), side: 20.0), AyuStrings.plugins.text(ru), ru ? "Скоро" : "Soon")
++                : .badgedLink(1, ExteraGramRow.plugins.rawValue, icons[.plugins] ?? nil, AyuStrings.plugins.text(ru), "ALPHA", 0xFF453A),
 +            .badgedLink(1, ExteraGramRow.materialDesign.rawValue, icons[.materialDesign] ?? nil, AyuStrings.materialDesignToggle.text(ru), "ALPHA", 0xFF453A),
 +            .link(1, ExteraGramRow.other.rawValue, icons[.other] ?? nil, AyuStrings.other.text(ru), "")
 +        ]
@@ -73386,10 +73399,10 @@ index 00000000..3d4d5447
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 new file mode 100644
-index 00000000..c041ac83
+index 00000000..780b99d9
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,191 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -73526,19 +73539,21 @@ index 00000000..c041ac83
 +    case link(Int32, Int32, UIImage?, String, String)
 +    /// A link whose title carries a coloured badge (ALPHA, BETA).
 +    case badgedLink(Int32, Int32, UIImage?, String, String, UInt32)
++    /// A greyed-out link with a lock beside the title that ignores taps.
++    case lockedLink(Int32, Int32, UIImage?, String, String)
 +    case toggle(Int32, Int32, UIImage?, String, String?, Bool)
 +    case info(Int32, Int32, String)
 +
 +    var section: ItemListSectionId {
 +        switch self {
-+        case let .logo(section, _, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .badgedLink(section, _, _, _, _, _), let .toggle(section, _, _, _, _, _), let .info(section, _, _):
++        case let .logo(section, _, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .badgedLink(section, _, _, _, _, _), let .lockedLink(section, _, _, _, _), let .toggle(section, _, _, _, _, _), let .info(section, _, _):
 +            return section
 +        }
 +    }
 +
 +    var stableId: Int32 {
 +        switch self {
-+        case let .logo(_, id, _, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .badgedLink(_, id, _, _, _, _), let .toggle(_, id, _, _, _, _), let .info(_, id, _):
++        case let .logo(_, id, _, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .badgedLink(_, id, _, _, _, _), let .lockedLink(_, id, _, _, _), let .toggle(_, id, _, _, _, _), let .info(_, id, _):
 +            return id
 +        }
 +    }
@@ -73551,6 +73566,7 @@ index 00000000..c041ac83
 +        case let (.header(ls, li, lt), .header(rs, ri, rt)): return ls == rs && li == ri && lt == rt
 +        case let (.link(ls, li, _, lt, ll), .link(rs, ri, _, rt, rl)): return ls == rs && li == ri && lt == rt && ll == rl
 +        case let (.badgedLink(ls, li, _, lt, lb, lc), .badgedLink(rs, ri, _, rt, rb, rc)): return ls == rs && li == ri && lt == rt && lb == rb && lc == rc
++        case let (.lockedLink(ls, li, _, lt, ll), .lockedLink(rs, ri, _, rt, rl)): return ls == rs && li == ri && lt == rt && ll == rl
 +        case let (.toggle(ls, li, _, lt, lx, lv), .toggle(rs, ri, _, rt, rx, rv)): return ls == rs && li == ri && lt == rt && lx == rx && lv == rv
 +        case let (.info(ls, li, lt), .info(rs, ri, rt)): return ls == rs && li == ri && lt == rt
 +        default: return false
@@ -73568,6 +73584,9 @@ index 00000000..c041ac83
 +            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.open(id) })
 +        case let .badgedLink(_, id, icon, title, badge, color):
 +            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, titleBadge: badge, titleBadgeColor: UIColor(rgb: color), label: "", sectionId: self.section, style: .blocks, action: { arguments.open(id) })
++        case let .lockedLink(_, _, icon, title, label):
++            let lock = UIImage(systemName: "lock.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13.0, weight: .semibold))?.withTintColor(presentationData.theme.list.itemDisabledTextColor, renderingMode: .alwaysOriginal)
++            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, enabled: false, titleIcon: lock, label: label, sectionId: self.section, style: .blocks, disclosureStyle: .none, action: nil)
 +        case let .toggle(_, id, icon, title, text, value):
 +            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, text: text, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
 +        case let .info(_, _, text):

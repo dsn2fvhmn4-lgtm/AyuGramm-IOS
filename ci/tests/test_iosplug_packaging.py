@@ -54,8 +54,8 @@ class IOSPlugPackagingTests(unittest.TestCase):
             self.assertEqual(len(base64.b64decode(proof["signature"])), 64)
 
     def test_all_published_files_have_their_source_and_audited_mapping(self):
-        report = PACKAGER.read_json(ROOT / "plugins/iosplug/compatibility.json")
-        cards = list((ROOT / "plugins/iosplug").glob("*.iosplug"))
+        report = PACKAGER.read_json(ROOT / "plug/compatibility.json")
+        cards = list((ROOT / "plug").glob("*.iosplug"))
         self.assertEqual(report["package_count"], len(cards))
         self.assertEqual(len(report["plugins"]), report["unique_sources"])
         expected = {row["file"] for row in report["plugins"] if "file" in row}

@@ -26,7 +26,7 @@ def run(source: Path):
                         str(source / 'tools/ayu-tests/iosplug-native/main.swift'),
                         '-o', str(output / 'native-iosplug-tests')], check=True)
         subprocess.run([str(output / 'native-iosplug-tests'),
-                        str(Path(__file__).resolve().parents[1] / 'plugins/iosplug')], check=True)
+                        str(Path(__file__).resolve().parents[1] / 'plug')], check=True)
         murmur = source / 'submodules/MurMurHash32'
         header = murmur / 'PublicHeaders/MurMurHash32/MurMurHash32.h'
         (output / 'module.modulemap').write_text(

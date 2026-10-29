@@ -21,6 +21,7 @@ patches = [
     root / "patches" / "ayugram-custom-features.patch",
     root / "patches" / "ayugram-followup-features.patch",
     root / "patches" / "ayugram-developer-badges.patch",
+    root / "patches" / "ayugram-interface-controls.patch",
 ]
 for patch in patches:
     subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)
@@ -38,6 +39,12 @@ if app_badge_src.is_file():
     app_badge_dst = source / "submodules" / "TelegramUI" / "Images.xcassets" / "Components" / "AppBadge.imageset" / "AppBadge@3x.png"
     app_badge_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(app_badge_src, app_badge_dst)
+
+# TelegramUIResources includes Resources/**/* in the application bundle.
+font_src = root / "assets" / "fonts" / "YSMusic-HeadlineBold.ttf"
+font_dst = source / "submodules" / "TelegramUI" / "Resources" / font_src.name
+font_dst.parent.mkdir(parents=True, exist_ok=True)
+shutil.copy2(font_src, font_dst)
 
 missing = missing_port_sources(source)
 if missing:

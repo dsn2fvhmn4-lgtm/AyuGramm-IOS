@@ -3,9 +3,9 @@
 Из 29 уникальных исходников подготовлены **16 пакетов**, остальные **13 ещё не перенесены**.
 Дубликаты `(2)` объединены по SHA-256. Android/Python-код не исполняется.
 
-Файлы находятся в [plugins/iosplug](../plugins/iosplug/). Полный список ограничений,
-необходимых точек входа и хешей: [README-RU.md](../plugins/iosplug/README-RU.md)
-и [compatibility.json](../plugins/iosplug/compatibility.json).
+Файлы находятся в [plug](../plug/). Полный список ограничений,
+необходимых точек входа и хешей: [README-RU.md](../plug/README-RU.md)
+и [compatibility.json](../plug/compatibility.json).
 
 ## Форматы
 

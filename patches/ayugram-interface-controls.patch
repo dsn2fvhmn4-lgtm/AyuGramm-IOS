@@ -1,0 +1,759 @@
+diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
+index fbd8ff6..c7df908 100644
+--- a/submodules/ChatListUI/Sources/ChatListController.swift
++++ b/submodules/ChatListUI/Sources/ChatListController.swift
+@@ -761,6 +761,7 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                     return
+                 }
+                 
++                strongSelf.chatListDisplayNode.ayuUpdateBottomFolderSwitch(fraction: fraction, isDragging: strongSelf.chatListDisplayNode.mainContainerNode.isSwitchingCurrentItemFilterByDragging, transition: ComponentTransition(transition))
+                 if let navigationBarView = strongSelf.chatListDisplayNode.navigationBarView.view as? ChatListNavigationBar.View, let headerPanelsView = navigationBarView.headerPanels as? HeaderPanelContainerComponent.View, let tabsView = headerPanelsView.tabs as? HorizontalTabsComponent.View {
+                     tabsView.updateTabSwitchFraction(fraction: fraction, isDragging: strongSelf.chatListDisplayNode.mainContainerNode.isSwitchingCurrentItemFilterByDragging, transition: ComponentTransition(transition))
+                 }
+diff --git a/submodules/ChatListUI/Sources/ChatListControllerNode.swift b/submodules/ChatListUI/Sources/ChatListControllerNode.swift
+index 594f370..f895e76 100644
+--- a/submodules/ChatListUI/Sources/ChatListControllerNode.swift
++++ b/submodules/ChatListUI/Sources/ChatListControllerNode.swift
+@@ -1176,6 +1176,9 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+     private var tapRecognizer: UITapGestureRecognizer?
+     var navigationBar: NavigationBar?
+     let navigationBarView = ComponentView<Empty>()
++    private let ayuBottomFolders = ComponentView<Empty>()
++    private var ayuBottomFoldersBackground: UIVisualEffectView?
++    private var ayuBottomFoldersHeight: CGFloat = 0.0
+     weak var controller: ChatListControllerImpl?
+     
+     private var toolbar: ComponentView<Empty>?
+@@ -1544,6 +1547,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+             )
+         }
+         
++        var ayuBottomTabs: AnyComponent<Empty>?
+         var navigationHeaderPanels: AnyComponent<Empty>?
+         if self.controller?.tabContainerData != nil || !panels.isEmpty {
+             var tabs: AnyComponent<Empty>?
+@@ -1684,6 +1688,13 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+                 ))
+             }
+                 
++            if self.context.account.network.ayuGhostMode.current.interface.foldersAtBottom,
++               !self.isSearchDisplayControllerActive, !self.isReorderingFilters,
++               self.toolbarData == nil, self.controller?.previewing == false,
++               (self.controller?.parent as? TabBarController)?.verticalTabBarFrame(for: layout) == nil {
++                ayuBottomTabs = tabs
++                tabs = nil
++            }
+             navigationHeaderPanels = AnyComponent(HeaderPanelContainerComponent(
+                 theme: self.presentationData.theme,
+                 tabs: tabs,
+@@ -1691,6 +1702,36 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+             ))
+         }
+         
++        self.ayuBottomFoldersHeight = 0.0
++        if let ayuBottomTabs {
++            let background: UIVisualEffectView
++            if let current = self.ayuBottomFoldersBackground {
++                background = current
++            } else {
++                background = UIVisualEffectView()
++                background.layer.cornerRadius = 22.0
++                background.clipsToBounds = true
++                self.ayuBottomFoldersBackground = background
++                self.view.addSubview(background)
++            }
++            background.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .systemChromeMaterialDark : .systemChromeMaterialLight)
++            let tabsSize = self.ayuBottomFolders.update(transition: transition, component: ayuBottomTabs, environment: {}, containerSize: CGSize(width: max(0.0, layout.size.width - layout.safeInsets.left - layout.safeInsets.right - 32.0), height: 48.0))
++            let height = max(40.0, tabsSize.height)
++            self.ayuBottomFoldersHeight = height + 12.0
++            let frame = CGRect(x: layout.safeInsets.left + 16.0, y: layout.size.height - layout.intrinsicInsets.bottom - self.ayuBottomFoldersHeight, width: tabsSize.width, height: height)
++            transition.setFrame(view: background, frame: frame)
++            if let tabsView = self.ayuBottomFolders.view {
++                if tabsView.superview !== background.contentView {
++                    background.contentView.addSubview(tabsView)
++                }
++                transition.setFrame(view: tabsView, frame: CGRect(x: 0.0, y: floor((height - tabsSize.height) * 0.5), width: tabsSize.width, height: tabsSize.height))
++            }
++            self.view.bringSubviewToFront(background)
++        } else {
++            self.ayuBottomFoldersBackground?.removeFromSuperview()
++            self.ayuBottomFoldersBackground = nil
++        }
++
+         var effectiveStorySubscriptions: EngineStorySubscriptions?
+         if let controller = self.controller, case .forum = controller.location {
+             effectiveStorySubscriptions = nil
+@@ -1855,6 +1896,12 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+         transition.updateSublayerTransformOffset(layer: self.mainContainerNode.layer, offset: CGPoint(x: 0.0, y: -mainDelta))
+     }
+     
++    func ayuUpdateBottomFolderSwitch(fraction: CGFloat, isDragging: Bool, transition: ComponentTransition) {
++        if let tabsView = self.ayuBottomFolders.view as? HorizontalTabsComponent.View {
++            tabsView.updateTabSwitchFraction(fraction: fraction, isDragging: isDragging, transition: transition)
++        }
++    }
++
+     func requestNavigationBarLayout(transition: ComponentTransition) {
+         guard let (layout, _, _, _, _) = self.containerLayout else {
+             return
+@@ -1897,6 +1944,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+         self.containerLayout = (layout, navigationBarHeight, visualNavigationHeight, cleanNavigationBarHeight, storiesInset)
+         
+         var insets = layout.insets(options: [.input])
++        insets.bottom += self.ayuBottomFoldersHeight
+         insets.top += navigationBarHeight
+         insets.left += layout.safeInsets.left
+         insets.right += layout.safeInsets.right
+diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+index 4716128..1c6e807 100644
+--- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+@@ -22,6 +22,7 @@ private enum AyuGramRow: Int32 {
+     case filters = 22
+     case nearbyContact = 23
+     case interface = 24
++    case navigationAndComposer = 25
+     case channel = 31
+     case sourceCode = 32
+ }
+@@ -52,6 +53,8 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             push?(ayuNearbyContactController(context: context))
+         case .interface:
+             push?(ayuInterfacePageController(context: context))
++        case .navigationAndComposer:
++            push?(ayuInterfacePageController(context: context, navigationOnly: true))
+         case .channel:
+             ayuOpenChannel(context: context, navigation: navigation?())
+         case .sourceCode:
+@@ -67,6 +70,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+         .filters: AyuSettingsIcons.glyph("AyuGram/Filter", color: UIColor(rgb: 0xFF3B30), side: 20.0),
+         .nearbyContact: AyuSettingsIcons.symbol("antenna.radiowaves.left.and.right", color: UIColor(rgb: 0x007AFF)),
+         .interface: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x32ADE6)),
++        .navigationAndComposer: AyuSettingsIcons.symbol("slider.horizontal.3", color: UIColor(rgb: 0x5856D6)),
+         .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
+         .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
+     ]
+@@ -88,8 +92,9 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             .header(3, 20, AyuStrings.qolToggles.text(ru)),
+             link(3, .localPremium, AyuStrings.localPremiumStatus.text(ru)),
+             link(3, .filters, AyuStrings.filters.text(ru)),
+-            link(3, .interface, ru ? "Интерфейс и чаты" : "Interface & Chats"),
+             .badgedLink(3, AyuGramRow.nearbyContact.rawValue, icons[.nearbyContact] ?? nil, AyuStrings.nearbyContact.text(ru), "BETA", 0xFFD60A),
++            link(3, .interface, ru ? "Интерфейс и чаты" : "Interface & Chats"),
++            link(3, .navigationAndComposer, ru ? "Навигация и редактор" : "Navigation and composer"),
+             .header(4, 30, AyuStrings.links.text(ru)),
+             link(4, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
+             link(4, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub")
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+index 7561b28..31226f6 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+@@ -556,10 +556,28 @@ func ayuMessageShotSettingsController(context: AccountContext) -> ViewController
+ 
+ /// exteraGram "Interface": the display switches grouped like the other exteraGram pages,
+ /// with icons and one short note per group.
+-func ayuInterfacePageController(context: AccountContext) -> ViewController {
++func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool = false) -> ViewController {
+     let store = context.account.network.ayuGhostMode
+     var presentError: (() -> Void)?
+-    let arguments = AyuSectionedArguments(open: { _ in }, toggle: { id, value in
++    let tabBarLift = ValuePromise<Double>(min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 24.0))), ignoreRepeated: true)
++    let arguments = AyuSectionedArguments(open: { id in
++        guard id == 55 else { return }
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let alert = UIAlertController(title: ru ? "Положение таббара" : "Tab bar position", message: "\n\n", preferredStyle: .alert)
++        let slider = UISlider(frame: CGRect(x: 20.0, y: 65.0, width: 230.0, height: 44.0))
++        slider.minimumValue = 0.0
++        slider.maximumValue = 48.0
++        slider.value = Float(min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 24.0))))
++        slider.accessibilityLabel = ru ? "Поднять таббар" : "Raise tab bar"
++        alert.view.addSubview(slider)
++        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { _ in
++            let value = Double(slider.value.rounded())
++            UserDefaults.standard.set(value, forKey: "ayu.tabBarLift")
++            tabBarLift.set(value)
++        }))
++        context.sharedContext.applicationBindings.presentNativeController(alert)
++    }, toggle: { id, value in
+         do {
+             try store.update {
+                 switch id {
+@@ -586,6 +604,10 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+                 case 32: $0.interface.streamerMode = value
+                 case 33: $0.interface.backgroundNotifications = value
+                 case 41: $0.interface.voiceMemosPlayer = value
++                case 51: $0.interface.foldersAtBottom = value
++                case 52: $0.interface.compactAttachmentMenu = value
++                case 53: $0.interface.doubleTapToEdit = value
++                case 54: $0.interface.formattingToolbar = value
+                 default: break
+                 }
+             }
+@@ -626,9 +648,9 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+         33: icon("bell.badge.fill", 0xFF9500),
+         41: icon("waveform", 0xFF3B30)
+     ]
+-    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    let signal = combineLatest(context.sharedContext.presentationData, store.signal, tabBarLift.get())
+     |> deliverOnMainQueue
+-    |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++    |> map { presentationData, settings, lift -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         let value = settings.interface
+         var entries: [AyuSectionedEntry] = [
+@@ -670,11 +692,21 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+             .info(3, 34, AyuStrings.streamerModeKeepsAyugramOutScreenshots.text(ru)),
+             .header(4, 40, ru ? "Голосовые сообщения" : "Voice Messages"),
+             .toggle(4, 41, icons[41] ?? nil, ru ? "Плеер в стиле «Диктофона»" : "Voice Memos Style Player", nil, value.voiceMemosPlayer),
+-            .info(4, 42, ru ? "Голосовые, открытые из панели воспроизведения, показываются с крупной волной, ±15 секунд и скоростью, как в «Диктофоне»." : "Voice messages opened from the playback bar show a large waveform, ±15 s skips and speed, like Voice Memos.")
++            .info(4, 42, ru ? "Голосовые, открытые из панели воспроизведения, показываются с крупной волной, ±15 секунд и скоростью, как в «Диктофоне»." : "Voice messages opened from the playback bar show a large waveform, ±15 s skips and speed, like Voice Memos."),
++            .header(5, 50, ru ? "Навигация и редактор" : "Navigation and composer"),
++            .toggle(5, 51, icon("folder.fill", 0x32ADE6), ru ? "Папки над таббаром" : "Folders above the tab bar", nil, value.foldersAtBottom),
++            .toggle(5, 52, icon("paperclip", 0x007AFF), ru ? "Компактное меню вложений" : "Compact attachment menu", nil, value.compactAttachmentMenu),
++            .toggle(5, 53, icon("hand.tap.fill", 0xAF52DE), ru ? "Редактировать двойным тапом" : "Double-tap to edit", nil, value.doubleTapToEdit),
++            .toggle(5, 54, icon("textformat", 0x5856D6), ru ? "Панель форматирования" : "Formatting toolbar", nil, value.formattingToolbar),
++            .link(5, 55, icon("arrow.up.and.down", 0x34C759), ru ? "Положение таббара" : "Tab bar position", "\(Int(lift)) pt"),
++            .info(5, 56, ru ? "Изменения применяются при возвращении к списку чатов или повторном открытии чата. Положение таббара общее для всех аккаунтов; 0 — стандартная высота." : "Changes apply when returning to the chat list or reopening a chat. Tab bar position is shared across accounts; 0 is the default height.")
+         ]
+         entries.append(contentsOf: remainingEntries)
++        if navigationOnly {
++            entries = entries.filter { $0.section == 5 }
++        }
+         let data = ItemListPresentationData(presentationData)
+-        let state = ItemListControllerState(presentationData: data, title: .text(AyuStrings.interface.text(ru)), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        let state = ItemListControllerState(presentationData: data, title: .text(navigationOnly ? (ru ? "Навигация и редактор" : "Navigation and composer") : AyuStrings.interface.text(ru)), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
+     }
+     let controller = ItemListController(context: context, state: signal)
+diff --git a/submodules/TabBarUI/Sources/TabBarContollerNode.swift b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
+index 2b833df..5afb5e9 100644
+--- a/submodules/TabBarUI/Sources/TabBarContollerNode.swift
++++ b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
+@@ -17,6 +17,7 @@ final class TabBarControllerNode: ASDisplayNode {
+         let currentControllerSearchState: ViewController.TabBarSearchState?
+         /// The side placement depends on it, and with it the bottom inset the tab gets.
+         let itemCount: Int
++        let ayuLift: Double
+         
+         init(
+             layout: ContainerViewLayout,
+@@ -30,6 +31,7 @@ final class TabBarControllerNode: ASDisplayNode {
+             self.isTabBarHidden = isTabBarHidden
+             self.currentControllerSearchState = currentControllerSearchState
+             self.itemCount = itemCount
++            self.ayuLift = min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 24.0)))
+         }
+     }
+     
+@@ -218,6 +220,9 @@ final class TabBarControllerNode: ASDisplayNode {
+         }
+ 
+         var tabBarBottomInset: CGFloat = panelsBottomInset
++        if self.sidePlacement(for: params.layout) == nil {
++            tabBarBottomInset += CGFloat(params.ayuLift)
++        }
+         if let currentController = self.currentController {
+             if let tabBarSearchState = currentController.tabBarSearchState, tabBarSearchState.isActive, let inputHeight = params.layout.inputHeight, inputHeight != 0.0 {
+                 tabBarBottomInset = max(tabBarBottomInset, inputHeight + 8.0)
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+index e27c3d9..6d5e969 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -50,6 +50,10 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+     public var supporterBadgesOnLeft = false
+     /// Opens voice messages in the Voice Memos style player instead of Telegram's.
+     public var voiceMemosPlayer = false
++    public var foldersAtBottom = true
++    public var compactAttachmentMenu = true
++    public var doubleTapToEdit = true
++    public var formattingToolbar = true
+     public init() {}
+ 
+     private enum CodingKeys: String, CodingKey {
+@@ -65,6 +69,7 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+         case horizonLockVideoMessages
+         case autoQuoteReplies, replyToDeletedMessages, showSupporterBadges
+         case supporterBadgesOnLeft
++        case foldersAtBottom, compactAttachmentMenu, doubleTapToEdit, formattingToolbar
+         case voiceMemosPlayer
+     }
+     public init(from decoder: Decoder) throws {
+@@ -110,6 +115,10 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+         self.replyToDeletedMessages = try values.decodeIfPresent(Bool.self, forKey: .replyToDeletedMessages) ?? true
+         self.showSupporterBadges = try values.decodeIfPresent(Bool.self, forKey: .showSupporterBadges) ?? true
+         self.supporterBadgesOnLeft = try values.decodeIfPresent(Bool.self, forKey: .supporterBadgesOnLeft) ?? false
++        self.foldersAtBottom = try values.decodeIfPresent(Bool.self, forKey: .foldersAtBottom) ?? true
++        self.compactAttachmentMenu = try values.decodeIfPresent(Bool.self, forKey: .compactAttachmentMenu) ?? true
++        self.doubleTapToEdit = try values.decodeIfPresent(Bool.self, forKey: .doubleTapToEdit) ?? true
++        self.formattingToolbar = try values.decodeIfPresent(Bool.self, forKey: .formattingToolbar) ?? true
+         self.voiceMemosPlayer = try values.decodeIfPresent(Bool.self, forKey: .voiceMemosPlayer) ?? false
+     }
+ }
+diff --git a/submodules/TelegramUI/Components/Chat/ChatInputTextNode/Sources/ChatRichTextInputNode.swift b/submodules/TelegramUI/Components/Chat/ChatInputTextNode/Sources/ChatRichTextInputNode.swift
+index 87f1a54..3f9a8be 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatInputTextNode/Sources/ChatRichTextInputNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatInputTextNode/Sources/ChatRichTextInputNode.swift
+@@ -57,7 +57,7 @@ public struct ChatRichTextThemeColors {
+ /// the inline marks the other commands set (bold, italic, underline, strikethrough, monospace, spoiler) from the
+ /// selection, as one step, and leaves the blocks alone.
+ public enum ChatRichTextFormatAction {
+-    case bold, italic, monospace, strikethrough, underline, spoiler, quote, pullQuote, code, date, clearFormatting
++    case bold, italic, monospace, strikethrough, underline, spoiler, quote, pullQuote, code, date, clearFormatting, bulletList, numberedList
+ }
+ 
+ /// The owner-facing media-control descriptor: the resolved `EngineMedia` ("what we're dealing with") plus
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+index d575eb3..1047a0f 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+@@ -5839,6 +5839,16 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+         switch recognizer.state {
+         case .ended:
+             if let (gesture, location) = recognizer.lastRecognizedGestureAndLocation, let item = self.item {
++                if case .doubleTap = gesture {
++                    // Resolve the tapped album item, rather than editing its first message.
++                    let tappedMessage = self.contentNodes.first(where: {
++                        $0.view.convert($0.bounds, to: self.view).contains(location)
++                    })?.item?.message ?? item.message
++                    if item.controllerInteraction.ayuEditOnDoubleTap(tappedMessage) {
++                        self.mainContainerNode.cancelGesture()
++                        return
++                    }
++                }
+                 if let action = self.gestureRecognized(gesture: gesture, location: location, recognizer: nil) {
+                     if case .doubleTap = gesture {
+                         self.mainContainerNode.cancelGesture()
+diff --git a/submodules/TelegramUI/Components/Chat/ChatRichTextEditorComposer/Sources/RichTextEditorChatInputNode.swift b/submodules/TelegramUI/Components/Chat/ChatRichTextEditorComposer/Sources/RichTextEditorChatInputNode.swift
+index 7d79644..340dc63 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatRichTextEditorComposer/Sources/RichTextEditorChatInputNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatRichTextEditorComposer/Sources/RichTextEditorChatInputNode.swift
+@@ -924,6 +924,8 @@ public final class RichTextEditorChatInputNode: ASDisplayNode, ChatRichTextInput
+         case .quote: self.editorView.wrapInBlockQuote()
+         case .pullQuote: self.editorView.makePullQuote()
+         case .code: self.editorView.makeCodeBlock()
++        case .bulletList: self.editorView.setList(.bullet)
++        case .numberedList: self.editorView.setList(.ordered)
+         case .date:
+             // TODO: no timestamp-entity model in the editor (deferred). No-op for now.
+             break
+@@ -937,7 +939,7 @@ public final class RichTextEditorChatInputNode: ASDisplayNode, ChatRichTextInput
+         case .bold, .strikethrough, .underline, .spoiler: return self.editorView.inlineFormatsReachSelection
+         // Not over a mention, a date or a link (composer harness p23, `HarnessInlineCodeOverEntityTests`).
+         case .monospace: return self.editorView.inlineCodeReachesSelection
+-        case .quote, .pullQuote, .code, .date, .clearFormatting: return true
++        case .quote, .pullQuote, .code, .date, .clearFormatting, .bulletList, .numberedList: return true
+         }
+     }
+ 
+diff --git a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+index ec2bc59..01f0034 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+@@ -307,6 +307,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+     
+     public var updateActivity: () -> Void = { }
+     
++    private var ayuFormattingBar: UIScrollView?
++    private var ayuFormattingButtons: [UIButton] = []
+     private var updatingInputState = false
+     
+     private var currentPlaceholder: String?
+@@ -3918,8 +3920,108 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+         transition.updateFrame(view: self.glassBackgroundContainer, frame: containerFrame)
+         self.glassBackgroundContainer.update(size: containerFrame.size, isDark: interfaceState.theme.overallDarkAppearance, transition: ComponentTransition(transition))
+         
++        let showsFormatting = (self.context?.account.network.ayuGhostMode.current.interface.formattingToolbar ?? false) && self.isFocused && mediaRecordingState == nil
++        if showsFormatting {
++            let bar: UIScrollView
++            if let current = self.ayuFormattingBar {
++                bar = current
++            } else {
++                bar = UIScrollView()
++                bar.showsHorizontalScrollIndicator = false
++                bar.delaysContentTouches = false
++                self.ayuFormattingBar = bar
++                self.view.addSubview(bar)
++                let items = [
++                    ("bold", "Жирный / Bold"), ("italic", "Курсив / Italic"),
++                    ("underline", "Подчёркнутый / Underline"), ("eye.slash", "Спойлер / Spoiler"),
++                    ("link", "Ссылка / Link"), ("text.quote", "Цитата / Quote"),
++                    ("strikethrough", "Зачёркнутый / Strikethrough"), ("chevron.left.forwardslash.chevron.right", "Код / Code"),
++                    ("list.bullet", "Маркер списка / Bullet"), ("list.number", "Нумерация / Number"),
++                    ("textformat", "Очистить форматирование / Clear formatting"), ("arrow.uturn.backward", "Отменить / Undo")
++                ]
++                for (index, item) in items.enumerated() {
++                    let button = UIButton(type: .system)
++                    button.tag = index
++                    button.setImage(UIImage(systemName: item.0), for: .normal)
++                    let russian = self.strings?.baseLanguageCode.hasPrefix("ru") ?? false
++                    button.accessibilityLabel = item.1.components(separatedBy: " / ")[russian ? 0 : 1]
++                    button.addTarget(self, action: #selector(self.ayuFormatPressed(_:)), for: .touchUpInside)
++                    bar.addSubview(button)
++                    self.ayuFormattingButtons.append(button)
++                }
++            }
++            bar.backgroundColor = interfaceState.theme.chat.inputPanel.panelBackgroundColor.withAlphaComponent(0.85)
++            transition.updateFrame(view: bar, frame: CGRect(x: leftInset, y: contentHeight, width: max(0.0, width - leftInset - rightInset), height: 44.0))
++            let buttonWidth = max(44.0, bar.bounds.width / 10.0)
++            for (index, button) in self.ayuFormattingButtons.enumerated() {
++                button.frame = CGRect(x: CGFloat(index) * buttonWidth, y: 0.0, width: buttonWidth, height: 44.0)
++                button.tintColor = interfaceState.theme.chat.inputPanel.inputControlColor
++                let secret = interfaceState.chatLocation.peerId?.namespace == Namespaces.Peer.SecretChat
++                button.isEnabled = !secret || ![3, 5].contains(index)
++                let nativeActions: [Int: ChatRichTextFormatAction] = [0: .bold, 1: .italic, 2: .underline, 3: .spoiler, 5: .quote, 6: .strikethrough, 7: .code, 8: .bulletList, 9: .numberedList, 10: .clearFormatting]
++                if self.richTextInputNode?.usesNativeRichTextEngine == true, let action = nativeActions[index] {
++                    button.isEnabled = button.isEnabled && (self.richTextInputNode?.canPerformFormatAction(action) ?? false)
++                }
++                if self.richTextInputNode?.usesNativeRichTextEngine != true, [0, 1, 2, 3, 4, 6, 10].contains(index), self.inputTextState.selectionRange.isEmpty {
++                    button.isEnabled = false
++                }
++            }
++            bar.contentSize = CGSize(width: CGFloat(self.ayuFormattingButtons.count) * buttonWidth, height: 44.0)
++            self.view.bringSubviewToFront(bar)
++            contentHeight += 44.0
++        } else if let bar = self.ayuFormattingBar {
++            bar.removeFromSuperview()
++            self.ayuFormattingBar = nil
++            self.ayuFormattingButtons = []
++        }
+         return contentHeight
+     }
++
++    @objc private func ayuFormatPressed(_ sender: UIButton) {
++        let nativeAction: ChatRichTextFormatAction?
++        switch sender.tag {
++        case 0: nativeAction = .bold
++        case 1: nativeAction = .italic
++        case 2: nativeAction = .underline
++        case 3: nativeAction = .spoiler
++        case 5: nativeAction = .quote
++        case 6: nativeAction = .strikethrough
++        case 7: nativeAction = .code
++        case 8: nativeAction = .bulletList
++        case 9: nativeAction = .numberedList
++        case 10: nativeAction = .clearFormatting
++        default: nativeAction = nil
++        }
++        if let nativeAction, self.performNativeFormatShortcut(nativeAction) { return }
++        switch sender.tag {
++        case 0: self.formatAttributesBold(sender)
++        case 1: self.formatAttributesItalic(sender)
++        case 2: self.formatAttributesUnderline(sender)
++        case 3: self.formatAttributesSpoiler(sender)
++        case 4: self.formatAttributesLink(sender)
++        case 5: self.formatAttributesQuote(sender)
++        case 6: self.formatAttributesStrikethrough(sender)
++        case 7: self.formatAttributesCodeBlock(sender)
++        case 8, 9:
++            let state = self.inputTextState
++            let range = NSRange(location: state.selectionRange.lowerBound, length: state.selectionRange.count)
++            let text = NSMutableAttributedString(string: sender.tag == 8 ? "• " : "1. ")
++            if range.length > 0, NSMaxRange(range) <= state.inputText.length {
++                text.append(state.inputText.attributedSubstring(from: range))
++            }
++            if self.richTextInputNode?.insertTextOnUsersBehalf(text) != true {
++                self.richTextInputNode?.performUndoableInputChange {
++                    self.interfaceInteraction?.updateTextInputStateAndMode { current, mode in
++                        return (current.replacingFlatRange(range, with: text), mode)
++                    }
++                }
++            }
++        case 10:
++            _ = self.performLegacyFormatShortcut { chatTextInputClearFormattingAttributes($0) }
++        case 11: self.richTextInputNode?.inputView.undoManager?.undo()
++        default: break
++        }
++    }
+     
+     @objc private func slowModeButtonPressed() {
+         self.interfaceInteraction?.openBoostToUnrestrict()
+@@ -4829,7 +4931,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+             
+             let baseWidth = width - leftInset - self.leftMenuInset - rightInset - self.rightSlowModeInset + self.currentTextInputBackgroundWidthOffset - additionalSideInsets.right
+             let (_, textFieldHeight, _) = self.calculateTextFieldMetrics(width: baseWidth, sendActionControlsWidth: self.sendActionButtons.bounds.width, maxHeight: maxHeight, metrics: metrics, bottomInset: bottomInset, interfaceState: interfaceState)
+-            let panelHeight = self.panelHeight(textFieldHeight: textFieldHeight, metrics: metrics, bottomInset: bottomInset)
++            let formattingHeight: CGFloat = self.ayuFormattingBar == nil ? 0.0 : 44.0
++            let panelHeight = self.panelHeight(textFieldHeight: textFieldHeight, metrics: metrics, bottomInset: bottomInset) + formattingHeight
+             if !self.bounds.size.height.isEqual(to: panelHeight) {
+                 self.updateHeight(animated)
+             } else {
+@@ -6030,6 +6133,10 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+     }
+     
+     override public func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
++        if let bar = self.ayuFormattingBar, bar.frame.contains(point),
++           let result = bar.hitTest(self.view.convert(point, to: bar), with: event) {
++            return result
++        }
+         if let audioRecordingCancelIndicator = self.audioRecordingCancelIndicator {
+             if let result = audioRecordingCancelIndicator.hitTest(self.view.convert(point, to: audioRecordingCancelIndicator), with: event) {
+                 return result
+diff --git a/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift b/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift
+index 7da9142..d78c8dd 100644
+--- a/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift
++++ b/submodules/TelegramUI/Components/ChatControllerInteraction/Sources/ChatControllerInteraction.swift
+@@ -251,6 +251,7 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol
+     public let pollOptionLongTap: (Data, LongTapParams?) -> Void
+     public let openCheckoutOrReceipt: (EngineMessage.Id, OpenMessageParams?) -> Void
+     public let openSearch: () -> Void
++    public var ayuEditOnDoubleTap: (EngineRawMessage) -> Bool = { _ in false }
+     public let setupReply: (EngineMessage.Id) -> Void
+     public let canSetupReply: (EngineRawMessage) -> ChatControllerInteractionSwipeAction
+     public let canSendMessages: () -> Bool
+diff --git a/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift b/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift
+new file mode 100644
+index 0000000..a8aa83b
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift
+@@ -0,0 +1,156 @@
++import Foundation
++import UIKit
++import AsyncDisplayKit
++import Display
++import TelegramPresentationData
++import AttachmentUI
++
++/// A compact attachment launcher. Every row opens Telegram's existing picker.
++final class AyuAttachmentMenuController: ViewController {
++    private let buttons: [AttachmentButtonType]
++    private let theme: PresentationTheme
++    private let russian: Bool
++    private let sourceRect: CGRect?
++    private let choose: (AttachmentButtonType) -> Void
++    private let outside = UIButton(type: .custom)
++    private let panel = UIVisualEffectView()
++    private let handleArea = UIView()
++    private let handle = UIView()
++    private let scrollView = UIScrollView()
++    private var rows: [UIButton] = []
++    private var layout: ContainerViewLayout?
++    private var expanded = false
++    private var appeared = false
++    private var closing = false
++
++    init(buttons: [AttachmentButtonType], theme: PresentationTheme, russian: Bool, sourceRect: CGRect?, choose: @escaping (AttachmentButtonType) -> Void) {
++        self.buttons = buttons
++        self.theme = theme
++        self.russian = russian
++        self.sourceRect = sourceRect
++        self.choose = choose
++        super.init(navigationBarPresentationData: nil)
++        self.statusBar.statusBarStyle = .Ignore
++    }
++
++    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
++
++    override func loadDisplayNode() {
++        self.displayNode = ASDisplayNode()
++        self.displayNode.backgroundColor = .clear
++        self.displayNodeDidLoad()
++        self.outside.addTarget(self, action: #selector(self.cancel), for: .touchUpInside)
++        self.view.addSubview(self.outside)
++        self.panel.effect = UIBlurEffect(style: self.theme.overallDarkAppearance ? .systemChromeMaterialDark : .systemChromeMaterialLight)
++        self.panel.layer.cornerRadius = 26.0
++        self.panel.clipsToBounds = true
++        self.view.addSubview(self.panel)
++        self.panel.contentView.addSubview(self.handleArea)
++        self.handle.backgroundColor = self.theme.list.itemSecondaryTextColor.withAlphaComponent(0.4)
++        self.handle.layer.cornerRadius = 2.0
++        self.handleArea.addSubview(self.handle)
++        self.handleArea.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(self.pan(_:))))
++        self.scrollView.alwaysBounceVertical = true
++        self.scrollView.showsVerticalScrollIndicator = false
++        self.panel.contentView.addSubview(self.scrollView)
++        for (index, type) in self.buttons.enumerated() {
++            let details = self.details(type)
++            let row = UIButton(type: .system)
++            row.tag = index
++            row.contentHorizontalAlignment = .left
++            row.titleLabel?.font = .systemFont(ofSize: 17.0)
++            row.setTitle(details.0, for: .normal)
++            row.setTitleColor(self.theme.list.itemPrimaryTextColor, for: .normal)
++            row.contentEdgeInsets = UIEdgeInsets(top: 0.0, left: 62.0, bottom: 0.0, right: 12.0)
++            let icon = UIImageView(image: UIImage(systemName: details.1))
++            icon.tintColor = .white
++            icon.contentMode = .center
++            icon.backgroundColor = details.2
++            icon.layer.cornerRadius = 18.0
++            icon.frame = CGRect(x: 16.0, y: 10.0, width: 36.0, height: 36.0)
++            row.addSubview(icon)
++            row.addTarget(self, action: #selector(self.pressed(_:)), for: .touchUpInside)
++            self.scrollView.addSubview(row)
++            self.rows.append(row)
++        }
++    }
++
++    private func details(_ type: AttachmentButtonType) -> (String, String, UIColor) {
++        switch type {
++        case .gallery: return (self.russian ? "Галерея" : "Gallery", "photo.on.rectangle", .systemPink)
++        case .richText: return (self.russian ? "Статья" : "Article", "doc.richtext", .systemGray)
++        case .file: return (self.russian ? "Файл" : "File", "doc.fill", .systemBlue)
++        case .location: return (self.russian ? "Геопозиция" : "Location", "location.fill", .systemGreen)
++        case .contact: return (self.russian ? "Контакт" : "Contact", "person.crop.circle.fill", .systemOrange)
++        case .poll: return (self.russian ? "Опрос" : "Poll", "chart.bar.fill", .systemPurple)
++        case .audio: return (self.russian ? "Музыка" : "Music", "music.note", .systemRed)
++        case .todo: return (self.russian ? "Список задач" : "Checklist", "checklist", .systemYellow)
++        case .gift: return (self.russian ? "Подарок" : "Gift", "gift.fill", .systemPink)
++        case .money: return (self.russian ? "Перевод" : "Transfer", "creditcard.fill", .systemGreen)
++        case .quickReply: return (self.russian ? "Быстрый ответ" : "Quick reply", "text.bubble.fill", .systemPurple)
++        case let .app(bot): return (bot.peer.compactDisplayTitle, "app.fill", .systemBlue)
++        default: return (type.key, "plus.circle.fill", .systemBlue)
++        }
++    }
++
++    override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
++        super.containerLayoutUpdated(layout, transition: transition)
++        self.layout = layout
++        self.outside.frame = CGRect(origin: .zero, size: layout.size)
++        let width = min(280.0, layout.size.width - layout.safeInsets.left - layout.safeInsets.right - 32.0)
++        let keyboardTop = layout.size.height - max(layout.inputHeight ?? 0.0, layout.intrinsicInsets.bottom)
++        let bottom = min(self.sourceRect?.minY ?? (keyboardTop - 56.0), keyboardTop) - 8.0
++        let top = max(layout.safeInsets.top, layout.statusBarHeight ?? 0.0) + 12.0
++        let desired = 20.0 + CGFloat(self.expanded ? self.rows.count : min(4, self.rows.count)) * 56.0
++        let height = min(desired, max(0.0, bottom - top))
++        let x = min(max(layout.safeInsets.left + 16.0, self.sourceRect?.minX ?? 16.0), layout.size.width - layout.safeInsets.right - width - 16.0)
++        transition.updateFrame(view: self.panel, frame: CGRect(x: x, y: bottom - height, width: width, height: height))
++        self.handleArea.frame = CGRect(x: 0.0, y: 0.0, width: width, height: 20.0)
++        self.handle.frame = CGRect(x: floor((width - 32.0) * 0.5), y: 7.0, width: 32.0, height: 4.0)
++        self.scrollView.frame = CGRect(x: 0.0, y: 20.0, width: width, height: max(0.0, height - 20.0))
++        for (index, row) in self.rows.enumerated() {
++            row.frame = CGRect(x: 0.0, y: CGFloat(index) * 56.0, width: width, height: 56.0)
++        }
++        self.scrollView.contentSize = CGSize(width: width, height: CGFloat(self.rows.count) * 56.0)
++    }
++
++    override func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++        guard !self.appeared else { return }
++        self.appeared = true
++        self.panel.alpha = 0.0
++        self.panel.transform = CGAffineTransform(translationX: 0.0, y: 12.0).scaledBy(x: 0.94, y: 0.94)
++        UIView.animate(withDuration: 0.22, delay: 0.0, options: [.curveEaseOut], animations: {
++            self.panel.alpha = 1.0
++            self.panel.transform = .identity
++        })
++    }
++
++    @objc private func pan(_ gesture: UIPanGestureRecognizer) {
++        guard gesture.state == .ended, let layout = self.layout else { return }
++        let distance = gesture.translation(in: self.view).y
++        guard abs(distance) > 12.0 else { return }
++        self.expanded = distance < 0.0
++        self.containerLayoutUpdated(layout, transition: .animated(duration: 0.25, curve: .easeInOut))
++    }
++
++    private func close(selected: AttachmentButtonType?) {
++        guard !self.closing else { return }
++        self.closing = true
++        UIView.animate(withDuration: 0.16, animations: {
++            self.panel.alpha = 0.0
++            self.panel.transform = CGAffineTransform(translationX: 0.0, y: 12.0)
++        }, completion: { [weak self] _ in
++            guard let self else { return }
++            self.dismiss(completion: {
++                if let selected { self.choose(selected) }
++            })
++        })
++    }
++
++    @objc private func cancel() { self.close(selected: nil) }
++    @objc private func pressed(_ sender: UIButton) {
++        guard self.buttons.indices.contains(sender.tag) else { return }
++        self.close(selected: self.buttons[sender.tag])
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index 8c2f255..ac8d62e 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -6075,6 +6075,17 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+         }, automaticMediaDownloadSettings: self.automaticMediaDownloadSettings, pollActionState: ChatInterfacePollActionState(), stickerSettings: self.stickerSettings, presentationContext: ChatPresentationContext(context: context, backgroundNode: self.chatBackgroundNode))
+         controllerInteraction.enableFullTranslucency = context.sharedContext.energyUsageSettings.fullTranslucency
+         
++        controllerInteraction.ayuEditOnDoubleTap = { [weak self] message in
++            guard let self, self.context.account.network.ayuGhostMode.current.interface.doubleTapToEdit,
++                  !message.flags.contains(.Incoming),
++                  message.author?.id == self.context.account.peerId,
++                  self.presentationInterfaceState.interfaceState.selectionState == nil,
++                  canEditMessage(context: self.context, limitsConfiguration: self.context.currentLimitsConfiguration.with { EngineConfiguration.Limits($0) }, message: message) else {
++                return false
++            }
++            self.interfaceInteraction?.setupEditMessage(message.id, { _ in })
++            return self.interfaceInteraction != nil
++        }
+         self.controllerInteraction = controllerInteraction
+         controllerInteraction.requestWalletTransferArrival = { [weak self] message in
+             self?.walletTransferAnimationCoordinator().requestArrival(message)
+diff --git a/submodules/TelegramUI/Sources/ChatControllerOpenAttachmentMenu.swift b/submodules/TelegramUI/Sources/ChatControllerOpenAttachmentMenu.swift
+index 1f70861..11e5536 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerOpenAttachmentMenu.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerOpenAttachmentMenu.swift
+@@ -53,7 +53,7 @@ extension ChatControllerImpl {
+         case gift
+     }
+ 
+-    func presentAttachmentMenu(subject: AttachMenuSubject) {
++    func presentAttachmentMenu(subject: AttachMenuSubject, ayuSelectedButton: AttachmentButtonType? = nil) {
+         Task { @MainActor [weak self] in
+             guard let self else {
+                 return
+@@ -425,6 +425,27 @@ extension ChatControllerImpl {
+                     buttons.insert(.richText, at: firstBotIndex)
+                 }
+                 
++                if case .default = subject, strongSelf.context.account.network.ayuGhostMode.current.interface.compactAttachmentMenu {
++                    if let ayuSelectedButton {
++                        guard buttons.contains(ayuSelectedButton), ayuSelectedButton == .gallery || AyuNativePlugins.showsAttachButton(key: ayuSelectedButton.key) else { return }
++                        initialButton = ayuSelectedButton
++                    } else {
++                        let visibleButtons = buttons.filter { $0 == .gallery || AyuNativePlugins.showsAttachButton(key: $0.key) }
++                        guard !visibleButtons.isEmpty else { return }
++                        // Keep the gallery/article/file/location ordering used by the compact menu.
++                        let order = ["gallery", "richText", "file", "location", "contact", "poll", "audio"]
++                        let sortedButtons = visibleButtons.enumerated().sorted { lhs, rhs in
++                            let left = order.firstIndex(of: lhs.element.key) ?? (order.count + lhs.offset)
++                            let right = order.firstIndex(of: rhs.element.key) ?? (order.count + rhs.offset)
++                            return left < right
++                        }.map { $0.element }
++                        let menu = AyuAttachmentMenuController(buttons: sortedButtons, theme: presentationData.theme, russian: presentationData.strings.baseLanguageCode.hasPrefix("ru"), sourceRect: strongSelf.chatDisplayNode.frameForAttachmentButton(), choose: { [weak self] button in
++                            self?.presentAttachmentMenu(subject: subject, ayuSelectedButton: button)
++                        })
++                        strongSelf.present(menu, in: .window(.root))
++                        return
++                    }
++                }
+                 guard let initialButton = initialButton else {
+                     if case let .bot(botId, botPayload, botJustInstalled) = subject {
+                         if let button = allButtons.first(where: { button in
+diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
+index 7a3e37d..193351c 100644
+--- a/tools/ayu-tests/main.swift
++++ b/tools/ayu-tests/main.swift
+@@ -1069,7 +1069,7 @@ if let signedCopy = liveCatalog.manifest(sourceSHA256: "5ad0f526b0f2423da62d417b
+ print("PASS: \(checks) native model checks including API 9 signed adapter activation")
+ 
+ // Exercise the actual v2 importer, signature verification and offline export path.
+-let iosplugFixtures = pluginFixtures.appendingPathComponent("iosplug")
++let iosplugFixtures = pluginFixtures.deletingLastPathComponent().appendingPathComponent("plug")
+ var iosplugPackageChecks = 0
+ for url in try FileManager.default.contentsOfDirectory(at: iosplugFixtures, includingPropertiesForKeys: nil) where url.pathExtension == "iosplug" {
+     let data = try Data(contentsOf: url)
+@@ -1095,4 +1095,17 @@ for url in try FileManager.default.contentsOfDirectory(at: iosplugFixtures, incl
+ check(iosplugPackageChecks == 9, "All nine reviewed source adapters have tested .iosplug packages")
+ check(pluginThrows { _ = try AyuIOSPluginEnvelope.parse(Data(repeating: 32, count: 65537)) }, "Oversized packages fail before JSON decoding")
+ check(pluginThrows { _ = try AyuIOSPluginEnvelope.parse(Data("{}".utf8)) }, "Missing package fields are rejected")
++
++// New controls default to on for existing accounts; explicit opt-outs must survive reloads.
++let oldNavigationSettings = try JSONDecoder().decode(AyuInterfaceSettings.self, from: Data("{}".utf8))
++check(oldNavigationSettings.foldersAtBottom && oldNavigationSettings.compactAttachmentMenu && oldNavigationSettings.doubleTapToEdit && oldNavigationSettings.formattingToolbar, "Missing navigation preferences enable the new controls")
++var customNavigationSettings = oldNavigationSettings
++customNavigationSettings.foldersAtBottom = false
++customNavigationSettings.compactAttachmentMenu = false
++customNavigationSettings.doubleTapToEdit = false
++customNavigationSettings.formattingToolbar = false
++customNavigationSettings.hidePhoneNumber = true
++let restoredNavigationSettings = try JSONDecoder().decode(AyuInterfaceSettings.self, from: JSONEncoder().encode(customNavigationSettings))
++check(restoredNavigationSettings == customNavigationSettings, "Navigation controls survive settings export and reload without losing existing preferences")
++
+ print("PASS: \(iosplugPackageChecks) actual signed .iosplug import/activation/export/tamper scenarios; \(checks) total model checks")

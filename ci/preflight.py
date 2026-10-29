@@ -23,6 +23,8 @@ def contract_errors(source, path=''):
         errors.append('AyuGram reaction display helpers require AccountContext')
     if path.endswith('ChatListControllerNode.swift') and re.search(r'!\s*self\.isSearchDisplayControllerActive\b', source):
         errors.append('ChatListControllerNode.isSearchDisplayControllerActive is ActiveSearch?; compare it with nil')
+    if path.rsplit('/', 1)[-1].startswith('Ayu') and re.search(r'\.(?:content|title|image)EdgeInsets\b', source):
+        errors.append('UIButton edge insets are deprecated in iOS 15; use UIButton.Configuration.contentInsets')
     return errors
 
 

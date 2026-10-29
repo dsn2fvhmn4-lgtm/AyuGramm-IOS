@@ -30,6 +30,14 @@ class UIContractTests(unittest.TestCase):
         self.assertFalse(contract_errors(broken.replace('!self.isSearchDisplayControllerActive', 'self.isSearchDisplayControllerActive == nil'), path))
         self.assertFalse(contract_errors(broken, 'UnrelatedController.swift'))
 
+    def test_ayugram_buttons_do_not_use_deprecated_edge_insets(self):
+        path = 'submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift'
+        broken = 'row.contentEdgeInsets = UIEdgeInsets(top: 0.0, left: 62.0, bottom: 0.0, right: 12.0)'
+        self.assertTrue(contract_errors(broken, path))
+        self.assertTrue(contract_errors(broken.replace('content', 'title'), path))
+        self.assertFalse(contract_errors('configuration.contentInsets = NSDirectionalEdgeInsets(top: 0.0, leading: 62.0, bottom: 0.0, trailing: 12.0)', path))
+        self.assertFalse(contract_errors(broken, 'submodules/TelegramUI/Sources/ChatController.swift'))
+
     def test_reaction_helpers_require_a_direct_bazel_dependency(self):
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory)

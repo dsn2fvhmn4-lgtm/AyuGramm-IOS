@@ -22,6 +22,11 @@ def run(source: Path):
                         '-o', str(output / 'startup-tests')], check=True)
         subprocess.run([str(output / 'startup-tests')], check=True)
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
+                        str(source / 'submodules/TelegramUI/Sources/AyuMusicHapticsTimeline.swift'),
+                        str(source / 'tools/ayu-tests/music-haptics/main.swift'),
+                        '-o', str(output / 'music-haptics-tests')], check=True)
+        subprocess.run([str(output / 'music-haptics-tests')], check=True)
+        subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
                         str(source / 'submodules/Display/Source/AyuNativePlugins.swift'),
                         str(source / 'tools/ayu-tests/iosplug-native/main.swift'),
                         '-o', str(output / 'native-iosplug-tests')], check=True)

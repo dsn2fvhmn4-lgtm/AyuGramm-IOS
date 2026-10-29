@@ -92,6 +92,7 @@ def main():
     # implementations before the expensive full Telegram build.
     sdk_sources = [source / 'submodules/TelegramUI/Sources' / name for name in (
         'Chat/AyuMessageShotCanvas.swift', 'AyuStartupStorage.swift', 'AyuStartupFailureController.swift')]
+    sdk_sources.append(source / 'submodules/TelegramUI/Sources/AyuMusicHaptics.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuPetpetController.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuPluginAvatar.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuArcadeGameController.swift')
@@ -104,8 +105,10 @@ def main():
         for path in sdk_sources:
             if not path.exists():
                 continue
+            companions = [path.with_name('AyuMusicHapticsTimeline.swift')] if path.name == 'AyuMusicHaptics.swift' else []
             result = subprocess.run(['xcrun', 'swiftc', '-typecheck', '-swift-version', '5', '-warnings-as-errors',
-                                     '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator', str(path)], capture_output=True, text=True)
+                                     '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator', str(path),
+                                     *map(str, companions)], capture_output=True, text=True)
             if result.returncode:
                 errors.append(f'{path.name} SDK type check:\n{result.stdout}{result.stderr}')
             else:

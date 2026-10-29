@@ -1,0 +1,842 @@
+diff --git a/submodules/CheckNode/Sources/CheckNode.swift b/submodules/CheckNode/Sources/CheckNode.swift
+index 7d7fa7a..a93b931 100644
+--- a/submodules/CheckNode/Sources/CheckNode.swift
++++ b/submodules/CheckNode/Sources/CheckNode.swift
+@@ -120,6 +120,7 @@ private final class CheckNodeParameters: NSObject {
+ }
+ 
+ public class CheckNode: ASDisplayNode {
++    private var materialStateLayer: CAShapeLayer?
+     private var animatingOut = false
+     private var animationProgress: CGFloat = 0.0
+     private var rectangleProgress: CGFloat
+@@ -174,10 +175,17 @@ public class CheckNode: ASDisplayNode {
+     
+     public var selected = false
+     public func setSelected(_ selected: Bool, animated: Bool = false) {
++        let animated = animated && !UIAccessibility.isReduceMotionEnabled
+         guard self.selected != selected else {
+             return
+         }
+         self.selected = selected
++        if AyuMaterialControls.isEnabled, animated, case .check = self.content {
++            self.setHighlighted(true, animated: false)
++            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
++                self?.setHighlighted(false, animated: true)
++            }
++        }
+         
+         if animated {
+             self.animatingOut = !selected
+@@ -199,6 +207,7 @@ public class CheckNode: ASDisplayNode {
+             animation.duration = selected ? 0.21 : 0.15
+             self.pop_add(animation, forKey: "progress")
+             
++            if AyuMaterialControls.isEnabled, case .check = self.content { return }
+             if selected {
+                 self.layer.animateScale(from: 1.0, to: 0.9, duration: 0.08, timingFunction: CAMediaTimingFunctionName.easeOut.rawValue, removeOnCompletion: false, completion: { [weak self] _ in
+                     guard let self else {
+@@ -229,6 +238,27 @@ public class CheckNode: ASDisplayNode {
+     }
+     
+     public func setHighlighted(_ highlighted: Bool, animated: Bool = false) {
++        guard AyuMaterialControls.isEnabled, case .check = self.content else { return }
++        let state: CAShapeLayer
++        if let current = self.materialStateLayer { state = current } else {
++            state = CAShapeLayer()
++            self.materialStateLayer = state
++            self.layer.addSublayer(state)
++        }
++        state.removeAnimation(forKey: "materialState")
++        CATransaction.begin()
++        CATransaction.setDisableActions(true)
++        state.path = UIBezierPath(ovalIn: CGRect(x: self.bounds.midX - 20.0, y: self.bounds.midY - 20.0, width: 40.0, height: 40.0)).cgPath
++        state.fillColor = self.theme.backgroundColor.cgColor
++        state.opacity = highlighted ? 0.12 : 0.0
++        CATransaction.commit()
++        if animated && !UIAccessibility.isReduceMotionEnabled {
++            let fade = CABasicAnimation(keyPath: "opacity")
++            fade.fromValue = highlighted ? 0.0 : 0.12
++            fade.toValue = state.opacity
++            fade.duration = 0.18
++            state.add(fade, forKey: "materialState")
++        }
+     }
+ 
+     override public func drawParameters(forAsyncLayer layer: _ASDisplayLayer) -> NSObjectProtocol? {
+@@ -404,6 +434,7 @@ public class CheckLayer: CALayer {
+ 
+     public var selected = false
+     public func setSelected(_ selected: Bool, animated: Bool = false) {
++        let animated = animated && !UIAccessibility.isReduceMotionEnabled
+         guard self.selected != selected else {
+             return
+         }
+@@ -429,7 +460,7 @@ public class CheckLayer: CALayer {
+             animation.duration = selected ? 0.21 : 0.15
+             self.pop_add(animation, forKey: "progress")
+             
+-            if self.animateScale {
++            if self.animateScale && !AyuMaterialControls.isEnabled {
+                 if selected {
+                     self.animateScale(from: 1.0, to: 0.9, duration: 0.08, timingFunction: CAMediaTimingFunctionName.easeOut.rawValue, removeOnCompletion: false, completion: { [weak self] _ in
+                         guard let self else {
+@@ -479,6 +510,10 @@ public class CheckLayer: CALayer {
+     
+     fileprivate static func drawContents(context: CGContext, size: CGSize, parameters: CheckNodeParameters) {
+         context.clear(CGRect(origin: CGPoint(), size: size))
++        if AyuMaterialControls.isEnabled, case .check = parameters.content {
++            AyuMaterialSelectionDrawing.drawCheckbox(context: context, size: size, progress: parameters.animationProgress, primary: parameters.theme.backgroundColor, onPrimary: parameters.theme.strokeColor, outline: parameters.theme.borderColor)
++            return
++        }
+ 
+         let center = CGPoint(x: size.width / 2.0, y: size.width / 2.0)
+ 
+diff --git a/submodules/Display/Source/AyuMaterialSelection.swift b/submodules/Display/Source/AyuMaterialSelection.swift
+new file mode 100644
+index 0000000..33581d9
+--- /dev/null
++++ b/submodules/Display/Source/AyuMaterialSelection.swift
+@@ -0,0 +1,166 @@
++import Foundation
++import UIKit
++
++public enum AyuMaterialSelectionKind { case checkbox, radio }
++
++/// M3 selection geometry: 18 pt checkbox, 20 pt radio, 40 pt state layer.
++public enum AyuMaterialSelectionDrawing {
++    public static func drawCheckbox(context: CGContext, size: CGSize, progress: CGFloat, primary: UIColor, onPrimary: UIColor, outline: UIColor) {
++        guard size.width > 0.0, size.height > 0.0 else { return }
++        let progress = min(1.0, max(0.0, progress))
++        let side = min(18.0, min(size.width, size.height))
++        let frame = CGRect(x: (size.width - side) * 0.5, y: (size.height - side) * 0.5, width: side, height: side)
++        let path = UIBezierPath(roundedRect: frame.insetBy(dx: 1.0, dy: 1.0), cornerRadius: 1.0).cgPath
++        context.saveGState()
++        context.setBlendMode(.normal)
++        context.setLineWidth(2.0)
++        context.setStrokeColor(outline.mixedWith(primary, alpha: progress).cgColor)
++        context.addPath(path)
++        context.strokePath()
++        if progress > 0.0 {
++            context.setFillColor(primary.withAlphaComponent(progress).cgColor)
++            context.addPath(path)
++            context.fillPath()
++            let points = [CGPoint(x: frame.minX + side * 0.22, y: frame.minY + side * 0.50), CGPoint(x: frame.minX + side * 0.43, y: frame.minY + side * 0.71), CGPoint(x: frame.minX + side * 0.79, y: frame.minY + side * 0.31)]
++            let firstLength = hypot(points[1].x - points[0].x, points[1].y - points[0].y)
++            let secondLength = hypot(points[2].x - points[1].x, points[2].y - points[1].y)
++            let length = (firstLength + secondLength) * min(1.0, max(0.0, (progress - 0.15) / 0.85))
++            if onPrimary == .clear { context.setBlendMode(.clear) }
++            context.setStrokeColor(onPrimary.cgColor)
++            context.setLineWidth(2.0)
++            context.setLineCap(.square)
++            context.setLineJoin(.miter)
++            context.move(to: points[0])
++            if length <= firstLength {
++                let fraction = length / firstLength
++                context.addLine(to: CGPoint(x: points[0].x + (points[1].x - points[0].x) * fraction, y: points[0].y + (points[1].y - points[0].y) * fraction))
++            } else {
++                context.addLine(to: points[1])
++                let fraction = (length - firstLength) / secondLength
++                context.addLine(to: CGPoint(x: points[1].x + (points[2].x - points[1].x) * fraction, y: points[1].y + (points[2].y - points[1].y) * fraction))
++            }
++            context.strokePath()
++        }
++        context.restoreGState()
++    }
++}
++
++public final class AyuMaterialSelectionView: UIControl {
++    private let kind: AyuMaterialSelectionKind
++    private let stateLayer = CAShapeLayer()
++    private let base = CAShapeLayer()
++    private let mark = CAShapeLayer()
++    private var checked = false
++    private var primary = UIColor(rgb: 0x6750A4)
++    private var onPrimary = UIColor.white
++    private var outline = UIColor(rgb: 0x49454F)
++
++    public init(kind: AyuMaterialSelectionKind) {
++        self.kind = kind
++        super.init(frame: .zero)
++        self.isUserInteractionEnabled = false
++        self.isAccessibilityElement = false
++        self.layer.addSublayer(self.stateLayer)
++        self.layer.addSublayer(self.base)
++        self.layer.addSublayer(self.mark)
++        self.base.lineWidth = 2.0
++        self.mark.lineWidth = 2.0
++        self.mark.lineCap = .square
++        self.mark.lineJoin = .miter
++        self.stateLayer.opacity = 0.0
++    }
++    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
++
++    public func updateColors(dark: Bool) {
++        self.primary = UIColor(rgb: dark ? 0xD0BCFF : 0x6750A4)
++        self.onPrimary = UIColor(rgb: dark ? 0x381E72 : 0xFFFFFF)
++        self.outline = UIColor(rgb: dark ? 0xCAC4D0 : 0x49454F)
++        self.update(animated: false)
++    }
++
++    public func setSelected(_ selected: Bool, animated: Bool) {
++        let changed = self.checked != selected
++        self.checked = selected
++        self.update(animated: animated && changed)
++        if changed && animated && !UIAccessibility.isReduceMotionEnabled {
++            let flash = CABasicAnimation(keyPath: "opacity")
++            flash.fromValue = 0.12
++            flash.toValue = 0.0
++            flash.duration = 0.22
++            self.stateLayer.add(flash, forKey: "selectionState")
++        }
++    }
++
++    override public var isHighlighted: Bool {
++        didSet {
++            self.stateLayer.removeAnimation(forKey: "selectionState")
++            CATransaction.begin()
++            CATransaction.setAnimationDuration(UIAccessibility.isReduceMotionEnabled ? 0.0 : 0.12)
++            self.stateLayer.opacity = self.isHighlighted ? 0.12 : 0.0
++            CATransaction.commit()
++        }
++    }
++
++    override public func layoutSubviews() {
++        super.layoutSubviews()
++        self.update(animated: false)
++    }
++
++    private func update(animated: Bool) {
++        let center = CGPoint(x: self.bounds.midX, y: self.bounds.midY)
++        let duration = animated && !UIAccessibility.isReduceMotionEnabled ? 0.18 : 0.0
++        let previousStroke = self.mark.presentation()?.strokeEnd ?? self.mark.strokeEnd
++        let previousFill = self.base.presentation()?.fillColor ?? self.base.fillColor
++        let previousTransform = self.mark.presentation()?.transform ?? self.mark.transform
++        CATransaction.begin()
++        CATransaction.setDisableActions(true)
++        self.stateLayer.path = UIBezierPath(ovalIn: CGRect(x: center.x - 20.0, y: center.y - 20.0, width: 40.0, height: 40.0)).cgPath
++        self.stateLayer.fillColor = self.primary.cgColor
++        self.base.strokeColor = (self.checked ? self.primary : self.outline).cgColor
++        if case .checkbox = self.kind {
++            self.base.path = UIBezierPath(roundedRect: CGRect(x: center.x - 8.0, y: center.y - 8.0, width: 16.0, height: 16.0), cornerRadius: 1.0).cgPath
++            self.base.fillColor = (self.checked ? self.primary : .clear).cgColor
++            let path = UIBezierPath()
++            path.move(to: CGPoint(x: center.x - 5.0, y: center.y))
++            path.addLine(to: CGPoint(x: center.x - 1.0, y: center.y + 4.0))
++            path.addLine(to: CGPoint(x: center.x + 5.0, y: center.y - 4.0))
++            self.mark.path = path.cgPath
++            self.mark.fillColor = nil
++            self.mark.strokeColor = self.onPrimary.cgColor
++            self.mark.strokeEnd = self.checked ? 1.0 : 0.0
++        } else {
++            self.base.path = UIBezierPath(ovalIn: CGRect(x: center.x - 9.0, y: center.y - 9.0, width: 18.0, height: 18.0)).cgPath
++            self.base.fillColor = UIColor.clear.cgColor
++            self.mark.bounds = CGRect(x: 0.0, y: 0.0, width: 10.0, height: 10.0)
++            self.mark.position = center
++            self.mark.path = UIBezierPath(ovalIn: self.mark.bounds).cgPath
++            self.mark.fillColor = self.primary.cgColor
++            self.mark.strokeColor = nil
++            self.mark.transform = CATransform3DMakeScale(self.checked ? 1.0 : 0.001, self.checked ? 1.0 : 0.001, 1.0)
++        }
++        CATransaction.commit()
++        if duration > 0.0 {
++            if case .checkbox = self.kind {
++                let stroke = CABasicAnimation(keyPath: "strokeEnd")
++                stroke.fromValue = previousStroke
++                stroke.toValue = self.mark.strokeEnd
++                stroke.duration = duration
++                self.mark.add(stroke, forKey: "check")
++                let fill = CABasicAnimation(keyPath: "fillColor")
++                fill.fromValue = previousFill
++                fill.toValue = self.base.fillColor
++                fill.duration = duration
++                self.base.add(fill, forKey: "fill")
++            } else {
++                let dot = CASpringAnimation(keyPath: "transform")
++                dot.fromValue = NSValue(caTransform3D: previousTransform)
++                dot.toValue = NSValue(caTransform3D: self.mark.transform)
++                dot.mass = 1.0
++                dot.stiffness = 650.0
++                dot.damping = 40.0
++                dot.duration = dot.settlingDuration
++                self.mark.add(dot, forKey: "dot")
++            }
++        }
++    }
++}
+diff --git a/submodules/ItemListUI/Sources/Items/ItemListCheckboxItem.swift b/submodules/ItemListUI/Sources/Items/ItemListCheckboxItem.swift
+index e803b28..c6bea6d 100644
+--- a/submodules/ItemListUI/Sources/Items/ItemListCheckboxItem.swift
++++ b/submodules/ItemListUI/Sources/Items/ItemListCheckboxItem.swift
+@@ -16,6 +16,7 @@ public enum ItemListCheckboxItemColor {
+ }
+ 
+ public class ItemListCheckboxItem: ListViewItem, ItemListItem {
++    public enum SelectionStyle: Equatable { case checkbox, radio }
+     public enum IconPlacement {
+         case `default`
+         case check
+@@ -36,6 +37,7 @@ public class ItemListCheckboxItem: ListViewItem, ItemListItem {
+     let style: ItemListCheckboxItemStyle
+     let color: ItemListCheckboxItemColor
+     let textColor: TextColor
++    let selectionStyle: SelectionStyle
+     let checked: Bool
+     let enabled: Bool
+     let zeroSeparatorInsets: Bool
+@@ -44,7 +46,7 @@ public class ItemListCheckboxItem: ListViewItem, ItemListItem {
+     let deleteAction: (() -> Void)?
+     public let tag: Any?
+     
+-    public init(presentationData: ItemListPresentationData, systemStyle: ItemListSystemStyle = .legacy, icon: UIImage? = nil, iconSize: CGSize? = nil, iconPlacement: IconPlacement = .default, title: String, subtitle: String? = nil, style: ItemListCheckboxItemStyle, color: ItemListCheckboxItemColor = .accent, textColor: TextColor = .primary, checked: Bool, enabled: Bool = true, zeroSeparatorInsets: Bool, sectionId: ItemListSectionId, action: @escaping () -> Void, deleteAction: (() -> Void)? = nil, tag: Any? = nil) {
++    public init(presentationData: ItemListPresentationData, systemStyle: ItemListSystemStyle = .legacy, icon: UIImage? = nil, iconSize: CGSize? = nil, iconPlacement: IconPlacement = .default, title: String, subtitle: String? = nil, style: ItemListCheckboxItemStyle, color: ItemListCheckboxItemColor = .accent, textColor: TextColor = .primary, checked: Bool, enabled: Bool = true, zeroSeparatorInsets: Bool, sectionId: ItemListSectionId, action: @escaping () -> Void, deleteAction: (() -> Void)? = nil, tag: Any? = nil, selectionStyle: SelectionStyle = .checkbox) {
+         self.presentationData = presentationData
+         self.systemStyle = systemStyle
+         self.icon = icon
+@@ -56,6 +58,7 @@ public class ItemListCheckboxItem: ListViewItem, ItemListItem {
+         self.color = color
+         self.textColor = textColor
+         self.checked = checked
++        self.selectionStyle = selectionStyle
+         self.enabled = enabled
+         self.zeroSeparatorInsets = zeroSeparatorInsets
+         self.sectionId = sectionId
+@@ -120,6 +123,8 @@ public class ItemListCheckboxItemNode: ItemListRevealOptionsItemNode {
+     private let contentContainerNode: ASDisplayNode
+     private let imageNode: ASImageNode
+     private let iconNode: ASImageNode
++    private var ayuMaterialSelection: AyuMaterialSelectionView?
++    private var ayuMaterialSelectionStyle: ItemListCheckboxItem.SelectionStyle?
+     private let titleNode: TextNode
+     private let subtitleNode: TextNode
+     
+@@ -219,7 +224,8 @@ public class ItemListCheckboxItemNode: ItemListRevealOptionsItemNode {
+                 }
+             }
+             
+-            let trailingInset: CGFloat = max(28.0, 28.0 + params.rightInset - params.leftInset)
++            let selectionInset: CGFloat = AyuMaterialControls.isEnabled ? 48.0 : 28.0
++            let trailingInset: CGFloat = max(selectionInset, selectionInset + params.rightInset - params.leftInset)
+             
+             let titleFont = Font.regular(item.presentationData.fontSize.itemListBaseFontSize)
+             let subtitleFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 15.0 / 17.0))
+@@ -281,6 +287,7 @@ public class ItemListCheckboxItemNode: ItemListRevealOptionsItemNode {
+ 
+             return (layout, { [weak self] in
+                 if let strongSelf = self {
++                    let previousChecked = strongSelf.item?.checked
+                     strongSelf.item = item
+                     
+                     strongSelf.contentParentNode.frame = CGRect(origin: CGPoint(), size: CGSize(width: params.width, height: layout.contentSize.height))
+@@ -323,6 +330,28 @@ public class ItemListCheckboxItemNode: ItemListRevealOptionsItemNode {
+                         }
+                     }
+                     strongSelf.iconNode.isHidden = !item.checked
++                    if AyuMaterialControls.isEnabled {
++                        let indicator: AyuMaterialSelectionView
++                        if let current = strongSelf.ayuMaterialSelection, strongSelf.ayuMaterialSelectionStyle == item.selectionStyle {
++                            indicator = current
++                        } else {
++                            strongSelf.ayuMaterialSelection?.removeFromSuperview()
++                            indicator = AyuMaterialSelectionView(kind: item.selectionStyle == .radio ? .radio : .checkbox)
++                            strongSelf.ayuMaterialSelection = indicator
++                            strongSelf.ayuMaterialSelectionStyle = item.selectionStyle
++                            strongSelf.contentContainerNode.view.addSubview(indicator)
++                        }
++                        let x: CGFloat
++                        switch item.style {
++                        case .left: x = params.leftInset + (leftInset - params.leftInset) * 0.5 - 20.0
++                        case .right: x = params.width - params.rightInset - 42.0
++                        }
++                        indicator.frame = CGRect(x: x, y: (contentSize.height - 40.0) * 0.5, width: 40.0, height: 40.0)
++                        indicator.updateColors(dark: item.presentationData.theme.overallDarkAppearance)
++                        indicator.setSelected(item.checked, animated: previousChecked != nil && previousChecked != item.checked)
++                        indicator.alpha = item.enabled ? 1.0 : 0.38
++                        strongSelf.iconNode.isHidden = true
++                    }
+                     
+                     if strongSelf.backgroundNode.supernode == nil {
+                         strongSelf.insertSubnode(strongSelf.backgroundNode, at: 0)
+@@ -409,6 +438,7 @@ public class ItemListCheckboxItemNode: ItemListRevealOptionsItemNode {
+         super.setHighlighted(highlighted, at: point, animated: animated)
+         
+         self.isHighlighted = highlighted && (self.item?.enabled ?? false)
++        self.ayuMaterialSelection?.isHighlighted = self.isHighlighted
+         self.updateRevealOptionsHighlightedBackgroundNode(self.highlightedBackgroundNode, isHighlighted: self.isHighlighted, transition: (animated && !highlighted) ? .animated(duration: 0.4, curve: .easeInOut) : .immediate, aboveNodes: [self.bottomStripeNode, self.topStripeNode, self.backgroundNode])
+     }
+     
+diff --git a/submodules/SettingsUI/Sources/AyuStrings.swift b/submodules/SettingsUI/Sources/AyuStrings.swift
+index a077f6c..9d56f3b 100644
+--- a/submodules/SettingsUI/Sources/AyuStrings.swift
++++ b/submodules/SettingsUI/Sources/AyuStrings.swift
+@@ -422,7 +422,7 @@ enum AyuStrings {
+         case .loopAnimation: return "Повторять анимацию"
+         case .markReadAfterSend: return "Прочитать после отправки"
+         case .media: return "Медиа"
+-        case .materialDesignInfo: return "Переключатели и ползунки рисуются как в Android. Изменение применится после перезапуска приложения."
++        case .materialDesignInfo: return "Переключатели, ползунки, чекбоксы и выбор темы оформлены в стиле Material Design 3. Изменение применится после перезапуска приложения."
+         case .materialDesignToggle: return "Material Design 3"
+         case .mediaArchive: return "Медиаархив"
+         case .mediaPreviews: return "Превью медиа"
+@@ -708,7 +708,7 @@ enum AyuStrings {
+         case .loopAnimation: return "Loop animation"
+         case .markReadAfterSend: return "Mark read after send"
+         case .media: return "Media"
+-        case .materialDesignInfo: return "Switches and sliders are drawn as on Android. The change applies after the app restarts."
++        case .materialDesignInfo: return "Switches, sliders, checkboxes and theme selection use Material Design 3. The change applies after the app restarts."
+         case .materialDesignToggle: return "Material Design 3"
+         case .mediaArchive: return "Media Archive"
+         case .mediaPreviews: return "Media previews"
+diff --git a/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift b/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift
+index efc10b4..819853b 100644
+--- a/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift
+@@ -44,7 +44,7 @@ private enum AyuTranslationSettingsEntry: ItemListNodeEntry {
+         case let .header(_, _, text):
+             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
+         case let .provider(_, provider, title, checked):
+-            return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: title, style: .right, checked: checked, zeroSeparatorInsets: false, sectionId: self.section, action: { arguments.selectProvider(provider) })
++            return ItemListCheckboxItem(presentationData: presentationData, systemStyle: .glass, title: title, style: .right, checked: checked, zeroSeparatorInsets: false, sectionId: self.section, action: { arguments.selectProvider(provider) }, selectionStyle: .radio)
+         case let .link(_, id, title, label):
+             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.open(id) })
+         case let .remove(_, title):
+diff --git a/submodules/TelegramUI/Components/Settings/ThemeSettingsThemeItem/Sources/ThemeSettingsThemeItem.swift b/submodules/TelegramUI/Components/Settings/ThemeSettingsThemeItem/Sources/ThemeSettingsThemeItem.swift
+index a5045da..cb0e95a 100644
+--- a/submodules/TelegramUI/Components/Settings/ThemeSettingsThemeItem/Sources/ThemeSettingsThemeItem.swift
++++ b/submodules/TelegramUI/Components/Settings/ThemeSettingsThemeItem/Sources/ThemeSettingsThemeItem.swift
+@@ -209,6 +209,7 @@ private final class ThemeSettingsThemeItemIconNode : ListViewItemNode {
+     private let containerNode: ContextControllerSourceNode
+     private let imageNode: TransformImageNode
+     private let overlayNode: ASImageNode
++    private var ayuMaterialRadio: AyuMaterialSelectionView?
+     private let titleNode: TextNode
+     var snapshotView: UIView?
+     
+@@ -320,6 +321,20 @@ private final class ThemeSettingsThemeItemIconNode : ListViewItemNode {
+                     strongSelf.overlayNode.frame = CGRect(origin: CGPoint(x: 9.0, y: 13.0), size: CGSize(width: 100.0, height: 64.0))
+                     strongSelf.titleNode.frame = CGRect(origin: CGPoint(x: 0.0, y: 88.0), size: CGSize(width: itemLayout.contentSize.width, height: 16.0))
+                     
++                    if AyuMaterialControls.isEnabled {
++                        let radio: AyuMaterialSelectionView
++                        if let current = strongSelf.ayuMaterialRadio { radio = current } else {
++                            radio = AyuMaterialSelectionView(kind: .radio)
++                            radio.backgroundColor = item.theme.list.itemBlocksBackgroundColor
++                            radio.layer.cornerRadius = 20.0
++                            strongSelf.ayuMaterialRadio = radio
++                            strongSelf.containerNode.view.addSubview(radio)
++                        }
++                        radio.backgroundColor = item.theme.list.itemBlocksBackgroundColor
++                        radio.frame = CGRect(x: strongSelf.imageNode.frame.maxX - 34.0, y: strongSelf.imageNode.frame.maxY - 34.0, width: 40.0, height: 40.0)
++                        radio.updateColors(dark: item.theme.overallDarkAppearance)
++                        radio.setSelected(item.selected, animated: currentItem != nil && updatedSelected)
++                    }
+                     strongSelf.activateAreaNode.accessibilityLabel = item.title
+                     if item.selected {
+                         strongSelf.activateAreaNode.accessibilityTraits = [.button, .selected]
+diff --git a/submodules/TelegramUI/Sources/AyuMusicHaptics.swift b/submodules/TelegramUI/Sources/AyuMusicHaptics.swift
+new file mode 100644
+index 0000000..1e1a1b2
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuMusicHaptics.swift
+@@ -0,0 +1,105 @@
++import Foundation
++import AVFoundation
++import CoreHaptics
++
++/// Decodes the cached track independently of playback; it never records the microphone.
++final class AyuMusicHaptics {
++    static var supported: Bool { CHHapticEngine.capabilitiesForHardware().supportsHaptics }
++    private var engine: CHHapticEngine?
++    private var timeline: AyuMusicHapticsTimeline?
++    private var analysis: Task<Void, Never>?
++    private var generation = 0
++    var ready: ((Bool) -> Void)?
++
++    deinit { self.analysis?.cancel(); self.engine?.stop(completionHandler: nil) }
++
++    func clear() {
++        self.generation += 1
++        self.analysis?.cancel()
++        self.analysis = nil
++        self.timeline = nil
++        self.engine?.stop(completionHandler: nil)
++    }
++
++    func suspend() {
++        self.timeline?.reset()
++        self.engine?.stop(completionHandler: nil)
++    }
++
++    func analyze(url: URL) {
++        self.clear()
++        let generation = self.generation
++        self.analysis = Task.detached(priority: .utility) { [weak self] in
++            let beats = await Self.readBeats(url: url)
++            guard !Task.isCancelled else { return }
++            await MainActor.run { [weak self] in
++                guard let self, self.generation == generation else { return }
++                self.timeline = beats.map { AyuMusicHapticsTimeline(beats: $0) }
++                self.ready?(beats?.isEmpty == false)
++            }
++        }
++    }
++
++    func tick(time: Double, playing: Bool) {
++        guard let strength = self.timeline?.advance(to: time, playing: playing), Self.supported else { return }
++        do {
++            let engine: CHHapticEngine
++            if let current = self.engine { engine = current } else {
++                engine = try CHHapticEngine()
++                engine.playsHapticsOnly = true
++                engine.isAutoShutdownEnabled = true
++                self.engine = engine
++            }
++            try engine.start()
++            let event = CHHapticEvent(eventType: .hapticTransient, parameters: [
++                CHHapticEventParameter(parameterID: .hapticIntensity, value: strength * 0.75),
++                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.35)
++            ], relativeTime: 0.0)
++            let player = try engine.makePlayer(with: CHHapticPattern(events: [event], parameters: []))
++            try player.start(atTime: CHHapticTimeImmediate)
++        } catch {
++            self.engine?.stop(completionHandler: nil)
++            self.engine = nil
++            self.timeline = nil
++            self.ready?(false)
++        }
++    }
++
++    private static func readBeats(url: URL) async -> [AyuMusicBeat]? {
++        do {
++            let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
++            let format = file.processingFormat
++            let sampleRate = format.sampleRate
++            let channels = Int(format.channelCount)
++            let duration = Double(file.length) / sampleRate
++            guard sampleRate.isFinite, sampleRate >= 8000.0, sampleRate <= 768000.0, channels > 0, channels <= 8,
++                  duration.isFinite, duration > 0.0, duration <= 1200.0,
++                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096) else { return nil }
++            let window = max(1, Int(sampleRate * 0.023))
++            var energies: [Float] = []
++            var sum: Double = 0.0
++            var count = 0
++            while file.framePosition < file.length, !Task.isCancelled {
++                try file.read(into: buffer)
++                guard buffer.frameLength > 0, let samples = buffer.floatChannelData else { return nil }
++                for frame in 0 ..< Int(buffer.frameLength) {
++                    var energy = 0.0
++                    for channel in 0 ..< channels {
++                        let value = samples[channel][frame]
++                        let finite = value.isFinite ? Double(value) : 0.0
++                        energy += finite * finite
++                    }
++                    sum += energy / Double(channels)
++                    count += 1
++                    if count == window {
++                        energies.append(Float(sqrt(sum / Double(count))))
++                        count = 0
++                        sum = 0.0
++                    }
++                }
++            }
++            guard !Task.isCancelled else { return nil }
++            return AyuMusicBeatDetector.detect(energies: energies, step: Double(window) / sampleRate)
++        } catch { return nil }
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuMusicHapticsTimeline.swift b/submodules/TelegramUI/Sources/AyuMusicHapticsTimeline.swift
+new file mode 100644
+index 0000000..ad6ba53
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuMusicHapticsTimeline.swift
+@@ -0,0 +1,64 @@
++import Foundation
++
++struct AyuMusicBeat: Sendable {
++    let time: Double
++    let intensity: Float
++}
++
++/// Detects local energy attacks, never inventing a fixed pulse rate for quiet audio.
++enum AyuMusicBeatDetector {
++    static func detect(energies: [Float], step: Double) -> [AyuMusicBeat] {
++        guard energies.count >= 3, step.isFinite, step > 0.0 else { return [] }
++        var result: [AyuMusicBeat] = []
++        var lastTime = -1.0
++        for index in 1 ..< energies.count - 1 {
++            let energy = energies[index]
++            guard energy.isFinite, energy > 0.012, energy > energies[index - 1], energy >= energies[index + 1] else { continue }
++            let start = max(0, index - 16)
++            let end = min(energies.count, index + 17)
++            let mean = energies[start ..< end].reduce(Float(0.0)) { $0 + ($1.isFinite ? max(0.0, $1) : 0.0) } / Float(end - start)
++            let time = Double(index) * step
++            guard energy > mean * 1.45 + 0.008, time - lastTime >= 0.16 else { continue }
++            result.append(AyuMusicBeat(time: time, intensity: min(1.0, max(0.25, (energy - mean) / energy))))
++            lastTime = time
++        }
++        return result
++    }
++}
++
++/// Follows the player's clock, dropping missed beats after pauses, seeks and stalls.
++final class AyuMusicHapticsTimeline {
++    private let beats: [AyuMusicBeat]
++    private var cursor = 0
++    private var lastTime: Double?
++    init(beats: [AyuMusicBeat]) { self.beats = beats }
++
++    func reset() { self.lastTime = nil }
++
++    private func seek(to time: Double) {
++        var low = 0
++        var high = self.beats.count
++        while low < high {
++            let middle = (low + high) / 2
++            if self.beats[middle].time <= time { low = middle + 1 } else { high = middle }
++        }
++        self.cursor = low
++    }
++
++    func advance(to time: Double, playing: Bool) -> Float? {
++        guard time.isFinite, time >= 0.0 else { self.reset(); return nil }
++        guard playing, let previous = self.lastTime, time >= previous, time - previous <= 0.35 else {
++            self.seek(to: time)
++            self.lastTime = playing ? time : nil
++            return nil
++        }
++        self.lastTime = time
++        var intensity: Float?
++        while self.cursor < self.beats.count, self.beats[self.cursor].time <= time {
++            let beat = self.beats[self.cursor]
++            if time - beat.time <= 0.08 { intensity = max(intensity ?? 0.0, beat.intensity) }
++            self.cursor += 1
++        }
++        return intensity
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+index 889aafd..dbc1b75 100644
+--- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -11,6 +11,7 @@ import TelegramUIPreferences
+ import UniversalMediaPlayer
+ import AccountContext
+ import PhotoResources
++import Postbox
+ 
+ /// Full-screen music player in the style of Apple Music: blurred artwork backdrop, large cover,
+ /// scrubber, transport controls, system volume, AirPlay, and time-synced lyrics. The queue
+@@ -77,13 +78,20 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+ 
+     override func viewDidAppear(_ animated: Bool) {
+         super.viewDidAppear(animated)
++        self.playerView?.setHapticsActive(true)
+         if !self.animatedIn {
+             self.animatedIn = true
+             self.playerView?.animateIn()
+         }
+     }
+ 
++    override func viewWillDisappear(_ animated: Bool) {
++        super.viewWillDisappear(animated)
++        self.playerView?.setHapticsActive(false)
++    }
++
+     override func dismiss(completion: (() -> Void)? = nil) {
++        self.playerView?.setHapticsActive(false)
+         guard let playerView = self.playerView else {
+             self.finishDismiss(completion: completion)
+             return
+@@ -185,6 +193,14 @@ final class AyuMusicPlayerView: UIView {
+     private let lyricsButton = UIButton(type: .system)
+     private let routePicker = AVRoutePickerView()
+     private let queueButton = UIButton(type: .system)
++    private let hapticsButton = UIButton(type: .system)
++    private let musicHaptics = AyuMusicHaptics()
++    private var musicHapticsEnabled = UserDefaults.standard.object(forKey: "ayu.musicHaptics.enabled") as? Bool ?? true
++    private var musicHapticsActive = false
++    private var hapticsResource: Disposable?
++    private var currentHapticsFile: FileMediaReference?
++    private var hapticsPrepared = false
++    private var hapticsAnalysisFinished = false
+ 
+     private let lyricsView = AyuLyricsView()
+ 
+@@ -259,7 +275,7 @@ final class AyuMusicPlayerView: UIView {
+         self.previousButton.setImage(ayuSymbol("backward.fill", size: 30.0), for: .normal)
+         self.nextButton.setImage(ayuSymbol("forward.fill", size: 30.0), for: .normal)
+         self.playPauseButton.setImage(ayuSymbol("play.fill", size: 44.0), for: .normal)
+-        for button in [self.previousButton, self.playPauseButton, self.nextButton, self.lyricsButton, self.queueButton] {
++        for button in [self.previousButton, self.playPauseButton, self.nextButton, self.lyricsButton, self.queueButton, self.hapticsButton] {
+             button.tintColor = .white
+             self.addSubview(button)
+         }
+@@ -285,6 +301,15 @@ final class AyuMusicPlayerView: UIView {
+         self.queueButton.setImage(ayuSymbol("list.bullet", size: 19.0, weight: .medium), for: .normal)
+         self.queueButton.accessibilityLabel = self.russian ? "Очередь" : "Queue"
+         self.queueButton.addTarget(self, action: #selector(self.queuePressed), for: .touchUpInside)
++        self.hapticsButton.setImage(ayuSymbol("waveform.path", size: 19.0, weight: .medium), for: .normal)
++        self.hapticsButton.layer.cornerRadius = 22.0
++        self.hapticsButton.addTarget(self, action: #selector(self.hapticsPressed), for: .touchUpInside)
++        self.musicHaptics.ready = { [weak self] ready in
++            self?.hapticsAnalysisFinished = true
++            self?.hapticsPrepared = ready
++            self?.updateHapticsButton()
++        }
++        self.updateHapticsButton()
+         self.routePicker.tintColor = UIColor(white: 1.0, alpha: 0.75)
+         self.routePicker.activeTintColor = .white
+         self.addSubview(self.routePicker)
+@@ -309,6 +334,7 @@ final class AyuMusicPlayerView: UIView {
+     }
+ 
+     deinit {
++        self.hapticsResource?.dispose()
+         self.stateDisposable?.dispose()
+         self.lyricsDisposable?.dispose()
+         self.displayLink?.invalidate()
+@@ -341,6 +367,7 @@ final class AyuMusicPlayerView: UIView {
+         }
+         if isPaused != self.isPaused {
+             self.isPaused = isPaused
++            if isPaused { self.musicHaptics.suspend() }
+             self.playPauseButton.setImage(ayuSymbol(isPaused ? "play.fill" : "pause.fill", size: 44.0), for: .normal)
+             self.playPauseButton.accessibilityLabel = isPaused ? (self.russian ? "Воспроизвести" : "Play") : (self.russian ? "Пауза" : "Pause")
+             self.updateArtworkScale(animated: true)
+@@ -365,6 +392,8 @@ final class AyuMusicPlayerView: UIView {
+         let trackKey = "\(state.item.stableId.hashValue)-\(title ?? "")-\(performer ?? "")"
+         if trackKey != self.trackKey {
+             self.trackKey = trackKey
++            self.currentHapticsFile = fileReference
++            self.prepareHaptics()
+             self.title = title ?? (self.russian ? "Неизвестный трек" : "Unknown Track")
+             self.artist = performer
+             self.titleLabel.text = self.title
+@@ -399,6 +428,9 @@ final class AyuMusicPlayerView: UIView {
+             return
+         }
+         let timestamp = self.currentTimestamp()
++        let hapticsPlaying: Bool
++        if case .playing = status.status { hapticsPlaying = true } else { hapticsPlaying = false }
++        self.musicHaptics.tick(time: timestamp, playing: hapticsPlaying && self.musicHapticsEnabled && self.musicHapticsActive && !self.isScrubbing && self.window != nil && UIApplication.shared.applicationState == .active)
+         if !self.isScrubbing {
+             self.scrubber.progress = status.duration > 0.0 ? CGFloat(timestamp / status.duration) : 0.0
+             self.elapsedLabel.text = ayuFormatTime(timestamp)
+@@ -409,6 +441,45 @@ final class AyuMusicPlayerView: UIView {
+         }
+     }
+ 
++    func setHapticsActive(_ active: Bool) {
++        self.musicHapticsActive = active
++        if !active { self.musicHaptics.suspend() }
++    }
++
++    private func updateHapticsButton() {
++        self.hapticsButton.isEnabled = AyuMusicHaptics.supported
++        self.hapticsButton.accessibilityLabel = self.russian ? "Вибрация под музыку" : "Music haptics"
++        self.hapticsButton.accessibilityValue = !AyuMusicHaptics.supported ? (self.russian ? "Не поддерживается" : "Not supported") : (self.musicHapticsEnabled ? (self.hapticsPrepared ? (self.russian ? "Включена" : "On") : (self.hapticsAnalysisFinished ? (self.russian ? "Для этого трека недоступна" : "Unavailable for this track") : (self.russian ? "Подготовка трека" : "Preparing track"))) : (self.russian ? "Выключена" : "Off"))
++        self.hapticsButton.accessibilityTraits = self.musicHapticsEnabled ? [.button, .selected] : [.button]
++        self.hapticsButton.tintColor = UIColor(white: 1.0, alpha: self.musicHapticsEnabled ? 1.0 : 0.4)
++        self.hapticsButton.backgroundColor = self.musicHapticsEnabled ? UIColor(white: 1.0, alpha: 0.12) : .clear
++    }
++
++    @objc private func hapticsPressed() {
++        self.musicHapticsEnabled.toggle()
++        UserDefaults.standard.set(self.musicHapticsEnabled, forKey: "ayu.musicHaptics.enabled")
++        self.prepareHaptics()
++        self.updateHapticsButton()
++    }
++
++    private func prepareHaptics() {
++        self.hapticsResource?.dispose()
++        self.hapticsResource = nil
++        self.musicHaptics.clear()
++        self.hapticsPrepared = false
++        self.hapticsAnalysisFinished = false
++        self.updateHapticsButton()
++        guard self.musicHapticsEnabled, AyuMusicHaptics.supported, let file = self.currentHapticsFile else { return }
++        let key = self.trackKey
++        self.hapticsResource = (self.context.account.postbox.mediaBox.resourceData(file.media.resource, option: .complete(waitUntilFetchStatus: false))
++        |> filter { $0.complete }
++        |> take(1)
++        |> deliverOnMainQueue).startStrict(next: { [weak self] data in
++            guard let self, self.musicHapticsEnabled, self.trackKey == key else { return }
++            self.musicHaptics.analyze(url: URL(fileURLWithPath: data.path))
++        })
++    }
++
+     private func control(_ action: SharedMediaPlayerControlAction) {
+         self.context.sharedContext.mediaManager.playlistControl(action, type: self.type)
+     }
+@@ -528,10 +599,11 @@ final class AyuMusicPlayerView: UIView {
+ 
+         // Bottom-up: utility row, volume, transport, scrubber, title.
+         let bottomRowY = size.height - insets.bottom - 16.0 - 44.0
+-        let rowCenters: [CGFloat] = [left + contentWidth * 0.12, left + contentWidth * 0.5, left + contentWidth * 0.88]
++        let rowCenters: [CGFloat] = [left + contentWidth * 0.08, left + contentWidth * 0.36, left + contentWidth * 0.64, left + contentWidth * 0.92]
+         self.lyricsButton.frame = CGRect(x: rowCenters[0] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
+-        self.routePicker.frame = CGRect(x: rowCenters[1] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
+-        self.queueButton.frame = CGRect(x: rowCenters[2] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
++        self.hapticsButton.frame = CGRect(x: rowCenters[1] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
++        self.routePicker.frame = CGRect(x: rowCenters[2] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
++        self.queueButton.frame = CGRect(x: rowCenters[3] - 22.0, y: bottomRowY, width: 44.0, height: 44.0)
+ 
+         let volumeY = bottomRowY - 46.0
+         self.volumeView.frame = CGRect(x: left + 26.0, y: volumeY, width: contentWidth - 52.0, height: 34.0)
+diff --git a/submodules/TelegramUI/Sources/ChatControllerOpenAttachmentMenu.swift b/submodules/TelegramUI/Sources/ChatControllerOpenAttachmentMenu.swift
+index 11e5536..3408063 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerOpenAttachmentMenu.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerOpenAttachmentMenu.swift
+@@ -67,6 +67,14 @@ extension ChatControllerImpl {
+             if case let .edit(mediaOptions, mediaReference) = subject {
+                 editingSubject = (mediaOptions, mediaReference)
+             }
++            // The second call is the picker selected in the compact menu, not a new paperclip tap.
++            if ayuSelectedButton == nil {
++                switch subject {
++                case .default, .edit:
++                    HapticFeedback().impact(.light)
++                case .bot, .gift: break
++                }
++            }
+             let isEditingMessage = editingSubject != nil
+ 
+             struct RichTextDraft: Codable {
+diff --git a/tools/ayu-tests/music-haptics/main.swift b/tools/ayu-tests/music-haptics/main.swift
+new file mode 100644
+index 0000000..b92209f
+--- /dev/null
++++ b/tools/ayu-tests/music-haptics/main.swift
+@@ -0,0 +1,32 @@
++import Foundation
++
++var checks = 0
++func check(_ value: @autoclosure () -> Bool, _ message: String) {
++    precondition(value(), message)
++    checks += 1
++}
++check(AyuMusicBeatDetector.detect(energies: Array(repeating: 0.0, count: 300), step: 0.02).isEmpty, "Silence must not generate artificial beats")
++check(AyuMusicBeatDetector.detect(energies: Array(repeating: 0.25, count: 300), step: 0.02).isEmpty, "A constant energy level must not generate a fixed pulse train")
++var energies = Array(repeating: Float(0.002), count: 200)
++for index in [25, 50, 75] { energies[index] = 0.5 }
++let beats = AyuMusicBeatDetector.detect(energies: energies, step: 0.02)
++check(beats.count == 3, "Distinct audio attacks produce three beats")
++check(zip(beats, [0.5, 1.0, 1.5]).allSatisfy { abs($0.0.time - $0.1) < 0.001 }, "Beat times follow the decoded audio, not wall-clock timers")
++check(beats.allSatisfy { $0.intensity.isFinite && $0.intensity >= 0.25 && $0.intensity <= 1.0 }, "Intensity stays in the hardware range")
++energies[100] = .nan
++check(AyuMusicBeatDetector.detect(energies: energies, step: 0.02).count == 3, "Invalid samples do not create extra events")
++let timeline = AyuMusicHapticsTimeline(beats: beats)
++check(timeline.advance(to: 0.45, playing: true) == nil, "Opening the player does not replay old events")
++check(timeline.advance(to: 0.51, playing: true) != nil, "Crossing a beat plays it")
++check(timeline.advance(to: 0.53, playing: true) == nil, "A beat plays once")
++check(timeline.advance(to: 0.90, playing: false) == nil, "Pause is silent")
++check(timeline.advance(to: 0.99, playing: true) == nil, "Resume resets the clock")
++check(timeline.advance(to: 1.01, playing: true) != nil, "Resume follows the next real beat")
++check(timeline.advance(to: 1.49, playing: true) == nil, "Seeking forward drops missed beats")
++check(timeline.advance(to: 1.51, playing: true) != nil, "After seeking, the next beat remains aligned")
++check(timeline.advance(to: 0.49, playing: true) == nil, "Seeking backward resets the event cursor")
++check(timeline.advance(to: 0.51, playing: true) != nil, "Replayed audio can replay its actual beat")
++timeline.reset()
++check(timeline.advance(to: 1.1, playing: true) == nil, "Leaving and reopening the player does not produce a burst")
++check(timeline.advance(to: .nan, playing: true) == nil, "Invalid clocks are silent")
++print("PASS: \(checks) audio beat and playback-clock checks")

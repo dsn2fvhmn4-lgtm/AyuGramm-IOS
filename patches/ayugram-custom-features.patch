@@ -1,29 +1,45 @@
 diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
-index 8e2e4a6..ba95e1d 100644
+index 8e2e4a6695..5256fa5bc7 100644
 --- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 +++ b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
-@@ -3607,6 +3607,9 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+@@ -3607,6 +3607,17 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                              if peer.isVerified {
                                  currentCredibilityIconContent = .verified(fillColor: item.presentationData.theme.list.itemCheckColors.fillColor, foregroundColor: item.presentationData.theme.list.itemCheckColors.foregroundColor, sizeType: .compact)
                              }
-+                            if !peer.isVerified && !peer.isScam && !peer.isFake && item.context.account.network.ayuGhostMode.current.interface.showSupporterBadges && AyuSupportersManager.shared.isSupporter(peerId: peer.id.id._internalGetInt64Value()) {
-+                                currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
++                            if !peer.isVerified && !peer.isScam && !peer.isFake && item.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
++                                if case .premium = currentCredibilityIconContent {
++                                    currentStatusIconContent = currentCredibilityIconContent
++                                }
++                                switch ayuBadge {
++                                case .developer, .supporter:
++                                    currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
++                                case let .custom(documentId, _):
++                                    currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
++                                }
 +                            }
                              if let verificationIconFileId = peer.verificationIconFileId {
                                  currentVerifiedIconContent = .animation(content: .customEmoji(fileId: verificationIconFileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(0))
                              }
-@@ -3638,6 +3641,9 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+@@ -3638,6 +3649,17 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                      if peer.isVerified {
                          currentCredibilityIconContent = .verified(fillColor: item.presentationData.theme.list.itemCheckColors.fillColor, foregroundColor: item.presentationData.theme.list.itemCheckColors.foregroundColor, sizeType: .compact)
                      }
-+                    if !peer.isVerified && !peer.isScam && !peer.isFake && item.context.account.network.ayuGhostMode.current.interface.showSupporterBadges && AyuSupportersManager.shared.isSupporter(peerId: peer.id.id._internalGetInt64Value()) {
-+                        currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
++                    if !peer.isVerified && !peer.isScam && !peer.isFake && item.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
++                        if case .premium = currentCredibilityIconContent {
++                            currentStatusIconContent = currentCredibilityIconContent
++                        }
++                        switch ayuBadge {
++                        case .developer, .supporter:
++                            currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
++                        case let .custom(documentId, _):
++                            currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
++                        }
 +                    }
                      if let verificationIconFileId = peer.verificationIconFileId {
                          currentVerifiedIconContent = .animation(content: .customEmoji(fileId: verificationIconFileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(0))
                      }
 diff --git a/submodules/Display/Source/DeviceMetrics.swift b/submodules/Display/Source/DeviceMetrics.swift
-index 7fa38a6..c2604c5 100644
+index 7fa38a6ed1..c2604c585c 100644
 --- a/submodules/Display/Source/DeviceMetrics.swift
 +++ b/submodules/Display/Source/DeviceMetrics.swift
 @@ -561,7 +561,7 @@ public enum DeviceMetrics: CaseIterable, Equatable {
@@ -36,7 +52,7 @@ index 7fa38a6..c2604c5 100644
      }
  }
 diff --git a/submodules/Display/Source/WindowContent.swift b/submodules/Display/Source/WindowContent.swift
-index 8873fc6..2701414 100644
+index 8873fc60c3..2701414555 100644
 --- a/submodules/Display/Source/WindowContent.swift
 +++ b/submodules/Display/Source/WindowContent.swift
 @@ -1477,7 +1477,8 @@ public class Window1 {
@@ -50,7 +66,7 @@ index 8873fc6..2701414 100644
              }
          }
 diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
-index 786127b..4716128 100644
+index 786127bdf2..47161282b0 100644
 --- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 @@ -21,6 +21,7 @@ private enum AyuGramRow: Int32 {
@@ -97,6 +113,7 @@ index d0e6ae2a..58937fbd 100644
 +                case 26: $0.interface.autoQuoteReplies = value
 +                case 27: $0.interface.replyToDeletedMessages = value
 +                case 28: $0.interface.showSupporterBadges = value
++                case 35: $0.interface.supporterBadgesOnLeft = value
                  case 31: $0.interface.spoofWebAppAsAndroid = value
                  case 32: $0.interface.streamerMode = value
                  case 33: $0.interface.backgroundNotifications = value
@@ -111,6 +128,7 @@ index d0e6ae2a..58937fbd 100644
 +        26: icon("quote.bubble.fill", 0x5856D6),
 +        27: icon("arrowshape.turn.up.left.fill", 0x34C759),
 +        28: icon("paperplane.fill", 0x007AFF),
++        35: icon("arrow.left.arrow.right", 0x5856D6),
          31: icon("square.grid.2x2.fill", 0x32ADE6),
          32: icon("video.slash.fill", 0xFF3B30),
 -        33: icon("bell.badge.fill", 0xFF9500)
@@ -127,6 +145,7 @@ index d0e6ae2a..58937fbd 100644
 +            .toggle(2, 26, icons[26] ?? nil, ru ? "Ответ цитатой по умолчанию" : "Auto-quote replies by default", nil, value.autoQuoteReplies),
 +            .toggle(2, 27, icons[27] ?? nil, ru ? "Ответ на удалённые сообщения" : "Reply to deleted messages", nil, value.replyToDeletedMessages),
 +            .toggle(2, 28, icons[28] ?? nil, ru ? "Бейджи спонсоров exteraGram" : "exteraGram Supporter Badges", nil, value.showSupporterBadges),
++            .toggle(2, 35, icons[35] ?? nil, ru ? "Бейдж слева от имени" : "Badge before name", ru ? "Выключено — справа от имени" : "Off — after name", value.supporterBadgesOnLeft),
 +            .info(2, 29, ru ? "Ответ на удалённое сообщение автоматически оформляется в псевдо-цитату с именем автора, предотвращая ошибку сервера." : "Replying to deleted messages creates a pseudo-quote with author header, bypassing server errors."),
              .header(3, 30, AyuStrings.other2.text(ru)),
              .toggle(3, 31, icons[31] ?? nil, AyuStrings.miniAppsAsAndroid.text(ru), nil, value.spoofWebAppAsAndroid),
@@ -151,6 +170,7 @@ index 86b4e0dc..79cb2d0b 100644
 +    public var autoQuoteReplies = true
 +    public var replyToDeletedMessages = true
 +    public var showSupporterBadges = true
++    public var supporterBadgesOnLeft = false
 +    /// Opens voice messages in the Voice Memos style player instead of Telegram's.
 +    public var voiceMemosPlayer = false
      public init() {}
@@ -161,6 +181,7 @@ index 86b4e0dc..79cb2d0b 100644
          case hideStickerTime, disableJumpToNextChannel, hideKeyboardOnScroll, addCommaAfterMention
          case horizonLockVideoMessages
 +        case autoQuoteReplies, replyToDeletedMessages, showSupporterBadges
++        case supporterBadgesOnLeft
 +        case voiceMemosPlayer
      }
      public init(from decoder: Decoder) throws {
@@ -172,23 +193,34 @@ index 86b4e0dc..79cb2d0b 100644
 +        self.autoQuoteReplies = try values.decodeIfPresent(Bool.self, forKey: .autoQuoteReplies) ?? true
 +        self.replyToDeletedMessages = try values.decodeIfPresent(Bool.self, forKey: .replyToDeletedMessages) ?? true
 +        self.showSupporterBadges = try values.decodeIfPresent(Bool.self, forKey: .showSupporterBadges) ?? true
++        self.supporterBadgesOnLeft = try values.decodeIfPresent(Bool.self, forKey: .supporterBadgesOnLeft) ?? false
 +        self.voiceMemosPlayer = try values.decodeIfPresent(Bool.self, forKey: .voiceMemosPlayer) ?? false
      }
  }
  
-@@ -109,3 +120,89 @@ public enum AyuPeerIdFormat {
+@@ -109,3 +121,127 @@ public enum AyuPeerIdFormat {
          }
      }
  }
 +
++public enum AyuSupporterBadge: Equatable {
++    case developer(text: String?)
++    case supporter(text: String?)
++    case custom(documentId: Int64, text: String?)
++}
++
 +public final class AyuSupportersManager {
 +    public static let shared = AyuSupportersManager()
 +    private let lock = NSLock()
-+    private var supporters: Set<Int64> = [
++    private var developers: Set<Int64> = [
 +        749218, 139303278, 168769611, 668557709, 880708503, 963080346,
 +        1282540315, 1348136086, 1374434073, 1752394339, 1773117711, 2135966128,
 +        5079320635, 5118627360, 5184725450, 5330087923, 5800413909, 6007644928,
 +        7380551229, 7738913005, 7818249287, 8083933640
++    ]
++    private var supporters = Set<Int64>()
++    private var customBadges: [Int64: (documentId: Int64, text: String?)] = [
++        1226061708: (5266966399934291023, "[📼] Пушистик **не поддержал(а)** разработку exteraGram, поэтому мы ему **ничерта** не выдали")
 +    ]
 +    private var isRefreshing = false
 +
@@ -198,9 +230,21 @@ index 86b4e0dc..79cb2d0b 100644
 +    }
 +
 +    public func isSupporter(peerId: Int64) -> Bool {
++        return self.badge(peerId: peerId) != nil
++    }
++
++    public func badge(peerId: Int64) -> AyuSupporterBadge? {
 +        self.lock.lock()
 +        defer { self.lock.unlock() }
-+        return self.supporters.contains(peerId)
++        if let customBadge = self.customBadges[peerId] {
++            return .custom(documentId: customBadge.documentId, text: customBadge.text)
++        } else if self.developers.contains(peerId) {
++            return .developer(text: "Участник команды разработчиков exteraGram")
++        } else if self.supporters.contains(peerId) {
++            return .supporter(text: nil)
++        } else {
++            return nil
++        }
 +    }
 +
 +    private var cacheUrl: URL? {
@@ -249,25 +293,40 @@ index 86b4e0dc..79cb2d0b 100644
 +
 +    private func parse(data: Data) {
 +        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-+        var ids = Set<Int64>()
++        var developers = Set<Int64>()
++        var supporters = Set<Int64>()
++        var customBadges: [Int64: (documentId: Int64, text: String?)] = [:]
 +        if let dev = json["developers"] as? [NSNumber] {
-+            for n in dev { ids.insert(n.int64Value) }
++            for n in dev { developers.insert(n.int64Value) }
 +        }
 +        if let sup = json["supporters"] as? [NSNumber] {
-+            for n in sup { ids.insert(n.int64Value) }
++            for n in sup { supporters.insert(n.int64Value) }
 +        }
 +        if let off = json["officialChannels"] as? [NSNumber] {
-+            for n in off { ids.insert(n.int64Value) }
++            for n in off { developers.insert(n.int64Value) }
 +        }
-+        if !ids.isEmpty {
-+            self.lock.lock()
-+            self.supporters.formUnion(ids)
-+            self.lock.unlock()
++        if let channels = json["supporterChannels"] as? [NSNumber] {
++            for n in channels { supporters.insert(n.int64Value) }
 +        }
++        if let badges = json["customBadges"] as? [[String: Any]] {
++            for item in badges {
++                guard let id = (item["id"] as? NSNumber)?.int64Value,
++                      let badge = item["badge"] as? [String: Any],
++                      let documentId = (badge["documentId"] as? NSNumber)?.int64Value else {
++                    continue
++                }
++                customBadges[id] = (documentId, badge["text"] as? String)
++            }
++        }
++        self.lock.lock()
++        self.developers.formUnion(developers)
++        self.supporters.formUnion(supporters)
++        self.customBadges.merge(customBadges, uniquingKeysWith: { _, remote in remote })
++        self.lock.unlock()
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
-index bbac667..b6a6358 100644
+index bbac6670ce..b6a6358dcc 100644
 --- a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
 +++ b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
 @@ -1052,6 +1052,7 @@ func enqueueMessages(transaction: Transaction, account: Account, peerId: PeerId,
@@ -421,7 +480,7 @@ index 1f0d0ea4..9a6e49f6 100644
          let backgroundStateIndex: Int
          switch params.state.lifecycleState {
 diff --git a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift
-index eadd3a1..3b9c391 100644
+index eadd3a184f..1aa2738458 100644
 --- a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift
 +++ b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift
 @@ -14,6 +14,7 @@ import TelegramStringFormatting
@@ -432,27 +491,37 @@ index eadd3a1..3b9c391 100644
  
  /// The pill's labels as an expansion borrows them: frames in the content container's coordinates, and the colours they
  /// are drawn in.
-@@ -656,6 +657,9 @@ public final class ChatTitleComponent: Component {
+@@ -656,6 +657,17 @@ public final class ChatTitleComponent: Component {
                              if peer.isVerified {
                                  titleCredibilityIcon = .verified
                              }
-+                            if !peer.isVerified && !peer.isScam && !peer.isFake, component.context.account.network.ayuGhostMode.current.interface.showSupporterBadges && AyuSupportersManager.shared.isSupporter(peerId: peer.id.id._internalGetInt64Value()) {
-+                                titleCredibilityIcon = .exteraSupporter
++                            if !peer.isVerified && !peer.isScam && !peer.isFake, component.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
++                                if titleCredibilityIcon == .premium {
++                                    titleStatusIcon = .premium
++                                }
++                                switch ayuBadge {
++                                case .developer, .supporter:
++                                    titleCredibilityIcon = .exteraSupporter
++                                case let .custom(documentId, _):
++                                    titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
++                                }
 +                            }
                              if let verificationIconFileId = peer.verificationIconFileId {
                                  titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: verificationIconFileId), expirationDate: nil))
                              }
-@@ -1140,6 +1144,8 @@ public final class ChatTitleComponent: Component {
+@@ -1140,6 +1152,10 @@ public final class ChatTitleComponent: Component {
                      return .text(color: component.theme.chat.message.incoming.scamColor, string: component.strings.Message_FakeAccount.uppercased())
                  case .scam:
                      return .text(color: component.theme.chat.message.incoming.scamColor, string: component.strings.Message_ScamAccount.uppercased())
 +                case .exteraSupporter:
 +                    return .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: component.theme.list.itemAccentColor)
++                case let .exteraCustomBadge(fileId):
++                    return .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: component.theme.list.mediaPlaceholderColor, themeColor: component.theme.list.itemAccentColor, loopMode: .count(2))
                  case let .emojiStatus(emojiStatus):
                      return .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: component.theme.list.mediaPlaceholderColor, themeColor: component.theme.list.itemAccentColor, loopMode: .count(2))
                  }
 diff --git a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift
-index ecd7a3c..505ace7 100644
+index ecd7a3c9c1..d29c342f48 100644
 --- a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift
 +++ b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift
 @@ -18,6 +18,7 @@ import AccountContext
@@ -463,42 +532,64 @@ index ecd7a3c..505ace7 100644
  import MultiAnimationRenderer
  import ComponentDisplayAdapters
  import GlassBackgroundComponent
-@@ -176,6 +177,7 @@ enum ChatTitleCredibilityIcon: Equatable {
+@@ -176,6 +177,8 @@ enum ChatTitleCredibilityIcon: Equatable {
      case scam
      case verified
      case premium
 +    case exteraSupporter
++    case exteraCustomBadge(fileId: Int64)
      case emojiStatus(PeerEmojiStatus)
  }
  
-@@ -317,6 +319,9 @@ public final class ChatTitleView: UIView, NavigationBarTitleView {
+@@ -317,6 +320,17 @@ public final class ChatTitleView: UIView, NavigationBarTitleView {
                                      if peer.isVerified {
                                          titleCredibilityIcon = .verified
                                      }
-+                                    if !peer.isVerified && !peer.isScam && !peer.isFake, self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges && AyuSupportersManager.shared.isSupporter(peerId: peer.id.id._internalGetInt64Value()) {
-+                                        titleCredibilityIcon = .exteraSupporter
++                                    if !peer.isVerified && !peer.isScam && !peer.isFake, self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
++                                        if titleCredibilityIcon == .premium {
++                                            titleStatusIcon = .premium
++                                        }
++                                        switch ayuBadge {
++                                        case .developer, .supporter:
++                                            titleCredibilityIcon = .exteraSupporter
++                                        case let .custom(documentId, _):
++                                            titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
++                                        }
 +                                    }
                                      if let verificationIconFileId = peer.verificationIconFileId {
                                          titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: verificationIconFileId), expirationDate: nil))
                                      }
-@@ -904,6 +909,8 @@ public final class ChatTitleView: UIView, NavigationBarTitleView {
+@@ -904,6 +918,10 @@ public final class ChatTitleView: UIView, NavigationBarTitleView {
              titleCredibilityContent = .text(color: self.theme.chat.message.incoming.scamColor, string: self.strings.Message_FakeAccount.uppercased())
          case .scam:
              titleCredibilityContent = .text(color: self.theme.chat.message.incoming.scamColor, string: self.strings.Message_ScamAccount.uppercased())
 +        case .exteraSupporter:
 +            titleCredibilityContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: self.theme.list.itemAccentColor)
++        case let .exteraCustomBadge(fileId):
++            titleCredibilityContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: self.theme.list.mediaPlaceholderColor, themeColor: self.theme.list.itemAccentColor, loopMode: .count(2))
          case let .emojiStatus(emojiStatus):
              titleCredibilityContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: self.theme.list.mediaPlaceholderColor, themeColor: self.theme.list.itemAccentColor, loopMode: .count(2))
          }
-@@ -920,6 +927,8 @@ public final class ChatTitleView: UIView, NavigationBarTitleView {
+@@ -920,6 +938,10 @@ public final class ChatTitleView: UIView, NavigationBarTitleView {
              titleVerifiedContent = .text(color: self.theme.chat.message.incoming.scamColor, string: self.strings.Message_FakeAccount.uppercased())
          case .scam:
              titleVerifiedContent = .text(color: self.theme.chat.message.incoming.scamColor, string: self.strings.Message_ScamAccount.uppercased())
 +        case .exteraSupporter:
 +            titleVerifiedContent = .none
++        case .exteraCustomBadge:
++            titleVerifiedContent = .none
          case let .emojiStatus(emojiStatus):
              titleVerifiedContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: self.theme.list.mediaPlaceholderColor, themeColor: self.theme.list.itemAccentColor, loopMode: .count(2))
          }
+@@ -927,6 +949,8 @@ public final class ChatTitleView: UIView, NavigationBarTitleView {
+         let titleStatusContent: EmojiStatusComponent.Content
+         var titleStatusParticleColor: UIColor?
+         switch self.titleStatusIcon {
++        case .premium:
++            titleStatusContent = .premium(color: self.theme.list.itemAccentColor)
+         case let .emojiStatus(emojiStatus):
+             titleStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: self.theme.list.mediaPlaceholderColor, themeColor: self.theme.list.itemAccentColor, loopMode: .count(2))
+             if let color = emojiStatus.color {
 diff --git a/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaPlaybackHeaderPanelComponent.swift b/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaPlaybackHeaderPanelComponent.swift
 index 8acf74a3..39837836 100644
 --- a/submodules/TelegramUI/Components/MediaPlaybackHeaderPanelComponent/Sources/MediaPlaybackHeaderPanelComponent.swift
@@ -517,7 +608,7 @@ index 8acf74a3..39837836 100644
                                  component.context.sharedContext.navigateToChat(accountId: component.context.account.id, peerId: id.messageId.peerId, messageId: id.messageId)
                              }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift
-index 42205b2..d4c1680 100644
+index 42205b2a92..d4c1680afc 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenLabeledValueItem.swift
 @@ -33,6 +33,7 @@ enum PeerInfoScreenLabeledValueLeftIcon {
@@ -538,39 +629,105 @@ index 42205b2..d4c1680 100644
              self.iconNode.image = generateTintedImage(image: iconImage, color: presentationData.theme.list.itemAccentColor)
              self.iconNode.isHidden = false
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
-index 0e6ead7..e1dcd4a 100644
+index 0e6ead75f1..31f429b942 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
-@@ -531,6 +531,7 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+@@ -531,7 +531,18 @@ final class PeerInfoHeaderNode: ASDisplayNode {
          case verified
          case fake
          case scam
-+        case exteraSupporter
++        case exteraSupporter(text: String?)
++        case exteraCustomBadge(fileId: Int64, text: String?)
          case emojiStatus(PeerEmojiStatus)
++
++        var ayuBadgeText: String? {
++            switch self {
++            case let .exteraSupporter(text), let .exteraCustomBadge(_, text):
++                return text
++            default:
++                return nil
++            }
++        }
      }
      
-@@ -690,6 +691,9 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+     private var currentCredibilityIcon: CredibilityIcon?
+@@ -690,6 +701,17 @@ final class PeerInfoHeaderNode: ASDisplayNode {
                  if case .premium = credibilityIcon { credibilityIcon = .none }
              } else if case .none = statusIcon, case .none = credibilityIcon { credibilityIcon = .premium }
          }
-+        if let peer = peer, !peer.isVerified && !peer.isScam && !peer.isFake, self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges && AyuSupportersManager.shared.isSupporter(peerId: peer.id.id._internalGetInt64Value()) {
-+            credibilityIcon = .exteraSupporter
++        if let peer = peer, !peer.isVerified && !peer.isScam && !peer.isFake, self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
++            if case .premium = credibilityIcon {
++                statusIcon = credibilityIcon
++            }
++            switch ayuBadge {
++            case let .developer(text), let .supporter(text):
++                credibilityIcon = .exteraSupporter(text: text)
++            case let .custom(documentId, text):
++                credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text)
++            }
 +        }
  
          var isForum = false
          if case let .channel(channel) = peer, channel.isForumOrMonoForum {
-@@ -982,6 +986,9 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+@@ -982,6 +1004,13 @@ final class PeerInfoHeaderNode: ASDisplayNode {
              case .scam:
                  emojiRegularStatusContent = .text(color: presentationData.theme.chat.message.incoming.scamColor, string: presentationData.strings.Message_ScamAccount.uppercased())
                  emojiExpandedStatusContent = emojiRegularStatusContent
 +            case .exteraSupporter:
 +                emojiRegularStatusContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: navigationContentsAccentColor)
 +                emojiExpandedStatusContent = emojiRegularStatusContent
++                emojiStatusSize = CGSize(width: 16.0, height: 16.0)
++            case let .exteraCustomBadge(fileId, _):
++                emojiRegularStatusContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
++                emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
              case let .emojiStatus(emojiStatus):
                  currentEmojiStatus = emojiStatus
                  let ayuLoop = peer?.id != self.context.account.peerId || ayuCosmetics.localStatusFileId != emojiStatus.fileId || ayuCosmetics.animateLocalEmoji
+@@ -1005,6 +1034,8 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+                         }
+                         if case .premium = strongSelf.currentCredibilityIcon {
+                             strongSelf.displayPremiumIntro?(strongSelf.titleCredibilityIconView, currentEmojiStatus, strongSelf.emojiStatusFileAndPackTitle.get(), false)
++                        } else if let text = strongSelf.currentCredibilityIcon?.ayuBadgeText, let presentationData = strongSelf.presentationData {
++                            strongSelf.controller?.present(UndoOverlayController(presentationData: presentationData, content: .info(title: nil, text: text, timeout: 5.0, customUndoText: nil), elevatedLayout: false, position: .top, action: { _ in return false }), in: .current)
+                         }
+                     }
+                 )),
+@@ -1027,6 +1058,8 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+                         }
+                         if case .premium = strongSelf.currentCredibilityIcon {
+                             strongSelf.displayPremiumIntro?(strongSelf.titleExpandedCredibilityIconView, currentEmojiStatus, strongSelf.emojiStatusFileAndPackTitle.get(), true)
++                        } else if let text = strongSelf.currentCredibilityIcon?.ayuBadgeText, let presentationData = strongSelf.presentationData {
++                            strongSelf.controller?.present(UndoOverlayController(presentationData: presentationData, content: .info(title: nil, text: text, timeout: 5.0, customUndoText: nil), elevatedLayout: false, position: .top, action: { _ in return false }), in: .current)
+                         }
+                     }
+                 )),
+@@ -1048,6 +1081,9 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+             let emojiRegularStatusContent: EmojiStatusComponent.Content
+             let emojiExpandedStatusContent: EmojiStatusComponent.Content
+             switch statusIcon {
++            case .premium:
++                emojiRegularStatusContent = .premium(color: navigationContentsAccentColor)
++                emojiExpandedStatusContent = .premium(color: navigationContentsAccentColor)
+             case let .emojiStatus(emojiStatus):
+                 currentEmojiStatus = emojiStatus
+                 let ayuLoop = peer?.id != self.context.account.peerId || ayuCosmetics.localStatusFileId != emojiStatus.fileId || ayuCosmetics.animateLocalEmoji
+@@ -2884,6 +2920,14 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+                 } else if iconFrame.contains(point) {
+                     return self.titleCredibilityIconView.hitTest(self.view.convert(point, to: self.titleCredibilityIconView), with: event)
+                 }
++            case .exteraSupporter, .exteraCustomBadge:
++                let iconFrame = self.titleCredibilityIconView.convert(self.titleCredibilityIconView.bounds, to: self.view)
++                let expandedIconFrame = self.titleExpandedCredibilityIconView.convert(self.titleExpandedCredibilityIconView.bounds, to: self.view)
++                if expandedIconFrame.contains(point) && self.isAvatarExpanded {
++                    return self.titleExpandedCredibilityIconView.hitTest(self.view.convert(point, to: self.titleExpandedCredibilityIconView), with: event)
++                } else if iconFrame.contains(point) {
++                    return self.titleCredibilityIconView.hitTest(self.view.convert(point, to: self.titleCredibilityIconView), with: event)
++                }
+             default:
+                 break
+             }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-index 6680052..a16188b 100644
+index 6680052d12..a16188b5d0 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 @@ -18,6 +18,215 @@ import PeerNameColorItem
@@ -2251,8 +2408,27 @@ index 00000000..102449e7
 +    }
 +
 +    private func search() {
++        let cleanedTitle = self.title
++            .replacingOccurrences(of: #"\s*[\(\[]\s*(?:feat\.?|ft\.?).*?[\)\]]"#, with: "", options: [.regularExpression, .caseInsensitive])
++            .trimmingCharacters(in: .whitespacesAndNewlines)
++        var queries: [String] = []
++        for query in [
++            [self.artist, cleanedTitle].compactMap { $0 }.joined(separator: " "),
++            cleanedTitle,
++            [self.artist, self.title].compactMap { $0 }.joined(separator: " ")
++        ] where !query.isEmpty && !queries.contains(query) {
++            queries.append(query)
++        }
++        self.search(queries: queries, index: 0)
++    }
++
++    private func search(queries: [String], index: Int) {
++        guard index < queries.count else {
++            self.finish(.notFound)
++            return
++        }
 +        var components = URLComponents(string: "https://lrclib.net/api/search")
-+        components?.queryItems = [URLQueryItem(name: "q", value: [self.artist, self.title].compactMap { $0 }.joined(separator: " "))]
++        components?.queryItems = [URLQueryItem(name: "q", value: queries[index])]
 +        guard let url = components?.url else {
 +            self.finish(.notFound)
 +            return
@@ -2263,6 +2439,10 @@ index 00000000..102449e7
 +                return
 +            }
 +            let records = json as? [[String: Any]] ?? []
++            if records.isEmpty {
++                self.search(queries: queries, index: index + 1)
++                return
++            }
 +            // Prefer synced lyrics whose length matches the track.
 +            let ranked = records.sorted(by: { lhs, rhs in
 +                let lhsSynced = lhs["syncedLyrics"] is String
@@ -3825,7 +4005,7 @@ index 00000000..86c79446
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
-index 17f21b6..0ab035e 100644
+index 17f21b6547..0ab035e176 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
 +++ b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
 @@ -1607,10 +1607,31 @@ extension ChatControllerImpl {
@@ -3862,7 +4042,7 @@ index 17f21b6..0ab035e 100644
                                  ))
                              }).updatedReplyMessage(message).updatedSearch(nil).updatedShowCommands(false) }, completion: { t in
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index 09a9b43..99a31b6 100644
+index 09a9b43d5b..99a31b6bdd 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -829,7 +829,9 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState

@@ -1,0 +1,292 @@
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+index c8567d681b..7e7a9ba716 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+@@ -588,7 +588,14 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+                 }
+             }
+         } catch { presentError?() }
+-    })
++    }, slider: { id, value in
++        guard id == 6 else { return }
++        do {
++            try store.update {
++                $0.interface.deletedMessageTransparency = min(99, max(25, value))
++            }
++        } catch { presentError?() }
++    })
+     let icon: (String, UInt32) -> UIImage? = { name, color in
+         return AyuSettingsIcons.symbol(name, color: UIColor(rgb: color))
+     }
+@@ -620,7 +627,7 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+     |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         let value = settings.interface
+-        let entries: [AyuSectionedEntry] = [
++        var entries: [AyuSectionedEntry] = [
+             .header(0, 0, AyuStrings.profilesMessages.text(ru)),
+             .toggle(0, 1, icons[1] ?? nil, AyuStrings.showIdsProfiles.text(ru), nil, value.showPeerIds),
+             .toggle(0, 2, icons[2] ?? nil, AyuStrings.hideQuickShareButton.text(ru), nil, value.hideFastShare),
+@@ -627,7 +634,13 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+             .toggle(0, 3, icons[3] ?? nil, AyuStrings.hideChatsTabBadge.text(ru), nil, value.hideChatsBadge),
+             .toggle(0, 4, icons[4] ?? nil, "MessageShot", nil, value.showMessageShot),
+             .toggle(0, 5, icons[5] ?? nil, AyuStrings.semiTransparentDeleted.text(ru), nil, value.semiTransparentDeletedMessages),
+-            .info(0, 6, AyuStrings.tapIdProfileCopy.text(ru)),
++        ]
++        if value.semiTransparentDeletedMessages {
++            entries.append(.slider(0, 6, value.deletedMessageTransparency, 25, 99))
++            entries.append(.info(0, 7, ru ? "Прозрачность удалённых: \(value.deletedMessageTransparency)%" : "Deleted message transparency: \(value.deletedMessageTransparency)%"))
++        }
++        let remainingEntries: [AyuSectionedEntry] = [
++            .info(0, 8, AyuStrings.tapIdProfileCopy.text(ru)),
+             .header(1, 10, AyuStrings.chatList.text(ru)),
+             .toggle(1, 11, icons[11] ?? nil, AyuStrings.hideStories.text(ru), nil, value.hideStories),
+             .toggle(1, 12, icons[12] ?? nil, AyuStrings.hideSimilarChannels.text(ru), nil, value.hideSimilarChannels),
+@@ -650,10 +663,11 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+             .toggle(3, 32, icons[32] ?? nil, AyuStrings.streamerMode.text(ru), nil, value.streamerMode),
+             .toggle(3, 33, icons[33] ?? nil, AyuStrings.backgroundNotifications.text(ru), nil, value.backgroundNotifications),
+             .info(3, 34, AyuStrings.streamerModeKeepsAyugramOutScreenshots.text(ru)),
+             .header(4, 40, ru ? "Голосовые сообщения" : "Voice Messages"),
+             .toggle(4, 41, icons[41] ?? nil, ru ? "Плеер в стиле «Диктофона»" : "Voice Memos Style Player", nil, value.voiceMemosPlayer),
+             .info(4, 42, ru ? "Голосовые, открытые из панели воспроизведения, показываются с крупной волной, ±15 секунд и скоростью, как в «Диктофоне»." : "Voice messages opened from the playback bar show a large waveform, ±15 s skips and speed, like Voice Memos.")
+-        ]
++        ]
++        entries.append(contentsOf: remainingEntries)
+         let data = ItemListPresentationData(presentationData)
+         let state = ItemListControllerState(presentationData: data, title: .text(AyuStrings.interface.text(ru)), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index c041ac8330..0695a0dd7d 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -123,6 +123,7 @@ func ayuAppVersion() -> String {
+ struct AyuSectionedArguments {
+     let open: (Int32) -> Void
+     let toggle: (Int32, Bool) -> Void
++    var slider: (Int32, Int32) -> Void = { _, _ in }
+     var context: AccountContext? = nil
+ }
+ 
+@@ -135,18 +136,19 @@ enum AyuSectionedEntry: ItemListNodeEntry {
+     /// A link whose title carries a coloured badge (ALPHA, BETA).
+     case badgedLink(Int32, Int32, UIImage?, String, String, UInt32)
+     case toggle(Int32, Int32, UIImage?, String, String?, Bool)
++    case slider(Int32, Int32, Int32, Int32, Int32)
+     case info(Int32, Int32, String)
+ 
+     var section: ItemListSectionId {
+         switch self {
+-        case let .logo(section, _, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .badgedLink(section, _, _, _, _, _), let .toggle(section, _, _, _, _, _), let .info(section, _, _):
++        case let .logo(section, _, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .badgedLink(section, _, _, _, _, _), let .toggle(section, _, _, _, _, _), let .slider(section, _, _, _, _), let .info(section, _, _):
+             return section
+         }
+     }
+ 
+     var stableId: Int32 {
+         switch self {
+-        case let .logo(_, id, _, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .badgedLink(_, id, _, _, _, _), let .toggle(_, id, _, _, _, _), let .info(_, id, _):
++        case let .logo(_, id, _, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .badgedLink(_, id, _, _, _, _), let .toggle(_, id, _, _, _, _), let .slider(_, id, _, _, _), let .info(_, id, _):
+             return id
+         }
+     }
+@@ -160,6 +162,7 @@ enum AyuSectionedEntry: ItemListNodeEntry {
+         case let (.link(ls, li, _, lt, ll), .link(rs, ri, _, rt, rl)): return ls == rs && li == ri && lt == rt && ll == rl
+         case let (.badgedLink(ls, li, _, lt, lb, lc), .badgedLink(rs, ri, _, rt, rb, rc)): return ls == rs && li == ri && lt == rt && lb == rb && lc == rc
+         case let (.toggle(ls, li, _, lt, lx, lv), .toggle(rs, ri, _, rt, rx, rv)): return ls == rs && li == ri && lt == rt && lx == rx && lv == rv
++        case let (.slider(ls, li, lv, lmin, lmax), .slider(rs, ri, rv, rmin, rmax)): return ls == rs && li == ri && lv == rv && lmin == rmin && lmax == rmax
+         case let (.info(ls, li, lt), .info(rs, ri, rt)): return ls == rs && li == ri && lt == rt
+         default: return false
+         }
+@@ -178,6 +181,8 @@ enum AyuSectionedEntry: ItemListNodeEntry {
+             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, titleBadge: badge, titleBadgeColor: UIColor(rgb: color), label: "", sectionId: self.section, style: .blocks, action: { arguments.open(id) })
+         case let .toggle(_, id, icon, title, text, value):
+             return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, text: text, value: value, sectionId: self.section, style: .blocks, updated: { arguments.toggle(id, $0) })
++        case let .slider(_, id, value, minimumValue, maximumValue):
++            return ThemeSettingsBrightnessItem(theme: presentationData.theme, value: value, minimumValue: minimumValue, maximumValue: maximumValue, sectionId: self.section, updated: { arguments.slider(id, $0) })
+         case let .info(_, _, text):
+             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+         }
+diff --git a/submodules/SettingsUI/Sources/Themes/ThemeSettingsBrightnessItem.swift b/submodules/SettingsUI/Sources/Themes/ThemeSettingsBrightnessItem.swift
+index a636043a4f..45e404aa6c 100644
+--- a/submodules/SettingsUI/Sources/Themes/ThemeSettingsBrightnessItem.swift
++++ b/submodules/SettingsUI/Sources/Themes/ThemeSettingsBrightnessItem.swift
+@@ -13,12 +13,16 @@ import AppBundle
+ class ThemeSettingsBrightnessItem: ListViewItem, ItemListItem {
+     let theme: PresentationTheme
+     let value: Int32
++    let minimumValue: Int32
++    let maximumValue: Int32
+     let sectionId: ItemListSectionId
+     let updated: (Int32) -> Void
+     
+-    init(theme: PresentationTheme, value: Int32, sectionId: ItemListSectionId, updated: @escaping (Int32) -> Void) {
++    init(theme: PresentationTheme, value: Int32, minimumValue: Int32 = 0, maximumValue: Int32 = 100, sectionId: ItemListSectionId, updated: @escaping (Int32) -> Void) {
+         self.theme = theme
+         self.value = value
++        self.minimumValue = minimumValue
++        self.maximumValue = maximumValue
+         self.sectionId = sectionId
+         self.updated = updated
+     }
+@@ -103,10 +107,10 @@ class ThemeSettingsBrightnessItemNode: ListViewItemNode {
+         sliderView.enablePanHandling = true
+         sliderView.trackCornerRadius = 1.0
+         sliderView.lineSize = 2.0
+-        sliderView.minimumValue = 0.0
+-        sliderView.startValue = 0.0
+-        sliderView.maximumValue = 100.0
++        sliderView.minimumValue = 0.0
++        sliderView.startValue = 0.0
++        sliderView.maximumValue = CGFloat((self.item?.maximumValue ?? 100) - (self.item?.minimumValue ?? 0))
+         sliderView.disablesInteractiveTransitionGestureRecognizer = true
+         if let item = self.item, let params = self.layoutParams {
+-            sliderView.value = CGFloat(item.value)
++            sliderView.value = CGFloat(item.value - item.minimumValue)
+             sliderView.backgroundColor = item.theme.list.itemBlocksBackgroundColor
+@@ -213,15 +217,19 @@ class ThemeSettingsBrightnessItemNode: ListViewItemNode {
+                     }
+                     
+                     if let sliderView = strongSelf.sliderView {
++                        sliderView.minimumValue = 0.0
++                        sliderView.startValue = 0.0
++                        sliderView.maximumValue = CGFloat(item.maximumValue - item.minimumValue)
++                        sliderView.value = CGFloat(item.value - item.minimumValue)
+                         if themeUpdated {
+                             sliderView.backgroundColor = item.theme.list.itemBlocksBackgroundColor
+                             sliderView.backColor = item.theme.list.itemSecondaryTextColor
+-                            sliderView.trackColor = item.theme.list.itemAccentColor.withAlphaComponent(0.45)
++                            sliderView.trackColor = item.theme.list.itemAccentColor
+                             sliderView.knobImage = PresentationResourcesItemList.knobImage(item.theme)
+                         }
+                         
+                         sliderView.frame = CGRect(origin: CGPoint(x: params.leftInset + 38.0, y: 8.0), size: CGSize(width: params.width - params.leftInset - params.rightInset - 38.0 * 2.0, height: 44.0))
+@@ -242,7 +250,7 @@ class ThemeSettingsBrightnessItemNode: ListViewItemNode {
+     @objc func sliderValueChanged() {
+         guard let sliderView = self.sliderView else {
+             return
+         }
+-        self.item?.updated(Int32(sliderView.value))
++        self.item?.updated(Int32(sliderView.value) + (self.item?.minimumValue ?? 0))
+     }
+ }
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+index 6eeb1f6bee..e116cee231 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -29,6 +29,8 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+     public var streamerMode = false
+     public var hideAllChatsFolder = false
+     public var semiTransparentDeletedMessages = false
++    /// Percentage of the deleted bubble that is transparent (25...99).
++    public var deletedMessageTransparency: Int32 = 50
+     /// Local notifications while the app runs in the background (no remote push in sideloaded builds).
+     public var backgroundNotifications = true
+     // exteraGram General
+@@ -54,7 +56,7 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+         case showRepeatText, showSearchPhrase, showCopyMessageIds
+         case showHideMessage
+         case hideStories, hideSimilarChannels, hidePremiumStatuses, hideUnreadCounters, revealSpoilers
+-        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers, streamerMode, hideAllChatsFolder, semiTransparentDeletedMessages, backgroundNotifications
++        case disableGreetingSticker, disableOpenLinkWarning, filterZalgo, spoofWebAppAsAndroid, unlimitedRecentStickers, streamerMode, hideAllChatsFolder, semiTransparentDeletedMessages, deletedMessageTransparency, backgroundNotifications
+         case disableNumberRounding, hidePhoneNumber, disableUnarchiveSwipe
+         case hideStickerTime, disableJumpToNextChannel, hideKeyboardOnScroll, addCommaAfterMention
+         case horizonLockVideoMessages
+@@ -89,6 +91,7 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+         self.streamerMode = try values.decodeIfPresent(Bool.self, forKey: .streamerMode) ?? false
+         self.hideAllChatsFolder = try values.decodeIfPresent(Bool.self, forKey: .hideAllChatsFolder) ?? false
+         self.semiTransparentDeletedMessages = try values.decodeIfPresent(Bool.self, forKey: .semiTransparentDeletedMessages) ?? false
++        self.deletedMessageTransparency = min(99, max(25, try values.decodeIfPresent(Int32.self, forKey: .deletedMessageTransparency) ?? 50))
+         self.backgroundNotifications = try values.decodeIfPresent(Bool.self, forKey: .backgroundNotifications) ?? true
+         self.disableNumberRounding = try values.decodeIfPresent(Bool.self, forKey: .disableNumberRounding) ?? false
+         self.hidePhoneNumber = try values.decodeIfPresent(Bool.self, forKey: .hidePhoneNumber) ?? false
+@@ -136,10 +139,13 @@ public final class AyuSupportersManager {
+     private var customBadges: [Int64: (documentId: Int64, text: String?)] = [
+         1226061708: (5266966399934291023, "[📼] Пушистик **не поддержал(а)** разработку exteraGram, поэтому мы ему **ничерта** не выдали")
+     ]
++    private var ayuIosBadges: [Int64: (documentId: Int64, text: String?)] = [:]
+     private var isRefreshing = false
+ 
+     private init() {
+         self.loadCached()
++        self.loadAyuRegistryCache()
++        self.refreshAyuRegistry()
+         self.refresh()
+     }
+ 
+@@ -150,7 +156,9 @@ public final class AyuSupportersManager {
+     public func badge(peerId: Int64) -> AyuSupporterBadge? {
+         self.lock.lock()
+         defer { self.lock.unlock() }
+-        if let customBadge = self.customBadges[peerId] {
++        if let customBadge = self.ayuIosBadges[peerId] {
++            return .custom(documentId: customBadge.documentId, text: customBadge.text)
++        } else if let customBadge = self.customBadges[peerId] {
+             return .custom(documentId: customBadge.documentId, text: customBadge.text)
+         } else if self.developers.contains(peerId) {
+             return .developer(text: "Участник команды разработчиков exteraGram")
+@@ -167,11 +175,51 @@ public final class AyuSupportersManager {
+             .appendingPathComponent("supporters.json")
+     }
+ 
++    private var ayuRegistryCacheUrl: URL? {
++        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
++            .appendingPathComponent("AyuGram", isDirectory: true)
++            .appendingPathComponent("ayu-ios-badges.json")
++    }
++
+     private func loadCached() {
+         guard let url = self.cacheUrl, let data = try? Data(contentsOf: url) else { return }
+         self.parse(data: data)
+     }
+ 
++    private func loadAyuRegistryCache() {
++        guard let url = self.ayuRegistryCacheUrl, let data = try? Data(contentsOf: url) else { return }
++        self.parseAyuRegistry(data: data)
++    }
++
++    private func refreshAyuRegistry() {
++        guard let url = URL(string: "https://raw.githubusercontent.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/main/assets/ayugram_ios_badges.json") else { return }
++        var request = URLRequest(url: url)
++        request.timeoutInterval = 15.0
++        URLSession(configuration: .ephemeral).dataTask(with: request) { [weak self] data, response, _ in
++            guard let self, let data, let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
++            self.parseAyuRegistry(data: data)
++            if let cacheUrl = self.ayuRegistryCacheUrl {
++                try? FileManager.default.createDirectory(at: cacheUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
++                try? data.write(to: cacheUrl, options: .atomic)
++            }
++        }.resume()
++    }
++
++    private func parseAyuRegistry(data: Data) {
++        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let badges = json["badges"] as? [[String: Any]] else { return }
++        var parsed: [Int64: (documentId: Int64, text: String?)] = [:]
++        for badge in badges {
++            guard let id = (badge["id"] as? NSNumber)?.int64Value,
++                  let documentId = (badge["documentId"] as? NSNumber)?.int64Value else {
++                continue
++            }
++            parsed[id] = (documentId, badge["title"] as? String)
++        }
++        self.lock.lock()
++        self.ayuIosBadges = parsed
++        self.lock.unlock()
++    }
++
+     private func refresh() {
+         guard !self.isRefreshing else { return }
+         self.isRefreshing = true
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+index 90c668f3bb..d575eb38d1 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+@@ -3973,7 +3973,8 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+         
+         strongSelf.appliedItem = item
+         // AyuGram "Semi-transparent deleted messages": locally kept deleted messages are dimmed.
+-        let ayuDeletedAlpha: CGFloat = item.context.account.network.ayuGhostMode.current.interface.semiTransparentDeletedMessages && item.content.firstMessage.attributes.contains(where: { $0 is AyuDeletedMessageAttribute }) ? 0.5 : 1.0
++        let ayuInterface = item.context.account.network.ayuGhostMode.current.interface
++        let ayuDeletedAlpha: CGFloat = ayuInterface.semiTransparentDeletedMessages && item.content.firstMessage.attributes.contains(where: { $0 is AyuDeletedMessageAttribute }) ? max(0.01, 1.0 - CGFloat(ayuInterface.deletedMessageTransparency) / 100.0) : 1.0
+         if strongSelf.mainContainerNode.alpha != ayuDeletedAlpha {
+             strongSelf.mainContainerNode.alpha = ayuDeletedAlpha
+         }

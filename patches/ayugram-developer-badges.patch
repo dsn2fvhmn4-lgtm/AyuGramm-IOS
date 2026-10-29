@@ -1,0 +1,228 @@
+diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
+index 5256fa5bc7..4a9ca878bc 100644
+--- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
++++ b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
+@@ -3616,11 +3616,16 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                                     currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
+                                 case let .custom(documentId, _):
+                                     currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
++                                case .ayuDeveloper:
++                                    break
+                                 }
+                             }
+                             if let verificationIconFileId = peer.verificationIconFileId {
+                                 currentVerifiedIconContent = .animation(content: .customEmoji(fileId: verificationIconFileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(0))
+                             }
++                            if case let .ayuDeveloper(documentId, _) = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()), item.context.account.network.ayuGhostMode.current.interface.showSupporterBadges {
++                                if item.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                                    currentVerifiedIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
++                                } else {
++                                    currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
++                                }
++                            }
+                         }
+                     default:
+                         break
+@@ -3658,11 +3663,16 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                             currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
+                         case let .custom(documentId, _):
+                             currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
++                        case .ayuDeveloper:
++                            break
+                         }
+                     }
+                     if let verificationIconFileId = peer.verificationIconFileId {
+                         currentVerifiedIconContent = .animation(content: .customEmoji(fileId: verificationIconFileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(0))
+                     }
++                    if case let .ayuDeveloper(documentId, _) = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()), item.context.account.network.ayuGhostMode.current.interface.showSupporterBadges {
++                        if item.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                            currentVerifiedIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
++                        } else {
++                            currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
++                        }
++                    }
+                 }
+             }
+             if let currentSecretIconImage = currentSecretIconImage {
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+index e116cee231..8eb5210e55 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -124,6 +124,7 @@ public enum AyuSupporterBadge: Equatable {
+     case developer(text: String?)
+     case supporter(text: String?)
+     case custom(documentId: Int64, text: String?)
++    case ayuDeveloper(documentId: Int64, text: String?)
+ }
+ 
+ public final class AyuSupportersManager {
+@@ -157,7 +158,7 @@ public final class AyuSupportersManager {
+         self.lock.lock()
+         defer { self.lock.unlock() }
+         if let customBadge = self.ayuIosBadges[peerId] {
+-            return .custom(documentId: customBadge.documentId, text: customBadge.text)
++            return .ayuDeveloper(documentId: customBadge.documentId, text: customBadge.text)
+         } else if let customBadge = self.customBadges[peerId] {
+             return .custom(documentId: customBadge.documentId, text: customBadge.text)
+         } else if self.developers.contains(peerId) {
+diff --git a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift
+index 1aa2738458..d9b0a9d3a2 100644
+--- a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift
++++ b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift
+@@ -666,11 +666,16 @@ public final class ChatTitleComponent: Component {
+                                     titleCredibilityIcon = .exteraSupporter
+                                 case let .custom(documentId, _):
+                                     titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
++                                case .ayuDeveloper:
++                                    break
+                                 }
+                             }
+                             if let verificationIconFileId = peer.verificationIconFileId {
+                                 titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: verificationIconFileId), expirationDate: nil))
+                             }
++                            if case let .ayuDeveloper(documentId, _) = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()), component.context.account.network.ayuGhostMode.current.interface.showSupporterBadges {
++                                if component.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                                    titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: documentId), expirationDate: nil))
++                                } else {
++                                    titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
++                                }
++                            }
+                         }
+                     }
+                     if peerView.peerId.namespace == Namespaces.Peer.SecretChat {
+diff --git a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift
+index d29c342f48..ace8d04a2d 100644
+--- a/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift
++++ b/submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift
+@@ -329,11 +329,16 @@ public final class ChatTitleView: UIView, NavigationBarTitleView {
+                                             titleCredibilityIcon = .exteraSupporter
+                                         case let .custom(documentId, _):
+                                             titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
++                                        case .ayuDeveloper:
++                                            break
+                                         }
+                                     }
+                                     if let verificationIconFileId = peer.verificationIconFileId {
+                                         titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: verificationIconFileId), expirationDate: nil))
+                                     }
++                                    if case let .ayuDeveloper(documentId, _) = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()), self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges {
++                                        if self.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                                            titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: documentId), expirationDate: nil))
++                                        } else {
++                                            titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
++                                        }
++                                    }
+                                 }
+                             }
+                             if peerView.peerId.namespace == Namespaces.Peer.SecretChat {
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
+index 31f429b942..113dea1492 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
+@@ -533,11 +533,12 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+         case scam
+         case exteraSupporter(text: String?)
+         case exteraCustomBadge(fileId: Int64, text: String?)
++        case ayuDeveloper(fileId: Int64, text: String?)
+         case emojiStatus(PeerEmojiStatus)
+ 
+         var ayuBadgeText: String? {
+             switch self {
+-            case let .exteraSupporter(text), let .exteraCustomBadge(_, text):
++            case let .exteraSupporter(text), let .exteraCustomBadge(_, text), let .ayuDeveloper(_, text):
+                 return text
+             default:
+                 return nil
+@@ -701,15 +702,21 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+                 if case .premium = credibilityIcon { credibilityIcon = .none }
+             } else if case .none = statusIcon, case .none = credibilityIcon { credibilityIcon = .premium }
+         }
+-        if let peer = peer, !peer.isVerified && !peer.isScam && !peer.isFake, self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
+-            if case .premium = credibilityIcon {
+-                statusIcon = credibilityIcon
+-            }
++        if let peer = peer, !peer.isScam && !peer.isFake, self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
+             switch ayuBadge {
+             case let .developer(text), let .supporter(text):
+-                credibilityIcon = .exteraSupporter(text: text)
++                if !peer.isVerified {
++                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }
++                    credibilityIcon = .exteraSupporter(text: text)
++                }
+             case let .custom(documentId, text):
+-                credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text)
++                if !peer.isVerified {
++                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }
++                    credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text)
++                }
++            case let .ayuDeveloper(documentId, text):
++                let resolvedText = text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle)
++                if self.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                    verifiedIcon = .ayuDeveloper(fileId: documentId, text: resolvedText)
++                } else {
++                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }
++                    credibilityIcon = .exteraCustomBadge(fileId: documentId, text: resolvedText)
++                }
+             }
+         }
+ 
+@@ -1011,6 +1018,9 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+             case let .exteraCustomBadge(fileId, _):
+                 emojiRegularStatusContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
+                 emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
++            case let .ayuDeveloper(fileId, _):
++                emojiRegularStatusContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
++                emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
+             case let .emojiStatus(emojiStatus):
+                 currentEmojiStatus = emojiStatus
+                 let ayuLoop = peer?.id != self.context.account.peerId || ayuCosmetics.localStatusFileId != emojiStatus.fileId || ayuCosmetics.animateLocalEmoji
+@@ -1191,6 +1201,9 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+             case let .emojiStatus(emojiStatus):
+                 emojiRegularStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
+                 emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
++            case let .ayuDeveloper(fileId, _):
++                emojiRegularStatusContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: presentationData.theme.list.mediaPlaceholderColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
++                emojiExpandedStatusContent = .animation(content: .customEmoji(fileId: fileId), size: CGSize(width: 80.0, height: 80.0), placeholderColor: navigationContentsAccentColor, themeColor: navigationContentsAccentColor, loopMode: .forever)
+             default:
+                 emojiRegularStatusContent = .none
+                 emojiExpandedStatusContent = .none
+@@ -1205,7 +1218,10 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+                     content: emojiRegularStatusContent,
+                     isVisibleForAnimations: true,
+                     useSharedAnimation: true,
+-                    action: nil,
++                    action: { [weak self] in
++                        guard let self, let text = self.currentVerifiedIcon?.ayuBadgeText, let presentationData = self.presentationData else { return }
++                        self.controller?.present(UndoOverlayController(presentationData: presentationData, content: .info(title: nil, text: text, timeout: 5.0, customUndoText: nil), elevatedLayout: false, position: .top, action: { _ in return false }), in: .current)
++                    },
+                     emojiFileUpdated: nil
+                 )),
+                 environment: {},
+@@ -1220,7 +1236,10 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+                     content: emojiExpandedStatusContent,
+                     isVisibleForAnimations: true,
+                     useSharedAnimation: true,
+-                    action: {}
++                    action: { [weak self] in
++                        guard let self, let text = self.currentVerifiedIcon?.ayuBadgeText, let presentationData = self.presentationData else { return }
++                        self.controller?.present(UndoOverlayController(presentationData: presentationData, content: .info(title: nil, text: text, timeout: 5.0, customUndoText: nil), elevatedLayout: false, position: .top, action: { _ in return false }), in: .current)
++                    }
+                 )),
+                 environment: {},
+                 containerSize: CGSize(width: 26.0, height: 26.0)
+@@ -2943,6 +2962,15 @@ final class PeerInfoHeaderNode: ASDisplayNode {
+             default:
+                 break
+             }
++            if case .ayuDeveloper? = self.currentVerifiedIcon {
++                let iconFrame = self.titleVerifiedIconView.convert(self.titleVerifiedIconView.bounds, to: self.view)
++                let expandedIconFrame = self.titleExpandedVerifiedIconView.convert(self.titleExpandedVerifiedIconView.bounds, to: self.view)
++                if expandedIconFrame.contains(point) && self.isAvatarExpanded {
++                    return self.titleExpandedVerifiedIconView.hitTest(self.view.convert(point, to: self.titleExpandedVerifiedIconView), with: event)
++                } else if iconFrame.contains(point) {
++                    return self.titleVerifiedIconView.hitTest(self.view.convert(point, to: self.titleVerifiedIconView), with: event)
++                }
++            }
+         }
+         
+         if let subtitleBackgroundButton = self.subtitleBackgroundButton, subtitleBackgroundButton.view.convert(subtitleBackgroundButton.bounds, to: self.view).contains(point) {

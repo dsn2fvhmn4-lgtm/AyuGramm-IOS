@@ -87,11 +87,37 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertEqual(registry["version"], 1)
         self.assertEqual(len(ids), len(set(ids)))
         self.assertTrue(all(badge["documentId"] > 0 and badge["title"] for badge in badges))
+        desktop_developers = set(json.loads((ROOT / "assets" / "ayu_supporters_seed.json").read_text())["developers"])
+        ios_developers = {8276132300, 7556953433, 7864640050}
+        self.assertEqual(set(ids), desktop_developers | ios_developers)
         by_id = {badge["id"]: badge for badge in badges}
         self.assertEqual(by_id[8276132300]["documentId"], 5341356487631448969)
         self.assertEqual(by_id[7556953433]["documentId"], 5208467231670812677)
         self.assertEqual(by_id[7864640050]["documentId"], 5341356487631448969)
         self.assertTrue(all("(name)" in by_id[user_id]["title"] for user_id in (8276132300, 7556953433, 7864640050)))
+
+    def test_every_team_member_has_a_renderable_leading_emoji_and_named_tooltip(self):
+        registry = json.loads((ROOT / "assets" / "ayugram_ios_badges.json").read_text())
+        badges = registry["badges"]
+
+        self.assertEqual(len(badges), 25)
+        self.assertTrue(all(item["documentId"] > 0 for item in badges))
+        self.assertTrue(all("(name)" in item["title"] for item in badges))
+
+    def test_leading_badge_path_covers_chat_list_titles_and_profile(self):
+        patch = (ROOT / "patches" / "ayugram-developer-badges.patch").read_text()
+
+        expected_files = (
+            "submodules/ChatListUI/Sources/Node/ChatListItem.swift",
+            "submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleComponent.swift",
+            "submodules/TelegramUI/Components/ChatTitleView/Sources/ChatTitleView.swift",
+            "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift",
+        )
+        for path in expected_files:
+            self.assertIn(path, patch)
+        self.assertEqual(patch.count("supporterBadgesOnLeft && peer.verificationIconFileId == nil"), 5)
+        self.assertGreaterEqual(patch.count("case .ayuDeveloper"), 5)
+        self.assertIn("if case .premium = credibilityIcon { statusIcon = credibilityIcon }", patch)
 
     def test_followup_patch_has_conditional_opacity_slider(self):
         patch = (ROOT / "patches" / "ayugram-followup-features.patch").read_text()

@@ -618,14 +618,6 @@ diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/subm
 index 889aafd..dbc1b75 100644
 --- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
 +++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
-@@ -11,6 +11,7 @@ import TelegramUIPreferences
- import UniversalMediaPlayer
- import AccountContext
- import PhotoResources
-+import Postbox
- 
- /// Full-screen music player in the style of Apple Music: blurred artwork backdrop, large cover,
- /// scrubber, transport controls, system volume, AirPlay, and time-synced lyrics. The queue
 @@ -77,13 +78,20 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
  
      override func viewDidAppear(_ animated: Bool) {
@@ -756,8 +748,8 @@ index 889aafd..dbc1b75 100644
 +        self.updateHapticsButton()
 +        guard self.musicHapticsEnabled, AyuMusicHaptics.supported, let file = self.currentHapticsFile else { return }
 +        let key = self.trackKey
-+        self.hapticsResource = (self.context.account.postbox.mediaBox.resourceData(file.media.resource, option: .complete(waitUntilFetchStatus: false))
-+        |> filter { $0.complete }
++        self.hapticsResource = (self.context.engine.resources.data(id: EngineMediaResource.Id(file.media.resource.id))
++        |> filter { $0.isComplete }
 +        |> take(1)
 +        |> deliverOnMainQueue).startStrict(next: { [weak self] data in
 +            guard let self, self.musicHapticsEnabled, self.trackKey == key else { return }

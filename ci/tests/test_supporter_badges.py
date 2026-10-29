@@ -27,7 +27,6 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertIn("currentStatusIconContent = currentCredibilityIconContent", patch)
 
     def test_static_badge_assets_use_centerable_square_canvases(self):
-        image_set = ROOT / "assets" / "branding" / "ExteraBadge.imageset"
         expected = {
             "extera_badge.png": (16, 16),
             "extera_badge@2x.png": (32, 32),
@@ -35,9 +34,28 @@ class SupporterBadgeTests(unittest.TestCase):
         }
 
         for name, size in expected.items():
-            data = (image_set / name).read_bytes()
+            data = (ROOT / "assets" / "branding" / "ExteraBadge.imageset" / name).read_bytes()
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(struct.unpack(">II", data[16:24]), size)
+
+        developer_expected = {
+            "extera_developer_badge.png": (16, 16),
+            "extera_developer_badge@2x.png": (32, 32),
+            "extera_developer_badge@3x.png": (48, 48),
+        }
+        for name, size in developer_expected.items():
+            data = (ROOT / "assets" / "branding" / "ExteraDeveloperBadge.imageset" / name).read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(struct.unpack(">II", data[16:24]), size)
+
+    def test_developer_and_supporter_badges_use_distinct_assets(self):
+        patch = (ROOT / "patches" / "ayugram-custom-features.patch").read_text()
+
+        self.assertIn("case exteraDeveloper", patch)
+        self.assertIn('case .developer:', patch)
+        self.assertIn('AyuGram/ExteraDeveloperBadge', patch)
+        self.assertIn('case .supporter:', patch)
+        self.assertIn('AyuGram/ExteraBadge', patch)
 
     def test_ios_developer_registry_has_unique_valid_entries(self):
         registry = json.loads((ROOT / "assets" / "ayugram_ios_badges.json").read_text())

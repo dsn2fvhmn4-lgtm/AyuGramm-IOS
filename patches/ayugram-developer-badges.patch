@@ -121,6 +121,7 @@ index 31f429b942..113dea1492 100644
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoHeaderNode.swift
 @@ -533,11 +533,12 @@ final class PeerInfoHeaderNode: ASDisplayNode {
          case scam
+         case exteraDeveloper(text: String?)
          case exteraSupporter(text: String?)
          case exteraCustomBadge(fileId: Int64, text: String?)
 +        case ayuDeveloper(fileId: Int64, text: String?)
@@ -128,8 +129,8 @@ index 31f429b942..113dea1492 100644
  
          var ayuBadgeText: String? {
              switch self {
--            case let .exteraSupporter(text), let .exteraCustomBadge(_, text):
-+            case let .exteraSupporter(text), let .exteraCustomBadge(_, text), let .ayuDeveloper(_, text):
+-            case let .exteraDeveloper(text), let .exteraSupporter(text), let .exteraCustomBadge(_, text):
++            case let .exteraDeveloper(text), let .exteraSupporter(text), let .exteraCustomBadge(_, text), let .ayuDeveloper(_, text):
                  return text
              default:
                  return nil
@@ -143,7 +144,13 @@ index 31f429b942..113dea1492 100644
 -            }
 +        if let peer = peer, !peer.isScam && !peer.isFake, self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
              switch ayuBadge {
-             case let .developer(text), let .supporter(text):
+             case let .developer(text):
+-                credibilityIcon = .exteraDeveloper(text: text)
++                if !peer.isVerified {
++                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }
++                    credibilityIcon = .exteraDeveloper(text: text)
++                }
+             case let .supporter(text):
 -                credibilityIcon = .exteraSupporter(text: text)
 +                if !peer.isVerified {
 +                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }

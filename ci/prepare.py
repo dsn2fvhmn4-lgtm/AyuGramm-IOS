@@ -26,11 +26,12 @@ for patch in patches:
     subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)
     subprocess.run(["git", "apply", "--recount", str(patch)], cwd=source, check=True)
 
-badge_src = root / "assets" / "branding" / "ExteraBadge.imageset"
-if badge_src.is_dir():
-    badge_dst = source / "submodules" / "TelegramUI" / "Images.xcassets" / "AyuGram" / "ExteraBadge.imageset"
-    badge_dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(badge_src, badge_dst, dirs_exist_ok=True)
+for badge_name in ("ExteraBadge", "ExteraDeveloperBadge"):
+    badge_src = root / "assets" / "branding" / f"{badge_name}.imageset"
+    if badge_src.is_dir():
+        badge_dst = source / "submodules" / "TelegramUI" / "Images.xcassets" / "AyuGram" / f"{badge_name}.imageset"
+        badge_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(badge_src, badge_dst, dirs_exist_ok=True)
 
 app_badge_src = root / "assets" / "branding" / "AppBadge@3x.png"
 if app_badge_src.is_file():

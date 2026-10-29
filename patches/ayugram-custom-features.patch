@@ -11,7 +11,9 @@ index 8e2e4a6695..5256fa5bc7 100644
 +                                    currentStatusIconContent = currentCredibilityIconContent
 +                                }
 +                                switch ayuBadge {
-+                                case .developer, .supporter:
++                                case .developer:
++                                    currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraDeveloperBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
++                                case .supporter:
 +                                    currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
 +                                case let .custom(documentId, _):
 +                                    currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
@@ -29,7 +31,9 @@ index 8e2e4a6695..5256fa5bc7 100644
 +                            currentStatusIconContent = currentCredibilityIconContent
 +                        }
 +                        switch ayuBadge {
-+                        case .developer, .supporter:
++                        case .developer:
++                            currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraDeveloperBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
++                        case .supporter:
 +                            currentCredibilityIconContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: item.presentationData.theme.list.itemAccentColor)
 +                        case let .custom(documentId, _):
 +                            currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
@@ -500,7 +504,9 @@ index eadd3a184f..1aa2738458 100644
 +                                    titleStatusIcon = .premium
 +                                }
 +                                switch ayuBadge {
-+                                case .developer, .supporter:
++                                case .developer:
++                                    titleCredibilityIcon = .exteraDeveloper
++                                case .supporter:
 +                                    titleCredibilityIcon = .exteraSupporter
 +                                case let .custom(documentId, _):
 +                                    titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
@@ -513,6 +519,8 @@ index eadd3a184f..1aa2738458 100644
                      return .text(color: component.theme.chat.message.incoming.scamColor, string: component.strings.Message_FakeAccount.uppercased())
                  case .scam:
                      return .text(color: component.theme.chat.message.incoming.scamColor, string: component.strings.Message_ScamAccount.uppercased())
++                case .exteraDeveloper:
++                    return .image(image: UIImage(bundleImageName: "AyuGram/ExteraDeveloperBadge"), tintColor: component.theme.list.itemAccentColor)
 +                case .exteraSupporter:
 +                    return .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: component.theme.list.itemAccentColor)
 +                case let .exteraCustomBadge(fileId):
@@ -536,6 +544,7 @@ index ecd7a3c9c1..d29c342f48 100644
      case scam
      case verified
      case premium
++    case exteraDeveloper
 +    case exteraSupporter
 +    case exteraCustomBadge(fileId: Int64)
      case emojiStatus(PeerEmojiStatus)
@@ -550,7 +559,9 @@ index ecd7a3c9c1..d29c342f48 100644
 +                                            titleStatusIcon = .premium
 +                                        }
 +                                        switch ayuBadge {
-+                                        case .developer, .supporter:
++                                        case .developer:
++                                            titleCredibilityIcon = .exteraDeveloper
++                                        case .supporter:
 +                                            titleCredibilityIcon = .exteraSupporter
 +                                        case let .custom(documentId, _):
 +                                            titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
@@ -563,6 +574,8 @@ index ecd7a3c9c1..d29c342f48 100644
              titleCredibilityContent = .text(color: self.theme.chat.message.incoming.scamColor, string: self.strings.Message_FakeAccount.uppercased())
          case .scam:
              titleCredibilityContent = .text(color: self.theme.chat.message.incoming.scamColor, string: self.strings.Message_ScamAccount.uppercased())
++        case .exteraDeveloper:
++            titleCredibilityContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraDeveloperBadge"), tintColor: self.theme.list.itemAccentColor)
 +        case .exteraSupporter:
 +            titleCredibilityContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: self.theme.list.itemAccentColor)
 +        case let .exteraCustomBadge(fileId):
@@ -574,6 +587,8 @@ index ecd7a3c9c1..d29c342f48 100644
              titleVerifiedContent = .text(color: self.theme.chat.message.incoming.scamColor, string: self.strings.Message_FakeAccount.uppercased())
          case .scam:
              titleVerifiedContent = .text(color: self.theme.chat.message.incoming.scamColor, string: self.strings.Message_ScamAccount.uppercased())
++        case .exteraDeveloper:
++            titleVerifiedContent = .none
 +        case .exteraSupporter:
 +            titleVerifiedContent = .none
 +        case .exteraCustomBadge:
@@ -636,13 +651,14 @@ index 0e6ead75f1..31f429b942 100644
          case verified
          case fake
          case scam
++        case exteraDeveloper(text: String?)
 +        case exteraSupporter(text: String?)
 +        case exteraCustomBadge(fileId: Int64, text: String?)
          case emojiStatus(PeerEmojiStatus)
 +
 +        var ayuBadgeText: String? {
 +            switch self {
-+            case let .exteraSupporter(text), let .exteraCustomBadge(_, text):
++            case let .exteraDeveloper(text), let .exteraSupporter(text), let .exteraCustomBadge(_, text):
 +                return text
 +            default:
 +                return nil
@@ -660,7 +676,9 @@ index 0e6ead75f1..31f429b942 100644
 +                statusIcon = credibilityIcon
 +            }
 +            switch ayuBadge {
-+            case let .developer(text), let .supporter(text):
++            case let .developer(text):
++                credibilityIcon = .exteraDeveloper(text: text)
++            case let .supporter(text):
 +                credibilityIcon = .exteraSupporter(text: text)
 +            case let .custom(documentId, text):
 +                credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text)
@@ -673,6 +691,10 @@ index 0e6ead75f1..31f429b942 100644
              case .scam:
                  emojiRegularStatusContent = .text(color: presentationData.theme.chat.message.incoming.scamColor, string: presentationData.strings.Message_ScamAccount.uppercased())
                  emojiExpandedStatusContent = emojiRegularStatusContent
++            case .exteraDeveloper:
++                emojiRegularStatusContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraDeveloperBadge"), tintColor: navigationContentsAccentColor)
++                emojiExpandedStatusContent = emojiRegularStatusContent
++                emojiStatusSize = CGSize(width: 16.0, height: 16.0)
 +            case .exteraSupporter:
 +                emojiRegularStatusContent = .image(image: UIImage(bundleImageName: "AyuGram/ExteraBadge"), tintColor: navigationContentsAccentColor)
 +                emojiExpandedStatusContent = emojiRegularStatusContent
@@ -715,7 +737,7 @@ index 0e6ead75f1..31f429b942 100644
                  } else if iconFrame.contains(point) {
                      return self.titleCredibilityIconView.hitTest(self.view.convert(point, to: self.titleCredibilityIconView), with: event)
                  }
-+            case .exteraSupporter, .exteraCustomBadge:
++            case .exteraDeveloper, .exteraSupporter, .exteraCustomBadge:
 +                let iconFrame = self.titleCredibilityIconView.convert(self.titleCredibilityIconView.bounds, to: self.view)
 +                let expandedIconFrame = self.titleExpandedCredibilityIconView.convert(self.titleExpandedCredibilityIconView.bounds, to: self.view)
 +                if expandedIconFrame.contains(point) && self.isAvatarExpanded {

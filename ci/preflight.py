@@ -25,6 +25,8 @@ def contract_errors(source, path=''):
         errors.append('ChatListControllerNode.isSearchDisplayControllerActive is ActiveSearch?; compare it with nil')
     if path.rsplit('/', 1)[-1].startswith('Ayu') and re.search(r'\.(?:content|title|image)EdgeInsets\b', source):
         errors.append('UIButton edge insets are deprecated in iOS 15; use UIButton.Configuration.contentInsets')
+    if path.rsplit('/', 1)[-1].startswith('Ayu') and re.search(r'\b(?:add|remove|set)TemporaryAttributes?\b', source):
+        errors.append('NSLayoutManager temporary attributes are macOS-only; draw a separate text layout on iOS')
     return errors
 
 

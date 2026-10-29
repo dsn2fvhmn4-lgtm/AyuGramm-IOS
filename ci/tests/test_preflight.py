@@ -38,6 +38,13 @@ class UIContractTests(unittest.TestCase):
         self.assertFalse(contract_errors('configuration.contentInsets = NSDirectionalEdgeInsets(top: 0.0, leading: 62.0, bottom: 0.0, trailing: 12.0)', path))
         self.assertFalse(contract_errors(broken, 'submodules/TelegramUI/Sources/ChatController.swift'))
 
+    def test_ayugram_text_drawing_avoids_macos_temporary_attributes(self):
+        path = 'submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift'
+        broken = 'self.manager.addTemporaryAttribute(.foregroundColor, value: UIColor.white, forCharacterRange: characters)'
+        self.assertTrue(contract_errors(broken, path))
+        self.assertTrue(contract_errors('self.manager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: characters)', path))
+        self.assertFalse(contract_errors('self.highlightManager.drawGlyphs(forGlyphRange: glyphs, at: .zero)', path))
+
     def test_reaction_helpers_require_a_direct_bazel_dependency(self):
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory)

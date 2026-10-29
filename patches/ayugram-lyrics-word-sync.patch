@@ -223,7 +223,7 @@ new file mode 100644
 index 0000000..dce9d7a
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,119 @@
 +import UIKit
 +
 +/// Draws the same shaped text twice, clipping the white layer to playback progress.
@@ -237,6 +237,9 @@ index 0000000..dce9d7a
 +    private let storage = NSTextStorage()
 +    private let manager = NSLayoutManager()
 +    private let container = NSTextContainer(size: .zero)
++    private let highlightStorage = NSTextStorage()
++    private let highlightManager = NSLayoutManager()
++    private let highlightContainer = NSTextContainer(size: .zero)
 +    private var preparedWidth: CGFloat = -1.0
 +    private var rectangles: [[CGRect]] = []
 +    private var rightToLeft: [Bool] = []
@@ -250,6 +253,9 @@ index 0000000..dce9d7a
 +        self.container.lineFragmentPadding = 0.0
 +        self.manager.addTextContainer(self.container)
 +        self.storage.addLayoutManager(self.manager)
++        self.highlightContainer.lineFragmentPadding = 0.0
++        self.highlightManager.addTextContainer(self.highlightContainer)
++        self.highlightStorage.addLayoutManager(self.highlightManager)
 +        self.isAccessibilityElement = true
 +        self.accessibilityTraits = .staticText
 +    }
@@ -269,6 +275,10 @@ index 0000000..dce9d7a
 +        self.container.size = CGSize(width: width, height: .greatestFiniteMagnitude)
 +        self.storage.setAttributedString(NSAttributedString(string: self.text, attributes: [.font: self.font, .foregroundColor: self.textColor]))
 +        self.manager.ensureLayout(for: self.container)
++        // iOS has no temporary layout attributes; an identical white layout is drawn under the progress clip.
++        self.highlightContainer.size = self.container.size
++        self.highlightStorage.setAttributedString(NSAttributedString(string: self.text, attributes: [.font: self.font, .foregroundColor: UIColor.white]))
++        self.highlightManager.ensureLayout(for: self.highlightContainer)
 +        self.rectangles = []
 +        self.rightToLeft = []
 +        var offset = 0
@@ -329,10 +339,7 @@ index 0000000..dce9d7a
 +        context.saveGState()
 +        context.addPath(path)
 +        context.clip()
-+        let characters = NSRange(location: 0, length: self.storage.length)
-+        self.manager.addTemporaryAttribute(.foregroundColor, value: UIColor.white, forCharacterRange: characters)
-+        self.manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
-+        self.manager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: characters)
++        self.highlightManager.drawGlyphs(forGlyphRange: self.highlightManager.glyphRange(for: self.highlightContainer), at: .zero)
 +        context.restoreGState()
 +    }
 +}

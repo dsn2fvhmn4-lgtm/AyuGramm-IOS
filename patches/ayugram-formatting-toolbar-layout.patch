@@ -1,0 +1,75 @@
+diff --git a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+index 01f0034..f31b21c 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+@@ -307,6 +307,16 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+     
+     public var updateActivity: () -> Void = { }
+     
++    private let ayuFormattingRowHeight: CGFloat = 44.0
++    private let ayuFormattingRowSpacing: CGFloat = 8.0
++
++    private func ayuShowsFormatting(interfaceState: ChatPresentationInterfaceState) -> Bool {
++        return (self.context?.account.network.ayuGhostMode.current.interface.formattingToolbar ?? false)
++            && self.isFocused
++            && interfaceState.inputTextPanelState.mediaRecordingState == nil
++            && interfaceState.interfaceState.mediaDraftState == nil
++    }
++
+     private var ayuFormattingBar: UIScrollView?
+     private var ayuFormattingButtons: [UIButton] = []
+     private var updatingInputState = false
+@@ -2617,7 +2627,9 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+         }
+         
+         let baseWidth = width - leftInset - leftMenuInset - rightInset - rightSlowModeInset
+-        let (accessoryButtonsWidth, textFieldHeight, isTextFieldOverflow) = self.calculateTextFieldMetrics(width: baseWidth, sendActionControlsWidth: sendActionButtonsSize.width, maxHeight: maxHeight, metrics: metrics, bottomInset: bottomInset, interfaceState: interfaceState)
++        let showsFormatting = self.ayuShowsFormatting(interfaceState: interfaceState)
++        let formattingHeight = showsFormatting ? self.ayuFormattingRowHeight + self.ayuFormattingRowSpacing : 0.0
++        let (accessoryButtonsWidth, textFieldHeight, isTextFieldOverflow) = self.calculateTextFieldMetrics(width: baseWidth, sendActionControlsWidth: sendActionButtonsSize.width, maxHeight: max(0.0, maxHeight - formattingHeight), metrics: metrics, bottomInset: bottomInset, interfaceState: interfaceState)
+         var panelHeight = self.panelHeight(textFieldHeight: textFieldHeight, metrics: metrics, bottomInset: bottomInset)
+         if displayBotStartButton {
+             panelHeight += 27.0
+@@ -3920,7 +3932,6 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+         transition.updateFrame(view: self.glassBackgroundContainer, frame: containerFrame)
+         self.glassBackgroundContainer.update(size: containerFrame.size, isDark: interfaceState.theme.overallDarkAppearance, transition: ComponentTransition(transition))
+         
+-        let showsFormatting = (self.context?.account.network.ayuGhostMode.current.interface.formattingToolbar ?? false) && self.isFocused && mediaRecordingState == nil
+         if showsFormatting {
+             let bar: UIScrollView
+             if let current = self.ayuFormattingBar {
+@@ -3951,7 +3962,13 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+                 }
+             }
+             bar.backgroundColor = interfaceState.theme.chat.inputPanel.panelBackgroundColor.withAlphaComponent(0.85)
+-            transition.updateFrame(view: bar, frame: CGRect(x: leftInset, y: contentHeight, width: max(0.0, width - leftInset - rightInset), height: 44.0))
++            // contentHeight is local to the input capsule and excludes its top inset.
++            // Use the capsule's frame in panel coordinates to keep the toolbar below it,
++            // including when a reply preview or several lines increase the field height.
++            let formattingOriginY = textInputContainerBackgroundFrame.maxY + self.ayuFormattingRowSpacing
++            let formattingFrame = CGRect(x: leftInset, y: formattingOriginY, width: max(0.0, width - leftInset - rightInset), height: self.ayuFormattingRowHeight)
++            transition.updateFrame(view: bar, frame: formattingFrame)
++            bar.clipsToBounds = true
+             let buttonWidth = max(44.0, bar.bounds.width / 10.0)
+             for (index, button) in self.ayuFormattingButtons.enumerated() {
+                 button.frame = CGRect(x: CGFloat(index) * buttonWidth, y: 0.0, width: buttonWidth, height: 44.0)
+@@ -3968,7 +3985,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+             }
+             bar.contentSize = CGSize(width: CGFloat(self.ayuFormattingButtons.count) * buttonWidth, height: 44.0)
+             self.view.bringSubviewToFront(bar)
+-            contentHeight += 44.0
++            contentHeight = formattingFrame.maxY - hideOffset.y
+         } else if let bar = self.ayuFormattingBar {
+             bar.removeFromSuperview()
+             self.ayuFormattingBar = nil
+@@ -4930,8 +4947,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+             rightInset += compactBottomSideInset
+             
+             let baseWidth = width - leftInset - self.leftMenuInset - rightInset - self.rightSlowModeInset + self.currentTextInputBackgroundWidthOffset - additionalSideInsets.right
+-            let (_, textFieldHeight, _) = self.calculateTextFieldMetrics(width: baseWidth, sendActionControlsWidth: self.sendActionButtons.bounds.width, maxHeight: maxHeight, metrics: metrics, bottomInset: bottomInset, interfaceState: interfaceState)
+-            let formattingHeight: CGFloat = self.ayuFormattingBar == nil ? 0.0 : 44.0
++            let formattingHeight = self.ayuShowsFormatting(interfaceState: interfaceState) ? self.ayuFormattingRowHeight + self.ayuFormattingRowSpacing : 0.0
++            let (_, textFieldHeight, _) = self.calculateTextFieldMetrics(width: baseWidth, sendActionControlsWidth: self.sendActionButtons.bounds.width, maxHeight: max(0.0, maxHeight - formattingHeight), metrics: metrics, bottomInset: bottomInset, interfaceState: interfaceState)
+             let panelHeight = self.panelHeight(textFieldHeight: textFieldHeight, metrics: metrics, bottomInset: bottomInset) + formattingHeight
+             if !self.bounds.size.height.isEqual(to: panelHeight) {
+                 self.updateHeight(animated)

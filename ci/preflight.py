@@ -93,6 +93,7 @@ def main():
     sdk_sources = [source / 'submodules/TelegramUI/Sources' / name for name in (
         'Chat/AyuMessageShotCanvas.swift', 'AyuStartupStorage.swift', 'AyuStartupFailureController.swift')]
     sdk_sources.append(source / 'submodules/TelegramUI/Sources/AyuMusicHaptics.swift')
+    sdk_sources.append(source / 'submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuPetpetController.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuPluginAvatar.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuArcadeGameController.swift')
@@ -106,6 +107,8 @@ def main():
             if not path.exists():
                 continue
             companions = [path.with_name('AyuMusicHapticsTimeline.swift')] if path.name == 'AyuMusicHaptics.swift' else []
+            if path.name == 'AyuLyricsLineLabel.swift':
+                companions = [path.with_name(name) for name in ('AyuLyricsTiming.swift', 'AyuLyricsYaml.swift')]
             result = subprocess.run(['xcrun', 'swiftc', '-typecheck', '-swift-version', '5', '-warnings-as-errors',
                                      '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator', str(path),
                                      *map(str, companions)], capture_output=True, text=True)

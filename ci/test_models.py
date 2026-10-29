@@ -32,6 +32,12 @@ def run(source: Path):
                         '-o', str(output / 'native-iosplug-tests')], check=True)
         subprocess.run([str(output / 'native-iosplug-tests'),
                         str(Path(__file__).resolve().parents[1] / 'plug')], check=True)
+        subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
+                        str(source / 'submodules/TelegramUI/Sources/AyuLyricsTiming.swift'),
+                        str(source / 'submodules/TelegramUI/Sources/AyuLyricsYaml.swift'),
+                        str(source / 'tools/ayu-tests/lyrics/main.swift'),
+                        '-o', str(output / 'lyrics-tests')], check=True)
+        subprocess.run([str(output / 'lyrics-tests')], check=True)
         murmur = source / 'submodules/MurMurHash32'
         header = murmur / 'PublicHeaders/MurMurHash32/MurMurHash32.h'
         (output / 'module.modulemap').write_text(

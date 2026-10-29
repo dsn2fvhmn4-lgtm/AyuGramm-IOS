@@ -86,7 +86,7 @@ class SupporterBadgeTests(unittest.TestCase):
 
         self.assertEqual(registry["version"], 1)
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue(all(badge["documentId"] > 0 and badge["title"] for badge in badges))
+        self.assertTrue(all(badge.get("documentId", 1) > 0 and badge["title"] for badge in badges))
         desktop_developers = set(json.loads((ROOT / "assets" / "ayu_supporters_seed.json").read_text())["developers"])
         ios_developers = {8276132300, 7556953433, 7864640050}
         self.assertEqual(set(ids), desktop_developers | ios_developers)
@@ -96,12 +96,16 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertEqual(by_id[7864640050]["documentId"], 5341356487631448969)
         self.assertTrue(all("(name)" in by_id[user_id]["title"] for user_id in (8276132300, 7556953433, 7864640050)))
 
-    def test_every_team_member_has_a_renderable_leading_emoji_and_named_tooltip(self):
+    def test_personal_star_is_never_assigned_to_other_developers(self):
         registry = json.loads((ROOT / "assets" / "ayugram_ios_badges.json").read_text())
         badges = registry["badges"]
 
         self.assertEqual(len(badges), 25)
-        self.assertTrue(all(item["documentId"] > 0 for item in badges))
+        star_users = {item["id"] for item in badges if item.get("documentId") == 5341356487631448969}
+        self.assertEqual(star_users, {8276132300, 7864640050})
+        owner = next(item for item in badges if item["id"] == 5800413909)
+        self.assertNotIn("documentId", owner)
+        self.assertIn("exteraGram", owner["title"])
         self.assertTrue(all("(name)" in item["title"] for item in badges))
 
     def test_leading_badge_path_covers_chat_list_titles_and_profile(self):

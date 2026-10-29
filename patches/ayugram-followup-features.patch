@@ -203,7 +203,7 @@ index 6eeb1f6bee..e116cee231 100644
      private var customBadges: [Int64: (documentId: Int64, text: String?)] = [
          1226061708: (5266966399934291023, "[📼] Пушистик **не поддержал(а)** разработку exteraGram, поэтому мы ему **ничерта** не выдали")
      ]
-+    private var ayuIosBadges: [Int64: (documentId: Int64, text: String?)] = [:]
++    private var ayuIosBadges: [Int64: (documentId: Int64?, text: String?)] = [:]
      private var isRefreshing = false
  
      private init() {
@@ -219,7 +219,10 @@ index 6eeb1f6bee..e116cee231 100644
          defer { self.lock.unlock() }
 -        if let customBadge = self.customBadges[peerId] {
 +        if let customBadge = self.ayuIosBadges[peerId] {
-+            return .custom(documentId: customBadge.documentId, text: customBadge.text)
++            if let documentId = customBadge.documentId {
++                return .custom(documentId: documentId, text: customBadge.text)
++            }
++            return .developer(text: customBadge.text)
 +        } else if let customBadge = self.customBadges[peerId] {
              return .custom(documentId: customBadge.documentId, text: customBadge.text)
          } else if self.developers.contains(peerId) {
@@ -260,13 +263,12 @@ index 6eeb1f6bee..e116cee231 100644
 +
 +    private func parseAyuRegistry(data: Data) {
 +        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let badges = json["badges"] as? [[String: Any]] else { return }
-+        var parsed: [Int64: (documentId: Int64, text: String?)] = [:]
++        var parsed: [Int64: (documentId: Int64?, text: String?)] = [:]
 +        for badge in badges {
-+            guard let id = (badge["id"] as? NSNumber)?.int64Value,
-+                  let documentId = (badge["documentId"] as? NSNumber)?.int64Value else {
++            guard let id = (badge["id"] as? NSNumber)?.int64Value else {
 +                continue
 +            }
-+            parsed[id] = (documentId, badge["title"] as? String)
++            parsed[id] = ((badge["documentId"] as? NSNumber)?.int64Value, badge["title"] as? String)
 +        }
 +        self.lock.lock()
 +        self.ayuIosBadges = parsed

@@ -21,6 +21,8 @@ def contract_errors(source, path=''):
         errors.append('stringWithAppliedEntities requires TextFormat')
     if re.search(r'\.ayuVisibleMessageReactions(?:AndPeers)?\s*\(', source) and 'import AccountContext' not in source:
         errors.append('AyuGram reaction display helpers require AccountContext')
+    if path.endswith('ChatListControllerNode.swift') and re.search(r'!\s*self\.isSearchDisplayControllerActive\b', source):
+        errors.append('ChatListControllerNode.isSearchDisplayControllerActive is ActiveSearch?; compare it with nil')
     return errors
 
 

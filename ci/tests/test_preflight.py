@@ -22,6 +22,14 @@ class UIContractTests(unittest.TestCase):
         self.assertTrue(contract_errors(call))
         self.assertFalse(contract_errors('import AccountContext\n' + call))
 
+    def test_optional_chat_list_search_state_is_not_a_boolean(self):
+        path = 'submodules/ChatListUI/Sources/ChatListControllerNode.swift'
+        broken = 'if foldersAtBottom, !self.isSearchDisplayControllerActive { showFolders() }'
+        self.assertTrue(contract_errors(broken, path))
+        self.assertTrue(contract_errors(broken.replace('!self.', '! self.'), path))
+        self.assertFalse(contract_errors(broken.replace('!self.isSearchDisplayControllerActive', 'self.isSearchDisplayControllerActive == nil'), path))
+        self.assertFalse(contract_errors(broken, 'UnrelatedController.swift'))
+
     def test_reaction_helpers_require_a_direct_bazel_dependency(self):
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory)

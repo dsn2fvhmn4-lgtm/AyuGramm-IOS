@@ -148,7 +148,7 @@ diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodu
 index 7561b28..31226f6 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-@@ -556,10 +556,28 @@ func ayuMessageShotSettingsController(context: AccountContext) -> ViewController
+@@ -556,10 +556,44 @@ func ayuMessageShotSettingsController(context: AccountContext) -> ViewController
  
  /// exteraGram "Interface": the display switches grouped like the other exteraGram pages,
  /// with icons and one short note per group.
@@ -159,6 +159,22 @@ index 7561b28..31226f6 100644
 -    let arguments = AyuSectionedArguments(open: { _ in }, toggle: { id, value in
 +    let tabBarLift = ValuePromise<Double>(min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 24.0))), ignoreRepeated: true)
 +    let arguments = AyuSectionedArguments(open: { id in
++        if id == 51 {
++            let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++            let alert = UIAlertController(title: ru ? "Расположение папок" : "Folder position", message: nil, preferredStyle: .alert)
++            let current = store.current.interface.foldersAtBottom
++            for bottom in [false, true] {
++                let title = bottom ? (ru ? "Снизу" : "Bottom") : (ru ? "Сверху" : "Top")
++                alert.addAction(UIAlertAction(title: title + (bottom == current ? " ✓" : ""), style: .default, handler: { _ in
++                    do {
++                        try store.update { $0.interface.foldersAtBottom = bottom }
++                    } catch { presentError?() }
++                }))
++            }
++            alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++            context.sharedContext.applicationBindings.presentNativeController(alert)
++            return
++        }
 +        guard id == 55 else { return }
 +        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
 +        let alert = UIAlertController(title: ru ? "Положение таббара" : "Tab bar position", message: "\n\n", preferredStyle: .alert)
@@ -179,7 +195,7 @@ index 7561b28..31226f6 100644
          do {
              try store.update {
                  switch id {
-@@ -586,6 +604,10 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+@@ -586,6 +620,10 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
                  case 32: $0.interface.streamerMode = value
                  case 33: $0.interface.backgroundNotifications = value
                  case 41: $0.interface.voiceMemosPlayer = value
@@ -190,7 +206,7 @@ index 7561b28..31226f6 100644
                  default: break
                  }
              }
-@@ -626,9 +648,9 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+@@ -626,9 +664,9 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
          33: icon("bell.badge.fill", 0xFF9500),
          41: icon("waveform", 0xFF3B30)
      ]
@@ -202,14 +218,14 @@ index 7561b28..31226f6 100644
          let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
          let value = settings.interface
          var entries: [AyuSectionedEntry] = [
-@@ -670,11 +692,21 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
+@@ -670,11 +708,21 @@ func ayuInterfacePageController(context: AccountContext) -> ViewController {
              .info(3, 34, AyuStrings.streamerModeKeepsAyugramOutScreenshots.text(ru)),
              .header(4, 40, ru ? "Голосовые сообщения" : "Voice Messages"),
              .toggle(4, 41, icons[41] ?? nil, ru ? "Плеер в стиле «Диктофона»" : "Voice Memos Style Player", nil, value.voiceMemosPlayer),
 -            .info(4, 42, ru ? "Голосовые, открытые из панели воспроизведения, показываются с крупной волной, ±15 секунд и скоростью, как в «Диктофоне»." : "Voice messages opened from the playback bar show a large waveform, ±15 s skips and speed, like Voice Memos.")
 +            .info(4, 42, ru ? "Голосовые, открытые из панели воспроизведения, показываются с крупной волной, ±15 секунд и скоростью, как в «Диктофоне»." : "Voice messages opened from the playback bar show a large waveform, ±15 s skips and speed, like Voice Memos."),
 +            .header(5, 50, ru ? "Навигация и редактор" : "Navigation and composer"),
-+            .toggle(5, 51, icon("folder.fill", 0x32ADE6), ru ? "Папки над таббаром" : "Folders above the tab bar", nil, value.foldersAtBottom),
++            .link(5, 51, icon("folder.fill", 0x32ADE6), ru ? "Расположение папок" : "Folder position", value.foldersAtBottom ? (ru ? "Снизу" : "Bottom") : (ru ? "Сверху" : "Top")),
 +            .toggle(5, 52, icon("paperclip", 0x007AFF), ru ? "Компактное меню вложений" : "Compact attachment menu", nil, value.compactAttachmentMenu),
 +            .toggle(5, 53, icon("hand.tap.fill", 0xAF52DE), ru ? "Редактировать двойным тапом" : "Double-tap to edit", nil, value.doubleTapToEdit),
 +            .toggle(5, 54, icon("textformat", 0x5856D6), ru ? "Панель форматирования" : "Formatting toolbar", nil, value.formattingToolbar),

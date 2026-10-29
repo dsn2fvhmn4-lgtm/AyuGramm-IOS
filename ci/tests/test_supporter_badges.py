@@ -94,7 +94,7 @@ class SupporterBadgeTests(unittest.TestCase):
         by_id = {badge["id"]: badge for badge in badges}
         self.assertEqual(by_id[8276132300]["documentId"], 5341356487631448969)
         self.assertEqual(by_id[7556953433]["documentId"], 5208467231670812677)
-        self.assertEqual(by_id[7864640050]["documentId"], 5341356487631448969)
+        self.assertEqual(by_id[7864640050]["documentId"], 5255770017194066070)
         self.assertTrue(all("(name)" in by_id[user_id]["title"] for user_id in (8276132300, 7556953433, 7864640050)))
 
     def test_personal_star_is_never_assigned_to_other_developers(self):
@@ -103,7 +103,7 @@ class SupporterBadgeTests(unittest.TestCase):
 
         self.assertEqual(len(badges), 3)
         star_users = {item["id"] for item in badges if item.get("documentId") == 5341356487631448969}
-        self.assertEqual(star_users, {8276132300, 7864640050})
+        self.assertEqual(star_users, {8276132300})
         self.assertNotIn(5800413909, {item["id"] for item in badges})
         self.assertTrue(all("(name)" in item["title"] for item in badges))
 
@@ -121,6 +121,26 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertEqual(patch.count("supporterBadgesOnLeft && peer.verificationIconFileId == nil"), 5)
         self.assertGreaterEqual(patch.count("case .ayuDeveloper"), 5)
         self.assertIn("if case .premium = credibilityIcon { statusIcon = credibilityIcon }", patch)
+
+    def test_creator_badge_and_brand_capitalization(self):
+        badges = json.loads((ROOT / "assets" / "ayugram_ios_badges.json").read_text())["badges"]
+        creator = next(badge for badge in badges if badge["id"] == 7864640050)
+        self.assertIn("создатель AyuGram-IOS", creator["title"])
+        self.assertNotIn("членом команды", creator["title"])
+        self.assertEqual(creator["documentId"], 5255770017194066070)
+        self.assertTrue(all("AyuGram-IOS" in badge["title"] for badge in badges))
+        self.assertFalse(any("ayugram-ios" in badge["title"] for badge in badges))
+
+    def test_position_setting_is_removed_and_ios_badges_always_lead(self):
+        patch = (ROOT / "patches" / "ayugram-fixed-leading-badges.patch").read_text()
+        additions = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
+        self.assertNotIn("supporterBadgesOnLeft", additions)
+        self.assertIn("-    public var supporterBadgesOnLeft", patch)
+        self.assertIn("-        case supporterBadgesOnLeft", patch)
+        self.assertIn('-            .toggle(2, 35,', patch)
+        self.assertEqual(additions.count("currentVerifiedIconContent = .animation"), 2)
+        self.assertEqual(additions.count("titleVerifiedIcon = .emojiStatus"), 2)
+        self.assertEqual(additions.count("verifiedIcon = .ayuDeveloper"), 1)
 
     def test_followup_patch_has_conditional_opacity_slider(self):
         patch = (ROOT / "patches" / "ayugram-followup-features.patch").read_text()

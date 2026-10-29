@@ -89,7 +89,8 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertTrue(all(badge.get("documentId", 1) > 0 and badge["title"] for badge in badges))
         desktop_developers = set(json.loads((ROOT / "assets" / "ayu_supporters_seed.json").read_text())["developers"])
         ios_developers = {8276132300, 7556953433, 7864640050}
-        self.assertEqual(set(ids), desktop_developers | ios_developers)
+        self.assertEqual(set(ids), ios_developers)
+        self.assertFalse(set(ids) & desktop_developers)
         by_id = {badge["id"]: badge for badge in badges}
         self.assertEqual(by_id[8276132300]["documentId"], 5341356487631448969)
         self.assertEqual(by_id[7556953433]["documentId"], 5208467231670812677)
@@ -100,12 +101,10 @@ class SupporterBadgeTests(unittest.TestCase):
         registry = json.loads((ROOT / "assets" / "ayugram_ios_badges.json").read_text())
         badges = registry["badges"]
 
-        self.assertEqual(len(badges), 25)
+        self.assertEqual(len(badges), 3)
         star_users = {item["id"] for item in badges if item.get("documentId") == 5341356487631448969}
         self.assertEqual(star_users, {8276132300, 7864640050})
-        owner = next(item for item in badges if item["id"] == 5800413909)
-        self.assertNotIn("documentId", owner)
-        self.assertIn("exteraGram", owner["title"])
+        self.assertNotIn(5800413909, {item["id"] for item in badges})
         self.assertTrue(all("(name)" in item["title"] for item in badges))
 
     def test_leading_badge_path_covers_chat_list_titles_and_profile(self):

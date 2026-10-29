@@ -14,7 +14,7 @@ index 5256fa5bc7..4a9ca878bc 100644
                                  currentVerifiedIconContent = .animation(content: .customEmoji(fileId: verificationIconFileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(0))
                              }
 +                            if case let .ayuDeveloper(documentId, _) = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()), item.context.account.network.ayuGhostMode.current.interface.showSupporterBadges {
-+                                if item.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                                if item.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft && peer.verificationIconFileId == nil {
 +                                    currentVerifiedIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
 +                                } else {
 +                                    currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
@@ -35,7 +35,7 @@ index 5256fa5bc7..4a9ca878bc 100644
                          currentVerifiedIconContent = .animation(content: .customEmoji(fileId: verificationIconFileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(0))
                      }
 +                    if case let .ayuDeveloper(documentId, _) = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()), item.context.account.network.ayuGhostMode.current.interface.showSupporterBadges {
-+                        if item.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                        if item.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft && peer.verificationIconFileId == nil {
 +                            currentVerifiedIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
 +                        } else {
 +                            currentCredibilityIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
@@ -81,7 +81,7 @@ index 1aa2738458..d9b0a9d3a2 100644
                                  titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: verificationIconFileId), expirationDate: nil))
                              }
 +                            if case let .ayuDeveloper(documentId, _) = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()), component.context.account.network.ayuGhostMode.current.interface.showSupporterBadges {
-+                                if component.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                                if component.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft && peer.verificationIconFileId == nil {
 +                                    titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: documentId), expirationDate: nil))
 +                                } else {
 +                                    titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
@@ -106,7 +106,7 @@ index d29c342f48..ace8d04a2d 100644
                                          titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: verificationIconFileId), expirationDate: nil))
                                      }
 +                                    if case let .ayuDeveloper(documentId, _) = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()), self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges {
-+                                        if self.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                                        if self.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft && peer.verificationIconFileId == nil {
 +                                            titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: documentId), expirationDate: nil))
 +                                        } else {
 +                                            titleCredibilityIcon = .exteraCustomBadge(fileId: documentId)
@@ -145,26 +145,26 @@ index 31f429b942..113dea1492 100644
 +        if let peer = peer, !peer.isScam && !peer.isFake, self.context.account.network.ayuGhostMode.current.interface.showSupporterBadges, let ayuBadge = AyuSupportersManager.shared.badge(peerId: peer.id.id._internalGetInt64Value()) {
              switch ayuBadge {
              case let .developer(text):
--                credibilityIcon = .exteraDeveloper(text: text)
+-                credibilityIcon = .exteraDeveloper(text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +                if !peer.isVerified {
 +                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }
-+                    credibilityIcon = .exteraDeveloper(text: text)
++                    credibilityIcon = .exteraDeveloper(text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +                }
              case let .supporter(text):
--                credibilityIcon = .exteraSupporter(text: text)
+-                credibilityIcon = .exteraSupporter(text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +                if !peer.isVerified {
 +                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }
-+                    credibilityIcon = .exteraSupporter(text: text)
++                    credibilityIcon = .exteraSupporter(text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +                }
              case let .custom(documentId, text):
--                credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text)
+-                credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +                if !peer.isVerified {
 +                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }
-+                    credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text)
++                    credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +                }
 +            case let .ayuDeveloper(documentId, text):
 +                let resolvedText = text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle)
-+                if self.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft {
++                if self.context.account.network.ayuGhostMode.current.interface.supporterBadgesOnLeft && peer.verificationIconFileId == nil {
 +                    verifiedIcon = .ayuDeveloper(fileId: documentId, text: resolvedText)
 +                } else {
 +                    if case .premium = credibilityIcon { statusIcon = credibilityIcon }

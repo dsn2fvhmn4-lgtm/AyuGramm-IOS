@@ -243,9 +243,9 @@ index 86b4e0dc..79cb2d0b 100644
 +        if let customBadge = self.customBadges[peerId] {
 +            return .custom(documentId: customBadge.documentId, text: customBadge.text)
 +        } else if self.developers.contains(peerId) {
-+            return .developer(text: "Участник команды разработчиков exteraGram")
++            return .developer(text: "(name) является членом команды разработчиков exteraGram.")
 +        } else if self.supporters.contains(peerId) {
-+            return .supporter(text: nil)
++            return .supporter(text: "(name) поддержал(а) разработку exteraGram или AyuGram и получил(а) уникальный бейдж.")
 +        } else {
 +            return nil
 +        }
@@ -323,9 +323,9 @@ index 86b4e0dc..79cb2d0b 100644
 +            }
 +        }
 +        self.lock.lock()
-+        self.developers.formUnion(developers)
-+        self.supporters.formUnion(supporters)
-+        self.customBadges.merge(customBadges, uniquingKeysWith: { _, remote in remote })
++        self.developers = developers
++        self.supporters = supporters
++        self.customBadges = customBadges
 +        self.lock.unlock()
 +    }
 +}
@@ -677,11 +677,11 @@ index 0e6ead75f1..31f429b942 100644
 +            }
 +            switch ayuBadge {
 +            case let .developer(text):
-+                credibilityIcon = .exteraDeveloper(text: text)
++                credibilityIcon = .exteraDeveloper(text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +            case let .supporter(text):
-+                credibilityIcon = .exteraSupporter(text: text)
++                credibilityIcon = .exteraSupporter(text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +            case let .custom(documentId, text):
-+                credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text)
++                credibilityIcon = .exteraCustomBadge(fileId: documentId, text: text?.replacingOccurrences(of: "(name)", with: peer.compactDisplayTitle))
 +            }
 +        }
  

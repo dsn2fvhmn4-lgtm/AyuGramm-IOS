@@ -37,6 +37,7 @@ class SupporterBadgeTests(unittest.TestCase):
             data = (ROOT / "assets" / "branding" / "ExteraBadge.imageset" / name).read_bytes()
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(struct.unpack(">II", data[16:24]), size)
+            self.assertIn(data[25], (4, 6), "badge PNG must retain an alpha channel")
 
         developer_expected = {
             "extera_developer_badge.png": (16, 16),
@@ -47,6 +48,7 @@ class SupporterBadgeTests(unittest.TestCase):
             data = (ROOT / "assets" / "branding" / "ExteraDeveloperBadge.imageset" / name).read_bytes()
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(struct.unpack(">II", data[16:24]), size)
+            self.assertIn(data[25], (4, 6), "developer badge PNG must retain an alpha channel")
 
     def test_developer_and_supporter_badges_use_distinct_assets(self):
         patch = (ROOT / "patches" / "ayugram-custom-features.patch").read_text()
@@ -56,6 +58,26 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertIn('AyuGram/ExteraDeveloperBadge', patch)
         self.assertIn('case .supporter:', patch)
         self.assertIn('AyuGram/ExteraBadge', patch)
+        self.assertNotIn('case .developer, .supporter:', patch)
+        self.assertNotIn('case let .developer(text), let .supporter(text):', patch)
+
+    def test_remote_badge_roles_replace_stale_cached_roles(self):
+        patch = (ROOT / "patches" / "ayugram-custom-features.patch").read_text()
+
+        self.assertIn("self.developers = developers", patch)
+        self.assertIn("self.supporters = supporters", patch)
+        self.assertIn("self.customBadges = customBadges", patch)
+        self.assertNotIn("self.developers.formUnion", patch)
+        self.assertNotIn("self.supporters.formUnion", patch)
+
+    def test_badge_tooltips_name_the_peer_and_preserve_verification(self):
+        base_patch = (ROOT / "patches" / "ayugram-custom-features.patch").read_text()
+        ios_patch = (ROOT / "patches" / "ayugram-developer-badges.patch").read_text()
+
+        self.assertIn('(name) является членом команды разработчиков exteraGram.', base_patch)
+        self.assertIn('(name) поддержал(а) разработку exteraGram или AyuGram', base_patch)
+        self.assertGreaterEqual(base_patch.count('replacingOccurrences(of: "(name)"'), 3)
+        self.assertEqual(ios_patch.count("supporterBadgesOnLeft && peer.verificationIconFileId == nil"), 5)
 
     def test_ios_developer_registry_has_unique_valid_entries(self):
         registry = json.loads((ROOT / "assets" / "ayugram_ios_badges.json").read_text())

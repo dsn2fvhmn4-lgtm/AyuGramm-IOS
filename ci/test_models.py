@@ -36,6 +36,7 @@ def run(source: Path):
                         str(source / 'submodules/TelegramUI/Sources/AyuMusicMetadata.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsLookup.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsProviders.swift'),
+                        str(source / 'submodules/TelegramUI/Sources/AyuLyricsAligner.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsTiming.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsYaml.swift'),
                         str(source / 'tools/ayu-tests/lyrics/main.swift'),

@@ -34,6 +34,7 @@ patches = [
     root / "patches" / "ayugram-player-toolbar-refinements.patch",
     root / "patches" / "ayugram-music-inline-queue.patch",
     root / "patches" / "ayugram-fixed-player-fades.patch",
+    root / "patches" / "ayugram-expanded-lyrics.patch",
 ]
 for patch in patches:
     subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)

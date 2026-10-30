@@ -1,0 +1,243 @@
+diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
+index e0b4bf0..288cdcf 100644
+--- a/submodules/TelegramUI/Sources/AyuLyrics.swift
++++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
+@@ -1,8 +1,8 @@
+ import Foundation
+ import SwiftSignalKit
+ 
+-/// Looks lyrics up on LRCLIB (lrclib.net), an open lyrics database. Only the track title,
+-/// artist and duration are sent, and only when the user opens the lyrics view.
++/// Looks lyrics up on LRCLIB, then lyrics.ovh if no text is available.
++/// Only track metadata is sent when lyrics are opened; audio is never uploaded.
+ func ayuFetchLyrics(title: String, artist: String?, duration: Double) -> Signal<AyuLyrics, NoError> {
+     return Signal { subscriber in
+         let request = AyuLyricsRequest(title: title, artist: artist, duration: duration, completion: { result in
+@@ -24,6 +24,10 @@ private final class AyuLyricsRequest {
+     private let session = URLSession(configuration: .ephemeral)
+     private let lock = NSLock()
+     private var cancelled = false
++    private var finished = false
++    private let startedAt = Date()
++    private var triedSecondary = false
++    private var cacheKey: String { AyuLyricsCache.key(title: self.title, artist: self.artist, duration: self.duration) }
+     private var fallbackLyrics: AyuLyrics?
+ 
+     init(title: String, artist: String?, duration: Double, completion: @escaping (AyuLyrics) -> Void) {
+@@ -34,6 +38,7 @@ private final class AyuLyricsRequest {
+     }
+ 
+     func start() {
++        if let cached = AyuLyricsCache.load(key: self.cacheKey) { self.finish(cached, cache: false); return }
+         var components = URLComponents(string: "https://lrclib.net/api/get")
+         var items = [URLQueryItem(name: "track_name", value: self.title)]
+         if let artist = self.artist, !artist.isEmpty {
+@@ -79,29 +84,28 @@ private final class AyuLyricsRequest {
+         return self.cancelled
+     }
+ 
+-    private func finish(_ result: AyuLyrics) {
+-        if !self.isCancelled {
+-            self.completion(result)
++    private func finish(_ result: AyuLyrics, cache: Bool = true) {
++        guard !self.isCancelled else { return }
++        if case .notFound = result, !self.triedSecondary {
++            self.triedSecondary = true
++            self.secondary(urls: AyuLyricsLookup.secondaryURLs(title: self.title, artist: self.artist), index: 0)
++            return
+         }
++        self.lock.lock()
++        guard !self.finished && !self.cancelled else { self.lock.unlock(); return }
++        self.finished = true
++        self.lock.unlock()
++        if cache { AyuLyricsCache.save(result, key: self.cacheKey) }
++        self.completion(result)
+     }
+ 
+     private func search() {
+-        let cleanedTitle = AyuMusicMetadata.searchTitle(self.title)
+-            .replacingOccurrences(of: #"\s*[\(\[]\s*(?:feat\.?|ft\.?).*?[\)\]]"#, with: "", options: [.regularExpression, .caseInsensitive])
+-            .trimmingCharacters(in: .whitespacesAndNewlines)
+-        var queries: [String] = []
+-        for query in [
+-            [self.artist, cleanedTitle].compactMap { $0 }.joined(separator: " "),
+-            cleanedTitle,
+-            [self.artist, self.title].compactMap { $0 }.joined(separator: " ")
+-        ] where !query.isEmpty && !queries.contains(query) {
+-            queries.append(query)
+-        }
++        let queries = AyuLyricsLookup.queries(title: self.title, artist: self.artist)
+         self.search(queries: queries, index: 0)
+     }
+ 
+     private func search(queries: [String], index: Int) {
+-        guard index < queries.count else {
++        guard index < queries.count, Date().timeIntervalSince(self.startedAt) < 18.0 else {
+             self.finish(self.fallbackLyrics ?? .notFound)
+             return
+         }
+@@ -164,12 +168,22 @@ private final class AyuLyricsRequest {
+         })
+     }
+ 
++    private func secondary(urls: [URL], index: Int) {
++        guard index < urls.count, Date().timeIntervalSince(self.startedAt) < 36.0 else { self.finish(.notFound); return }
++        self.load(urls[index], completion: { [weak self] json in
++            guard let self, !self.isCancelled else { return }
++            if let record = json as? [String: Any], let text = record["lyrics"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
++                self.finish(.plain(text))
++            } else { self.secondary(urls: urls, index: index + 1) }
++        })
++    }
++
+     private func load(_ url: URL, completion: @escaping (Any?) -> Void) {
+         if self.isCancelled {
+             return
+         }
+         var request = URLRequest(url: url)
+-        request.timeoutInterval = 15.0
++        request.timeoutInterval = max(1.0, min(10.0, 36.0 - Date().timeIntervalSince(self.startedAt)))
+         request.setValue("AyuGramm-IOS (https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS)", forHTTPHeaderField: "User-Agent")
+         self.session.dataTask(with: request, completionHandler: { data, response, _ in
+             if let http = response as? HTTPURLResponse, http.statusCode == 429 || http.statusCode == 503 {
+@@ -177,7 +191,7 @@ private final class AyuLyricsRequest {
+                 self.finish(self.fallbackLyrics ?? .notFound)
+                 return
+             }
+-            guard let http = response as? HTTPURLResponse, http.statusCode == 200, let data else {
++            guard let http = response as? HTTPURLResponse, http.statusCode == 200, let data, data.count <= 4_194_304 else {
+                 completion(nil)
+                 return
+             }
+diff --git a/submodules/TelegramUI/Sources/AyuLyricsLookup.swift b/submodules/TelegramUI/Sources/AyuLyricsLookup.swift
+new file mode 100644
+index 0000000..e5c12a4
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuLyricsLookup.swift
+@@ -0,0 +1,70 @@
++import Foundation
++import CryptoKit
++
++enum AyuLyricsLookup {
++    static func titleVariants(_ title: String) -> [String] {
++        let cleaned = AyuMusicMetadata.searchTitle(title)
++        let solo = cleaned.replacingOccurrences(of: #"\s*[\(\[]\s*(?:feat\.?|ft\.?).*?[\)\]]|\s+(?:feat\.|ft\.)\s+.*$"#, with: "", options: [.regularExpression, .caseInsensitive]).trimmingCharacters(in: .whitespacesAndNewlines)
++        return self.unique([title, cleaned, solo])
++    }
++    static func artistVariants(_ artist: String?) -> [String] {
++        guard let artist else { return [] }
++        let primary = artist.components(separatedBy: CharacterSet(charactersIn: ";,&")).first ?? artist
++        let solo = primary.replacingOccurrences(of: #"\s+(?:feat\.?|ft\.?|with|x)\s+.*$"#, with: "", options: [.regularExpression, .caseInsensitive])
++        return self.unique([artist, solo])
++    }
++    static func queries(title: String, artist: String?) -> [String] {
++        let titles = self.titleVariants(title)
++        let artists = self.artistVariants(artist)
++        var result: [String] = []
++        for name in artists { for song in titles.reversed() { result.append(name + " " + song) } }
++        result.append(contentsOf: titles.reversed())
++        return Array(self.unique(result).prefix(6))
++    }
++    static func secondaryURLs(title: String, artist: String?) -> [URL] {
++        var result: [URL] = []
++        for name in self.artistVariants(artist) {
++            for song in self.titleVariants(title).reversed() {
++                // Slash and query characters are data inside a single path component.
++                var allowed = CharacterSet.urlPathAllowed
++                allowed.remove(charactersIn: "/?#%")
++                guard let artist = name.addingPercentEncoding(withAllowedCharacters: allowed), let track = song.addingPercentEncoding(withAllowedCharacters: allowed), let url = URL(string: "https://api.lyrics.ovh/v1/" + artist + "/" + track) else { continue }
++                if !result.contains(url) { result.append(url) }
++            }
++        }
++        return Array(result.prefix(3))
++    }
++    private static func unique(_ values: [String]) -> [String] {
++        var keys = Set<String>()
++        return values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && keys.insert($0.lowercased()).inserted }
++    }
++}
++
++/// Cache successful results only; failed lookups must be retried as databases grow.
++enum AyuLyricsCache {
++    private struct Entry: Codable { let created: Date; let lyrics: AyuLyrics }
++    static var directory: URL? { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("ayu-lyrics-v1", isDirectory: true) }
++    static func key(title: String, artist: String?, duration: Double) -> String {
++        let identity = [title.lowercased(), artist?.lowercased() ?? "", String(duration.isFinite ? Int(min(86400, max(0, duration.rounded()))) : 0)].joined(separator: "\u{0}")
++        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
++    }
++    static func load(key: String, directory: URL? = AyuLyricsCache.directory, now: Date = Date()) -> AyuLyrics? {
++        guard let directory, let data = try? Data(contentsOf: directory.appendingPathComponent(key + ".json")), data.count <= 1_048_576, let entry = try? JSONDecoder().decode(Entry.self, from: data) else { return nil }
++        let lifetime: TimeInterval
++        switch entry.lyrics { case .synced: lifetime = 7 * 86400; case .plain: lifetime = 6 * 3600; default: return nil }
++        let age = now.timeIntervalSince(entry.created)
++        guard age >= 0 && age < lifetime else { return nil }
++        return entry.lyrics
++    }
++    static func save(_ lyrics: AyuLyrics, key: String, directory: URL? = AyuLyricsCache.directory, now: Date = Date()) {
++        switch lyrics { case .synced, .plain: break; default: return }
++        guard let directory, let data = try? JSONEncoder().encode(Entry(created: now, lyrics: lyrics)), data.count <= 1_048_576 else { return }
++        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        try? data.write(to: directory.appendingPathComponent(key + ".json"), options: .atomic)
++        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
++        if files.count > 200 {
++            let oldest = files.sorted { ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) < ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
++            for file in oldest.prefix(files.count - 200) { try? FileManager.default.removeItem(at: file) }
++        }
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuLyricsTiming.swift b/submodules/TelegramUI/Sources/AyuLyricsTiming.swift
+index e78b467..8dd1010 100644
+--- a/submodules/TelegramUI/Sources/AyuLyricsTiming.swift
++++ b/submodules/TelegramUI/Sources/AyuLyricsTiming.swift
+@@ -1,13 +1,13 @@
+ import Foundation
+ import CoreFoundation
+ 
+-struct AyuLyricsWord: Equatable {
++struct AyuLyricsWord: Equatable, Codable {
+     let time: Double
+     let endTime: Double
+     let text: String
+ }
+ 
+-struct AyuLyricsLine: Equatable {
++struct AyuLyricsLine: Equatable, Codable {
+     let time: Double
+     let endTime: Double
+     let text: String
+@@ -15,7 +15,7 @@ struct AyuLyricsLine: Equatable {
+     let exactWordTiming: Bool
+ }
+ 
+-enum AyuLyrics: Equatable {
++enum AyuLyrics: Equatable, Codable {
+     case synced([AyuLyricsLine])
+     case plain(String)
+     case instrumental
+diff --git a/tools/ayu-tests/lyrics/main.swift b/tools/ayu-tests/lyrics/main.swift
+index 9897686..d542050 100644
+--- a/tools/ayu-tests/lyrics/main.swift
++++ b/tools/ayu-tests/lyrics/main.swift
+@@ -90,3 +90,22 @@ check(AyuMusicMetadata.searchTitle(fileTags.title) == "Long Song", "Remove uploa
+ check(AyuMusicMetadata.searchTitle("Long Song (Live)") == "Long Song (Live)", "Preserve performance variants with different timing")
+ let realTags = AyuMusicMetadata.track(title: "A - B", artist: "Band", filename: "other.mp3")
+ check(realTags.title == "A - B" && realTags.artist == "Band", "Keep embedded tags when present")
++
++let variants = AyuLyricsLookup.queries(title: "Track (Official Audio) [feat. Guest]", artist: "Band feat. Singer")
++check(variants.contains("Band Track"), "Search the principal artist and clean song title")
++check(variants.count <= 6, "Bound lookup fanout")
++let backup = AyuLyricsLookup.secondaryURLs(title: "Track / Part?", artist: "Artist & Guest")
++check(!backup.isEmpty && backup[0].absoluteString.contains("%2F") && backup[0].query == nil, "Escape metadata as path data")
++check(AyuLyricsLookup.secondaryURLs(title: "Track", artist: nil).isEmpty, "Do not invent a backup artist")
++let cacheDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++defer { try? FileManager.default.removeItem(at: cacheDirectory) }
++let cacheDate = Date(timeIntervalSince1970: 1_000_000)
++let cacheKey = AyuLyricsCache.key(title: "Track", artist: "Band", duration: 200)
++check(cacheKey != AyuLyricsCache.key(title: "Track", artist: "Band", duration: 210), "Keep different recordings separate")
++AyuLyricsCache.save(.synced(lines), key: cacheKey, directory: cacheDirectory, now: cacheDate)
++check(AyuLyricsCache.load(key: cacheKey, directory: cacheDirectory, now: cacheDate.addingTimeInterval(10)) == .synced(lines), "Cache preserves exact word timestamps")
++check(AyuLyricsCache.load(key: cacheKey, directory: cacheDirectory, now: cacheDate.addingTimeInterval(8 * 86400)) == nil, "Expired lyrics are fetched again")
++AyuLyricsCache.save(.notFound, key: "miss", directory: cacheDirectory, now: cacheDate)
++check(AyuLyricsCache.load(key: "miss", directory: cacheDirectory, now: cacheDate) == nil, "A failed lookup does not become a permanent miss")
++AyuLyricsCache.save(.plain("Fixture text"), key: "plain", directory: cacheDirectory, now: cacheDate)
++check(AyuLyricsCache.load(key: "plain", directory: cacheDirectory, now: cacheDate.addingTimeInterval(7 * 3600)) == nil, "Retry plain lyrics sooner to discover new word sync")

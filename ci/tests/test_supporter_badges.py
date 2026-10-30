@@ -96,7 +96,7 @@ class SupporterBadgeTests(unittest.TestCase):
         by_id = {badge["id"]: badge for badge in badges}
         self.assertEqual(by_id[8276132300]["documentId"], 5341356487631448969)
         self.assertEqual(by_id[7556953433]["documentId"], 5208467231670812677)
-        self.assertEqual(by_id[7864640050]["documentId"], 5803006063963804158)
+        self.assertEqual(by_id[7864640050]["documentId"], 5348056739692428633)
         self.assertTrue(all("(name)" in by_id[user_id]["title"] for user_id in (8276132300, 7556953433, 7864640050)))
 
     def test_personal_star_is_never_assigned_to_other_developers(self):
@@ -129,7 +129,7 @@ class SupporterBadgeTests(unittest.TestCase):
         creator = next(badge for badge in badges if badge["id"] == 7864640050)
         self.assertIn("создатель AyuGram-IOS", creator["title"])
         self.assertNotIn("членом команды", creator["title"])
-        self.assertEqual(creator["documentId"], 5803006063963804158)
+        self.assertEqual(creator["documentId"], 5348056739692428633)
         self.assertTrue(all("AyuGram-IOS" in badge["title"] for badge in badges if badge["id"] in {8276132300, 7556953433, 7864640050}))
         self.assertFalse(any("ayugram-ios" in badge["title"] for badge in badges))
 

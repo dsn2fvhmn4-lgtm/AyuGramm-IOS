@@ -91,7 +91,7 @@ class SupporterBadgeTests(unittest.TestCase):
         ios_developers = {8276132300, 7556953433, 7864640050}
         self.assertEqual(set(ids), ios_developers | {8202789099, 7754143736})
         self.assertEqual(next(badge for badge in badges if badge["id"] == 8202789099), {"id": 8202789099, "documentId": 5416138353655458286, "title": "Сам еблан"})
-        self.assertEqual(next(badge for badge in badges if badge["id"] == 7754143736), {"id": 7754143736, "documentId": 5203934945956879908, "title": "автостопом по фазе сна"})
+        self.assertEqual(next(badge for badge in badges if badge["id"] == 7754143736), {"id": 7754143736, "documentId": 5341375767739642248, "title": "фембой-парень @asuka4scape_developer"})
         self.assertFalse(set(ids) & desktop_developers)
         by_id = {badge["id"]: badge for badge in badges}
         self.assertEqual(by_id[8276132300]["documentId"], 5341356487631448969)

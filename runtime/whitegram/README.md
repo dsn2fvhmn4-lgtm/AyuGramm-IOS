@@ -1,18 +1,22 @@
-# WhiteGram JavaScript compatibility: work in progress
+# WhiteGram JavaScript compatibility
 
-`bridge.js` implements a compatibility layer inferred from the user's WhiteGram
-`.js` examples. It is not an official SDK and is not wired into the iOS app yet.
-The app still cannot import or run WhiteGram scripts. A native host must isolate
-plugins, provide the host calls, persist storage separately per plugin and account,
-install/uninstall scripts, and connect lifecycle and chat events before shipping.
+The app can import `.js` files in the plugin manager. Enabled scripts run in
+separate WebKit environments; their storage is isolated by account and plugin.
+The initial compatibility layer is inferred from the supplied WhiteGram plugin
+examples, not an official SDK implementation.
 
-Implemented bridge calls are events, `BasePlugin`, registration, timers, storage,
-chat controls, settings rows/pages, screen hooks, action sheets, notifications,
-vibration, draft access, message operations and fetch. These are messages to the
-host; their native behavior is not implemented by the bridge itself. Unsupported
-host operations must report errors and must not silently claim success. Actual
-availability, permissions, error behavior and SDK signatures need verification
-against WhiteGram's documentation and source.
+The iOS host provides plugin registration, lifecycle, timers, chat open events,
+buttons and labels in the chat, local storage, settings rows and sliders, action
+sheets, toast messages and basic vibration. The host removes overlays on chat
+exit and stops the plugin on disable. Plugin settings become available after the
+script has loaded; to remove a script, swipe its row in the plugin list.
+
+The host also implements `wg.fetch` for HTTP and HTTPS with a 15-second timeout.
+Modifying/sending messages, input access and context menus are not yet connected.
+Unsupported calls are logged. Plugins using those methods do not fully work.
+The separate screen hook API currently relies on the `onChatOpen` event supported
+by the supplied Tamagotchi plugin. Full API behavior needs verification against
+WhiteGram's SDK and actual plugin versions.
 
 Run the repeatable synthetic test:
 
@@ -20,6 +24,8 @@ Run the repeatable synthetic test:
 node runtime/tests/whitegram/test_bridge.js
 ```
 
-Pass a path to the original Tamagotchi file to run the same integration scenario
-against it. The test uses a fake host and Node's VM; it does not exercise UIKit,
-Telegram messages, a real iOS JavaScript engine or security boundaries.
+Pass a path to the original Tamagotchi file to run the same scenario against it.
+The test uses a fake host and Node's VM; it does not exercise WebKit, UIKit,
+Telegram messages, a real iOS JavaScript engine or security boundaries. Build
+and test the installed app on an iOS device before treating the integration as
+verified.

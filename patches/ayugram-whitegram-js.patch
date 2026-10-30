@@ -1,0 +1,395 @@
+diff --git a/submodules/Display/Source/AyuWhiteGramRuntime.swift b/submodules/Display/Source/AyuWhiteGramRuntime.swift
+new file mode 100644
+index 0000000..59f760f
+--- /dev/null
++++ b/submodules/Display/Source/AyuWhiteGramRuntime.swift
+@@ -0,0 +1,239 @@
++import Foundation
++import UIKit
++import WebKit
++
++/// WhiteGram JavaScript plugins run in separate WebKit processes; native operations
++/// are dispatched through an explicit bridge and persisted per account and plugin.
++public final class AyuWhiteGramRuntime {
++    public static let shared = AyuWhiteGramRuntime()
++    public static let didChange = Notification.Name("AyuWhiteGramPluginsChanged")
++    private var engines: [String: AyuWhiteGramEngine] = [:]
++    private weak var chatView: UIView?
++    private var account = "0"
++    private var presenter: ((UIViewController) -> Void)?
++    private var peer = ""
++
++    private var directory: URL {
++        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
++        let directory = base.appendingPathComponent("ayu-whitegram/" + self.account, isDirectory: true)
++        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        return directory
++    }
++    private var stateKey: String { "ayu.whitegram.enabled." + self.account }
++    public struct Plugin {
++        public let id: String
++        public let name: String
++        public let author: String
++        public let description: String
++        public let enabled: Bool
++    }
++    private func metadata(_ source: String, _ key: String) -> String {
++        for line in source.components(separatedBy: .newlines).prefix(40) {
++            let value = line.trimmingCharacters(in: .whitespaces)
++            if value.hasPrefix("// @" + key + " ") { return String(value.dropFirst(key.count + 5)).trimmingCharacters(in: .whitespaces) }
++        }
++        return ""
++    }
++    public var plugins: [Plugin] {
++        let enabled = Set(UserDefaults.standard.stringArray(forKey: self.stateKey) ?? [])
++        return ((try? FileManager.default.contentsOfDirectory(at: self.directory, includingPropertiesForKeys: nil)) ?? []).filter { $0.pathExtension == "js" }.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap { url in
++            guard let source = try? String(contentsOf: url, encoding: .utf8) else { return nil }
++            let name = self.metadata(source, "name")
++            return Plugin(id: url.deletingPathExtension().lastPathComponent, name: name.isEmpty ? url.deletingPathExtension().lastPathComponent : name, author: self.metadata(source, "author"), description: self.metadata(source, "description"), enabled: enabled.contains(url.deletingPathExtension().lastPathComponent))
++        }
++    }
++    public func setAccount(_ account: Int64) {
++        let value = String(account)
++        guard self.account != value else { return }
++        self.detach(); self.engines.values.forEach { $0.stop() }; self.engines.removeAll(); self.account = value
++    }
++    public func install(_ url: URL) throws {
++        let data = try Data(contentsOf: url, options: .mappedIfSafe)
++        guard data.count <= 512 * 1024, let source = String(data: data, encoding: .utf8), !source.isEmpty else { throw NSError(domain: "AyuWhiteGram", code: 1) }
++        let id = UUID().uuidString.lowercased()
++        try data.write(to: self.directory.appendingPathComponent(id + ".js"), options: .atomic)
++        self.setEnabled(id, true)
++    }
++    public func setEnabled(_ id: String, _ enabled: Bool) {
++        var values = Set(UserDefaults.standard.stringArray(forKey: self.stateKey) ?? [])
++        if enabled { values.insert(id) } else { values.remove(id); self.engines.removeValue(forKey: id)?.stop() }
++        UserDefaults.standard.set(Array(values), forKey: self.stateKey)
++        if enabled, self.chatView != nil { self.start(id) }
++        NotificationCenter.default.post(name: Self.didChange, object: nil)
++    }
++    public func remove(_ id: String) {
++        self.setEnabled(id, false)
++        try? FileManager.default.removeItem(at: self.directory.appendingPathComponent(id + ".js"))
++        NotificationCenter.default.post(name: Self.didChange, object: nil)
++    }
++    public func configure(account: Int64, present: @escaping (UIViewController) -> Void) {
++        self.setAccount(account); self.presenter = present
++    }
++    public func attach(view: UIView, account: Int64, peer: Int64, present: @escaping (UIViewController) -> Void) {
++        self.setAccount(account); self.chatView = view; self.presenter = present; self.peer = String(peer)
++        for plugin in self.plugins where plugin.enabled { self.start(plugin.id) }
++        for engine in self.engines.values { engine.attach(view: view); engine.emit("onChatOpen", value: self.peer) }
++    }
++    public func detach(view: UIView? = nil) {
++        if let view, self.chatView !== view { return }
++        self.engines.values.forEach { $0.detach() }; self.chatView = nil; self.presenter = nil
++    }
++    private func start(_ id: String) {
++        if let engine = self.engines[id] { if let view = self.chatView { engine.attach(view: view) }; return }
++        guard let source = try? String(contentsOf: self.directory.appendingPathComponent(id + ".js"), encoding: .utf8), let bridgeURL = Bundle.main.resourceURL?.appendingPathComponent("ayu-whitegram-bridge.js"), let bridge = try? String(contentsOf: bridgeURL, encoding: .utf8) else { return }
++        let engine = AyuWhiteGramEngine(id: id, account: self.account, source: source, bridge: bridge, present: { [weak self] controller in self?.presenter?(controller) })
++        self.engines[id] = engine
++        if let view = self.chatView { engine.attach(view: view) }
++        engine.emit("onChatOpen", value: self.peer)
++    }
++    public func settings(for id: String) -> UIViewController? { self.start(id); return self.engines[id]?.settingsController() }
++}
++
++private final class AyuWhiteGramEngine: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
++    private let id: String
++    private let account: String
++    private let source: String
++    private let bridge: String
++    private let present: (UIViewController) -> Void
++    private let web: WKWebView
++    private weak var chat: UIView?
++    private var ready = false
++    private var pending: [(String, Any)] = []
++    private var controls: [String: UIView] = [:]
++    private var rows: [[String: Any]] = []
++    private var pages: [[String: Any]] = []
++    private var storageKey: String { "ayu.whitegram.storage." + self.account + "." + self.id }
++
++    init(id: String, account: String, source: String, bridge: String, present: @escaping (UIViewController) -> Void) {
++        self.id = id; self.account = account; self.source = source; self.bridge = bridge; self.present = present
++        let configuration = WKWebViewConfiguration()
++        configuration.websiteDataStore = .nonPersistent()
++        self.web = WKWebView(frame: .zero, configuration: configuration)
++        super.init()
++        self.web.configuration.userContentController.add(self, name: "ayu")
++        self.web.navigationDelegate = self
++        NotificationCenter.default.addObserver(self, selector: #selector(self.enterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
++        NotificationCenter.default.addObserver(self, selector: #selector(self.enterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
++        self.web.loadHTMLString("<html><body></body></html>", baseURL: nil)
++    }
++    deinit { NotificationCenter.default.removeObserver(self); self.web.configuration.userContentController.removeScriptMessageHandler(forName: "ayu") }
++    @objc private func enterForeground() { self.emit("onAppForeground", value: NSNull()) }
++    @objc private func enterBackground() { self.emit("onAppBackground", value: NSNull()) }
++    private func json(_ value: Any) -> String {
++        guard let data = try? JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed]), let text = String(data: data, encoding: .utf8) else { return "null" }
++        return String(text.dropFirst().dropLast())
++    }
++    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
++        let values = UserDefaults.standard.dictionary(forKey: self.storageKey) ?? [:]
++        let code = """
++        \(self.bridge)
++        (function(){
++          const original={setTimeout:window.setTimeout.bind(window),setInterval:window.setInterval.bind(window),clearTimeout:window.clearTimeout.bind(window),clearInterval:window.clearInterval.bind(window)};
++          const host={call:(op,payload)=>window.webkit.messageHandlers.ayu.postMessage({op:op,payload:payload}),getInputText:()=>'',...original};
++          window.ayuPlugin=AyuWhiteGram.create(host,\(self.json(values)));
++          window.wg=ayuPlugin.wg;
++          window.setTimeout=ayuPlugin.setTimeout; window.setInterval=ayuPlugin.setInterval;
++          window.clearTimeout=ayuPlugin.clearTimeout; window.clearInterval=ayuPlugin.clearInterval;
++          try { (0,eval)(\(self.json(self.source))); } catch(e) { host.call('error',{message:String(e)}); }
++        })();
++        """
++        self.web.evaluateJavaScript(code) { [weak self] _, _ in
++            guard let self else { return }
++            self.ready = true
++            let events = self.pending; self.pending.removeAll()
++            for (name, value) in events { self.emit(name, value: value) }
++        }
++    }
++    func emit(_ name: String, value: Any) {
++        if !self.ready { self.pending.append((name, value)); return }
++        self.web.evaluateJavaScript("window.ayuPlugin.emit(\(self.json(name)),\(self.json(value)))", completionHandler: nil)
++    }
++    private func resolve(_ id: Int, _ value: Int) {
++        self.web.evaluateJavaScript("window.ayuPlugin.resolve(\(id),\(value))", completionHandler: nil)
++    }
++    func attach(view: UIView) { self.detach(); self.chat = view }
++    func detach() { self.controls.values.forEach { $0.removeFromSuperview() }; self.controls.removeAll(); self.chat = nil }
++    func stop() { self.web.evaluateJavaScript("window.ayuPlugin && window.ayuPlugin.stop()", completionHandler: { [weak self] _, _ in self?.web.configuration.userContentController.removeScriptMessageHandler(forName: "ayu") }); self.detach() }
++    @objc private func tapped(_ sender: UIButton) { if let name = sender.accessibilityIdentifier { self.emit(name, value: NSNull()) } }
++    private func color(_ value: String?, fallback: UIColor) -> UIColor {
++        guard let value, value.hasPrefix("#"), let number = UInt64(value.dropFirst(), radix: 16), value.count == 7 else { return fallback }
++        return UIColor(red: CGFloat((number >> 16) & 255) / 255, green: CGFloat((number >> 8) & 255) / 255, blue: CGFloat(number & 255) / 255, alpha: 1)
++    }
++    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
++        guard let body = message.body as? [String: Any], let op = body["op"] as? String, let data = body["payload"] as? [String: Any] else { return }
++        switch op {
++        case "storage.set":
++            guard let key = data["key"] as? String, let value = data["value"] as? String else { return }
++            var storage = UserDefaults.standard.dictionary(forKey: self.storageKey) ?? [:]; storage[key] = value; UserDefaults.standard.set(storage, forKey: self.storageKey)
++        case "chat.remove":
++            if let id = data["id"] as? String { self.controls.removeValue(forKey: id)?.removeFromSuperview() }
++        case "chat.button", "chat.label":
++            guard let chat = self.chat, let id = data["id"] as? String else { return }
++            self.controls.removeValue(forKey: id)?.removeFromSuperview()
++            let width = CGFloat((data["width"] as? NSNumber)?.doubleValue ?? 48), height = CGFloat((data["height"] as? NSNumber)?.doubleValue ?? 32)
++            let x = CGFloat((data["relX"] as? NSNumber)?.doubleValue ?? 0.5), y = CGFloat((data["relY"] as? NSNumber)?.doubleValue ?? 0.5)
++            let view: UIView
++            if op == "chat.button" {
++                let button = UIButton(type: .system); button.setTitle(data["text"] as? String, for: .normal); button.accessibilityIdentifier = data["hookName"] as? String; button.addTarget(self, action: #selector(self.tapped(_:)), for: .touchUpInside); button.tintColor = self.color(data["textColor"] as? String, fallback: .white); view = button
++            } else {
++                let label = UILabel(); label.text = data["text"] as? String; label.font = .systemFont(ofSize: 12); label.textColor = self.color(data["textColor"] as? String, fallback: .white); label.textAlignment = .center; view = label
++            }
++            view.backgroundColor = self.color(data["bgColor"] as? String, fallback: .gray); view.layer.cornerRadius = CGFloat((data["cornerRadius"] as? NSNumber)?.doubleValue ?? 8); view.clipsToBounds = true
++            view.frame = CGRect(x: max(0, min(chat.bounds.width - width, chat.bounds.width * x - width / 2)), y: max(0, min(chat.bounds.height - height, chat.bounds.height * y - height / 2)), width: width, height: height)
++            view.autoresizingMask = [.flexibleLeftMargin, .flexibleTopMargin]; chat.addSubview(view); self.controls[id] = view
++        case "ui.actionSheet":
++            guard let id = data["callbackId"] as? Int, let options = data["options"] as? [String] else { return }
++            let alert = UIAlertController(title: data["title"] as? String, message: data["message"] as? String, preferredStyle: .alert)
++            for (index, option) in options.enumerated() { alert.addAction(UIAlertAction(title: option, style: .default, handler: { [weak self] _ in self?.resolve(id, index) })) }
++            alert.addAction(UIAlertAction(title: "Отмена", style: .cancel, handler: { [weak self] _ in self?.resolve(id, -1) })); self.present(alert)
++        case "vibrate": UIImpactFeedbackGenerator(style: .light).impactOccurred()
++        case "toast":
++            guard let chat = self.chat, let text = data["text"] as? String else { return }
++            let label = UILabel(frame: CGRect(x: 24, y: chat.bounds.height - 170, width: max(0, chat.bounds.width - 48), height: 42)); label.text = text; label.textColor = .white; label.textAlignment = .center; label.backgroundColor = UIColor.black.withAlphaComponent(0.8); label.layer.cornerRadius = 12; label.clipsToBounds = true; chat.addSubview(label); UIView.animate(withDuration: 0.3, delay: 2, options: [], animations: { label.alpha = 0 }, completion: { _ in label.removeFromSuperview() })
++        case "settings.row": self.rows.append(data)
++        case "settings.page": self.pages.append(data)
++        case "fetch":
++            guard let callback = data["callbackId"] as? Int else { return }
++            guard let address = data["url"] as? String, let url = URL(string: address), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else {
++                self.web.evaluateJavaScript("window.ayuPlugin.resolve(\(callback),'Invalid URL',null)", completionHandler: nil); return
++            }
++            var request = URLRequest(url: url); request.timeoutInterval = 15
++            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
++                let text = data.flatMap { $0.count <= 1_048_576 ? String(data: $0, encoding: .utf8) : nil }
++                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
++                let message = error?.localizedDescription ?? (status < 200 || status >= 300 ? "HTTP \(status)" : (text == nil ? "Invalid response" : ""))
++                DispatchQueue.main.async {
++                    guard let self else { return }
++                    let callbackError: Any = message.isEmpty ? NSNull() : message as Any
++                    self.web.evaluateJavaScript("window.ayuPlugin.resolve(\(callback),\(self.json(callbackError)),\(self.json(text ?? "")))", completionHandler: nil)
++                }
++            }.resume()
++        case "error", "log":
++            NSLog("WhiteGram plugin %@: %@", self.id, data["message"] as? String ?? data["text"] as? String ?? "")
++        case "screen.hook": break // onChatOpen is delivered directly by the host.
++        default:
++            NSLog("WhiteGram plugin %@: unsupported operation %@", self.id, op)
++        }
++    }
++    func settingsController() -> UIViewController {
++        let controller = AyuWhiteGramSettingsController(rows: self.rows, pages: self.pages, action: { [weak self] name, value in self?.emit(name, value: value) })
++        return controller
++    }
++}
++
++private final class AyuWhiteGramSettingsController: UITableViewController {
++    private let rows: [[String: Any]]
++    private let pages: [[String: Any]]
++    private let action: (String, Any) -> Void
++    init(rows: [[String: Any]], pages: [[String: Any]], action: @escaping (String, Any) -> Void) { self.rows = rows; self.pages = pages; self.action = action; super.init(style: .insetGrouped); self.title = "Настройки плагина" }
++    required init?(coder: NSCoder) { return nil }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { self.rows.count + self.pages.flatMap { $0["controls"] as? [[String: Any]] ?? [] }.count }
++    private var items: [[String: Any]] { self.rows + self.pages.flatMap { $0["controls"] as? [[String: Any]] ?? [] } }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let item = self.items[indexPath.row], cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil); cell.textLabel?.text = item["title"] as? String; cell.detailTextLabel?.text = item["subtitle"] as? String
++        if item["type"] as? String == "slider" { let slider = UISlider(); slider.minimumValue = (item["min"] as? NSNumber)?.floatValue ?? 0; slider.maximumValue = (item["max"] as? NSNumber)?.floatValue ?? 100; slider.value = (item["default"] as? NSNumber)?.floatValue ?? 50; slider.tag = indexPath.row; slider.addTarget(self, action: #selector(self.changed(_:)), for: .valueChanged); cell.accessoryView = slider }
++        return cell
++    }
++    @objc private func changed(_ sender: UISlider) { if let name = self.items[sender.tag]["hookName"] as? String { self.action(name, Double(sender.value)) } }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) { tableView.deselectRow(at: indexPath, animated: true); if let name = self.items[indexPath.row]["hookName"] as? String, self.items[indexPath.row]["type"] as? String != "slider" { self.action(name, NSNull()) } }
++}
+diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
+index 9743501..3c449cb 100644
+--- a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
++++ b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
+@@ -108,6 +108,9 @@ final class AyuHostedNavigationScreen: ViewController, AyuPluginPresentationHost
+ 
+ /// Opens the plugin list as a page; `fileURL` imports a .plugin file opened from elsewhere.
+ public func ayuImportPlugin(context: AccountContext, fileURL: URL?, filename: String?) {
++    AyuWhiteGramRuntime.shared.configure(account: context.account.peerId.toInt64(), present: { controller in
++        context.sharedContext.applicationBindings.presentNativeController(controller)
++    })
+     let data = context.sharedContext.currentPresentationData.with { $0 }
+     let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
+     let initialImport: (URL, String)?
+diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
+index 515572a..6874984 100644
+--- a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
++++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
+@@ -208,9 +208,14 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+             [plugin.title(self.russian), plugin.author, plugin.summary(self.russian)].contains { $0.localizedCaseInsensitiveContains(self.query) }
+         }
+     }
++    private var whiteGramItems: [AyuWhiteGramRuntime.Plugin] {
++        let plugins = AyuWhiteGramRuntime.shared.plugins
++        guard !self.query.isEmpty else { return plugins }
++        return plugins.filter { [$0.name, $0.author, $0.description].contains { $0.localizedCaseInsensitiveContains(self.query) } }
++    }
+     private func reload() {
+         self.tableView.reloadData()
+-        guard self.items.isEmpty && self.nativeItems.isEmpty else {
++        guard self.items.isEmpty && self.nativeItems.isEmpty && self.whiteGramItems.isEmpty else {
+             self.tableView.backgroundView = nil
+             return
+         }
+@@ -220,7 +225,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+         label.textColor = self.palette?.secondary ?? .secondaryLabel
+         label.font = .preferredFont(forTextStyle: .subheadline)
+         if self.query.isEmpty {
+-            label.text = self.russian ? "Плагины не найдены.\n\nНажмите «+», чтобы установить файл .iosplug или .plugin." : "No plugins found.\n\nTap + to install a .iosplug or .plugin file."
++            label.text = self.russian ? "Плагины не найдены.\n\nНажмите «+», чтобы установить файл .iosplug, .plugin или .js." : "No plugins found.\n\nTap + to install a .iosplug, .plugin or .js file."
+         } else {
+             label.text = self.russian ? "Ничего не найдено." : "Nothing found."
+         }
+@@ -260,11 +265,12 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+         if let close = self.close { close() } else { self.dismiss(animated: true) }
+     }
+     /// Section 0 lists the built-in plugins, section 1 the `.plugin` files.
+-    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 3 }
+     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+-        return section == 0 ? self.nativeItems.count : self.items.count
++        return section == 0 ? self.nativeItems.count : (section == 1 ? self.items.count : self.whiteGramItems.count)
+     }
+     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        if section == 2 { return self.whiteGramItems.isEmpty ? nil : "WhiteGram · JavaScript" }
+         guard section == 0, !self.nativeItems.isEmpty, !self.items.isEmpty else { return nil }
+         return self.russian ? "Встроенные" : "Built-in"
+     }
+@@ -303,6 +309,16 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+         if indexPath.section == 0 {
+             return self.nativeCell(self.nativeItems[indexPath.row])
+         }
++        if indexPath.section == 2 {
++            let item = self.whiteGramItems[indexPath.row], cell = AyuPluginListCell()
++            cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
++            cell.iconView.image = self.pluginIcon(32.0)
++            cell.titleView.text = item.name
++            cell.detailView.text = item.author + "\n" + item.description
++            let toggle = UISwitch(); toggle.isOn = item.enabled; toggle.accessibilityIdentifier = item.id
++            toggle.addTarget(self, action: #selector(self.whiteGramToggle(_:)), for: .valueChanged); cell.accessoryView = toggle
++            return cell
++        }
+         let cell = AyuPluginListCell()
+         cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
+         cell.iconView.image = self.pluginIcon(32.0)
+@@ -332,6 +348,10 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+         }
+         return cell
+     }
++    @objc private func whiteGramToggle(_ toggle: UISwitch) {
++        guard let id = toggle.accessibilityIdentifier else { return }
++        AyuWhiteGramRuntime.shared.setEnabled(id, toggle.isOn); self.reload()
++    }
+     @objc private func toggleChanged(_ toggle: UISwitch) {
+         guard let id = toggle.accessibilityIdentifier, let plugin = self.store.current.plugins.installed.first(where: { $0.manifest.id == id }) else {
+             self.reload()
+@@ -388,6 +408,11 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+         tableView.deselectRow(at: indexPath, animated: true)
+         guard !self.reading, !self.applying else { return }
++        if indexPath.section == 2 {
++            let item = self.whiteGramItems[indexPath.row]
++            if item.enabled, let controller = AyuWhiteGramRuntime.shared.settings(for: item.id) { self.navigationController?.pushViewController(controller, animated: true) }
++            return
++        }
+         if indexPath.section == 0 {
+             let nativeItems = self.nativeItems
+             guard indexPath.row < nativeItems.count, let controller = self.nativePluginSettings?(nativeItems[indexPath.row]) else { return }
+@@ -399,6 +424,13 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+         let plugin = items[indexPath.row]
+         self.navigationController?.pushViewController(self.makeDetailsController(pluginID: plugin.manifest.id), animated: true)
+     }
++    override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool { indexPath.section == 2 }
++    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
++        if editingStyle == .delete, indexPath.section == 2 {
++            AyuWhiteGramRuntime.shared.remove(self.whiteGramItems[indexPath.row].id)
++            self.reload()
++        }
++    }
+     private func makeDetailsController(pluginID: String) -> AyuPluginDetailsController {
+         let controller = AyuPluginDetailsController(store: self.store, pluginID: pluginID, russian: self.russian, palette: self.palette, settingsController: self.settingsController, keepAwake: self.keepAwake)
+         controller.pluginIcon = self.pluginIcon
+@@ -410,6 +442,13 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+     }
+     private func readImport(_ url: URL, filename: String, picker: UIViewController? = nil) {
+         guard url.isFileURL, !self.reading, !self.applying else { return }
++        if (filename as NSString).pathExtension.lowercased() == "js" {
++            let scoped = url.startAccessingSecurityScopedResource()
++            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
++            do { try AyuWhiteGramRuntime.shared.install(url); self.reload() }
++            catch { self.error(error) }
++            return
++        }
+         if (filename as NSString).pathExtension.lowercased() == AyuNativePluginCard.fileExtension {
+             self.readNativeCard(url, picker: picker)
+             return
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index ac8d62e..409c3a2 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -7911,6 +7911,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+ 
+     override public func viewDidAppear(_ animated: Bool) {
+         super.viewDidAppear(animated)
++        if let peerId = self.chatLocation.peerId, peerId.namespace != Namespaces.Peer.SecretChat {
++            AyuWhiteGramRuntime.shared.attach(view: self.view, account: self.context.account.peerId.toInt64(), peer: peerId.toInt64(), present: { [weak self] controller in
++                self?.context.sharedContext.applicationBindings.presentNativeController(controller)
++            })
++        }
+         
+         self.didAppear = true
+         
+@@ -8357,6 +8362,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+     
+     override public func viewWillDisappear(_ animated: Bool) {
+         super.viewWillDisappear(animated)
++        AyuWhiteGramRuntime.shared.detach(view: self.view)
+ 
+         self.walletTransferAnimationsVisible = false
+         

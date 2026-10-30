@@ -904,6 +904,71 @@ index 00000000..454dd164
 +        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +}
+diff --git a/submodules/Display/Source/AyuSettingsTransfer.swift b/submodules/Display/Source/AyuSettingsTransfer.swift
+new file mode 100644
+index 00000000..68b9ba65
+--- /dev/null
++++ b/submodules/Display/Source/AyuSettingsTransfer.swift
+@@ -0,0 +1,59 @@
++import Foundation
++
++/// WhiteGram-style settings portability: device-wide AyuGram preferences (WhiteGram,
++/// Appearance+, developer, lyrics sources, player) to and from a JSON file. Only `ayu.*`
++/// UserDefaults keys are included; account data, plugin storage and caches never are.
++public enum AyuSettingsTransfer {
++    public static let format = "ayugram-ios-settings"
++
++    /// Prefixes worth carrying between devices; plugin storage and remembered track identities stay local.
++    private static func isPortable(_ key: String) -> Bool {
++        guard key.hasPrefix("ayu.") else { return false }
++        let excluded = ["ayu.script.storage.", "ayu.music.identity.", "ayu.lyrics.", "ayu.developer."]
++        if key == "ayu.lyrics.providers.v1" { return true }
++        return !excluded.contains(where: { key.hasPrefix($0) })
++    }
++
++    public static func exportData() throws -> Data {
++        var values: [String: Any] = [:]
++        for (key, value) in UserDefaults.standard.dictionaryRepresentation() where self.isPortable(key) {
++            if let data = value as? Data {
++                values[key] = ["data": data.base64EncodedString()]
++            } else if JSONSerialization.isValidJSONObject([value]) {
++                values[key] = value
++            }
++        }
++        let document: [String: Any] = ["format": self.format, "version": 1, "exported": ISO8601DateFormatter().string(from: Date()), "values": values]
++        return try JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
++    }
++
++    /// Writes the export to a temporary `.ayusettings` file for the share sheet.
++    public static func exportFile() throws -> URL {
++        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AyuGram-settings.ayusettings")
++        try self.exportData().write(to: url, options: .atomic)
++        return url
++    }
++
++    /// Returns how many values were restored.
++    @discardableResult
++    public static func importData(_ data: Data) throws -> Int {
++        guard data.count <= 2 * 1024 * 1024,
++              let document = try JSONSerialization.jsonObject(with: data) as? [String: Any],
++              document["format"] as? String == self.format,
++              let values = document["values"] as? [String: Any] else {
++            throw CocoaError(.fileReadCorruptFile)
++        }
++        var restored = 0
++        for (key, value) in values where self.isPortable(key) {
++            if let wrapped = value as? [String: Any], let base64 = wrapped["data"] as? String, let data = Data(base64Encoded: base64) {
++                UserDefaults.standard.set(data, forKey: key)
++            } else {
++                UserDefaults.standard.set(value, forKey: key)
++            }
++            restored += 1
++        }
++        NotificationCenter.default.post(name: AyuWhiteGram.didChangeNotification, object: nil)
++        NotificationCenter.default.post(name: AyuAppearancePlus.didChangeNotification, object: nil)
++        return restored
++    }
++}
 diff --git a/submodules/Display/Source/AyuSettingsVisibility.swift b/submodules/Display/Source/AyuSettingsVisibility.swift
 new file mode 100644
 index 00000000..9809f9ba
@@ -975,10 +1040,10 @@ index 00000000..9809f9ba
 +}
 diff --git a/submodules/Display/Source/AyuWhiteGram.swift b/submodules/Display/Source/AyuWhiteGram.swift
 new file mode 100644
-index 00000000..b1edfdf8
+index 00000000..0576d72f
 --- /dev/null
 +++ b/submodules/Display/Source/AyuWhiteGram.swift
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,140 @@
 +import Foundation
 +import UIKit
 +import CoreText
@@ -1039,6 +1104,13 @@ index 00000000..b1edfdf8
 +    public static var hideGalleryCamera: Bool { return bool("hideGalleryCamera") }
 +    public static var showFullViewCount: Bool { return bool("showFullViewCount") }
 +    public static var compactChatList: Bool { return bool("compactChatList") }
++
++    // MARK: Sending
++
++    /// Compressed photos at up to 2560 px instead of 1280 px.
++    public static var sendLargePhotos: Bool { return bool("sendLargePhotos") }
++    /// JPEG quality of compressed photos, 0.5…0.95 (Telegram uses 0.6).
++    public static var photoQuality: CGFloat { return CGFloat(max(0.5, min(0.95, double("photoQuality", 0.6)))) }
 +
 +    // MARK: Tab bar
 +
@@ -1156,6 +1228,30 @@ index e53d8ae6..955824c1 100644
          if #available(iOS 8.2, *) {
              return UIFont.boldSystemFont(ofSize: size)
          } else {
+diff --git a/submodules/LegacyMediaPickerUI/Sources/LegacyMediaPickers.swift b/submodules/LegacyMediaPickerUI/Sources/LegacyMediaPickers.swift
+index da2cc21b..b5cf90fb 100644
+--- a/submodules/LegacyMediaPickerUI/Sources/LegacyMediaPickers.swift
++++ b/submodules/LegacyMediaPickerUI/Sources/LegacyMediaPickers.swift
+@@ -405,15 +405,16 @@ public func legacyAssetPickerEnqueueMessages(
+                                     var randomId: Int64 = 0
+                                     arc4random_buf(&randomId, 8)
+                                     let tempFilePath = NSTemporaryDirectory() + "\(randomId).jpeg"
+-                                    let maxSize = item.forceHd ? CGSize(width: 2560.0, height: 2560.0) : CGSize(width: 1280.0, height: 1280.0)
++                                    // WhiteGram "send large photos" and photo quality.
++                                    let maxSize = (item.forceHd || AyuWhiteGram.sendLargePhotos) ? CGSize(width: 2560.0, height: 2560.0) : CGSize(width: 1280.0, height: 1280.0)
+                                     let scaledSize = image.size.aspectFittedOrSmaller(maxSize)
+-                                
++
+                                     if let scaledImage = TGScaleImageToPixelSize(image, scaledSize) {
+                                         let tempFile = EngineTempBox.shared.tempFile(fileName: "file")
+                                         defer {
+                                             EngineTempBox.shared.dispose(tempFile)
+                                         }
+-                                        if let scaledImageData = compressImageToJPEG(scaledImage, quality: 0.6, tempFilePath: tempFile.path) {
++                                        if let scaledImageData = compressImageToJPEG(scaledImage, quality: Float(AyuWhiteGram.photoQuality), tempFilePath: tempFile.path) {
+                                             let _ = try? scaledImageData.write(to: URL(fileURLWithPath: tempFilePath))
+ 
+                                             let resource = LocalFileReferenceMediaResource(localFilePath: tempFilePath, randomId: randomId)
 diff --git a/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift b/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
 index c0725e00..eb4ff908 100644
 --- a/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
@@ -2805,10 +2901,10 @@ index 00000000..8729d0f7
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuWhiteGramController.swift b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
 new file mode 100644
-index 00000000..87d4b7b2
+index 00000000..5e07e522
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,276 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -2827,6 +2923,7 @@ index 00000000..87d4b7b2
 +    case borderColor = 2
 +    case transparentBubbles = 3
 +    case semiTransparentBubbles = 4
++    case wideChannelPosts = 5
 +    case squareAvatars = 11
 +    case oledMode = 12
 +    case stickerSize = 13
@@ -2841,10 +2938,14 @@ index 00000000..87d4b7b2
 +    case tabBarScale = 23
 +    case tabBarWidth = 24
 +    case tabsAndGlass = 25
++    case sendLargePhotos = 27
++    case photoQuality = 28
 +    case customFontEnabled = 31
 +    case importFont = 32
 +    case chooseFont = 33
 +    case settingsRows = 41
++    case exportSettings = 42
++    case importSettings = 43
 +    case relaunchInfo = 50
 +    case reset = 51
 +}
@@ -2915,6 +3016,8 @@ index 00000000..87d4b7b2
 +            presentNative?(controller)
 +        case .stickerSize?:
 +            cycle("stickerScale", steps: [0.5, 0.75, 1.0, 1.25, 1.5], current: AyuWhiteGram.stickerScale)
++        case .photoQuality?:
++            cycle("photoQuality", steps: [0.6, 0.7, 0.8, 0.9, 0.95], current: AyuWhiteGram.photoQuality)
 +        case .tabBarScale?:
 +            cycle("tabBarScale", steps: [0.8, 0.9, 1.0, 1.1, 1.2], current: AyuWhiteGram.tabBarScale)
 +        case .tabBarWidth?:
@@ -2923,6 +3026,28 @@ index 00000000..87d4b7b2
 +            push?(ayuAppearancePlusController(context: context))
 +        case .settingsRows?:
 +            push?(ayuSettingsVisibilityController(context: context))
++        case .exportSettings?:
++            do {
++                let url = try AyuSettingsTransfer.exportFile()
++                presentNative?(UIActivityViewController(activityItems: [url], applicationActivities: nil))
++            } catch {
++                alert(russian ? "Не удалось экспортировать" : "Export failed", error.localizedDescription)
++            }
++        case .importSettings?:
++            let delegate = AyuFontPickerDelegate(completion: { url in
++                let scoped = url.startAccessingSecurityScopedResource()
++                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
++                do {
++                    let count = try AyuSettingsTransfer.importData(Data(contentsOf: url))
++                    alert(russian ? "Настройки восстановлены" : "Settings restored", russian ? "Значений: \(count). Перезапустите приложение, чтобы применить всё." : "\(count) values. Relaunch the app to apply everything.")
++                } catch {
++                    alert(russian ? "Не удалось импортировать" : "Import failed", russian ? "Это не файл настроек AyuGram." : "This is not an AyuGram settings file.")
++                }
++            })
++            AyuFontPickerDelegate.current = delegate
++            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
++            picker.delegate = delegate
++            presentNative?(picker)
 +        case .importFont?:
 +            let delegate = AyuFontPickerDelegate(completion: { url in
 +                let scoped = url.startAccessingSecurityScopedResource()
@@ -2973,6 +3098,7 @@ index 00000000..87d4b7b2
 +            AyuWhiteGram.set(value, forKey: "semiTransparentBubbles")
 +            if value { AyuWhiteGram.set(false, forKey: "transparentBubbles") }
 +        case .squareAvatars?: AyuWhiteGram.set(value, forKey: "squareAvatars")
++        case .wideChannelPosts?: AyuWhiteGram.set(value, forKey: "wideChannelPosts")
 +        case .oledMode?: AyuWhiteGram.set(value, forKey: "oledMode")
 +        case .hideGalleryCamera?: AyuWhiteGram.set(value, forKey: "hideGalleryCamera")
 +        case .hideBusinessBotPanel?: AyuWhiteGram.set(value, forKey: "hideBusinessBotPanel")
@@ -2985,6 +3111,7 @@ index 00000000..87d4b7b2
 +            try? store.update { $0.interface.disableNumberRounding = value }
 +            AyuWhiteGram.set(value, forKey: "showFullViewCount")
 +        case .hideBottomTabBar?: AyuWhiteGram.set(value, forKey: "hideBottomTabBar")
++        case .sendLargePhotos?: AyuWhiteGram.set(value, forKey: "sendLargePhotos")
 +        case .customFontEnabled?: AyuWhiteGram.set(value, forKey: "customFontEnabled")
 +        default: break
 +        }
@@ -3012,6 +3139,7 @@ index 00000000..87d4b7b2
 +            link(1, .borderColor, symbol("paintpalette.fill", 0xFF2D55), ru ? "Цвет рамки" : "Border color", AyuWhiteGram.messageBorderColorHex.isEmpty ? (ru ? "акцент" : "accent") : AyuWhiteGram.messageBorderColorHex),
 +            row(1, .transparentBubbles, symbol("circle.dashed", 0x32ADE6), ru ? "Прозрачные пузыри" : "Transparent bubbles", nil, AyuWhiteGram.transparentBubbles),
 +            row(1, .semiTransparentBubbles, symbol("circle.lefthalf.filled", 0x007AFF), ru ? "Полупрозрачные пузыри" : "Semi-transparent bubbles", nil, AyuWhiteGram.semiTransparentBubbles),
++            row(1, .wideChannelPosts, symbol("rectangle.expand.vertical", 0x34C759), ru ? "Широкие посты в каналах" : "Wide channel posts", nil, AyuWhiteGram.wideChannelPosts),
 +            .header(2, 10, ru ? "ИНТЕРФЕЙС" : "INTERFACE"),
 +            row(2, .squareAvatars, symbol("square.fill", 0xFF9500), ru ? "Квадратные аватары" : "Square avatars", nil, AyuWhiteGram.squareAvatars),
 +            row(2, .oledMode, symbol("moon.fill", 0x000000), ru ? "OLED-режим" : "OLED mode", ru ? "Тёмная тема — чистый чёрный (после перезапуска)" : "Dark theme in true black (after relaunch)", AyuWhiteGram.oledMode),
@@ -3028,14 +3156,19 @@ index 00000000..87d4b7b2
 +            link(3, .tabBarScale, symbol("arrow.up.left.and.arrow.down.right", 0x007AFF), ru ? "Масштаб панели" : "Tab bar scale", percent(AyuWhiteGram.tabBarScale)),
 +            link(3, .tabBarWidth, symbol("arrow.left.and.right", 0x007AFF), ru ? "Ширина панели" : "Tab bar width", percent(AyuWhiteGram.tabBarWidth)),
 +            link(3, .tabsAndGlass, symbol("paintbrush.pointed.fill", 0xFF2D55), ru ? "Вкладки, стекло, старый дизайн" : "Tabs, glass, classic design", ""),
-+            .header(4, 30, ru ? "ШРИФТЫ" : "FONTS"),
-+            row(4, .customFontEnabled, symbol("textformat", 0xAF52DE), ru ? "Свой шрифт" : "Custom font", ru ? "Применяется после перезапуска" : "Applies after relaunch", AyuWhiteGram.customFontEnabled),
-+            link(4, .importFont, symbol("plus.circle.fill", 0x34C759), ru ? "Добавить шрифт (.ttf, .otf)" : "Add font (.ttf, .otf)", ""),
-+            link(4, .chooseFont, symbol("list.bullet", 0x8E8E93), ru ? "Выбрать шрифт" : "Choose font", fontLabel),
-+            .header(5, 40, ru ? "НАСТРОЙКИ" : "SETTINGS"),
-+            link(5, .settingsRows, symbol("list.bullet.rectangle.fill", 0x8E8E93), ru ? "Пункты в Настройках" : "Settings rows", AyuSettingsVisibility.hiddenKeys.isEmpty ? "" : "\(AyuSettingsVisibility.hiddenKeys.count)"),
-+            .info(5, AyuWhiteGramRow.relaunchInfo.rawValue, ru ? "Всё работает локально на устройстве. Рамка, OLED и шрифт применяются после перезапуска приложения." : "Everything stays on this device. Border, OLED and font apply after relaunching the app."),
-+            link(5, .reset, symbol("arrow.counterclockwise", 0xFF3B30), ru ? "Сбросить WhiteGram" : "Reset WhiteGram", "")
++            .header(4, 26, ru ? "ОТПРАВКА ФОТО" : "SENDING PHOTOS"),
++            row(4, .sendLargePhotos, symbol("photo.fill", 0x34C759), ru ? "Крупные фото" : "Large photos", ru ? "До 2560 px вместо 1280 px" : "Up to 2560 px instead of 1280 px", AyuWhiteGram.sendLargePhotos),
++            link(4, .photoQuality, symbol("dial.medium.fill", 0x007AFF), ru ? "Качество фото" : "Photo quality", percent(AyuWhiteGram.photoQuality)),
++            .header(5, 30, ru ? "ШРИФТЫ" : "FONTS"),
++            row(5, .customFontEnabled, symbol("textformat", 0xAF52DE), ru ? "Свой шрифт" : "Custom font", ru ? "Применяется после перезапуска" : "Applies after relaunch", AyuWhiteGram.customFontEnabled),
++            link(5, .importFont, symbol("plus.circle.fill", 0x34C759), ru ? "Добавить шрифт (.ttf, .otf)" : "Add font (.ttf, .otf)", ""),
++            link(5, .chooseFont, symbol("list.bullet", 0x8E8E93), ru ? "Выбрать шрифт" : "Choose font", fontLabel),
++            .header(6, 40, ru ? "НАСТРОЙКИ" : "SETTINGS"),
++            link(6, .settingsRows, symbol("list.bullet.rectangle.fill", 0x8E8E93), ru ? "Пункты в Настройках" : "Settings rows", AyuSettingsVisibility.hiddenKeys.isEmpty ? "" : "\(AyuSettingsVisibility.hiddenKeys.count)"),
++            link(6, .exportSettings, symbol("square.and.arrow.up", 0x007AFF), ru ? "Экспорт настроек в файл" : "Export settings to a file", ""),
++            link(6, .importSettings, symbol("square.and.arrow.down", 0x34C759), ru ? "Импорт настроек из файла" : "Import settings from a file", ""),
++            .info(6, AyuWhiteGramRow.relaunchInfo.rawValue, ru ? "Всё работает локально на устройстве. Рамка, OLED и шрифт применяются после перезапуска приложения." : "Everything stays on this device. Border, OLED and font apply after relaunching the app."),
++            link(6, .reset, symbol("arrow.counterclockwise", 0xFF3B30), ru ? "Сбросить WhiteGram" : "Reset WhiteGram", "")
 +        ]
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text("WhiteGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
@@ -4303,10 +4436,21 @@ index 25f0a555..4755a32f 100644
          let emojiFile = self.emojiFile
          let telegramDice = self.telegramDice
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
-index 1047a0fd..37797234 100644
+index 1047a0fd..57aff5c1 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
-@@ -3978,6 +3978,13 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+@@ -2022,6 +2022,10 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+             needsSummarizeButton = false
+             allowFullWidth = true
+         }
++        // WhiteGram "wide channel posts": every broadcast channel post uses the full width.
++        if AyuWhiteGram.wideChannelPosts, let channel = item.content.firstMessage.peers[item.content.firstMessage.id.peerId] as? TelegramChannel, case .broadcast = channel.info {
++            allowFullWidth = true
++        }
+ 
+         if item.context.account.network.ayuGhostMode.current.interface.hideFastShare, !isAd, !hasCommentButton(item: item) {
+             needsShareButton = false
+@@ -3978,6 +3982,13 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
          if strongSelf.mainContainerNode.alpha != ayuDeletedAlpha {
              strongSelf.mainContainerNode.alpha = ayuDeletedAlpha
          }

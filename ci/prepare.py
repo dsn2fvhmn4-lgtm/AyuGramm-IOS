@@ -31,8 +31,8 @@ patches = [
     root / "patches" / "ayugram-plugin-dialogs-keyboard.patch",
     root / "patches" / "ayugram-music-reference.patch",
     root / "patches" / "ayugram-peer-search.patch",
-    root / "patches" / "ayugram-whitegram-js.patch",
     root / "patches" / "ayugram-player-toolbar-refinements.patch",
+    root / "patches" / "ayugram-music-inline-queue.patch",
 ]
 for patch in patches:
     subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)
@@ -50,12 +50,6 @@ if app_badge_src.is_file():
     app_badge_dst = source / "submodules" / "TelegramUI" / "Images.xcassets" / "Components" / "AppBadge.imageset" / "AppBadge@3x.png"
     app_badge_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(app_badge_src, app_badge_dst)
-
-# WhiteGram compatibility script runs in a separate WebKit environment per plugin.
-whitegram_bridge = root / "runtime" / "whitegram" / "bridge.js"
-whitegram_target = source / "submodules" / "TelegramUI" / "Resources" / "ayu-whitegram-bridge.js"
-whitegram_target.parent.mkdir(parents=True, exist_ok=True)
-shutil.copy2(whitegram_bridge, whitegram_target)
 
 # TelegramUIResources includes Resources/**/* in the application bundle.
 font_src = root / "assets" / "fonts" / "YSMusic-HeadlineBold.ttf"

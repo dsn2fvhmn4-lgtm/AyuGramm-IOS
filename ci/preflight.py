@@ -97,7 +97,6 @@ def main():
     sdk_sources.append(source / 'submodules/TelegramUI/Sources/AyuMusicHaptics.swift')
     sdk_sources.append(source / 'submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift')
     sdk_sources.append(source / 'submodules/TelegramUI/Sources/AyuLyricsPauseView.swift')
-    sdk_sources.append(source / 'submodules/Display/Source/AyuWhiteGramRuntime.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuPetpetController.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuPluginAvatar.swift')
     sdk_sources.append(source / 'submodules/Display/Source/AyuArcadeGameController.swift')
@@ -142,8 +141,7 @@ def main():
                                              '-emit-module-path', str(Path(directory) / 'Display.swiftmodule'),
                                              str(source / 'submodules/Display/Source/AyuPluginAvatar.swift'),
                                              str(source / 'submodules/Display/Source/AyuArcadeGameController.swift'),
-                                             str(source / 'submodules/Display/Source/AyuNativePlugins.swift'),
-                                             str(source / 'submodules/Display/Source/AyuWhiteGramRuntime.swift')], capture_output=True, text=True)
+                                             str(source / 'submodules/Display/Source/AyuNativePlugins.swift')], capture_output=True, text=True)
                     if result.returncode:
                         errors.append(f'Actual plugin avatar SDK harness:\n{result.stdout}{result.stderr}')
                     else:

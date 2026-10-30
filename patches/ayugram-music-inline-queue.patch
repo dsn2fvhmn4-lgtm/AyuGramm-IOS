@@ -1,0 +1,335 @@
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+index fe551b5..facd6cf 100644
+--- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -70,9 +70,6 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+         playerView.requestDismiss = { [weak self] in
+             self?.dismiss()
+         }
+-        playerView.openQueue = { [weak self] in
+-            self?.openQueue()
+-        }
+         playerView.lyricsOptions = { [weak self] in self?.showLyricsOptions() }
+         self.playerView = playerView
+         self.displayNode.view.addSubview(playerView)
+@@ -153,23 +150,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+         playerView.setNeedsLayout()
+     }
+ 
+-    /// Telegram's own playlist screen, for picking another track from the chat.
+-    private func openQueue() {
+-        guard let navigationController = self.parentNavigationController ?? (self.navigationController as? NavigationController) else {
+-            return
+-        }
+-        let queue = OverlayAudioPlayerControllerImpl(
+-            context: self.context,
+-            chatLocation: self.chatLocation,
+-            type: self.type,
+-            initialMessageId: self.initialMessageId,
+-            initialOrder: self.initialOrder,
+-            playlistLocation: self.playlistLocation,
+-            parentNavigationController: navigationController
+-        )
+-        queue.navigationPresentation = .flatModal
+-        navigationController.pushViewController(queue)
+-    }
++
+ }
+ 
+ private func ayuFormatTime(_ seconds: Double) -> String {
+@@ -201,7 +182,8 @@ final class AyuMusicPlayerView: UIView {
+     private var lyricsOffset = 0.0
+     private var lyricsSettingsKey = ""
+     var lyricsIdentity: String? { return self.trackKey }
+-    var openQueue: (() -> Void)?
++    private let queueView: AyuMusicQueueView
++    private var showsQueue = false
+     var safeInsets = UIEdgeInsets()
+ 
+     private let backdropNode = TransformImageNode()
+@@ -257,6 +239,7 @@ final class AyuMusicPlayerView: UIView {
+     private var dragOffset: CGFloat = 0.0
+ 
+     init(context: AccountContext, type: MediaManagerPlayerType) {
++        self.queueView = AyuMusicQueueView(context: context)
+         self.context = context
+         self.type = type
+         self.russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+@@ -294,6 +277,12 @@ final class AyuMusicPlayerView: UIView {
+             self?.control(.seek(time))
+         }
+         self.addSubview(self.lyricsView)
++        self.queueView.isHidden = true
++        self.queueView.haptics = { [weak self] in
++            self?.hapticsPressed()
++            if let self { self.queueView.hapticsEnabled = self.musicHapticsEnabled }
++        }
++        self.addSubview(self.queueView)
+ 
+         self.addSubview(self.scrubber)
+         for label in [self.elapsedLabel, self.remainingLabel] {
+@@ -393,6 +382,7 @@ final class AyuMusicPlayerView: UIView {
+             return
+         }
+         self.hadState = true
++        self.queueView.update(state)
+ 
+         self.status = state.status
+         let isPaused: Bool
+@@ -557,7 +547,18 @@ final class AyuMusicPlayerView: UIView {
+     }
+ 
+     @objc private func queuePressed() {
+-        self.openQueue?()
++        self.showsQueue.toggle()
++        if self.showsQueue {
++            self.showsLyrics = false
++            self.updateLyricsButton()
++            self.lyricsView.isHidden = true
++            self.queueView.isHidden = false
++            self.queueView.hapticsEnabled = self.musicHapticsEnabled
++            self.queueView.reveal()
++        } else { self.queueView.isHidden = true }
++        self.queueButton.backgroundColor = self.showsQueue ? UIColor.white.withAlphaComponent(0.2) : .clear
++        self.queueButton.layer.cornerRadius = 22.0
++        self.layoutContent()
+     }
+ 
+     @objc private func lyricsHeld(_ gesture: UILongPressGestureRecognizer) {
+@@ -583,6 +584,9 @@ final class AyuMusicPlayerView: UIView {
+     }
+ 
+     @objc private func lyricsPressed() {
++        self.showsQueue = false
++        self.queueView.isHidden = true
++        self.queueButton.backgroundColor = .clear
+         self.showsLyrics = !self.showsLyrics
+         self.updateLyricsButton()
+         if self.showsLyrics {
+@@ -696,6 +700,10 @@ final class AyuMusicPlayerView: UIView {
+         self.remainingLabel.frame = CGRect(x: left + contentWidth / 2.0, y: scrubberY + 24.0, width: contentWidth / 2.0, height: 16.0)
+ 
+         let artworkTop = insets.top + 34.0
++        self.artworkShadow.isHidden = self.showsQueue
++        self.titleLabel.isHidden = self.showsQueue
++        self.artistLabel.isHidden = self.showsQueue
++        self.queueView.frame = CGRect(x: insets.left, y: artworkTop, width: size.width - insets.left - insets.right, height: max(0, scrubberY - artworkTop - 8))
+         if self.showsLyrics {
+             // Compact header: small cover with title beside it, lyrics below.
+             let small: CGFloat = 48.0
+@@ -753,6 +761,7 @@ final class AyuMusicPlayerView: UIView {
+         if self.scrubber.frame.insetBy(dx: 0.0, dy: -10.0).contains(location) || self.volumeView.frame.insetBy(dx: 0.0, dy: -10.0).contains(location) {
+             return false
+         }
++        if self.showsQueue && self.queueView.frame.contains(location) { return false }
+         if self.showsLyrics && self.lyricsView.frame.contains(location) {
+             return false
+         }
+diff --git a/submodules/TelegramUI/Sources/AyuMusicQueueView.swift b/submodules/TelegramUI/Sources/AyuMusicQueueView.swift
+new file mode 100644
+index 0000000..1630c64
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuMusicQueueView.swift
+@@ -0,0 +1,202 @@
++import UIKit
++import AsyncDisplayKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramUIPreferences
++import AccountContext
++import PhotoResources
++import PeerMessagesMediaPlaylist
++
++/// The queue shares the player's backdrop and leaves transport controls fixed below it.
++final class AyuMusicQueueView: UIScrollView {
++    private let context: AccountContext
++    private var current: SharedMediaPlayerItemPlaybackState?
++    private var history: [SharedMediaPlaylistItem] = []
++    private var tracks: [SharedMediaPlaylistItem] = []
++    private let request = MetaDisposable()
++    private var playlist: PeerMessagesPlaylistLocation?
++    private var rows: [UIView] = []
++    private var headerY: CGFloat = 0
++    private var lastSize = CGSize.zero
++    private var historyLocations: [AnyHashable: PeerMessagesPlaylistLocation] = [:]
++    private var resetPosition = true
++    private var loadMore: (() -> Void)?
++    private var loading = false
++    private var generation = 0
++    var haptics: (() -> Void)?
++    var hapticsEnabled = true
++    private var russian: Bool { self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
++
++    init(context: AccountContext) {
++        self.context = context
++        super.init(frame: .zero)
++        self.alwaysBounceVertical = true
++        self.showsVerticalScrollIndicator = true
++        let mask = CAGradientLayer()
++        mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
++        mask.locations = [0, 0.88, 1]
++        self.layer.mask = mask
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.request.dispose() }
++    func reveal() { self.resetPosition = true; if let current = self.current { self.loadTracks(current) }; self.rebuild() }
++
++    func update(_ state: SharedMediaPlayerItemPlaybackState) {
++        let changed = self.current?.item.stableId != state.item.stableId
++        if changed, let previous = self.current?.item {
++            self.history.removeAll { $0.stableId == previous.stableId }
++            self.history.append(previous)
++            if let source = self.current?.playlistLocation as? PeerMessagesPlaylistLocation { self.historyLocations[previous.stableId] = source }
++            if self.history.count > 100 { self.history.removeFirst() }
++        }
++        let controlsChanged = self.current?.order != state.order || self.current?.looping != state.looping || self.current?.nextItem?.stableId != state.nextItem?.stableId
++        let locationChanged = self.current.map { !$0.playlistLocation.isEqual(to: state.playlistLocation) } ?? true
++        self.current = state
++        if (changed || locationChanged) && !self.isHidden { self.loadTracks(state) }
++        if changed || controlsChanged { self.rebuild() }
++    }
++    private func loadTracks(_ state: SharedMediaPlayerItemPlaybackState) {
++        self.generation += 1
++        let generation = self.generation
++        self.request.set(nil); self.loadMore = nil; self.tracks = []; self.loading = true
++        guard let source = state.playlistLocation as? PeerMessagesPlaylistLocation else { self.loading = false; self.rebuild(); return }
++        self.playlist = source
++        var saved = false
++        if case .savedMusic = source { saved = true }
++        switch source.effectiveLocation(context: self.context) {
++        case let .custom(messages, _, _, loadMore, _):
++            self.request.set((messages |> deliverOnMainQueue).startStrict(next: { [weak self] result in
++                guard let self, self.generation == generation else { return }
++                self.loading = false
++                self.tracks = result.0.map { MessageMediaPlaylistItem(message: $0, isSavedMusic: saved) }
++                self.loadMore = result.2 ? loadMore : nil
++                self.rebuild()
++            }))
++        case let .messages(chat, tags, at):
++            guard let peer = chat.peerId else { self.loading = false; self.rebuild(); return }
++            self.request.set((self.context.engine.messages.searchMessages(location: .peer(peerId: peer, fromId: nil, tags: tags, reactions: nil, threadId: chat.threadId, minDate: nil, maxDate: nil), query: "", state: nil, centerId: at, limit: 100)
++            |> deliverOnMainQueue).startStrict(next: { [weak self] result in
++                guard let self, self.generation == generation else { return }
++                self.loading = false
++                self.tracks = result.0.messages.sorted { $0.index > $1.index }.map { MessageMediaPlaylistItem(message: $0, isSavedMusic: false) }
++                self.rebuild()
++            }))
++        default: self.loading = false; self.rebuild()
++        }
++    }
++    private func label(_ text: String, secondary: Bool = false) -> UILabel {
++        let label = UILabel(); label.text = text
++        label.font = .systemFont(ofSize: secondary ? 14 : 18, weight: secondary ? .regular : .bold)
++        label.textColor = UIColor.white.withAlphaComponent(secondary ? 0.55 : 1)
++        self.addSubview(label); self.rows.append(label); return label
++    }
++    private func button(_ title: String, symbol: String? = nil, action: @escaping () -> Void) -> UIButton {
++        let button = UIButton(type: .system)
++        if let symbol { button.setImage(UIImage(systemName: symbol), for: .normal) } else { button.setTitle(title, for: .normal) }
++        button.tintColor = .white
++        button.addAction(UIAction(handler: { _ in action() }), for: .touchUpInside)
++        self.addSubview(button); self.rows.append(button); return button
++    }
++    private func row(_ item: SharedMediaPlaylistItem, large: Bool = false) -> UIView {
++        let row = AyuMusicQueueRow(context: self.context, item: item, large: large)
++        row.addAction(UIAction(handler: { [weak self] _ in self?.play(item) }), for: .touchUpInside)
++        self.addSubview(row); self.rows.append(row); return row
++    }
++    private func play(_ item: SharedMediaPlaylistItem) {
++        guard let item = item as? MessageMediaPlaylistItem, let source = self.historyLocations[item.stableId] ?? self.playlist else { return }
++        let at = item.message.id
++        let location: PeerMessagesPlaylistLocation
++        switch source {
++        case let .savedMusic(context, _, reorder): location = .savedMusic(context: context, at: at.id, canReorder: reorder)
++        case let .custom(messages, reorder, _, more, hide): location = .custom(messages: messages, canReorder: reorder, at: at, loadMore: more, hidePanel: hide)
++        case let .messages(chat, tags, _): location = .messages(chatLocation: chat, tagMask: tags, at: at)
++        default: location = .singleMessage(at)
++        }
++        let manager = self.context.sharedContext.mediaManager
++        manager.setPlaylist((self.context, PeerMessagesMediaPlaylist(context: self.context, location: location, chatLocationContextHolder: nil)), type: .music, control: .playback(.play))
++        if let current = self.current {
++            manager.playlistControl(.setOrder(current.order), type: .music)
++            manager.playlistControl(.setLooping(current.looping), type: .music)
++        }
++    }
++    private func rebuild() { self.rows.forEach { $0.removeFromSuperview() }; self.rows = []; self.setNeedsLayout() }
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        self.layer.mask?.frame = self.bounds
++        if self.lastSize != self.bounds.size { self.lastSize = self.bounds.size; self.rows.forEach { $0.removeFromSuperview() }; self.rows = [] }
++        guard self.rows.isEmpty, let state = self.current, self.bounds.width > 0 else { return }
++        let side: CGFloat = 28, width = max(0, self.bounds.width - 56)
++        var y: CGFloat = 12
++        if !self.history.isEmpty {
++            self.label(self.russian ? "История" : "History").frame = CGRect(x: side, y: y, width: width - 80, height: 30)
++            self.button(self.russian ? "Очистить" : "Clear", action: { [weak self] in self?.history = []; self?.historyLocations = [:]; self?.resetPosition = true; self?.rebuild() }).frame = CGRect(x: side + width - 80, y: y, width: 80, height: 30)
++            y += 40
++            for item in self.history.reversed() { self.row(item).frame = CGRect(x: side, y: y, width: width, height: 64); y += 70 }
++            y += 16
++        }
++        self.headerY = y
++        self.row(state.item, large: true).frame = CGRect(x: side, y: y, width: width, height: 88); y += 100
++        let icons = ["shuffle", state.looping == .item ? "repeat.1" : "repeat", "infinity", "waveform.path"]
++        for index in 0 ..< 4 {
++            let control = self.button("", symbol: icons[index], action: { [weak self] in
++                guard let self, let state = self.current else { return }
++                let manager = self.context.sharedContext.mediaManager
++                switch index {
++                case 0: manager.playlistControl(.setOrder(state.order == .random ? .regular : .random), type: .music)
++                case 1: manager.playlistControl(.setLooping(state.looping == .item ? .none : .item), type: .music)
++                case 2: manager.playlistControl(.setLooping(state.looping == .all ? .none : .all), type: .music)
++                default: self.haptics?(); self.rebuild()
++                }
++            })
++            let selected = [state.order == .random, state.looping == .item, state.looping == .all, self.hapticsEnabled][index]
++            control.backgroundColor = UIColor.white.withAlphaComponent(selected ? 0.4 : 0.1)
++            control.layer.cornerRadius = 20
++            control.frame = CGRect(x: side + CGFloat(index) * (width + 12) / 4, y: y, width: (width - 36) / 4, height: 42)
++        }
++        y += 62
++        self.label(self.russian ? "Далее" : "Continue Playing").frame = CGRect(x: side, y: y, width: width, height: 28); y += 36
++        var upcoming = self.tracks
++        if let index = upcoming.firstIndex(where: { $0.stableId == state.item.stableId }) {
++            upcoming = state.order == .reversed ? Array(upcoming.prefix(index).reversed()) : Array(upcoming.dropFirst(index + 1))
++        } else { upcoming = upcoming.filter { $0.stableId != state.item.stableId } }
++        if let next = state.nextItem {
++            upcoming.removeAll { $0.stableId == next.stableId }; upcoming.insert(next, at: 0)
++        }
++        if upcoming.isEmpty { self.label(self.loading ? (self.russian ? "Загрузка…" : "Loading…") : (self.russian ? "Очередь пуста" : "Queue is empty"), secondary: true).frame = CGRect(x: side, y: y, width: width, height: 40); y += 44 }
++        for item in upcoming { self.row(item).frame = CGRect(x: side, y: y, width: width, height: 64); y += 70 }
++        if let loadMore = self.loadMore { self.button(self.russian ? "Загрузить ещё" : "Load more", action: loadMore).frame = CGRect(x: side, y: y, width: width, height: 44); y += 48 }
++        self.contentSize = CGSize(width: self.bounds.width, height: max(self.bounds.height + self.headerY, y + 30))
++        if self.resetPosition { self.resetPosition = false; self.contentOffset.y = self.headerY }
++    }
++}
++
++private final class AyuMusicQueueRow: UIButton {
++    private let artwork = TransformImageNode()
++    private let nameLabel = UILabel()
++    private let artistLabel = UILabel()
++    private let large: Bool
++    init(context: AccountContext, item: SharedMediaPlaylistItem, large: Bool) {
++        self.large = large
++        super.init(frame: .zero)
++        self.addSubview(self.artwork.view); self.artwork.isUserInteractionEnabled = false
++        var album: SharedMediaPlaybackAlbumArt?
++        if case let .music(title, artist, art, _, _)? = item.displayData { self.nameLabel.text = title; self.artistLabel.text = artist; album = art }
++        var reference: FileMediaReference?
++        if case let .telegramFile(file, _, _)? = item.playbackData?.source { reference = file; if self.nameLabel.text?.isEmpty != false { self.nameLabel.text = file.media.fileName } }
++        self.artwork.setSignal(playerAlbumArt(engine: context.engine, fileReference: reference, albumArt: album, thumbnail: true, emptyColor: UIColor(white: 0.2, alpha: 1)))
++        self.nameLabel.font = .systemFont(ofSize: large ? 18 : 17, weight: .semibold); self.nameLabel.textColor = .white
++        self.artistLabel.font = .systemFont(ofSize: 15); self.artistLabel.textColor = UIColor.white.withAlphaComponent(0.55)
++        for label in [self.nameLabel, self.artistLabel] { self.addSubview(label); label.isUserInteractionEnabled = false }
++        self.accessibilityLabel = [self.nameLabel.text, self.artistLabel.text].compactMap { $0 }.joined(separator: ", ")
++    }
++    required init?(coder: NSCoder) { return nil }
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        let side: CGFloat = self.large ? 80 : 54
++        self.artwork.frame = CGRect(x: 0, y: (self.bounds.height - side) / 2, width: side, height: side)
++        self.artwork.asyncLayout()(TransformImageArguments(corners: ImageCorners(radius: 6), imageSize: CGSize(width: side, height: side), boundingSize: CGSize(width: side, height: side), intrinsicInsets: UIEdgeInsets(), emptyColor: UIColor(white: 0.2, alpha: 1)))()
++        self.nameLabel.frame = CGRect(x: side + 14, y: self.bounds.midY - 23, width: max(0, self.bounds.width - side - 14), height: 25)
++        self.artistLabel.frame = CGRect(x: side + 14, y: self.bounds.midY + 2, width: max(0, self.bounds.width - side - 14), height: 23)
++    }
++}

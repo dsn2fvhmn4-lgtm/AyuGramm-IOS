@@ -4100,10 +4100,10 @@ index 00000000..f2d7892f
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuTrackRecognizer.swift b/submodules/TelegramUI/Sources/AyuTrackRecognizer.swift
 new file mode 100644
-index 00000000..0433b6c4
+index 00000000..a6cbda95
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuTrackRecognizer.swift
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,196 @@
 +import Foundation
 +import AVFoundation
 +import ShazamKit
@@ -4224,8 +4224,9 @@ index 00000000..0433b6c4
 +        }
 +
 +        func session(_ session: SHSession, didNotFindMatchFor signature: SHSignature, error: Error?) {
-+            if let error = error as NSError?, error.domain == SHErrorDomain, error.code != SHError.Code.noMatch.rawValue {
-+                // Typically: this build's bundle ID is not registered for ShazamKit.
++            // No error means the catalog simply has no match. An error (typically
++            // matchAttemptFailed) usually means this build's bundle ID is not registered for ShazamKit.
++            if let error {
 +                self.deliver(.failure(.unavailable(error.localizedDescription)))
 +            } else {
 +                self.deliver(.failure(.noMatch))

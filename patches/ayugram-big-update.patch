@@ -851,110 +851,81 @@ index 00000000..454dd164
 +        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +}
-diff --git a/submodules/Display/Source/AyuMaterialSelection.swift b/submodules/Display/Source/AyuMaterialSelection.swift
-index 33581d9e..b9554f81 100644
---- a/submodules/Display/Source/AyuMaterialSelection.swift
-+++ b/submodules/Display/Source/AyuMaterialSelection.swift
-@@ -5,6 +5,22 @@ public enum AyuMaterialSelectionKind { case checkbox, radio }
- 
- /// M3 selection geometry: 18 pt checkbox, 20 pt radio, 40 pt state layer.
- public enum AyuMaterialSelectionDrawing {
-+    /// M3 radio button: 2 pt ring, 10 pt dot when selected.
-+    public static func drawRadio(context: CGContext, size: CGSize, selected: Bool, primary: UIColor, outline: UIColor) {
-+        guard size.width > 0.0, size.height > 0.0 else { return }
-+        let side = min(20.0, min(size.width, size.height))
-+        let frame = CGRect(x: (size.width - side) * 0.5, y: (size.height - side) * 0.5, width: side, height: side)
-+        context.saveGState()
-+        context.setLineWidth(2.0)
-+        context.setStrokeColor((selected ? primary : outline).cgColor)
-+        context.strokeEllipse(in: frame.insetBy(dx: 1.0, dy: 1.0))
-+        if selected {
-+            context.setFillColor(primary.cgColor)
-+            context.fillEllipse(in: frame.insetBy(dx: 5.0, dy: 5.0))
-+        }
-+        context.restoreGState()
+diff --git a/submodules/Display/Source/AyuSettingsVisibility.swift b/submodules/Display/Source/AyuSettingsVisibility.swift
+new file mode 100644
+index 00000000..9809f9ba
+--- /dev/null
++++ b/submodules/Display/Source/AyuSettingsVisibility.swift
+@@ -0,0 +1,63 @@
++import Foundation
++
++/// Rows of the main Settings page that Appearance+ can hide (WhiteGram's "settings item
++/// visibility"). Each key names one row by its section and stable item id in the Settings list.
++public enum AyuSettingsVisibility {
++    public struct Row {
++        public let key: String
++        public let titleRu: String
++        public let titleEn: String
++        public let section: Int
++        public let itemId: Int64
 +    }
 +
-     public static func drawCheckbox(context: CGContext, size: CGSize, progress: CGFloat, primary: UIColor, onPrimary: UIColor, outline: UIColor) {
-         guard size.width > 0.0, size.height > 0.0 else { return }
-         let progress = min(1.0, max(0.0, progress))
-diff --git a/submodules/GalleryUI/Sources/AyuGalleryMenuIcons.swift b/submodules/GalleryUI/Sources/AyuGalleryMenuIcons.swift
-new file mode 100644
-index 00000000..ff19eece
---- /dev/null
-+++ b/submodules/GalleryUI/Sources/AyuGalleryMenuIcons.swift
-@@ -0,0 +1,18 @@
-+import Foundation
-+import UIKit
-+import Display
-+import AppBundle
++    /// Section numbers follow `SettingsSection` in PeerInfoSettingsItems.swift.
++    public static let rows: [Row] = [
++        Row(key: "emojiStatus", titleRu: "Статус-эмодзи", titleEn: "Emoji status", section: 0, itemId: 0),
++        Row(key: "profileColor", titleRu: "Цвет профиля", titleEn: "Profile color", section: 0, itemId: 1),
++        Row(key: "setPhoto", titleRu: "Установить фото", titleEn: "Set photo", section: 0, itemId: 2),
++        Row(key: "addAccount", titleRu: "Добавить аккаунт", titleEn: "Add account", section: 2, itemId: 100),
++        Row(key: "myProfile", titleRu: "Мой профиль", titleEn: "My profile", section: 3, itemId: 0),
++        Row(key: "wallet", titleRu: "Кошелёк", titleEn: "Wallet", section: 4, itemId: 0),
++        Row(key: "proxy", titleRu: "Прокси", titleEn: "Proxy", section: 5, itemId: 0),
++        Row(key: "favorites", titleRu: "Избранное", titleEn: "Saved Messages", section: 7, itemId: 1),
++        Row(key: "recentCalls", titleRu: "Недавние звонки", titleEn: "Recent calls", section: 7, itemId: 2),
++        Row(key: "devices", titleRu: "Устройства", titleEn: "Devices", section: 7, itemId: 3),
++        Row(key: "folders", titleRu: "Папки с чатами", titleEn: "Chat folders", section: 7, itemId: 4),
++        Row(key: "notifications", titleRu: "Уведомления и звуки", titleEn: "Notifications and sounds", section: 8, itemId: 0),
++        Row(key: "privacy", titleRu: "Конфиденциальность", titleEn: "Privacy and security", section: 8, itemId: 1),
++        Row(key: "dataAndStorage", titleRu: "Данные и память", titleEn: "Data and storage", section: 8, itemId: 2),
++        Row(key: "appearance", titleRu: "Оформление", titleEn: "Appearance", section: 8, itemId: 3),
++        Row(key: "language", titleRu: "Язык", titleEn: "Language", section: 8, itemId: 4),
++        Row(key: "energySaving", titleRu: "Энергосбережение", titleEn: "Power saving", section: 8, itemId: 6),
++        Row(key: "premium", titleRu: "Telegram Premium", titleEn: "Telegram Premium", section: 9, itemId: 100),
++        Row(key: "stars", titleRu: "Звёзды", titleEn: "Stars", section: 9, itemId: 102),
++        Row(key: "ton", titleRu: "TON", titleEn: "TON", section: 9, itemId: 103),
++        Row(key: "business", titleRu: "Telegram для бизнеса", titleEn: "Telegram Business", section: 9, itemId: 104),
++        Row(key: "sendGift", titleRu: "Отправить подарок", titleEn: "Send a gift", section: 9, itemId: 105),
++        Row(key: "passport", titleRu: "Telegram Passport", titleEn: "Telegram Passport", section: 10, itemId: 0),
++        Row(key: "appleWatch", titleRu: "Apple Watch", titleEn: "Apple Watch", section: 10, itemId: 1),
++        Row(key: "support", titleRu: "Задать вопрос", titleEn: "Ask a question", section: 11, itemId: 0),
++        Row(key: "faq", titleRu: "Вопросы о Telegram", titleEn: "Telegram FAQ", section: 11, itemId: 1),
++        Row(key: "tips", titleRu: "Возможности Telegram", titleEn: "Telegram features", section: 11, itemId: 2)
++    ]
 +
-+/// Selection mark for the video settings menu (speed, quality). The stock mark was a check
-+/// tinted plain white, which vanished whenever the menu background was light (Material
-+/// Design 3 uses flat light panels); it now follows the menu's text colour, and in Material
-+/// Design 3 it is an M3 radio button like the rest of that style.
-+func ayuGalleryMenuSelectionIcon(_ selected: Bool, color: UIColor) -> UIImage? {
-+    if AyuMaterialControls.isEnabled {
-+        return generateImage(CGSize(width: 24.0, height: 24.0), rotatedContext: { size, context in
-+            context.clear(CGRect(origin: .zero, size: size))
-+            AyuMaterialSelectionDrawing.drawRadio(context: context, size: size, selected: selected, primary: color, outline: color.withAlphaComponent(0.55))
++    private static let defaultsKey = "ayu.appearance.hiddenSettingsRows"
++
++    public static var hiddenKeys: Set<String> {
++        get { return Set(UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []) }
++        set {
++            UserDefaults.standard.set(Array(newValue).sorted(), forKey: defaultsKey)
++            NotificationCenter.default.post(name: AyuAppearancePlus.didChangeNotification, object: nil)
++        }
++    }
++
++    /// Whether the Settings row at (section, item id) is hidden.
++    public static func isHidden(section: Int, itemId: AnyHashable) -> Bool {
++        let hidden = self.hiddenKeys
++        guard !hidden.isEmpty else { return false }
++        return self.rows.contains(where: { row in
++            row.section == section && hidden.contains(row.key) && (itemId == AnyHashable(Int(row.itemId)) || itemId == AnyHashable(row.itemId))
 +        })
 +    }
-+    return selected ? generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: color) : UIImage()
 +}
-diff --git a/submodules/GalleryUI/Sources/Items/UniversalVideoGalleryItem.swift b/submodules/GalleryUI/Sources/Items/UniversalVideoGalleryItem.swift
-index 7636bd18..1c00a0fb 100644
---- a/submodules/GalleryUI/Sources/Items/UniversalVideoGalleryItem.swift
-+++ b/submodules/GalleryUI/Sources/Items/UniversalVideoGalleryItem.swift
-@@ -3579,11 +3579,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
-                         let isSelected = abs(status.baseRate - rate) < 0.01
-                         items.append(.action(ContextMenuActionItem(text: text, icon: { _ in return nil }, iconSource: ContextMenuActionItemIconSource(size: CGSize(width: 24.0, height: 24.0), signal: sliderValuePromise.get()
-                         |> map { value in
--                            if isSelected && value == nil {
--                                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: .white)
--                            } else {
--                                return UIImage()
--                            }
-+                            return ayuGalleryMenuSelectionIcon(isSelected && value == nil, color: .white)
-                         }), action: { _, f in
-                             f(.default)
-                             
-@@ -3611,12 +3607,8 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
-                         } else {
-                             textLayout = .singleLine
-                         }
--                        items.append(.action(ContextMenuActionItem(id: AnyHashable("q"), text: qualityText, textLayout: textLayout, icon: { _ in
--                            if isSelected {
--                                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: .white)
--                            } else {
--                                return UIImage()
--                            }
-+                        items.append(.action(ContextMenuActionItem(id: AnyHashable("q"), text: qualityText, textLayout: textLayout, icon: { theme in
-+                            return ayuGalleryMenuSelectionIcon(isSelected, color: theme.contextMenu.primaryColor)
-                         }, action: { [weak strongSelf] _, f in
-                             f(.default)
-                             
-@@ -3665,12 +3657,8 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
-                                     qualityDebugText += ", \(dataSizeString(size, formatting: DataSizeStringFormatting(presentationData: strongSelf.presentationData)))"
-                                 }
-                             }
--                            items.append(.action(ContextMenuActionItem(text: qualityTitle, textLayout: .secondLineWithValue("\(quality)p\(qualityDebugText)"), icon: { _ in
--                                if isSelected {
--                                    return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: .white)
--                                } else {
--                                    return UIImage()
--                                }
-+                            items.append(.action(ContextMenuActionItem(text: qualityTitle, textLayout: .secondLineWithValue("\(quality)p\(qualityDebugText)"), icon: { theme in
-+                                return ayuGalleryMenuSelectionIcon(isSelected, color: theme.contextMenu.primaryColor)
-                             }, action: { [weak self] _, f in
-                                 f(.default)
-                                 
 diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
 new file mode 100644
-index 00000000..d6f68519
+index 00000000..884153e7
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,108 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -976,6 +947,7 @@ index 00000000..d6f68519
 +    case classicDesign = 21
 +    case slowMotion = 25
 +    case relaunchInfo = 30
++    case settingsRows = 35
 +    case reset = 41
 +}
 +
@@ -993,8 +965,13 @@ index 00000000..d6f68519
 +
 +func ayuAppearancePlusController(context: AccountContext) -> ViewController {
 +    var presentController: ((ViewController) -> Void)?
++    var push: ((ViewController) -> Void)?
 +
 +    let arguments = AyuSectionedArguments(open: { id in
++        if id == AyuAppearancePlusRow.settingsRows.rawValue {
++            push?(ayuSettingsVisibilityController(context: context))
++            return
++        }
 +        if id == AyuAppearancePlusRow.slowMotion.rawValue {
 +            let steps = AyuAppearancePlus.slowMotionSteps
 +            let current = AyuAppearancePlus.slowMotionFactor
@@ -1045,6 +1022,8 @@ index 00000000..d6f68519
 +        if AyuAppearancePlus.needsRelaunch {
 +            entries.append(.info(3, AyuAppearancePlusRow.relaunchInfo.rawValue, ru ? "⚠️ Перезапустите приложение, чтобы применить стекло и дизайн." : "⚠️ Relaunch the app to apply the glass and design changes."))
 +        }
++        entries.append(.header(4, 34, ru ? "НАСТРОЙКИ" : "SETTINGS"))
++        entries.append(.link(4, AyuAppearancePlusRow.settingsRows.rawValue, symbol("list.bullet.rectangle.fill", 0x8E8E93), ru ? "Пункты в Настройках" : "Settings rows", AyuSettingsVisibility.hiddenKeys.isEmpty ? "" : (ru ? "скрыто \(AyuSettingsVisibility.hiddenKeys.count)" : "\(AyuSettingsVisibility.hiddenKeys.count) hidden")))
 +        entries.append(.link(4, AyuAppearancePlusRow.reset.rawValue, symbol("arrow.counterclockwise", 0xFF3B30), ru ? "Сбросить оформление" : "Reset appearance", ""))
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Оформление+" : "Appearance+"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
@@ -1052,6 +1031,7 @@ index 00000000..d6f68519
 +    }
 +    let controller = ItemListController(context: context, state: signal)
 +    presentController = { [weak controller] in controller?.present($0, in: .window(.root)) }
++    push = { [weak controller] in controller?.push($0) }
 +    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
@@ -2508,6 +2488,66 @@ index 00000000..80e64c66
 +        return AyuCodePluginItem(id: plugin.id, name: plugin.name, author: plugin.author, version: plugin.version, description: plugin.description, enabled: plugin.enabled, timedOut: plugin.disabledReason == "timeout", activity: activity)
 +    }
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsVisibilityController.swift b/submodules/SettingsUI/Sources/AyuSettingsVisibilityController.swift
+new file mode 100644
+index 00000000..8729d0f7
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuSettingsVisibilityController.swift
+@@ -0,0 +1,54 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++// Appearance+ → Settings rows: show or hide each row of the main Settings page.
++
++private func ayuSettingsVisibilitySignal() -> Signal<Set<String>, NoError> {
++    return Signal { subscriber in
++        subscriber.putNext(AyuSettingsVisibility.hiddenKeys)
++        let observer = NotificationCenter.default.addObserver(forName: AyuAppearancePlus.didChangeNotification, object: nil, queue: .main, using: { _ in
++            subscriber.putNext(AyuSettingsVisibility.hiddenKeys)
++        })
++        return ActionDisposable {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++}
++
++func ayuSettingsVisibilityController(context: AccountContext) -> ViewController {
++    let rows = AyuSettingsVisibility.rows
++    let arguments = AyuSectionedArguments(open: { id in
++        if id == 1000 {
++            AyuSettingsVisibility.hiddenKeys = []
++        }
++    }, toggle: { id, value in
++        let index = Int(id) - 1
++        guard rows.indices.contains(index) else { return }
++        var hidden = AyuSettingsVisibility.hiddenKeys
++        if value { hidden.remove(rows[index].key) } else { hidden.insert(rows[index].key) }
++        AyuSettingsVisibility.hiddenKeys = hidden
++    })
++
++    let signal = combineLatest(context.sharedContext.presentationData, ayuSettingsVisibilitySignal())
++    |> deliverOnMainQueue
++    |> map { presentationData, hidden -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        var entries: [AyuSectionedEntry] = [.header(1, 0, ru ? "ПОКАЗЫВАТЬ В НАСТРОЙКАХ" : "SHOW IN SETTINGS")]
++        for (index, row) in rows.enumerated() {
++            entries.append(.toggle(1, Int32(index + 1), nil, ru ? row.titleRu : row.titleEn, nil, !hidden.contains(row.key)))
++        }
++        entries.append(.info(1, 999, ru ? "Скрытый пункт пропадает со страницы «Настройки»; сами разделы остаются доступны через поиск и ссылки." : "A hidden row disappears from the Settings page; the screens themselves stay reachable through search and links."))
++        entries.append(.link(2, 1000, AyuSettingsIcons.symbol("arrow.counterclockwise", color: UIColor(rgb: 0xFF3B30)), ru ? "Показать все пункты" : "Show all rows", hidden.isEmpty ? "" : "\(hidden.count)"))
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Пункты в Настройках" : "Settings rows"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    return ItemListController(context: context, state: signal)
++}
 diff --git a/submodules/TabBarUI/Sources/TabBarContollerNode.swift b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
 index 5afb5e98..5fee5e91 100644
 --- a/submodules/TabBarUI/Sources/TabBarContollerNode.swift
@@ -3643,6 +3683,20 @@ index 92d7de3d..af0dbefc 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
+index 80a7b214..70d9d233 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
+@@ -361,7 +361,8 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
+     
+     var result: [(AnyHashable, [PeerInfoScreenItem])] = []
+     for section in SettingsSection.allCases {
+-        if let sectionItems = items[section], !sectionItems.isEmpty {
++        // AyuGram Appearance+: rows the user chose to hide.
++        if let sectionItems = items[section]?.filter({ !AyuSettingsVisibility.isHidden(section: section.rawValue, itemId: $0.id) }), !sectionItems.isEmpty {
+             result.append((section, sectionItems))
+         }
+     }
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
 index ed6a26a2..c3e5cc70 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift

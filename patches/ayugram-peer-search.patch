@@ -1,0 +1,130 @@
+diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+index 1c6e807..e2236c5 100644
+--- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+@@ -23,6 +23,7 @@ private enum AyuGramRow: Int32 {
+     case nearbyContact = 23
+     case interface = 24
+     case navigationAndComposer = 25
++    case peerSearch = 26
+     case channel = 31
+     case sourceCode = 32
+ }
+@@ -55,6 +56,8 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             push?(ayuInterfacePageController(context: context))
+         case .navigationAndComposer:
+             push?(ayuInterfacePageController(context: context, navigationOnly: true))
++        case .peerSearch:
++            push?(ayuPeerSearchController(context: context))
+         case .channel:
+             ayuOpenChannel(context: context, navigation: navigation?())
+         case .sourceCode:
+@@ -71,6 +74,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+         .nearbyContact: AyuSettingsIcons.symbol("antenna.radiowaves.left.and.right", color: UIColor(rgb: 0x007AFF)),
+         .interface: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x32ADE6)),
+         .navigationAndComposer: AyuSettingsIcons.symbol("slider.horizontal.3", color: UIColor(rgb: 0x5856D6)),
++        .peerSearch: AyuSettingsIcons.symbol("magnifyingglass", color: UIColor(rgb: 0x007AFF)),
+         .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
+         .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
+     ]
+@@ -93,6 +97,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             link(3, .localPremium, AyuStrings.localPremiumStatus.text(ru)),
+             link(3, .filters, AyuStrings.filters.text(ru)),
+             .badgedLink(3, AyuGramRow.nearbyContact.rawValue, icons[.nearbyContact] ?? nil, AyuStrings.nearbyContact.text(ru), "BETA", 0xFFD60A),
++            link(3, .peerSearch, ru ? "Поиск каналов и людей" : "Find channels and people"),
+             link(3, .interface, ru ? "Интерфейс и чаты" : "Interface & Chats"),
+             link(3, .navigationAndComposer, ru ? "Навигация и редактор" : "Navigation and composer"),
+             .header(4, 30, AyuStrings.links.text(ru)),
+diff --git a/submodules/SettingsUI/Sources/AyuPeerSearchController.swift b/submodules/SettingsUI/Sources/AyuPeerSearchController.swift
+new file mode 100644
+index 0000000..9e113f0
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuPeerSearchController.swift
+@@ -0,0 +1,87 @@
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++
++/// Searches Telegram's public directory and peers already known to this account.
++private final class AyuPeerSearchController: AyuPluginTableController, UISearchBarDelegate {
++    private let context: AccountContext
++    private let request = MetaDisposable()
++    private var peers: [EnginePeer] = []
++    private let search = UISearchBar()
++    private let russian: Bool
++    private var generation = 0
++    private var status = ""
++
++    init(context: AccountContext) {
++        self.context = context
++        self.russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        super.init(style: .insetGrouped)
++        self.title = self.russian ? "Поиск каналов и людей" : "Find channels and people"
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.request.dispose() }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.search.delegate = self
++        self.search.placeholder = self.russian ? "Название, @username или ID" : "Name, @username or ID"
++        self.search.frame.size.height = 56.0
++        self.tableView.tableHeaderView = self.search
++        self.status = self.russian ? "Для поиска по ID пользователь должен быть известен аккаунту. Доступные каналы также проверяются в Telegram." : "ID lookup uses peers known to your account and checks available channels on Telegram."
++    }
++    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
++        searchBar.resignFirstResponder()
++        let query = (searchBar.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++        self.generation += 1
++        let generation = self.generation
++        self.request.set(nil)
++        self.peers = []
++        guard !query.isEmpty else { self.tableView.reloadData(); return }
++        self.status = self.russian ? "Ищем…" : "Searching…"
++        self.tableView.reloadData()
++        let trimmed = query.hasPrefix("-100") ? String(query.dropFirst(4)) : query
++        if let id = Int64(trimmed), id > 0 {
++            let user = EnginePeer.Id(namespace: Namespaces.Peer.CloudUser, id: EnginePeer.Id.Id._internalFromInt64Value(id))
++            let channel = EnginePeer.Id(namespace: Namespaces.Peer.CloudChannel, id: EnginePeer.Id.Id._internalFromInt64Value(id))
++            let local = self.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: user), TelegramEngine.EngineData.Item.Peer.Peer(id: channel))
++            let remote = self.context.engine.peers.findChannelById(channelId: id)
++            self.request.set((combineLatest(local, remote) |> deliverOnMainQueue).startStrict(next: { [weak self] local, remote in
++                guard let self, self.generation == generation else { return }
++                self.show([local.0, local.1, remote].compactMap { $0 })
++            }))
++        } else {
++            let text = query.hasPrefix("@") ? String(query.dropFirst()) : query
++            self.request.set((self.context.engine.contacts.searchRemotePeers(query: text) |> deliverOnMainQueue).startStrict(next: { [weak self] own, global in
++                guard let self, self.generation == generation else { return }
++                self.show((own + global).map { $0.peer })
++            }))
++        }
++    }
++    private func show(_ results: [EnginePeer]) {
++        var ids = Set<EnginePeer.Id>()
++        self.peers = results.filter { ids.insert($0.id).inserted }
++        self.status = self.peers.isEmpty ? (self.russian ? "Ничего не найдено или объект недоступен." : "Nothing found or the peer is unavailable.") : ""
++        self.tableView.reloadData()
++    }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { self.peers.count }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? { self.status }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let peer = self.peers[indexPath.row]
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        cell.textLabel?.text = peer.compactDisplayTitle
++        cell.detailTextLabel?.text = "ID: \(peer.id.id._internalGetInt64Value())"
++        cell.accessoryType = .disclosureIndicator
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard let navigation = self.context.sharedContext.mainWindow?.viewController as? NavigationController else { return }
++        self.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigation, context: self.context, chatLocation: .peer(self.peers[indexPath.row])))
++    }
++}
++
++func ayuPeerSearchController(context: AccountContext) -> ViewController {
++    return AyuHostedNavigationScreen(context: context, root: AyuPeerSearchController(context: context))
++}

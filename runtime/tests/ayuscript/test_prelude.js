@@ -88,4 +88,15 @@ function run(plugin) {
     assert.strictEqual(typeof sandbox.ayu.hooks.replace, 'function');
 }
 
+// 5. The documented example plugin replaces the outgoing handler and disables a feature.
+{
+    const example = fs.readFileSync(path.join(__dirname, '../../../docs/examples/smart-quotes.ayu.js'), 'utf8');
+    const { calls } = run(example);
+    const hook = calls.hooks.find((h) => h.point === 'message.outgoing.text');
+    assert(hook && hook.mode === 'replace', 'example replaces the outgoing handler');
+    assert.strictEqual(hook.fn('say "hi" -- ok', { peerId: '1' }), 'say “hi” — ok');
+    assert.strictEqual(hook.fn('он сказал "привет"', { peerId: '1' }), 'он сказал «привет»');
+    assert.deepStrictEqual(calls.features, [['fastShare', true]]);
+}
+
 console.log('ayuscript prelude: all checks passed');

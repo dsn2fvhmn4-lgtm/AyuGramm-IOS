@@ -1206,10 +1206,10 @@ index 9743501e..496d3a52 100644
      plugins.nativePluginSettings = { plugin in
          return AyuNativePluginSettingsController(plugin: plugin, russian: russian, palette: palette, icon: AyuSettingsIcons.plugin(size: 88.0), runAutoArchive: { completion in
 diff --git a/submodules/SettingsUI/Sources/AyuPeerSearchController.swift b/submodules/SettingsUI/Sources/AyuPeerSearchController.swift
-index db2748e1..b2516ba1 100644
+index db2748e1..2711f021 100644
 --- a/submodules/SettingsUI/Sources/AyuPeerSearchController.swift
 +++ b/submodules/SettingsUI/Sources/AyuPeerSearchController.swift
-@@ -5,81 +5,341 @@ import TelegramCore
+@@ -5,81 +5,342 @@ import TelegramCore
  import AccountContext
  import LocalizedPeerData
  
@@ -1496,6 +1496,7 @@ index db2748e1..b2516ba1 100644
 +            if case .broadcast = channel.info { return self.russian ? "канал" : "channel" }
 +            return self.russian ? "супергруппа" : "supergroup"
 +        case .secretChat: return self.russian ? "секретный чат" : "secret chat"
++        default: return self.russian ? "чат" : "chat"
 +        }
 +    }
 +
@@ -2532,10 +2533,10 @@ index 00000000..a9f3c1f0
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPeerArchive.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPeerArchive.swift
 new file mode 100644
-index 00000000..ccd05137
+index 00000000..894ec525
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuPeerArchive.swift
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,188 @@
 +import Foundation
 +import Postbox
 +
@@ -2647,7 +2648,8 @@ index 00000000..ccd05137
 +        case let .channel(channel):
 +            if case .broadcast = channel.info { kind = .channel } else { kind = .group }
 +            title = channel.title
-+        case .secretChat:
++        default:
++            // Secret chats and communities are not archived.
 +            return
 +        }
 +        let usernames = peer.usernames.map { $0.username }.filter { !$0.isEmpty }

@@ -2805,10 +2805,10 @@ index 00000000..8729d0f7
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuWhiteGramController.swift b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
 new file mode 100644
-index 00000000..ac97fcdb
+index 00000000..87d4b7b2
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,239 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -2835,10 +2835,12 @@ index 00000000..ac97fcdb
 +    case disableChatSwipeOptions = 16
 +    case showCharCountTyping = 17
 +    case showFullViewCount = 18
-+    case hideBottomTabBar = 21
-+    case tabBarScale = 22
-+    case tabBarWidth = 23
-+    case tabsAndGlass = 24
++    case showCharCountMessages = 19
++    case showActionTime = 20
++    case hideBottomTabBar = 22
++    case tabBarScale = 23
++    case tabBarWidth = 24
++    case tabsAndGlass = 25
 +    case customFontEnabled = 31
 +    case importFont = 32
 +    case chooseFont = 33
@@ -2976,6 +2978,8 @@ index 00000000..ac97fcdb
 +        case .hideBusinessBotPanel?: AyuWhiteGram.set(value, forKey: "hideBusinessBotPanel")
 +        case .disableChatSwipeOptions?: AyuWhiteGram.set(value, forKey: "disableChatSwipeOptions")
 +        case .showCharCountTyping?: AyuWhiteGram.set(value, forKey: "showCharCountTyping")
++        case .showCharCountMessages?: AyuWhiteGram.set(value, forKey: "showCharCountMessages")
++        case .showActionTime?: AyuWhiteGram.set(value, forKey: "showActionTime")
 +        case .showFullViewCount?:
 +            // The same switch as exteraGram's "disable number rounding": one setting, two entry points.
 +            try? store.update { $0.interface.disableNumberRounding = value }
@@ -3017,7 +3021,9 @@ index 00000000..ac97fcdb
 +            row(2, .disableChatSwipeOptions, symbol("hand.draw.fill", 0xFF3B30), ru ? "Без свайпов в списке чатов" : "No chat list swipes", nil, AyuWhiteGram.disableChatSwipeOptions),
 +            row(2, .showCharCountTyping, symbol("textformat.123", 0x5856D6), ru ? "Счётчик символов при наборе" : "Character count while typing", nil, AyuWhiteGram.showCharCountTyping),
 +            row(2, .showFullViewCount, symbol("eye.fill", 0x32ADE6), ru ? "Полные числа просмотров" : "Full view counts", ru ? "12 345 вместо 12K" : "12,345 instead of 12K", settings.interface.disableNumberRounding),
-+            .header(3, 20, ru ? "НИЖНЯЯ ПАНЕЛЬ" : "TAB BAR"),
++            row(2, .showCharCountMessages, symbol("number", 0x5856D6), ru ? "Счётчик символов в сообщениях" : "Character count in messages", ru ? "Рядом со временем" : "Beside the time", AyuWhiteGram.showCharCountMessages),
++            row(2, .showActionTime, symbol("clock.fill", 0xFF9500), ru ? "Время у служебных сообщений" : "Time on service messages", ru ? "«Вступил в группу · 12:30»" : "“joined the group · 12:30”", AyuWhiteGram.showActionTime),
++            .header(3, 21, ru ? "НИЖНЯЯ ПАНЕЛЬ" : "TAB BAR"),
 +            row(3, .hideBottomTabBar, symbol("rectangle.bottomhalf.inset.filled", 0x8E8E93), ru ? "Скрыть нижнюю панель" : "Hide tab bar", ru ? "Переход между вкладками — из настроек и поиска" : "Switch tabs from settings and search", AyuWhiteGram.hideBottomTabBar),
 +            link(3, .tabBarScale, symbol("arrow.up.left.and.arrow.down.right", 0x007AFF), ru ? "Масштаб панели" : "Tab bar scale", percent(AyuWhiteGram.tabBarScale)),
 +            link(3, .tabBarWidth, symbol("arrow.left.and.right", 0x007AFF), ru ? "Ширина панели" : "Tab bar width", percent(AyuWhiteGram.tabBarWidth)),
@@ -4261,6 +4267,27 @@ index 4d80c191..6374b809 100644
  
          var incomingGradientColors: [UIColor]?
          if Set(incoming.fill.map(\.argb)).count > 1 {
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageActionBubbleContentNode/Sources/ChatMessageActionBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageActionBubbleContentNode/Sources/ChatMessageActionBubbleContentNode.swift
+index dd4d37af..adb0feb1 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageActionBubbleContentNode/Sources/ChatMessageActionBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageActionBubbleContentNode/Sources/ChatMessageActionBubbleContentNode.swift
+@@ -27,7 +27,15 @@ import ReactionSelectionNode
+ import MultilineTextComponent
+ 
+ private func attributedServiceMessageString(theme: ChatPresentationThemeData, strings: PresentationStrings, nameDisplayOrder: PresentationPersonNameOrder, dateTimeFormat: PresentationDateTimeFormat, message: EngineRawMessage, messageCount: Int? = nil, accountPeerId: EnginePeer.Id, forForumOverview: Bool) -> NSAttributedString? {
+-    return universalServiceMessageString(presentationData: (theme.theme, theme.wallpaper), strings: strings, nameDisplayOrder: nameDisplayOrder, dateTimeFormat: dateTimeFormat, message: EngineMessage(message), messageCount: messageCount, accountPeerId: accountPeerId, forChatList: false, forForumOverview: forForumOverview)
++    let string = universalServiceMessageString(presentationData: (theme.theme, theme.wallpaper), strings: strings, nameDisplayOrder: nameDisplayOrder, dateTimeFormat: dateTimeFormat, message: EngineMessage(message), messageCount: messageCount, accountPeerId: accountPeerId, forChatList: false, forForumOverview: forForumOverview)
++    // WhiteGram "show action time": the event's local time after the service text.
++    guard AyuWhiteGram.showActionTime, let string, string.length > 0 else {
++        return string
++    }
++    let result = NSMutableAttributedString(attributedString: string)
++    let attributes = string.attributes(at: max(0, string.length - 1), effectiveRange: nil)
++    result.append(NSAttributedString(string: " · " + stringForMessageTimestamp(timestamp: message.timestamp, dateTimeFormat: dateTimeFormat), attributes: attributes))
++    return result
+ }
+ 
+ public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
 index 25f0a555..4755a32f 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
@@ -4293,6 +4320,28 @@ index 1047a0fd..37797234 100644
          strongSelf.appliedForwardInfo = ChatMessageAppliedForwardInfo(messageId: item.content.firstMessage.id, source: forwardSource, authorSignature: forwardAuthorSignature)
          strongSelf.updateAccessibilityData(accessibilityData)
          strongSelf.disablesComments = disablesComments
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
+index 2d168b5e..2ee94179 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode/Sources/StringForMessageTimestampStatus.swift
+@@ -6,6 +6,7 @@ import TelegramStringFormatting
+ import TextFormat
+ import LocalizedPeerData
+ import AccountContext
++import Display
+ 
+ public enum MessageTimestampStatusFormat {
+     case full
+@@ -271,5 +272,9 @@ public func stringForMessageTimestampStatus(
+             dateText = "\(label) · \(dateText)"
+         }
+     }
++    // WhiteGram: character count of the message text beside its time.
++    if AyuWhiteGram.showCharCountMessages, !message.text.isEmpty {
++        dateText = "\(message.text.count) · \(dateText)"
++    }
+     return dateText
+ }
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
 index 7e2dc75d..a34811ac 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
@@ -6048,13 +6097,19 @@ index c5b61bf2..2987a9b6 100644
 +    }
  }
 diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
-index 1a77683e..6ef5056d 100644
+index 1a77683e..878dccc6 100644
 --- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
 +++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
-@@ -82,6 +82,17 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+@@ -82,6 +82,23 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
              menu.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in self?.playerView?.adjustLyricsOffset(by: offset) }))
          }
          menu.addAction(UIAlertAction(title: russian ? "Сбросить сдвиг" : "Reset timing", style: .default, handler: { [weak self] _ in self?.playerView?.adjustLyricsOffset(by: nil) }))
++        // WhiteGram music speed.
++        let currentRate = self.playerView?.playbackRate ?? 1.0
++        for rate in [0.75, 1.0, 1.25, 1.5, 2.0] {
++            let title = (russian ? "Скорость " : "Speed ") + String(format: rate == rate.rounded() ? "%.0f×" : "%.2g×", rate) + (abs(currentRate - rate) < 0.01 ? " ✓" : "")
++            menu.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in self?.playerView?.setPlaybackRate(rate) }))
++        }
 +        menu.addAction(UIAlertAction(title: russian ? "Распознать трек (Shazam)" : "Recognize track (Shazam)", style: .default, handler: { [weak self] _ in
 +            self?.playerView?.recognizeWithShazam(completion: { [weak self] message in
 +                guard let self else { return }
@@ -6069,7 +6124,7 @@ index 1a77683e..6ef5056d 100644
          menu.addAction(UIAlertAction(title: russian ? "Загрузить LRC или Lyricsfile" : "Import LRC or Lyricsfile", style: .default, handler: { [weak self] _ in
              guard let self else { return }
              let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
-@@ -126,7 +137,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+@@ -126,7 +143,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
              self.finishDismiss(completion: completion)
              return
          }
@@ -6078,7 +6133,7 @@ index 1a77683e..6ef5056d 100644
              self?.finishDismiss(completion: completion)
          })
      }
-@@ -145,7 +156,10 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+@@ -145,7 +162,10 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
          guard let playerView = self.playerView else {
              return
          }
@@ -6090,7 +6145,7 @@ index 1a77683e..6ef5056d 100644
          playerView.safeInsets = UIEdgeInsets(top: max(layout.statusBarHeight ?? 0.0, layout.safeInsets.top), left: layout.safeInsets.left, bottom: max(layout.intrinsicInsets.bottom, layout.safeInsets.bottom), right: layout.safeInsets.right)
          playerView.setNeedsLayout()
      }
-@@ -239,6 +253,21 @@ final class AyuMusicPlayerView: UIView {
+@@ -239,6 +259,21 @@ final class AyuMusicPlayerView: UIView {
      private var showsLyrics = false
      private var isScrubbing = false
      private var dragOffset: CGFloat = 0.0
@@ -6112,7 +6167,7 @@ index 1a77683e..6ef5056d 100644
  
      init(context: AccountContext, type: MediaManagerPlayerType) {
          self.queueView = AyuMusicQueueView(context: context)
-@@ -265,6 +294,10 @@ final class AyuMusicPlayerView: UIView {
+@@ -265,6 +300,10 @@ final class AyuMusicPlayerView: UIView {
          self.artworkShadow.layer.shadowOffset = CGSize(width: 0.0, height: 12.0)
          self.artworkShadow.addSubview(self.artworkNode.view)
          self.addSubview(self.artworkShadow)
@@ -6123,7 +6178,7 @@ index 1a77683e..6ef5056d 100644
  
          self.titleLabel.font = ayuMusicFont(ofSize: 21.0)
          self.titleLabel.textColor = .white
-@@ -355,6 +388,8 @@ final class AyuMusicPlayerView: UIView {
+@@ -355,6 +394,8 @@ final class AyuMusicPlayerView: UIView {
  
          let pan = UIPanGestureRecognizer(target: self, action: #selector(self.dismissPan(_:)))
          self.addGestureRecognizer(pan)
@@ -6132,7 +6187,7 @@ index 1a77683e..6ef5056d 100644
  
          self.stateDisposable = (context.sharedContext.mediaManager.musicMediaPlayerState
          |> deliverOnMainQueue).startStrict(next: { [weak self] value in
-@@ -362,7 +397,11 @@ final class AyuMusicPlayerView: UIView {
+@@ -362,7 +403,11 @@ final class AyuMusicPlayerView: UIView {
          })
  
          let displayLink = CADisplayLink(target: AyuWeakTarget(self), selector: #selector(AyuWeakTarget.tick))
@@ -6145,7 +6200,7 @@ index 1a77683e..6ef5056d 100644
          displayLink.add(to: .main, forMode: .common)
          self.displayLink = displayLink
      }
-@@ -372,6 +411,9 @@ final class AyuMusicPlayerView: UIView {
+@@ -372,6 +417,9 @@ final class AyuMusicPlayerView: UIView {
      }
  
      deinit {
@@ -6155,7 +6210,7 @@ index 1a77683e..6ef5056d 100644
          self.hapticsResource?.dispose()
          self.stateDisposable?.dispose()
          self.lyricsDisposable?.dispose()
-@@ -381,14 +423,29 @@ final class AyuMusicPlayerView: UIView {
+@@ -381,14 +429,29 @@ final class AyuMusicPlayerView: UIView {
      // MARK: State
  
      private func update(state value: (Account, SharedMediaPlayerItemPlaybackStateOrLoading, MediaManagerPlayerType)?) {
@@ -6188,7 +6243,7 @@ index 1a77683e..6ef5056d 100644
              return
          }
          self.hadState = true
-@@ -428,21 +485,53 @@ final class AyuMusicPlayerView: UIView {
+@@ -428,21 +491,53 @@ final class AyuMusicPlayerView: UIView {
              }
          }
  
@@ -6243,7 +6298,7 @@ index 1a77683e..6ef5056d 100644
              let emptyColor = UIColor(white: 0.22, alpha: 1.0)
              self.artworkNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: false, emptyColor: emptyColor))
              self.backdropNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: true, emptyColor: emptyColor, drawPlaceholderWhenEmpty: false))
-@@ -478,12 +567,22 @@ final class AyuMusicPlayerView: UIView {
+@@ -478,12 +573,22 @@ final class AyuMusicPlayerView: UIView {
          self.musicHaptics.tick(time: timestamp, playing: hapticsPlaying && self.musicHapticsEnabled && self.musicHapticsActive && !self.isScrubbing && self.window != nil && UIApplication.shared.applicationState == .active)
          if !self.isScrubbing {
              self.scrubber.progress = status.duration > 0.0 ? CGFloat(timestamp / status.duration) : 0.0
@@ -6268,7 +6323,7 @@ index 1a77683e..6ef5056d 100644
      }
  
      func setHapticsActive(_ active: Bool) {
-@@ -535,6 +634,7 @@ final class AyuMusicPlayerView: UIView {
+@@ -535,6 +640,7 @@ final class AyuMusicPlayerView: UIView {
          }
          let timestamp = Double(fraction) * status.duration
          self.isScrubbing = !finished
@@ -6276,7 +6331,7 @@ index 1a77683e..6ef5056d 100644
          self.elapsedLabel.text = ayuFormatTime(timestamp)
          self.remainingLabel.text = "-" + ayuFormatTime(max(0.0, status.duration - timestamp))
          if finished {
-@@ -542,6 +642,100 @@ final class AyuMusicPlayerView: UIView {
+@@ -542,6 +648,109 @@ final class AyuMusicPlayerView: UIView {
          }
      }
  
@@ -6368,6 +6423,15 @@ index 1a77683e..6ef5056d 100644
 +        })
 +    }
 +
++    var playbackRate: Double {
++        return self.status?.baseRate ?? 1.0
++    }
++
++    func setPlaybackRate(_ rate: Double) {
++        self.control(.setBaseRate(AudioPlaybackRate(rate)))
++        self.debugOverlay.note(String(format: "rate %.2fx", rate))
++    }
++
 +    func forgetRecognizedIdentity() {
 +        guard let file = self.currentHapticsFile else { return }
 +        AyuTrackRecognizer.remember(nil, fileId: file.media.fileId.id)
@@ -6377,7 +6441,7 @@ index 1a77683e..6ef5056d 100644
      // MARK: Actions
  
      @objc private func previousPressed() {
-@@ -568,7 +762,13 @@ final class AyuMusicPlayerView: UIView {
+@@ -568,7 +777,13 @@ final class AyuMusicPlayerView: UIView {
          } else { self.queueView.isHidden = true }
          self.queueButton.backgroundColor = self.showsQueue ? UIColor.white.withAlphaComponent(0.2) : .clear
          self.queueButton.layer.cornerRadius = 22.0
@@ -6392,7 +6456,7 @@ index 1a77683e..6ef5056d 100644
      }
  
      @objc private func lyricsHeld(_ gesture: UILongPressGestureRecognizer) {
-@@ -633,6 +833,13 @@ final class AyuMusicPlayerView: UIView {
+@@ -633,6 +848,13 @@ final class AyuMusicPlayerView: UIView {
                  return
              }
              self.lyricsView.set(lyrics: lyrics, loading: false, russian: self.russian)
@@ -6406,7 +6470,7 @@ index 1a77683e..6ef5056d 100644
              self.tick()
          })
      }
-@@ -652,7 +859,7 @@ final class AyuMusicPlayerView: UIView {
+@@ -652,7 +874,7 @@ final class AyuMusicPlayerView: UIView {
              self.artworkShadow.layer.shadowOpacity = self.isPaused ? 0.15 : 0.35
          }
          if animated {
@@ -6415,7 +6479,7 @@ index 1a77683e..6ef5056d 100644
          } else {
              apply()
          }
-@@ -743,6 +950,9 @@ final class AyuMusicPlayerView: UIView {
+@@ -743,6 +965,9 @@ final class AyuMusicPlayerView: UIView {
              self.lyricsView.frame = CGRect(x: insets.left, y: artworkTop, width: size.width - insets.left - insets.right, height: max(0.0, scrubberY - 8.0 - artworkTop))
          }
          self.updateArtworkScale(animated: false)
@@ -6425,7 +6489,7 @@ index 1a77683e..6ef5056d 100644
      }
  
      private func setArtworkFrame(_ frame: CGRect, cornerRadius: CGFloat) {
-@@ -759,12 +969,26 @@ final class AyuMusicPlayerView: UIView {
+@@ -759,12 +984,26 @@ final class AyuMusicPlayerView: UIView {
      // MARK: Presentation
  
      func animateIn() {
@@ -6456,7 +6520,7 @@ index 1a77683e..6ef5056d 100644
              completion()
          })
      }
-@@ -786,18 +1010,22 @@ final class AyuMusicPlayerView: UIView {
+@@ -786,18 +1025,22 @@ final class AyuMusicPlayerView: UIView {
      }
  
      @objc private func dismissPan(_ recognizer: UIPanGestureRecognizer) {
@@ -6482,7 +6546,7 @@ index 1a77683e..6ef5056d 100644
                      self.transform = .identity
                  })
              }
-@@ -937,6 +1165,15 @@ private final class AyuLyricsView: UIView {
+@@ -937,6 +1180,15 @@ private final class AyuLyricsView: UIView {
      private var pauseEnds: [Int: Double] = [:]
      private var russian = false
      private var userScrollUntil: Double = 0.0
@@ -6498,7 +6562,7 @@ index 1a77683e..6ef5056d 100644
  
      override init(frame: CGRect) {
          super.init(frame: frame)
-@@ -981,6 +1218,8 @@ private final class AyuLyricsView: UIView {
+@@ -981,6 +1233,8 @@ private final class AyuLyricsView: UIView {
          self.currentPauseIndex = nil
          self.lines = []
          self.currentIndex = nil
@@ -6507,7 +6571,7 @@ index 1a77683e..6ef5056d 100644
          self.activeIndices = []
          self.russian = russian
          self.scrollView.contentOffset = CGPoint()
-@@ -1008,7 +1247,7 @@ private final class AyuLyricsView: UIView {
+@@ -1008,7 +1262,7 @@ private final class AyuLyricsView: UIView {
          for (index, text) in texts.enumerated() {
              let label = AyuLyricsLineLabel(frame: .zero)
              label.text = text
@@ -6516,7 +6580,7 @@ index 1a77683e..6ef5056d 100644
              label.textColor = UIColor(white: 1.0, alpha: synced ? 0.32 : 0.85)
              label.tag = index
              if synced {
-@@ -1036,16 +1275,17 @@ private final class AyuLyricsView: UIView {
+@@ -1036,16 +1290,17 @@ private final class AyuLyricsView: UIView {
                  self.scrollView.addSubview(pause)
              }
          }
@@ -6538,7 +6602,7 @@ index 1a77683e..6ef5056d 100644
      }
  
      @objc private func lineTapped(_ recognizer: UITapGestureRecognizer) {
-@@ -1097,10 +1337,10 @@ private final class AyuLyricsView: UIView {
+@@ -1097,10 +1352,10 @@ private final class AyuLyricsView: UIView {
          if pauseIndex != self.currentPauseIndex {
              self.currentPauseIndex = pauseIndex
              if let pauseIndex, let pause = self.pauseViews[pauseIndex], CACurrentMediaTime() > self.userScrollUntil {
@@ -6551,7 +6615,7 @@ index 1a77683e..6ef5056d 100644
          let active = pauseIndex == nil ? Set(AyuLyricsPlayback.visibleLines(self.lines, at: timestamp)) : Set<Int>()
          for previous in self.activeIndices.subtracting(active) {
              self.lineLabels[previous].isLyricActive = false
-@@ -1113,24 +1353,67 @@ private final class AyuLyricsView: UIView {
+@@ -1113,24 +1368,67 @@ private final class AyuLyricsView: UIView {
              self.lineLabels[activeIndex].setProgresses(words.map { AyuLyricsPlayback.progress($0, at: timestamp) }, emptyLineActive: words.isEmpty)
          }
          if index != self.currentIndex {
@@ -6573,9 +6637,9 @@ index 1a77683e..6ef5056d 100644
 -                    self.scrollView.contentOffset = CGPoint(x: 0.0, y: targetY)
 -                })
 +                self.cascadeScroll(to: self.lineLabels[index].frame.minY, anchorIndex: index)
-+            }
-+        }
-+    }
+             }
+         }
+     }
 +
 +    /// Lines away from the current one blur with distance, as in Apple Music; while the user
 +    /// browses the lyrics everything is sharp.
@@ -6588,7 +6652,7 @@ index 1a77683e..6ef5056d 100644
 +            guard !browsing, let current, !self.activeIndices.contains(index) else {
 +                label.blurAmount = 0.0
 +                continue
-             }
++            }
 +            let distance = abs(index - current)
 +            label.blurAmount = distance == 0 ? 0.0 : min(1.0, 0.45 + 0.18 * CGFloat(distance - 1))
 +        }
@@ -6630,8 +6694,8 @@ index 1a77683e..6ef5056d 100644
 +            animation.fillMode = .backwards
 +            animation.isAdditive = false
 +            view.layer.add(animation, forKey: "ayu.cascade")
-         }
-     }
++        }
++    }
  }
 diff --git a/submodules/TelegramUI/Sources/AyuPlayerDebugOverlay.swift b/submodules/TelegramUI/Sources/AyuPlayerDebugOverlay.swift
 new file mode 100644

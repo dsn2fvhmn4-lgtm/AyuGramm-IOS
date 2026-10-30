@@ -561,6 +561,104 @@ index 00000000..ab6788ff
 +    })(globalThis);
 +    """
 +}
+diff --git a/submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift b/submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift
+index d3c142b2..ec6e4efe 100644
+--- a/submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift
++++ b/submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift
+@@ -194,6 +194,32 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
+                 strongSelf.account = updatedAccount
+                 strongSelf.inAppPurchaseManager = InAppPurchaseManager(engine: .unauthorized(strongSelf.engine))
+             }
++            controller.loginWithBotToken = { [weak self, weak controller] token in
++                guard let self else {
++                    return
++                }
++                controller?.inProgress = true
++                self.actionDisposable.set((ayuAuthorizeWithBotToken(accountManager: self.sharedContext.accountManager, account: self.account, apiId: self.apiId, apiHash: self.apiHash, token: token)
++                |> deliverOnMainQueue).startStrict(error: { [weak self, weak controller] error in
++                    guard let self else {
++                        return
++                    }
++                    controller?.inProgress = false
++                    let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++                    let text: String
++                    switch error {
++                    case .invalidToken:
++                        text = ru ? "Токен неверный или отозван. Возьмите актуальный у @BotFather." : "The token is invalid or revoked. Get a current one from @BotFather."
++                    case .flood:
++                        text = self.presentationData.strings.Login_CodeFloodError
++                    case let .generic(description):
++                        text = (ru ? "Не удалось войти: " : "Sign-in failed: ") + description
++                    }
++                    controller?.present(textAlertController(sharedContext: self.sharedContext, title: nil, text: text, actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                }, completed: { [weak controller] in
++                    controller?.inProgress = false
++                }))
++            }
+             controller.loginWithNumber = { [weak self, weak controller] number, syncContacts in
+                 guard let self else {
+                     return
+diff --git a/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift b/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
+index 9f9d8866..5da5f202 100644
+--- a/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
++++ b/submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift
+@@ -55,6 +55,8 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
+         }
+     }
+     public var loginWithNumber: ((String, Bool) -> Void)?
++    /// AyuGram: sign in as a bot with a BotFather token instead of a phone number.
++    public var loginWithBotToken: ((String) -> Void)?
+     public var loginWithPasskey: ((AuthorizationPasskeyData, Bool) -> Void)?
+     var accountUpdated: ((UnauthorizedAccount) -> Void)?
+     
+@@ -93,6 +95,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
+         if !otherAccountPhoneNumbers.1.isEmpty {
+             self.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "___close", style: .plain, target: self, action: #selector(self.cancelPressed))
+         }
++        self.navigationItem.rightBarButtonItem = self.ayuBotItem()
+         
+         if let countriesConfiguration {
+             AuthorizationSequenceCountrySelectionController.setupCountryCodes(countries: countriesConfiguration.countries, codesByPrefix: countriesConfiguration.countriesByPrefix)
+@@ -110,11 +113,39 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
+     @objc private func cancelPressed() {
+         self.back()
+     }
++
++    private func ayuBotItem() -> UIBarButtonItem {
++        return UIBarButtonItem(title: self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бот" : "Bot", style: .plain, target: self, action: #selector(self.ayuBotPressed))
++    }
++
++    @objc private func ayuBotPressed() {
++        guard !self.inProgress else { return }
++        let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let alert = UIAlertController(title: ru ? "Вход как бот" : "Sign in as a bot", message: ru ? "Вставьте токен бота от @BotFather (вида 123456789:AA…). Боты не видят список чатов целиком — чаты появятся по мере новых сообщений." : "Paste the bot token from @BotFather (like 123456789:AA…). Bots cannot load the whole chat list — chats appear as messages arrive.", preferredStyle: .alert)
++        alert.addTextField { field in
++            field.placeholder = "123456789:AAH…"
++            field.isSecureTextEntry = true
++            field.autocapitalizationType = .none
++            field.autocorrectionType = .no
++            field.keyboardType = .asciiCapable
++        }
++        alert.addAction(UIAlertAction(title: self.presentationData.strings.Common_Cancel, style: .cancel))
++        alert.addAction(UIAlertAction(title: ru ? "Войти" : "Sign in", style: .default, handler: { [weak self, weak alert] _ in
++            guard let self, let token = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else { return }
++            self.loginWithBotToken?(token)
++        }))
++        self.sharedContext.applicationBindings.presentNativeController(alert)
++    }
+     
+     func updateNavigationItems() {
+         guard let layout = self.validLayout, layout.size.width < 360.0 else {
++            // The Next button lives in the node here, so the bar's right side holds Bot.
++            self.navigationItem.rightBarButtonItem = self.inProgress ? nil : self.ayuBotItem()
+             return
+         }
++        if self.navigationItem.leftBarButtonItem == nil {
++            self.navigationItem.leftBarButtonItem = self.ayuBotItem()
++        }
+                 
+         if self.inProgress {
+             let item = UIBarButtonItem(customDisplayNode: ProgressNavigationButtonNode(color: self.presentationData.theme.rootController.navigationBar.accentTextColor))
 diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 index de8b2b31..9e493889 100644
 --- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
@@ -2558,6 +2656,79 @@ index 5afb5e98..5fee5e91 100644
          self.isChangingSelectedIndex = true
          self.requestUpdate()
      }
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuBotAuthorization.swift b/submodules/TelegramCore/Sources/AyuGram/AyuBotAuthorization.swift
+new file mode 100644
+index 00000000..3c5a53bf
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuBotAuthorization.swift
+@@ -0,0 +1,67 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++internal import TelegramApi
++import MtProtoKit
++
++public enum AyuBotAuthorizationError: Equatable {
++    case invalidToken
++    case flood
++    case generic(String)
++}
++
++/// Signs this unauthorized account in as a bot with a BotFather token (`auth.importBotAuthorization`),
++/// following the bot's datacenter if the server redirects, then switches to the authorized
++/// account exactly as a phone or QR sign-in does.
++public func ayuAuthorizeWithBotToken(accountManager: AccountManager<TelegramAccountManagerTypes>, account: UnauthorizedAccount, apiId: Int32, apiHash: String, token: String) -> Signal<Void, AyuBotAuthorizationError> {
++    let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
++    // "123456789:AA…" — numeric bot id, colon, secret.
++    guard let colon = trimmed.firstIndex(of: ":"), Int64(trimmed[trimmed.startIndex ..< colon]) != nil, trimmed.count >= 30, trimmed.count <= 120 else {
++        return .fail(.invalidToken)
++    }
++    let request = Api.functions.auth.importBotAuthorization(flags: 0, apiId: apiId, apiHash: apiHash, botAuthToken: trimmed)
++
++    func attempt(_ account: UnauthorizedAccount, followRedirect: Bool) -> Signal<(Api.auth.Authorization, UnauthorizedAccount), AyuBotAuthorizationError> {
++        return account.network.request(request, automaticFloodWait: false)
++        |> map { result -> (Api.auth.Authorization, UnauthorizedAccount) in
++            return (result, account)
++        }
++        |> `catch` { error -> Signal<(Api.auth.Authorization, UnauthorizedAccount), AyuBotAuthorizationError> in
++            let description = error.errorDescription ?? ""
++            if followRedirect, let range = description.range(of: "_MIGRATE_"), let datacenter = Int32(description[range.upperBound...]) {
++                return account.changedMasterDatacenterId(accountManager: accountManager, masterDatacenterId: datacenter)
++                |> castError(AyuBotAuthorizationError.self)
++                |> mapToSignal { updated -> Signal<(Api.auth.Authorization, UnauthorizedAccount), AyuBotAuthorizationError> in
++                    return attempt(updated, followRedirect: false)
++                }
++            }
++            if description.hasPrefix("ACCESS_TOKEN_") || description.hasPrefix("BOT_") || description == "AUTH_KEY_INVALID" {
++                return .fail(.invalidToken)
++            }
++            if description.hasPrefix("FLOOD_WAIT") {
++                return .fail(.flood)
++            }
++            return .fail(.generic(description))
++        }
++    }
++
++    return attempt(account, followRedirect: true)
++    |> mapToSignal { authorization, account -> Signal<Void, AyuBotAuthorizationError> in
++        switch authorization {
++        case let .authorization(authorizationData):
++            return account.postbox.transaction { transaction -> Signal<Void, NoError> in
++                let user = TelegramUser(user: authorizationData.user)
++                let state = AuthorizedAccountState(isTestingEnvironment: account.testingEnvironment, masterDatacenterId: account.masterDatacenterId, peerId: user.id, state: nil, invalidatedChannels: [])
++                initializedAppSettingsAfterLogin(transaction: transaction, appVersion: account.networkArguments.appVersion, syncContacts: false)
++                transaction.setState(state)
++                return accountManager.transaction { transaction -> Void in
++                    switchToAuthorizedAccount(transaction: transaction, account: account, isSupportUser: false)
++                }
++            }
++            |> switchToLatest
++            |> castError(AyuBotAuthorizationError.self)
++        case .authorizationSignUpRequired:
++            return .fail(.generic("SIGN_UP_REQUIRED"))
++        }
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuDeveloperSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuDeveloperSettings.swift
 new file mode 100644
 index 00000000..c42d0d1e

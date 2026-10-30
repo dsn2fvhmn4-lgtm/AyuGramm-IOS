@@ -1,31 +1,35 @@
 # WhiteGram JavaScript compatibility
 
-The app can import `.js` files in the plugin manager. Enabled scripts run in
-separate WebKit environments; their storage is isolated by account and plugin.
-The initial compatibility layer is inferred from the supplied WhiteGram plugin
-examples, not an official SDK implementation.
+The app installs WhiteGram `.js` plugins from the plugin manager ("+") or by tapping a `.js`
+file in a chat; installation asks for confirmation and shows the plugin's name, author and
+description. Enabled scripts run in separate JavaScriptCore contexts on the main thread; their
+storage is isolated by account and plugin. The API is inferred from real WhiteGram plugins, not
+from an official SDK: no public JavaScript SDK documentation was found.
 
-The iOS host provides plugin registration, lifecycle, timers, chat open events,
-buttons and labels in the chat, local storage, settings rows and sliders, action
-sheets, toast messages and basic vibration. The host removes overlays on chat
-exit and stops the plugin on disable. Plugin settings become available after the
-script has loaded; to remove a script, swipe its row in the plugin list.
+| API | iOS behaviour |
+| --- | --- |
+| `wg.on`, `wg.registerPlugin`, `wg.BasePlugin` | Events and `onLoad`/`onUnload` lifecycle |
+| `onChatOpen(peerId)`, `onActivate`, `onAppForeground`, `onAppBackground` | Emitted by the host |
+| `wg.ui.hookScreen({screen: "chat", event: "open"})` | Hook is emitted on chat open |
+| `onMessageReceive({peerId, messageId, text, out})` | Own text messages after the server confirms them, in the open chat (any chat, not only Saved Messages) |
+| `wg.editMessage(peerId, messageId, text)` | Edits a cloud message; also works after leaving the chat |
+| `wg.getInputText`, `wg.setInputText`, `wg.sendMessage` | Input field of the open chat |
+| `wg.chat.addButton`, `addLabel`, `removeView` | Overlays on the chat; removed on chat exit |
+| `wg.settings.addRow`, `registerPage` (rows, sliders) | Plugin settings screen (tap the plugin in the list) |
+| `wg.addContextMenuItem` | Shown in the "Действия" section of the plugin settings |
+| `wg.ui.actionSheet`, `wg.toast`, `wg.vibrate(style)`, `wg.log` | Native UI |
+| `wg.fetch(url, cb)` | HTTP(S) GET, 15 s timeout, 1 MiB text limit |
+| `setTimeout`/`setInterval`, `console.log` | Native timers, cleared on disable |
 
-The host also implements `wg.fetch` for HTTP and HTTPS with a 15-second timeout.
-Modifying/sending messages, input access and context menus are not yet connected.
-Unsupported calls are logged. Plugins using those methods do not fully work.
-The separate screen hook API currently relies on the `onChatOpen` event supported
-by the supplied Tamagotchi plugin. Full API behavior needs verification against
-WhiteGram's SDK and actual plugin versions.
+Not available: secret chats, incoming messages from other people, and editing other people's
+messages (the server rejects it). A plugin with an infinite loop blocks the app.
 
-Run the repeatable synthetic test:
+Tests (fake host on Node's VM; they do not exercise JavaScriptCore, UIKit or Telegram):
 
 ```
 node runtime/tests/whitegram/test_bridge.js
+node runtime/tests/whitegram/test_plugins.js "/path/to/folder/with/plugins"
 ```
 
-Pass a path to the original Tamagotchi file to run the same scenario against it.
-The test uses a fake host and Node's VM; it does not exercise WebKit, UIKit,
-Telegram messages, a real iOS JavaScript engine or security boundaries. Build
-and test the installed app on an iOS device before treating the integration as
-verified.
+`test_plugins.js` loads every `.js` in the folder, drives chat open, button taps, settings rows
+and text commands, and fails on any exception or on an operation the iOS host does not implement.

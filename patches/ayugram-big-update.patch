@@ -702,6 +702,21 @@ index bedc41a2..9f3dff30 100644
              var synchronousLoad = synchronousLoad
              var representation: TelegramMediaImageRepresentation?
              var icon = AvatarNodeIcon.none
+diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
+index c7df9084..86601806 100644
+--- a/submodules/ChatListUI/Sources/ChatListController.swift
++++ b/submodules/ChatListUI/Sources/ChatListController.swift
+@@ -3186,6 +3186,10 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                 guard let self else {
+                     return
+                 }
++                // WhiteGram "disable swipe to record story": the pull no longer opens the camera.
++                if AyuWhiteGram.disableSwipeToRecordStory {
++                    return
++                }
+                 self.openStoryCamera(fromList: true, gesturePullOffset: offset)
+             }
+             
 diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 index de8b2b31..e7d07943 100644
 --- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
@@ -1040,10 +1055,10 @@ index 00000000..9809f9ba
 +}
 diff --git a/submodules/Display/Source/AyuWhiteGram.swift b/submodules/Display/Source/AyuWhiteGram.swift
 new file mode 100644
-index 00000000..0576d72f
+index 00000000..f480a873
 --- /dev/null
 +++ b/submodules/Display/Source/AyuWhiteGram.swift
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,141 @@
 +import Foundation
 +import UIKit
 +import CoreText
@@ -1104,6 +1119,7 @@ index 00000000..0576d72f
 +    public static var hideGalleryCamera: Bool { return bool("hideGalleryCamera") }
 +    public static var showFullViewCount: Bool { return bool("showFullViewCount") }
 +    public static var compactChatList: Bool { return bool("compactChatList") }
++    public static var disableSwipeToRecordStory: Bool { return bool("disableSwipeToRecordStory") }
 +
 +    // MARK: Sending
 +
@@ -2901,10 +2917,10 @@ index 00000000..8729d0f7
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuWhiteGramController.swift b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
 new file mode 100644
-index 00000000..5e07e522
+index 00000000..5dac2a53
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,279 @@
 +import Foundation
 +import UIKit
 +import UniformTypeIdentifiers
@@ -2934,6 +2950,7 @@ index 00000000..5e07e522
 +    case showFullViewCount = 18
 +    case showCharCountMessages = 19
 +    case showActionTime = 20
++    case disableSwipeToRecordStory = 9
 +    case hideBottomTabBar = 22
 +    case tabBarScale = 23
 +    case tabBarWidth = 24
@@ -3106,6 +3123,7 @@ index 00000000..5e07e522
 +        case .showCharCountTyping?: AyuWhiteGram.set(value, forKey: "showCharCountTyping")
 +        case .showCharCountMessages?: AyuWhiteGram.set(value, forKey: "showCharCountMessages")
 +        case .showActionTime?: AyuWhiteGram.set(value, forKey: "showActionTime")
++        case .disableSwipeToRecordStory?: AyuWhiteGram.set(value, forKey: "disableSwipeToRecordStory")
 +        case .showFullViewCount?:
 +            // The same switch as exteraGram's "disable number rounding": one setting, two entry points.
 +            try? store.update { $0.interface.disableNumberRounding = value }
@@ -3140,7 +3158,8 @@ index 00000000..5e07e522
 +            row(1, .transparentBubbles, symbol("circle.dashed", 0x32ADE6), ru ? "Прозрачные пузыри" : "Transparent bubbles", nil, AyuWhiteGram.transparentBubbles),
 +            row(1, .semiTransparentBubbles, symbol("circle.lefthalf.filled", 0x007AFF), ru ? "Полупрозрачные пузыри" : "Semi-transparent bubbles", nil, AyuWhiteGram.semiTransparentBubbles),
 +            row(1, .wideChannelPosts, symbol("rectangle.expand.vertical", 0x34C759), ru ? "Широкие посты в каналах" : "Wide channel posts", nil, AyuWhiteGram.wideChannelPosts),
-+            .header(2, 10, ru ? "ИНТЕРФЕЙС" : "INTERFACE"),
++            .header(2, 7, ru ? "ИНТЕРФЕЙС" : "INTERFACE"),
++            row(2, .disableSwipeToRecordStory, symbol("camera.badge.ellipsis", 0xFF9500), ru ? "Без камеры историй по свайпу" : "No story camera on pull", ru ? "Оттягивание списка чатов не открывает камеру" : "Pulling the chat list does not open the camera", AyuWhiteGram.disableSwipeToRecordStory),
 +            row(2, .squareAvatars, symbol("square.fill", 0xFF9500), ru ? "Квадратные аватары" : "Square avatars", nil, AyuWhiteGram.squareAvatars),
 +            row(2, .oledMode, symbol("moon.fill", 0x000000), ru ? "OLED-режим" : "OLED mode", ru ? "Тёмная тема — чистый чёрный (после перезапуска)" : "Dark theme in true black (after relaunch)", AyuWhiteGram.oledMode),
 +            link(2, .stickerSize, symbol("face.smiling.inverse", 0xFFCC00), ru ? "Размер стикеров" : "Sticker size", percent(AyuWhiteGram.stickerScale)),

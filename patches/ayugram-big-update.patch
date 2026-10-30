@@ -659,8 +659,51 @@ index 9f9d8866..5da5f202 100644
                  
          if self.inProgress {
              let item = UIBarButtonItem(customDisplayNode: ProgressNavigationButtonNode(color: self.presentationData.theme.rootController.navigationBar.accentTextColor))
+diff --git a/submodules/AvatarNode/Sources/AvatarNode.swift b/submodules/AvatarNode/Sources/AvatarNode.swift
+index bedc41a2..9f3dff30 100644
+--- a/submodules/AvatarNode/Sources/AvatarNode.swift
++++ b/submodules/AvatarNode/Sources/AvatarNode.swift
+@@ -35,6 +35,14 @@ public func generateDeletedAccountAvatarImage(size: CGSize) -> UIImage? {
+     return generateAvatarImage(size: size, icon: deletedIcon, iconScale: size.width / 60.0, color: .blue, customColors: AvatarNode.grayscaleColors)
+ }
+ 
++/// AyuGram WhiteGram "square avatars": round avatars draw as rounded squares.
++func ayuAvatarClipStyle(_ style: AvatarNodeClipStyle) -> AvatarNodeClipStyle {
++    if case .round = style, AyuWhiteGram.cachedSquareAvatars {
++        return .roundedRect
++    }
++    return style
++}
++
+ public enum AvatarNodeClipStyle {
+     case none
+     case round
+@@ -595,6 +603,7 @@ public final class AvatarNode: ASDisplayNode {
+             storeUnrounded: Bool = false,
+             cutoutRect: CGRect? = nil
+         ) {
++            let clipStyle = ayuAvatarClipStyle(clipStyle)
+             var synchronousLoad = synchronousLoad
+             var representation: TelegramMediaImageRepresentation?
+             var icon = AvatarNodeIcon.none
+@@ -723,6 +732,7 @@ public final class AvatarNode: ASDisplayNode {
+             displayDimensions: CGSize = CGSize(width: 60.0, height: 60.0),
+             storeUnrounded: Bool = false
+         ) {
++            let clipStyle = ayuAvatarClipStyle(clipStyle)
+             let smallProfileImage = peer?.smallProfileImage
+             let params = Params(
+                 peerId: peer?.id,
+@@ -802,6 +812,7 @@ public final class AvatarNode: ASDisplayNode {
+             storeUnrounded: Bool = false,
+             cutoutRect: CGRect? = nil
+         ) {
++            let clipStyle = ayuAvatarClipStyle(clipStyle)
+             var synchronousLoad = synchronousLoad
+             var representation: TelegramMediaImageRepresentation?
+             var icon = AvatarNodeIcon.none
 diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
-index de8b2b31..9e493889 100644
+index de8b2b31..e7d07943 100644
 --- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 +++ b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
 @@ -2316,6 +2316,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
@@ -745,6 +788,16 @@ index de8b2b31..9e493889 100644
                          currentVerifiedIconContent = .animation(content: .customEmoji(fileId: documentId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(2))
                      }
                  }
+@@ -5526,7 +5528,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                     if item.editing {
+                         strongSelf.setRevealOptions((left: [], right: []), enableAnimations: item.context.sharedContext.energyUsageSettings.fullTranslucency)
+                     } else {
+-                        strongSelf.setRevealOptions((left: peerLeftRevealOptions, right: peerRevealOptions), enableAnimations: item.context.sharedContext.energyUsageSettings.fullTranslucency)
++                        // WhiteGram "disable chat swipe options".
++                        strongSelf.setRevealOptions(AyuWhiteGram.disableChatSwipeOptions && !item.editing ? (left: [], right: []) : (left: peerLeftRevealOptions, right: peerRevealOptions), enableAnimations: item.context.sharedContext.energyUsageSettings.fullTranslucency)
+                     }
+                     if !strongSelf.customAnimationInProgress {
+                         strongSelf.setRevealOptionsOpened(item.hasActiveRevealControls, animated: true)
 diff --git a/submodules/Display/Source/AyuAppearancePlus.swift b/submodules/Display/Source/AyuAppearancePlus.swift
 new file mode 100644
 index 00000000..454dd164
@@ -920,6 +973,203 @@ index 00000000..9809f9ba
 +        })
 +    }
 +}
+diff --git a/submodules/Display/Source/AyuWhiteGram.swift b/submodules/Display/Source/AyuWhiteGram.swift
+new file mode 100644
+index 00000000..b1edfdf8
+--- /dev/null
++++ b/submodules/Display/Source/AyuWhiteGram.swift
+@@ -0,0 +1,133 @@
++import Foundation
++import UIKit
++import CoreText
++
++/// WhiteGram-style local customization (Settings → AyuGram → WhiteGram). App-wide, stored in
++/// UserDefaults; nothing here touches the network. Values that feed cached graphics (bubble
++/// borders, fonts) apply after a relaunch, the rest at once.
++public enum AyuWhiteGram {
++    public static let didChangeNotification = Notification.Name("AyuGram.WhiteGramChanged")
++
++    private static func bool(_ key: String) -> Bool { return UserDefaults.standard.bool(forKey: "ayu.wg." + key) }
++    private static func double(_ key: String, _ fallback: Double) -> Double {
++        return UserDefaults.standard.object(forKey: "ayu.wg." + key) as? Double ?? fallback
++    }
++    private static func string(_ key: String) -> String { return UserDefaults.standard.string(forKey: "ayu.wg." + key) ?? "" }
++
++    public static func set(_ value: Any?, forKey key: String) {
++        if let value { UserDefaults.standard.set(value, forKey: "ayu.wg." + key) } else { UserDefaults.standard.removeObject(forKey: "ayu.wg." + key) }
++        AyuWhiteGram.refreshCaches()
++        NotificationCenter.default.post(name: AyuWhiteGram.didChangeNotification, object: nil)
++    }
++
++    // MARK: Bubbles
++
++    public static var messageBorder: Bool { return bool("messageBorder") }
++    /// `#RRGGBB`; empty uses the theme accent.
++    public static var messageBorderColorHex: String { return string("messageBorderColor") }
++    public static var transparentBubbles: Bool { return bool("transparentBubbles") }
++    public static var semiTransparentBubbles: Bool { return bool("semiTransparentBubbles") }
++    public static var wideChannelPosts: Bool { return bool("wideChannelPosts") }
++
++    /// Opacity of bubble fills, wallpaper backdrop and shadow.
++    public static var bubbleFillAlpha: CGFloat {
++        if AyuWhiteGram.transparentBubbles { return 0.0 }
++        if AyuWhiteGram.semiTransparentBubbles { return 0.65 }
++        return 1.0
++    }
++
++    public static func borderColor(accent: UIColor) -> UIColor {
++        let hex = AyuWhiteGram.messageBorderColorHex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
++        if hex.count == 6, let value = UInt32(hex, radix: 16) {
++            return UIColor(rgb: value)
++        }
++        return accent
++    }
++
++    // MARK: Interface
++
++    public static var squareAvatars: Bool { return bool("squareAvatars") }
++    public static var oledMode: Bool { return bool("oledMode") }
++    /// Sticker scale, 0.5…1.5.
++    public static var stickerScale: CGFloat { return CGFloat(max(0.5, min(1.5, double("stickerScale", 1.0)))) }
++    public static var showCharCountTyping: Bool { return bool("showCharCountTyping") }
++    public static var showCharCountMessages: Bool { return bool("showCharCountMessages") }
++    public static var showActionTime: Bool { return bool("showActionTime") }
++    public static var hideBusinessBotPanel: Bool { return bool("hideBusinessBotPanel") }
++    public static var disableChatSwipeOptions: Bool { return bool("disableChatSwipeOptions") }
++    public static var hideGalleryCamera: Bool { return bool("hideGalleryCamera") }
++    public static var showFullViewCount: Bool { return bool("showFullViewCount") }
++    public static var compactChatList: Bool { return bool("compactChatList") }
++
++    // MARK: Tab bar
++
++    public static var hideBottomTabBar: Bool { return bool("hideBottomTabBar") }
++    /// Tab bar scale 0.8…1.2 and width share 0.6…1.0.
++    public static var tabBarScale: CGFloat { return CGFloat(max(0.8, min(1.2, double("tabBarScale", 1.0)))) }
++    public static var tabBarWidth: CGFloat { return CGFloat(max(0.6, min(1.0, double("tabBarWidth", 1.0)))) }
++
++    // MARK: Fonts
++
++    /// PostScript name of the custom font, registered from Application Support at launch.
++    public static var customFontName: String { return string("customFontName") }
++    public static var customFontEnabled: Bool { return bool("customFontEnabled") && !AyuWhiteGram.customFontName.isEmpty }
++
++    public static var fontsDirectory: URL? {
++        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
++            .appendingPathComponent("AyuGram", isDirectory: true)
++            .appendingPathComponent("fonts", isDirectory: true)
++    }
++
++    /// Copies a .ttf/.otf into the app and registers it; returns its PostScript names.
++    public static func importFont(from url: URL) throws -> [String] {
++        guard let directory = AyuWhiteGram.fontsDirectory else { throw CocoaError(.fileWriteUnknown) }
++        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        let target = directory.appendingPathComponent(url.lastPathComponent)
++        if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
++        try FileManager.default.copyItem(at: url, to: target)
++        guard let descriptors = CTFontManagerCreateFontDescriptorsFromURL(target as CFURL) as? [CTFontDescriptor], !descriptors.isEmpty else {
++            try? FileManager.default.removeItem(at: target)
++            throw CocoaError(.fileReadCorruptFile)
++        }
++        CTFontManagerRegisterFontsForURL(target as CFURL, .process, nil)
++        return descriptors.compactMap { CTFontDescriptorCopyAttribute($0, kCTFontNameAttribute) as? String }
++    }
++
++    /// Registers every imported font so the chosen one resolves by name.
++    public static func registerImportedFonts() {
++        guard let directory = AyuWhiteGram.fontsDirectory, let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
++        for file in files where ["ttf", "otf", "ttc"].contains(file.pathExtension.lowercased()) {
++            CTFontManagerRegisterFontsForURL(file as CFURL, .process, nil)
++        }
++    }
++
++    public static var importedFontNames: [String] {
++        guard let directory = AyuWhiteGram.fontsDirectory, let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return [] }
++        var names: [String] = []
++        for file in files {
++            if let descriptors = CTFontManagerCreateFontDescriptorsFromURL(file as CFURL) as? [CTFontDescriptor] {
++                names.append(contentsOf: descriptors.compactMap { CTFontDescriptorCopyAttribute($0, kCTFontNameAttribute) as? String })
++            }
++        }
++        return names.sorted()
++    }
++
++    // MARK: Cached flags for hot paths
++
++    /// Read on every layout of avatars, fonts and bubbles; refreshed when a value changes.
++    public private(set) static var cachedSquareAvatars = AyuWhiteGram.squareAvatars
++    public private(set) static var cachedCustomFont: String? = AyuWhiteGram.customFontEnabled ? AyuWhiteGram.customFontName : nil
++
++    private static func refreshCaches() {
++        AyuWhiteGram.cachedSquareAvatars = AyuWhiteGram.squareAvatars
++        // Fonts are cached by Font; a new choice applies after relaunch.
++    }
++
++    public static func resetAll() {
++        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("ayu.wg.") {
++            UserDefaults.standard.removeObject(forKey: key)
++        }
++        AyuWhiteGram.refreshCaches()
++        NotificationCenter.default.post(name: AyuWhiteGram.didChangeNotification, object: nil)
++    }
++}
+diff --git a/submodules/Display/Source/Font.swift b/submodules/Display/Source/Font.swift
+index e53d8ae6..955824c1 100644
+--- a/submodules/Display/Source/Font.swift
++++ b/submodules/Display/Source/Font.swift
+@@ -159,7 +159,16 @@ public struct Font {
+ 
+     private static let cache = Cache()
+     
++    /// AyuGram WhiteGram custom font: replaces the system face in regular text.
++    private static func ayuCustomFont(_ size: CGFloat) -> UIFont? {
++        guard let name = AyuWhiteGram.cachedCustomFont else { return nil }
++        return UIFont(name: name, size: size)
++    }
++
+     public static func with(size: CGFloat, design: Design = .regular, weight: Weight = .regular, width: Width = .standard, traits: Traits = []) -> UIFont {
++        if case .regular = design, traits.isEmpty, let custom = Font.ayuCustomFont(size) {
++            return custom
++        }
+         let key = "\(size)_\(design.key)_\(weight.key)_\(width.key)_\(traits.rawValue)"
+         
+         if let cachedFont = self.cache.get(key) {
+@@ -289,18 +298,22 @@ public struct Font {
+     }
+     
+     public static func regular(_ size: CGFloat) -> UIFont {
++        if let custom = Font.ayuCustomFont(size) { return custom }
+         return UIFont.systemFont(ofSize: size)
+     }
+     
+     public static func medium(_ size: CGFloat) -> UIFont {
++        if let custom = Font.ayuCustomFont(size) { return custom }
+         return UIFont.systemFont(ofSize: size, weight: UIFont.Weight.medium)
+     }
+     
+     public static func semibold(_ size: CGFloat) -> UIFont {
++        if let custom = Font.ayuCustomFont(size) { return custom }
+         return UIFont.systemFont(ofSize: size, weight: UIFont.Weight.semibold)
+     }
+     
+     public static func bold(_ size: CGFloat) -> UIFont {
++        if let custom = Font.ayuCustomFont(size) { return custom }
+         if #available(iOS 8.2, *) {
+             return UIFont.boldSystemFont(ofSize: size)
+         } else {
+diff --git a/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift b/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
+index c0725e00..eb4ff908 100644
+--- a/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
++++ b/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
+@@ -752,7 +752,8 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
+             var useLegacyCamera = false
+             var useModernCamera = false
+             if case .assets(nil, .default) = controller.subject {
+-                useLegacyCamera = true
++                // WhiteGram "hide gallery camera": no live camera tile in the attachment gallery.
++                useLegacyCamera = !AyuWhiteGram.hideGalleryCamera
+             } else if case .assets(nil, let mode) = controller.subject {
+                 switch mode {
+                 case .createSticker, .createAvatar:
 diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
 new file mode 100644
 index 00000000..884153e7
@@ -1433,7 +1683,7 @@ index 00000000..4948ec0c
 +    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
-index e2236c5f..7b614897 100644
+index e2236c5f..e66785d6 100644
 --- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 @@ -16,6 +16,7 @@ import PeerNameColorScreen
@@ -1444,19 +1694,20 @@ index e2236c5f..7b614897 100644
      case messageHistory = 11
      case mediaArchive = 12
      case localPremium = 21
-@@ -24,8 +25,11 @@ private enum AyuGramRow: Int32 {
+@@ -24,8 +25,12 @@ private enum AyuGramRow: Int32 {
      case interface = 24
      case navigationAndComposer = 25
      case peerSearch = 26
 +    case appearancePlus = 27
 +    case lyricsSources = 28
++    case whiteGram = 29
      case channel = 31
      case sourceCode = 32
 +    case developer = 41
  }
  
  /// AyuGram preferences (AyuGramPreferencesActivity), opened from its own Settings row,
-@@ -42,6 +46,14 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -42,6 +47,16 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              push?(ayuGhostModeController(context: context))
          case .ghostModePlus:
              push?(ayuGhostModePlusController(context: context))
@@ -1466,23 +1717,26 @@ index e2236c5f..7b614897 100644
 +            push?(ayuAppearancePlusController(context: context))
 +        case .lyricsSources:
 +            push?(ayuLyricsSourcesController(context: context))
++        case .whiteGram:
++            push?(ayuWhiteGramController(context: context))
 +        case .developer:
 +            push?(ayuDeveloperSettingsController(context: context))
          case .messageHistory:
              push?(ayuMessageHistoryController(context: context))
          case .mediaArchive:
-@@ -75,6 +87,10 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -75,6 +90,11 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
          .interface: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x32ADE6)),
          .navigationAndComposer: AyuSettingsIcons.symbol("slider.horizontal.3", color: UIColor(rgb: 0x5856D6)),
          .peerSearch: AyuSettingsIcons.symbol("magnifyingglass", color: UIColor(rgb: 0x007AFF)),
 +        .ghostExceptions: AyuSettingsIcons.symbol("person.crop.circle.badge.checkmark", color: UIColor(rgb: 0x8E5CF7)),
 +        .appearancePlus: AyuSettingsIcons.symbol("paintbrush.pointed.fill", color: UIColor(rgb: 0xFF2D55)),
 +        .lyricsSources: AyuSettingsIcons.symbol("quote.bubble.fill", color: UIColor(rgb: 0xFF2D55)),
++        .whiteGram: AyuSettingsIcons.symbol("sparkles", color: UIColor(rgb: 0x8E8E93)),
 +        .developer: AyuSettingsIcons.symbol("hammer.fill", color: UIColor(rgb: 0x8E8E93)),
          .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
          .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
      ]
-@@ -90,6 +106,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -90,6 +110,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              .header(1, 0, AyuStrings.ghostEssentials.text(ru)),
              link(1, .ghostMode, "Ghost Mode"),
              link(1, .ghostModePlus, "Ghost Mode+"),
@@ -1490,12 +1744,13 @@ index e2236c5f..7b614897 100644
              .header(2, 10, AyuStrings.spyEssentials.text(ru)),
              link(2, .messageHistory, AyuStrings.messageHistory.text(ru)),
              link(2, .mediaArchive, AyuStrings.mediaArchive.text(ru)),
-@@ -100,9 +117,13 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -100,9 +121,14 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              link(3, .peerSearch, ru ? "Поиск каналов и людей" : "Find channels and people"),
              link(3, .interface, ru ? "Интерфейс и чаты" : "Interface & Chats"),
              link(3, .navigationAndComposer, ru ? "Навигация и редактор" : "Navigation and composer"),
 +            link(3, .appearancePlus, ru ? "Оформление+" : "Appearance+"),
 +            link(3, .lyricsSources, ru ? "Источники текстов песен" : "Lyrics sources"),
++            link(3, .whiteGram, "WhiteGram"),
              .header(4, 30, AyuStrings.links.text(ru)),
              link(4, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
 -            link(4, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub")
@@ -1505,7 +1760,7 @@ index e2236c5f..7b614897 100644
          ]
          let data = ItemListPresentationData(presentationData)
          let state = ItemListControllerState(presentationData: data, title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-@@ -111,6 +132,23 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -111,6 +137,23 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
      let controller = ItemListController(context: context, state: signal)
      push = { [weak controller] in controller?.push($0) }
      navigation = { [weak controller] in controller?.navigationController as? NavigationController }
@@ -2548,8 +2803,247 @@ index 00000000..8729d0f7
 +    }
 +    return ItemListController(context: context, state: signal)
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuWhiteGramController.swift b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
+new file mode 100644
+index 00000000..ac97fcdb
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
+@@ -0,0 +1,233 @@
++import Foundation
++import UIKit
++import UniformTypeIdentifiers
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++// Settings → AyuGram → WhiteGram: WhiteGram's local customization in one place.
++
++private enum AyuWhiteGramRow: Int32 {
++    case messageBorder = 1
++    case borderColor = 2
++    case transparentBubbles = 3
++    case semiTransparentBubbles = 4
++    case squareAvatars = 11
++    case oledMode = 12
++    case stickerSize = 13
++    case hideGalleryCamera = 14
++    case hideBusinessBotPanel = 15
++    case disableChatSwipeOptions = 16
++    case showCharCountTyping = 17
++    case showFullViewCount = 18
++    case hideBottomTabBar = 21
++    case tabBarScale = 22
++    case tabBarWidth = 23
++    case tabsAndGlass = 24
++    case customFontEnabled = 31
++    case importFont = 32
++    case chooseFont = 33
++    case settingsRows = 41
++    case relaunchInfo = 50
++    case reset = 51
++}
++
++private func ayuWhiteGramSignal() -> Signal<Void, NoError> {
++    return Signal { subscriber in
++        subscriber.putNext(Void())
++        let observers = [AyuWhiteGram.didChangeNotification, AyuAppearancePlus.didChangeNotification].map { name in
++            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { _ in subscriber.putNext(Void()) })
++        }
++        return ActionDisposable {
++            for observer in observers { NotificationCenter.default.removeObserver(observer) }
++        }
++    }
++}
++
++/// Keeps the font picker's delegate alive while the picker is on screen.
++private final class AyuFontPickerDelegate: NSObject, UIDocumentPickerDelegate {
++    let completion: (URL) -> Void
++    init(completion: @escaping (URL) -> Void) { self.completion = completion }
++    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
++        if let url = urls.first { self.completion(url) }
++        AyuFontPickerDelegate.current = nil
++    }
++    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
++        AyuFontPickerDelegate.current = nil
++    }
++    static var current: AyuFontPickerDelegate?
++}
++
++func ayuWhiteGramController(context: AccountContext) -> ViewController {
++    var push: ((ViewController) -> Void)?
++    var presentNative: ((UIViewController) -> Void)?
++    let store = context.account.network.ayuGhostMode
++    let russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++
++    func alert(_ title: String, _ message: String) {
++        let controller = UIAlertController(title: title, message: message, preferredStyle: .alert)
++        controller.addAction(UIAlertAction(title: "OK", style: .default))
++        presentNative?(controller)
++    }
++
++    func cycle(_ key: String, steps: [Double], current: CGFloat) {
++        let next = steps.first(where: { $0 > Double(current) + 0.001 }) ?? steps[0]
++        AyuWhiteGram.set(next, forKey: key)
++    }
++
++    let arguments = AyuSectionedArguments(open: { id in
++        switch AyuWhiteGramRow(rawValue: id) {
++        case .borderColor?:
++            let controller = UIAlertController(title: russian ? "Цвет рамки" : "Border color", message: russian ? "HEX вида #FF2D55. Пусто — акцентный цвет темы." : "HEX like #FF2D55. Empty uses the theme accent.", preferredStyle: .alert)
++            controller.addTextField { field in
++                field.text = AyuWhiteGram.messageBorderColorHex
++                field.placeholder = "#FF2D55"
++                field.autocapitalizationType = .allCharacters
++                field.autocorrectionType = .no
++            }
++            controller.addAction(UIAlertAction(title: russian ? "Отмена" : "Cancel", style: .cancel))
++            controller.addAction(UIAlertAction(title: russian ? "Сохранить" : "Save", style: .default, handler: { [weak controller] _ in
++                let value = (controller?.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespaces)
++                let hex = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
++                guard value.isEmpty || (hex.count == 6 && UInt32(hex, radix: 16) != nil) else {
++                    alert(russian ? "Неверный цвет" : "Invalid color", russian ? "Нужно 6 шестнадцатеричных цифр." : "Six hexadecimal digits are needed.")
++                    return
++                }
++                AyuWhiteGram.set(value.isEmpty ? nil : "#" + hex.uppercased(), forKey: "messageBorderColor")
++            }))
++            presentNative?(controller)
++        case .stickerSize?:
++            cycle("stickerScale", steps: [0.5, 0.75, 1.0, 1.25, 1.5], current: AyuWhiteGram.stickerScale)
++        case .tabBarScale?:
++            cycle("tabBarScale", steps: [0.8, 0.9, 1.0, 1.1, 1.2], current: AyuWhiteGram.tabBarScale)
++        case .tabBarWidth?:
++            cycle("tabBarWidth", steps: [0.6, 0.7, 0.8, 0.9, 1.0], current: AyuWhiteGram.tabBarWidth)
++        case .tabsAndGlass?:
++            push?(ayuAppearancePlusController(context: context))
++        case .settingsRows?:
++            push?(ayuSettingsVisibilityController(context: context))
++        case .importFont?:
++            let delegate = AyuFontPickerDelegate(completion: { url in
++                let scoped = url.startAccessingSecurityScopedResource()
++                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
++                do {
++                    let names = try AyuWhiteGram.importFont(from: url)
++                    if let first = names.first {
++                        AyuWhiteGram.set(first, forKey: "customFontName")
++                        AyuWhiteGram.set(true, forKey: "customFontEnabled")
++                    }
++                    alert(russian ? "Шрифт добавлен" : "Font added", (names.first ?? "") + (russian ? "\nПерезапустите приложение, чтобы применить." : "\nRelaunch the app to apply."))
++                } catch {
++                    alert(russian ? "Не удалось добавить шрифт" : "Could not add the font", russian ? "Поддерживаются файлы .ttf, .otf и .ttc." : ".ttf, .otf and .ttc files are supported.")
++                }
++            })
++            AyuFontPickerDelegate.current = delegate
++            var types: [UTType] = []
++            for ext in ["ttf", "otf", "ttc"] { if let type = UTType(filenameExtension: ext) { types.append(type) } }
++            let picker = UIDocumentPickerViewController(forOpeningContentTypes: types.isEmpty ? [.item] : types, asCopy: true)
++            picker.delegate = delegate
++            presentNative?(picker)
++        case .chooseFont?:
++            let names = AyuWhiteGram.importedFontNames
++            let sheet = UIAlertController(title: russian ? "Шрифт" : "Font", message: names.isEmpty ? (russian ? "Сначала добавьте файл шрифта." : "Add a font file first.") : nil, preferredStyle: .actionSheet)
++            for name in names {
++                sheet.addAction(UIAlertAction(title: name + (name == AyuWhiteGram.customFontName ? " ✓" : ""), style: .default, handler: { _ in
++                    AyuWhiteGram.set(name, forKey: "customFontName")
++                    AyuWhiteGram.set(true, forKey: "customFontEnabled")
++                }))
++            }
++            sheet.addAction(UIAlertAction(title: russian ? "Системный шрифт" : "System font", style: .destructive, handler: { _ in
++                AyuWhiteGram.set(false, forKey: "customFontEnabled")
++            }))
++            sheet.addAction(UIAlertAction(title: russian ? "Отмена" : "Cancel", style: .cancel))
++            presentNative?(sheet)
++        case .reset?:
++            AyuWhiteGram.resetAll()
++        default:
++            break
++        }
++    }, toggle: { id, value in
++        switch AyuWhiteGramRow(rawValue: id) {
++        case .messageBorder?: AyuWhiteGram.set(value, forKey: "messageBorder")
++        case .transparentBubbles?:
++            AyuWhiteGram.set(value, forKey: "transparentBubbles")
++            if value { AyuWhiteGram.set(false, forKey: "semiTransparentBubbles") }
++        case .semiTransparentBubbles?:
++            AyuWhiteGram.set(value, forKey: "semiTransparentBubbles")
++            if value { AyuWhiteGram.set(false, forKey: "transparentBubbles") }
++        case .squareAvatars?: AyuWhiteGram.set(value, forKey: "squareAvatars")
++        case .oledMode?: AyuWhiteGram.set(value, forKey: "oledMode")
++        case .hideGalleryCamera?: AyuWhiteGram.set(value, forKey: "hideGalleryCamera")
++        case .hideBusinessBotPanel?: AyuWhiteGram.set(value, forKey: "hideBusinessBotPanel")
++        case .disableChatSwipeOptions?: AyuWhiteGram.set(value, forKey: "disableChatSwipeOptions")
++        case .showCharCountTyping?: AyuWhiteGram.set(value, forKey: "showCharCountTyping")
++        case .showFullViewCount?:
++            // The same switch as exteraGram's "disable number rounding": one setting, two entry points.
++            try? store.update { $0.interface.disableNumberRounding = value }
++            AyuWhiteGram.set(value, forKey: "showFullViewCount")
++        case .hideBottomTabBar?: AyuWhiteGram.set(value, forKey: "hideBottomTabBar")
++        case .customFontEnabled?: AyuWhiteGram.set(value, forKey: "customFontEnabled")
++        default: break
++        }
++    })
++
++    func symbol(_ name: String, _ color: UInt32) -> UIImage? {
++        return AyuSettingsIcons.symbol(name, color: UIColor(rgb: color))
++    }
++    func percent(_ value: CGFloat) -> String { return "\(Int((value * 100.0).rounded()))%" }
++
++    let signal = combineLatest(context.sharedContext.presentationData, ayuWhiteGramSignal(), store.signal)
++    |> deliverOnMainQueue
++    |> map { presentationData, _, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        func row(_ section: Int32, _ row: AyuWhiteGramRow, _ icon: UIImage?, _ title: String, _ text: String?, _ value: Bool) -> AyuSectionedEntry {
++            return .toggle(section, row.rawValue, icon, title, text, value)
++        }
++        func link(_ section: Int32, _ row: AyuWhiteGramRow, _ icon: UIImage?, _ title: String, _ label: String) -> AyuSectionedEntry {
++            return .link(section, row.rawValue, icon, title, label)
++        }
++        let fontLabel = AyuWhiteGram.customFontEnabled ? AyuWhiteGram.customFontName : (ru ? "системный" : "system")
++        let entries: [AyuSectionedEntry] = [
++            .header(1, 0, ru ? "ПУЗЫРИ" : "BUBBLES"),
++            row(1, .messageBorder, symbol("square.dashed", 0x5856D6), ru ? "Рамка сообщений" : "Message border", ru ? "Применяется после перезапуска" : "Applies after relaunch", AyuWhiteGram.messageBorder),
++            link(1, .borderColor, symbol("paintpalette.fill", 0xFF2D55), ru ? "Цвет рамки" : "Border color", AyuWhiteGram.messageBorderColorHex.isEmpty ? (ru ? "акцент" : "accent") : AyuWhiteGram.messageBorderColorHex),
++            row(1, .transparentBubbles, symbol("circle.dashed", 0x32ADE6), ru ? "Прозрачные пузыри" : "Transparent bubbles", nil, AyuWhiteGram.transparentBubbles),
++            row(1, .semiTransparentBubbles, symbol("circle.lefthalf.filled", 0x007AFF), ru ? "Полупрозрачные пузыри" : "Semi-transparent bubbles", nil, AyuWhiteGram.semiTransparentBubbles),
++            .header(2, 10, ru ? "ИНТЕРФЕЙС" : "INTERFACE"),
++            row(2, .squareAvatars, symbol("square.fill", 0xFF9500), ru ? "Квадратные аватары" : "Square avatars", nil, AyuWhiteGram.squareAvatars),
++            row(2, .oledMode, symbol("moon.fill", 0x000000), ru ? "OLED-режим" : "OLED mode", ru ? "Тёмная тема — чистый чёрный (после перезапуска)" : "Dark theme in true black (after relaunch)", AyuWhiteGram.oledMode),
++            link(2, .stickerSize, symbol("face.smiling.inverse", 0xFFCC00), ru ? "Размер стикеров" : "Sticker size", percent(AyuWhiteGram.stickerScale)),
++            row(2, .hideGalleryCamera, symbol("camera.fill", 0x8E8E93), ru ? "Без камеры в галерее" : "No camera in gallery", ru ? "Плитка камеры при выборе вложений" : "Camera tile when attaching", AyuWhiteGram.hideGalleryCamera),
++            row(2, .hideBusinessBotPanel, symbol("briefcase.fill", 0x34C759), ru ? "Скрыть панель бизнес-бота" : "Hide business bot panel", nil, AyuWhiteGram.hideBusinessBotPanel),
++            row(2, .disableChatSwipeOptions, symbol("hand.draw.fill", 0xFF3B30), ru ? "Без свайпов в списке чатов" : "No chat list swipes", nil, AyuWhiteGram.disableChatSwipeOptions),
++            row(2, .showCharCountTyping, symbol("textformat.123", 0x5856D6), ru ? "Счётчик символов при наборе" : "Character count while typing", nil, AyuWhiteGram.showCharCountTyping),
++            row(2, .showFullViewCount, symbol("eye.fill", 0x32ADE6), ru ? "Полные числа просмотров" : "Full view counts", ru ? "12 345 вместо 12K" : "12,345 instead of 12K", settings.interface.disableNumberRounding),
++            .header(3, 20, ru ? "НИЖНЯЯ ПАНЕЛЬ" : "TAB BAR"),
++            row(3, .hideBottomTabBar, symbol("rectangle.bottomhalf.inset.filled", 0x8E8E93), ru ? "Скрыть нижнюю панель" : "Hide tab bar", ru ? "Переход между вкладками — из настроек и поиска" : "Switch tabs from settings and search", AyuWhiteGram.hideBottomTabBar),
++            link(3, .tabBarScale, symbol("arrow.up.left.and.arrow.down.right", 0x007AFF), ru ? "Масштаб панели" : "Tab bar scale", percent(AyuWhiteGram.tabBarScale)),
++            link(3, .tabBarWidth, symbol("arrow.left.and.right", 0x007AFF), ru ? "Ширина панели" : "Tab bar width", percent(AyuWhiteGram.tabBarWidth)),
++            link(3, .tabsAndGlass, symbol("paintbrush.pointed.fill", 0xFF2D55), ru ? "Вкладки, стекло, старый дизайн" : "Tabs, glass, classic design", ""),
++            .header(4, 30, ru ? "ШРИФТЫ" : "FONTS"),
++            row(4, .customFontEnabled, symbol("textformat", 0xAF52DE), ru ? "Свой шрифт" : "Custom font", ru ? "Применяется после перезапуска" : "Applies after relaunch", AyuWhiteGram.customFontEnabled),
++            link(4, .importFont, symbol("plus.circle.fill", 0x34C759), ru ? "Добавить шрифт (.ttf, .otf)" : "Add font (.ttf, .otf)", ""),
++            link(4, .chooseFont, symbol("list.bullet", 0x8E8E93), ru ? "Выбрать шрифт" : "Choose font", fontLabel),
++            .header(5, 40, ru ? "НАСТРОЙКИ" : "SETTINGS"),
++            link(5, .settingsRows, symbol("list.bullet.rectangle.fill", 0x8E8E93), ru ? "Пункты в Настройках" : "Settings rows", AyuSettingsVisibility.hiddenKeys.isEmpty ? "" : "\(AyuSettingsVisibility.hiddenKeys.count)"),
++            .info(5, AyuWhiteGramRow.relaunchInfo.rawValue, ru ? "Всё работает локально на устройстве. Рамка, OLED и шрифт применяются после перезапуска приложения." : "Everything stays on this device. Border, OLED and font apply after relaunching the app."),
++            link(5, .reset, symbol("arrow.counterclockwise", 0xFF3B30), ru ? "Сбросить WhiteGram" : "Reset WhiteGram", "")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text("WhiteGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    push = { [weak controller] in controller?.push($0) }
++    presentNative = { viewController in
++        context.sharedContext.applicationBindings.presentNativeController(viewController)
++    }
++    return controller
++}
 diff --git a/submodules/TabBarUI/Sources/TabBarContollerNode.swift b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
-index 5afb5e98..5fee5e91 100644
+index 5afb5e98..49b710a8 100644
 --- a/submodules/TabBarUI/Sources/TabBarContollerNode.swift
 +++ b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
 @@ -8,6 +8,7 @@ import ComponentDisplayAdapters
@@ -2560,23 +3054,29 @@ index 5afb5e98..5fee5e91 100644
  
  final class TabBarControllerNode: ASDisplayNode {
      private struct Params: Equatable {
-@@ -18,6 +19,7 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -18,6 +19,10 @@ final class TabBarControllerNode: ASDisplayNode {
          /// The side placement depends on it, and with it the bottom inset the tab gets.
          let itemCount: Int
          let ayuLift: Double
 +        let ayuHideTitles: Bool
++        let ayuHidden: Bool
++        let ayuScale: CGFloat
++        let ayuWidth: CGFloat
          
          init(
              layout: ContainerViewLayout,
-@@ -32,6 +34,7 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -32,6 +37,10 @@ final class TabBarControllerNode: ASDisplayNode {
              self.currentControllerSearchState = currentControllerSearchState
              self.itemCount = itemCount
              self.ayuLift = min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 24.0)))
 +            self.ayuHideTitles = AyuAppearancePlus.hideTabTitles
++            self.ayuHidden = AyuWhiteGram.hideBottomTabBar
++            self.ayuScale = AyuWhiteGram.tabBarScale
++            self.ayuWidth = AyuWhiteGram.tabBarWidth
          }
      }
      
-@@ -63,6 +66,10 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -63,6 +72,11 @@ final class TabBarControllerNode: ASDisplayNode {
      private let contextAction: (Int, ContextExtractedContentContainingView, ContextGesture) -> Void
      
      private let tabBarView = ComponentView<Empty>()
@@ -2584,10 +3084,11 @@ index 5afb5e98..5fee5e91 100644
 +    /// floating component while horizontal.
 +    private var classicTabBar: TabBarNode?
 +    private var appearanceObserver: NSObjectProtocol?
++    private var whiteGramObserver: NSObjectProtocol?
      
      private let disabledOverlayNode: ASDisplayNode
      private var toolbar: ComponentView<Empty>?
-@@ -148,9 +155,26 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -148,9 +162,34 @@ final class TabBarControllerNode: ASDisplayNode {
          }
          
          self.backgroundColor = theme.list.plainBackgroundColor
@@ -2606,16 +3107,24 @@ index 5afb5e98..5fee5e91 100644
 +            self.layoutResult = nil
 +            self.requestUpdate()
 +        })
++        self.whiteGramObserver = NotificationCenter.default.addObserver(forName: AyuWhiteGram.didChangeNotification, object: nil, queue: .main, using: { [weak self] _ in
++            guard let self else { return }
++            self.layoutResult = nil
++            self.requestUpdate()
++        })
 +    }
 +
 +    deinit {
 +        if let appearanceObserver = self.appearanceObserver {
 +            NotificationCenter.default.removeObserver(appearanceObserver)
 +        }
++        if let whiteGramObserver = self.whiteGramObserver {
++            NotificationCenter.default.removeObserver(whiteGramObserver)
++        }
      }
      
      override func didLoad() {
-@@ -170,6 +194,7 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -170,6 +209,7 @@ final class TabBarControllerNode: ASDisplayNode {
          self.backgroundColor = theme.list.plainBackgroundColor
          
          self.disabledOverlayNode.backgroundColor = theme.rootController.tabBar.backgroundColor.withAlphaComponent(0.5)
@@ -2623,7 +3132,7 @@ index 5afb5e98..5fee5e91 100644
          self.requestUpdate()
      }
      
-@@ -326,7 +351,7 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -326,10 +366,10 @@ final class TabBarControllerNode: ASDisplayNode {
                  selectedId: selectedId,
                  outerInsets: UIEdgeInsets(top: 0.0, left: sideInset, bottom: tabBarBottomInset, right: sideInset),
                  axis: sidePlacement == nil ? .horizontal : .vertical,
@@ -2631,8 +3140,25 @@ index 5afb5e98..5fee5e91 100644
 +                isCompact: tabBarIsCompact(layout: params.layout, sidePlacement: sidePlacement) || params.ayuHideTitles
              )),
              environment: {},
-             containerSize: sidePlacement?.frame.size ?? CGSize(width: params.layout.size.width - sideInset * 2.0, height: 100.0)
-@@ -360,6 +385,28 @@ final class TabBarControllerNode: ASDisplayNode {
+-            containerSize: sidePlacement?.frame.size ?? CGSize(width: params.layout.size.width - sideInset * 2.0, height: 100.0)
++            containerSize: sidePlacement?.frame.size ?? CGSize(width: (params.layout.size.width - sideInset * 2.0) * (sidePlacement == nil ? params.ayuWidth : 1.0), height: 100.0)
+         )
+         let tabBarFrame: CGRect
+         if let sidePlacement {
+@@ -356,10 +396,40 @@ final class TabBarControllerNode: ASDisplayNode {
+                 }
+             }
+             tabBarFrameTransition.updateFrame(view: tabBarComponentView, frame: tabBarFrame)
+-            transition.updateAlpha(layer: tabBarComponentView.layer, alpha: tabBarAlpha)
++            // WhiteGram tab bar scale (anchored at its bottom edge) and full hiding.
++            let ayuScale = sidePlacement == nil ? params.ayuScale : 1.0
++            // Scale the bar's content, not its frame (frame and transform must not be mixed).
++            CATransaction.begin()
++            CATransaction.setDisableActions(true)
++            tabBarComponentView.layer.sublayerTransform = ayuScale == 1.0 ? CATransform3DIdentity : CATransform3DConcat(CATransform3DMakeScale(ayuScale, ayuScale, 1.0), CATransform3DMakeTranslation(0.0, tabBarFrame.height * (1.0 - ayuScale) * 0.5, 0.0))
++            CATransaction.commit()
++            transition.updateAlpha(layer: tabBarComponentView.layer, alpha: params.ayuHidden && sidePlacement == nil ? 0.0 : tabBarAlpha)
++            tabBarComponentView.isUserInteractionEnabled = !(params.ayuHidden && sidePlacement == nil)
          }
          
          tabBarFrameTransition.updateFrame(node: self.disabledOverlayNode, frame: tabBarFrame)
@@ -2661,7 +3187,15 @@ index 5afb5e98..5fee5e91 100644
          
          let toolbarHeight = 44.0
          let toolbarFrame: CGRect
-@@ -461,6 +508,9 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -457,10 +527,17 @@ final class TabBarControllerNode: ASDisplayNode {
+             // toolbar at the bottom needs an inset.
+             return params.toolbar != nil ? panelsBottomInset + toolbarHeight : nil
+         }
++        if params.ayuHidden && params.toolbar == nil {
++            // Hidden tab bar: content runs to the bottom edge.
++            return params.layout.insets(options: []).bottom
++        }
+         return params.layout.size.height - tabBarFrame.minY
      }
      
      func frameForControllerTab(at index: Int) -> CGRect? {
@@ -2671,7 +3205,7 @@ index 5afb5e98..5fee5e91 100644
          guard let tabBarView = self.tabBarView.view as? TabBarComponent.View else {
              return nil
          }
-@@ -471,6 +521,9 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -471,6 +548,9 @@ final class TabBarControllerNode: ASDisplayNode {
      }
      
      func isPointInsideContentArea(point: CGPoint) -> Bool {
@@ -2681,7 +3215,7 @@ index 5afb5e98..5fee5e91 100644
          guard let tabBarView = self.tabBarView.view else {
              return false
          }
-@@ -490,11 +543,13 @@ final class TabBarControllerNode: ASDisplayNode {
+@@ -490,11 +570,13 @@ final class TabBarControllerNode: ASDisplayNode {
      
      func updateTabBarItems(items: [TabBarNodeItem]) {
          self.tabBarItems = items
@@ -3683,6 +4217,113 @@ index 92d7de3d..af0dbefc 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramPresentationData/Sources/MakePresentationTheme.swift b/submodules/TelegramPresentationData/Sources/MakePresentationTheme.swift
+index 3f0398e9..fb744066 100644
+--- a/submodules/TelegramPresentationData/Sources/MakePresentationTheme.swift
++++ b/submodules/TelegramPresentationData/Sources/MakePresentationTheme.swift
+@@ -3,6 +3,7 @@ import UIKit
+ import Postbox
+ import TelegramUIPreferences
+ import TelegramCore
++import Display
+ 
+ public func makeDefaultPresentationTheme(reference: PresentationBuiltinThemeReference, extendingThemeReference: PresentationThemeReference? = nil, serviceBackgroundColor: UIColor?, preview: Bool = false) -> PresentationTheme {
+     let theme: PresentationTheme
+@@ -14,7 +15,8 @@ public func makeDefaultPresentationTheme(reference: PresentationBuiltinThemeRefe
+         case .night:
+             theme = makeDefaultDarkPresentationTheme(extendingThemeReference: extendingThemeReference, preview: preview)
+         case .nightAccent:
+-            theme = makeDefaultDarkTintedPresentationTheme(extendingThemeReference: extendingThemeReference, preview: preview)
++            // WhiteGram OLED mode: the tinted dark theme gives way to Telegram's true-black night.
++            theme = AyuWhiteGram.oledMode ? makeDefaultDarkPresentationTheme(extendingThemeReference: extendingThemeReference, preview: preview) : makeDefaultDarkTintedPresentationTheme(extendingThemeReference: extendingThemeReference, preview: preview)
+     }
+     return theme
+ }
+diff --git a/submodules/TelegramPresentationData/Sources/PresentationThemeEssentialGraphics.swift b/submodules/TelegramPresentationData/Sources/PresentationThemeEssentialGraphics.swift
+index 4d80c191..6374b809 100644
+--- a/submodules/TelegramPresentationData/Sources/PresentationThemeEssentialGraphics.swift
++++ b/submodules/TelegramPresentationData/Sources/PresentationThemeEssentialGraphics.swift
+@@ -208,8 +208,15 @@ public final class PrincipalThemeEssentialGraphics {
+         let wallpaper = initialWallpaper
+         self.hasWallpaper = !wallpaper.isEmpty
+         
+-        let incoming: PresentationThemeBubbleColorComponents = wallpaper.isEmpty ? theme.message.incoming.bubble.withoutWallpaper : theme.message.incoming.bubble.withWallpaper
+-        let outgoing: PresentationThemeBubbleColorComponents = wallpaper.isEmpty ? theme.message.outgoing.bubble.withoutWallpaper : theme.message.outgoing.bubble.withWallpaper
++        var incoming: PresentationThemeBubbleColorComponents = wallpaper.isEmpty ? theme.message.incoming.bubble.withoutWallpaper : theme.message.incoming.bubble.withWallpaper
++        var outgoing: PresentationThemeBubbleColorComponents = wallpaper.isEmpty ? theme.message.outgoing.bubble.withoutWallpaper : theme.message.outgoing.bubble.withWallpaper
++        if AyuWhiteGram.messageBorder {
++            // WhiteGram message border: the theme's outline images become a visible 1 pt stroke
++            // that follows every bubble shape, tail and merge.
++            let accent = theme.message.outgoing.accentControlColor
++            incoming = incoming.withUpdated(stroke: AyuWhiteGram.borderColor(accent: accent))
++            outgoing = outgoing.withUpdated(stroke: AyuWhiteGram.borderColor(accent: accent))
++        }
+ 
+         var incomingGradientColors: [UIColor]?
+         if Set(incoming.fill.map(\.argb)).count > 1 {
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
+index 25f0a555..4755a32f 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
+@@ -812,7 +812,8 @@ public class ChatMessageAnimatedStickerItemNode: ChatMessageItemView {
+     }
+         
+     override public func asyncLayout() -> (_ item: ChatMessageItem, _ params: ListViewItemLayoutParams, _ mergedTop: ChatMessageMerge, _ mergedBottom: ChatMessageMerge, _ dateHeaderAtBottom: ChatMessageHeaderSpec) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation, ListViewItemApply, Bool) -> Void) {
+-        var displaySize = CGSize(width: 180.0, height: 180.0)
++        // WhiteGram sticker size.
++        var displaySize = CGSize(width: floor(180.0 * AyuWhiteGram.stickerScale), height: floor(180.0 * AyuWhiteGram.stickerScale))
+         let telegramFile = self.telegramFile
+         let emojiFile = self.emojiFile
+         let telegramDice = self.telegramDice
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+index 1047a0fd..37797234 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+@@ -3978,6 +3978,13 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+         if strongSelf.mainContainerNode.alpha != ayuDeletedAlpha {
+             strongSelf.mainContainerNode.alpha = ayuDeletedAlpha
+         }
++        // WhiteGram transparent / semi-transparent bubbles: fill, wallpaper backdrop and shadow.
++        let ayuBubbleAlpha = AyuWhiteGram.bubbleFillAlpha
++        if strongSelf.backgroundNode.alpha != ayuBubbleAlpha {
++            strongSelf.backgroundNode.alpha = ayuBubbleAlpha
++            strongSelf.backgroundWallpaperNode.alpha = ayuBubbleAlpha
++            strongSelf.shadowNode.alpha = ayuBubbleAlpha
++        }
+         strongSelf.appliedForwardInfo = ChatMessageAppliedForwardInfo(messageId: item.content.firstMessage.id, source: forwardSource, authorSignature: forwardAuthorSignature)
+         strongSelf.updateAccessibilityData(accessibilityData)
+         strongSelf.disablesComments = disablesComments
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
+index 7e2dc75d..a34811ac 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageStickerItemNode/Sources/ChatMessageStickerItemNode.swift
+@@ -393,7 +393,8 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
+     }
+     
+     override public func asyncLayout() -> (_ item: ChatMessageItem, _ params: ListViewItemLayoutParams, _ mergedTop: ChatMessageMerge, _ mergedBottom: ChatMessageMerge, _ dateHeaderAtBottom: ChatMessageHeaderSpec) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation, ListViewItemApply, Bool) -> Void) {
+-        let displaySize = CGSize(width: 184.0, height: 184.0)
++        // WhiteGram sticker size.
++        let displaySize = CGSize(width: floor(184.0 * AyuWhiteGram.stickerScale), height: floor(184.0 * AyuWhiteGram.stickerScale))
+         let telegramFile = self.telegramFile
+         let layoutConstants = self.layoutConstants
+         let imageLayout = self.imageNode.asyncLayout()
+diff --git a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+index b614fcf2..31271733 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+@@ -4458,8 +4458,11 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+             let counterColor: UIColor = textCount > inputTextMaxLength ? presentationInterfaceState.theme.chat.inputPanel.panelControlDestructiveColor : presentationInterfaceState.theme.chat.inputPanel.panelControlColor
+             
+             let remainingCount = max(-999, inputTextMaxLength - textCount)
+-            let counterText = remainingCount >= 5 ? "" : "\(remainingCount)"
++            // WhiteGram: the typed length is always shown; the limit warning still takes priority.
++            let counterText = remainingCount >= 5 ? (AyuWhiteGram.showCharCountTyping && textCount > 0 ? "\(textCount)" : "") : "\(remainingCount)"
+             self.counterTextNode.attributedText = NSAttributedString(string: counterText, font: counterFont, textColor: counterColor)
++        } else if AyuWhiteGram.showCharCountTyping, let presentationInterfaceState = self.presentationInterfaceState, let textCount = self.richTextInputNode?.text.count, textCount > 0 {
++            self.counterTextNode.attributedText = NSAttributedString(string: "\(textCount)", font: counterFont, textColor: presentationInterfaceState.theme.chat.inputPanel.panelControlColor)
+         } else {
+             self.counterTextNode.attributedText = NSAttributedString(string: "", font: counterFont, textColor: .black)
+         }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 index 80a7b214..70d9d233 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
@@ -3698,19 +4339,21 @@ index 80a7b214..70d9d233 100644
          }
      }
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
-index ed6a26a2..c3e5cc70 100644
+index ed6a26a2..8cee4376 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
 +++ b/submodules/TelegramUI/Sources/AppDelegate.swift
-@@ -453,6 +453,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+@@ -453,6 +453,10 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
          let statusBarHost = ApplicationStatusBarHost(scene: window.windowScene)
          self.statusBarHost = statusBarHost
          self.mainWindow = Window1(hostView: hostView, statusBarHost: statusBarHost)
 +        // AyuGram Slow-Motion must be active before the first transition runs.
 +        AyuAppearancePlus.applyAtLaunch()
++        // WhiteGram custom fonts must resolve by name before the first label is laid out.
++        AyuWhiteGram.registerImportedFonts()
          if let traitCollection = window.rootViewController?.traitCollection {
              if #available(iOS 13.0, *) {
                  switch traitCollection.userInterfaceStyle {
-@@ -1471,6 +1473,12 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+@@ -1471,6 +1475,12 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                      self.mainWindow.debugAction = nil
                      self.mainWindow.viewController = context.rootController
                      self.ayuPresentStartupNotice()
@@ -6496,6 +7139,29 @@ index ac8d62e4..5672a5ee 100644
              self.updateRightNavigationButtons(presentationInterfaceState: self.presentationInterfaceState, transition: .immediate)
          } catch {
              let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+diff --git a/submodules/TelegramUI/Sources/ChatInterfaceTitlePanelNodes.swift b/submodules/TelegramUI/Sources/ChatInterfaceTitlePanelNodes.swift
+index 850d1c92..392ba97f 100644
+--- a/submodules/TelegramUI/Sources/ChatInterfaceTitlePanelNodes.swift
++++ b/submodules/TelegramUI/Sources/ChatInterfaceTitlePanelNodes.swift
+@@ -1,6 +1,7 @@
+ import Foundation
+ import UIKit
+ import TelegramCore
++import Display
+ import AccountContext
+ import ChatPresentationInterfaceState
+ import ChatControllerInteraction
+@@ -251,6 +252,10 @@ func managingBotTitlePanelForChatPresentationInterfaceState(_ chatPresentationIn
+     guard let contactStatus = chatPresentationInterfaceState.contactStatus, contactStatus.managingBot != nil else {
+         return nil
+     }
++    // WhiteGram "hide business bot panel".
++    if AyuWhiteGram.hideBusinessBotPanel {
++        return nil
++    }
+     if chatPresentationInterfaceState.peerIsBlocked {
+         return nil
+     }
 diff --git a/submodules/TelegramUI/Sources/OpenChatMessage.swift b/submodules/TelegramUI/Sources/OpenChatMessage.swift
 index 32f76b24..bc64daf9 100644
 --- a/submodules/TelegramUI/Sources/OpenChatMessage.swift

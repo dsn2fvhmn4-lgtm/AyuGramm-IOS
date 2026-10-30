@@ -1,0 +1,149 @@
+diff --git a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+index f31b21c..b614fcf 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+@@ -183,7 +183,7 @@ private func makeTextInputTheme(context: AccountContext, interfaceState: ChatPre
+     )
+ }
+ 
+-public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDelegate, ChatInputTextNodeDelegate {
++public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDelegate, ChatInputTextNodeDelegate, UIContextMenuInteractionDelegate {
+     private enum AudioRecordingRemoveAnimationState {
+         case recordingToAttachButton
+         case previewToAttachButton
+@@ -3940,6 +3940,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+                 bar = UIScrollView()
+                 bar.showsHorizontalScrollIndicator = false
+                 bar.delaysContentTouches = false
++                bar.addInteraction(UIContextMenuInteraction(delegate: self))
+                 self.ayuFormattingBar = bar
+                 self.view.addSubview(bar)
+                 let items = [
+@@ -3970,8 +3971,12 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+             transition.updateFrame(view: bar, frame: formattingFrame)
+             bar.clipsToBounds = true
+             let buttonWidth = max(44.0, bar.bounds.width / 10.0)
++            let hidden = Set(UserDefaults.standard.array(forKey: "ayu.formatting.hidden") as? [Int] ?? [])
++            var visibleIndex = 0
+             for (index, button) in self.ayuFormattingButtons.enumerated() {
+-                button.frame = CGRect(x: CGFloat(index) * buttonWidth, y: 0.0, width: buttonWidth, height: 44.0)
++                button.isHidden = hidden.contains(index)
++                button.frame = CGRect(x: CGFloat(visibleIndex) * buttonWidth, y: 0.0, width: buttonWidth, height: 44.0)
++                if !button.isHidden { visibleIndex += 1 }
+                 button.tintColor = interfaceState.theme.chat.inputPanel.inputControlColor
+                 let secret = interfaceState.chatLocation.peerId?.namespace == Namespaces.Peer.SecretChat
+                 button.isEnabled = !secret || ![3, 5].contains(index)
+@@ -3983,7 +3988,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+                     button.isEnabled = false
+                 }
+             }
+-            bar.contentSize = CGSize(width: CGFloat(self.ayuFormattingButtons.count) * buttonWidth, height: 44.0)
++            bar.contentSize = CGSize(width: CGFloat(visibleIndex) * buttonWidth, height: 44.0)
+             self.view.bringSubviewToFront(bar)
+             contentHeight = formattingFrame.maxY - hideOffset.y
+         } else if let bar = self.ayuFormattingBar {
+@@ -3994,6 +3999,22 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+         return contentHeight
+     }
+ 
++    public func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
++        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil, actionProvider: { [weak self] _ in
++            guard let self else { return nil }
++            let hidden = Set(UserDefaults.standard.array(forKey: "ayu.formatting.hidden") as? [Int] ?? [])
++            let actions = self.ayuFormattingButtons.map { button in
++                UIAction(title: button.accessibilityLabel ?? "", image: button.image(for: .normal), state: hidden.contains(button.tag) ? .off : .on, handler: { [weak self] _ in
++                    var updated = hidden
++                    if updated.contains(button.tag) { updated.remove(button.tag) } else if updated.count < 11 { updated.insert(button.tag) }
++                    UserDefaults.standard.set(Array(updated), forKey: "ayu.formatting.hidden")
++                    self?.requestLayout(transition: .immediate)
++                })
++            }
++            return UIMenu(title: "Панель форматирования", children: actions)
++        })
++    }
++
+     @objc private func ayuFormatPressed(_ sender: UIButton) {
+         let nativeAction: ChatRichTextFormatAction?
+         switch sender.tag {
+diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
+index 214e27c..e0b4bf0 100644
+--- a/submodules/TelegramUI/Sources/AyuLyrics.swift
++++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
+@@ -141,6 +141,21 @@ private final class AyuLyricsRequest {
+                 let rhsDelta = abs((rhs["duration"] as? Double ?? 0.0) - duration)
+                 return lhsDelta < rhsDelta
+             })
++            if compatible.isEmpty {
++                // A different recording can still supply useful static text, but its
++                // timestamps must not be applied to this audio.
++                let name = AyuMusicMetadata.searchTitle(self.title).lowercased()
++                if let record = records.first(where: { record in
++                    guard let title = record["trackName"] as? String else { return false }
++                    guard AyuMusicMetadata.searchTitle(title).lowercased() == name else { return false }
++                    if let artist = self.artist, !artist.isEmpty {
++                        return (record["artistName"] as? String)?.localizedCaseInsensitiveContains(artist) == true
++                    }
++                    return true
++                }), let text = record["plainLyrics"] as? String, !text.isEmpty {
++                    self.fallbackLyrics = self.fallbackLyrics ?? .plain(text)
++                }
++            }
+             if let result = ranked.lazy.compactMap({ AyuLyricsRequest.lyrics(from: $0, duration: duration) }).first {
+                 self.finish(result)
+             } else {
+diff --git a/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
+index b1932ec..b102d50 100644
+--- a/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
++++ b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
+@@ -118,26 +118,18 @@ final class AyuLyricsLineLabel: UIView {
+         }
+         self.manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+         guard let context = UIGraphicsGetCurrentContext() else { return }
+-        let path = CGMutablePath()
+-        if self.emptyLineActive { path.addRect(self.bounds) }
+-        for index in self.rectangles.indices where index < self.progresses.count {
+-            let rects = self.rectangles[index]
+-            let totalWidth = rects.reduce(CGFloat(0.0)) { $0 + $1.width }
+-            var remaining = totalWidth * CGFloat(self.progresses[index])
+-            for rectangle in rects {
+-                let width = min(rectangle.width, max(0.0, remaining))
+-                if width > 0.0 {
+-                    let x = self.rightToLeft[index] ? rectangle.maxX - width : rectangle.minX
+-                    path.addRect(CGRect(x: x, y: rectangle.minY, width: width, height: rectangle.height))
+-                }
+-                remaining -= rectangle.width
+-            }
++        let glyphRange = self.highlightManager.glyphRange(for: self.highlightContainer)
++        if self.emptyLineActive { self.highlightManager.drawGlyphs(forGlyphRange: glyphRange, at: .zero) }
++        for index in self.rectangles.indices where index < self.progresses.count && self.progresses[index] > 0.0 {
++            let path = CGMutablePath()
++            for rectangle in self.rectangles[index] { path.addRect(rectangle) }
++            guard !path.isEmpty else { continue }
++            context.saveGState()
++            context.addPath(path)
++            context.clip()
++            context.setAlpha(CGFloat(min(1.0, self.progresses[index] * 6.0)))
++            self.highlightManager.drawGlyphs(forGlyphRange: glyphRange, at: .zero)
++            context.restoreGState()
+         }
+-        guard !path.isEmpty else { return }
+-        context.saveGState()
+-        context.addPath(path)
+-        context.clip()
+-        self.highlightManager.drawGlyphs(forGlyphRange: self.highlightManager.glyphRange(for: self.highlightContainer), at: .zero)
+-        context.restoreGState()
+     }
+ }
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+index e793034..fe551b5 100644
+--- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -1011,7 +1011,7 @@ private final class AyuLyricsView: UIView {
+                 self.scrollView.addSubview(pause)
+             }
+         }
+-        self.timingLabel.isHidden = !synced
++        self.timingLabel.isHidden = true
+         self.updateTimingLabel(index: nil)
+         self.setNeedsLayout()
+     }

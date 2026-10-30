@@ -60,6 +60,11 @@ font_dst = source / "submodules" / "TelegramUI" / "Resources" / font_src.name
 font_dst.parent.mkdir(parents=True, exist_ok=True)
 shutil.copy2(font_src, font_dst)
 
+# AyuGram settings pull-down easter egg image, bundled the same way.
+eblan_src = root / "assets" / "easter" / "AyuEblan.png"
+if eblan_src.is_file():
+    shutil.copy2(eblan_src, source / "submodules" / "TelegramUI" / "Resources" / eblan_src.name)
+
 missing = missing_port_sources(source)
 if missing:
     raise SystemExit("Port patch is missing required native source files:\n" + "\n".join(missing))

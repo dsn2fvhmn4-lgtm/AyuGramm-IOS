@@ -649,11 +649,12 @@ index de8b2b31..9e493889 100644
                  }
 diff --git a/submodules/Display/Source/AyuAppearancePlus.swift b/submodules/Display/Source/AyuAppearancePlus.swift
 new file mode 100644
-index 00000000..9e7ef2ba
+index 00000000..454dd164
 --- /dev/null
 +++ b/submodules/Display/Source/AyuAppearancePlus.swift
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,100 @@
 +import Foundation
++import UIKitRuntimeUtils
 +
 +/// App-wide appearance options from Settings → AyuGram → Appearance+.
 +/// Glass and classic-design choices are read once per launch because glass views are
@@ -673,6 +674,27 @@ index 00000000..9e7ef2ba
 +    private static let hideTabTitlesKey = "ayu.appearance.hideTabTitles"
 +    private static let glassStyleKey = "ayu.appearance.glassStyle"
 +    private static let classicDesignKey = "ayu.appearance.classicDesign"
++    private static let slowMotionKey = "ayu.appearance.slowMotion"
++
++    /// Slow-Motion choices for every animation in the client.
++    public static let slowMotionSteps: [Double] = [1.0, 2.0, 3.0, 5.0, 10.0]
++
++    /// 1 = off. Applies at once to Telegram's own animations and UIKit block animations.
++    public static var slowMotionFactor: Double {
++        get {
++            let value = UserDefaults.standard.double(forKey: slowMotionKey)
++            return value >= 1.0 ? value : 1.0
++        }
++        set {
++            set(max(1.0, min(20.0, newValue)), forKey: slowMotionKey)
++            ayuSetAnimationSlowMotionFactor(AyuAppearancePlus.slowMotionFactor)
++        }
++    }
++
++    /// Called once at launch so the saved factor is active before the first transition.
++    public static func applyAtLaunch() {
++        ayuSetAnimationSlowMotionFactor(AyuAppearancePlus.slowMotionFactor)
++    }
 +
 +    /// Values that only take effect after relaunch, captured at first access.
 +    public static let launchGlassStyle: GlassStyle = AyuAppearancePlus.glassStyle
@@ -716,9 +738,10 @@ index 00000000..9e7ef2ba
 +    public static func resetAll() {
 +        _ = AyuAppearancePlus.launchGlassStyle
 +        _ = AyuAppearancePlus.launchClassicDesign
-+        for key in [hideContactsKey, hideCallsKey, hideTabTitlesKey, glassStyleKey, classicDesignKey] {
++        for key in [hideContactsKey, hideCallsKey, hideTabTitlesKey, glassStyleKey, classicDesignKey, slowMotionKey] {
 +            UserDefaults.standard.removeObject(forKey: key)
 +        }
++        ayuSetAnimationSlowMotionFactor(1.0)
 +        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +
@@ -730,12 +753,110 @@ index 00000000..9e7ef2ba
 +        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +}
+diff --git a/submodules/Display/Source/AyuMaterialSelection.swift b/submodules/Display/Source/AyuMaterialSelection.swift
+index 33581d9e..b9554f81 100644
+--- a/submodules/Display/Source/AyuMaterialSelection.swift
++++ b/submodules/Display/Source/AyuMaterialSelection.swift
+@@ -5,6 +5,22 @@ public enum AyuMaterialSelectionKind { case checkbox, radio }
+ 
+ /// M3 selection geometry: 18 pt checkbox, 20 pt radio, 40 pt state layer.
+ public enum AyuMaterialSelectionDrawing {
++    /// M3 radio button: 2 pt ring, 10 pt dot when selected.
++    public static func drawRadio(context: CGContext, size: CGSize, selected: Bool, primary: UIColor, outline: UIColor) {
++        guard size.width > 0.0, size.height > 0.0 else { return }
++        let side = min(20.0, min(size.width, size.height))
++        let frame = CGRect(x: (size.width - side) * 0.5, y: (size.height - side) * 0.5, width: side, height: side)
++        context.saveGState()
++        context.setLineWidth(2.0)
++        context.setStrokeColor((selected ? primary : outline).cgColor)
++        context.strokeEllipse(in: frame.insetBy(dx: 1.0, dy: 1.0))
++        if selected {
++            context.setFillColor(primary.cgColor)
++            context.fillEllipse(in: frame.insetBy(dx: 5.0, dy: 5.0))
++        }
++        context.restoreGState()
++    }
++
+     public static func drawCheckbox(context: CGContext, size: CGSize, progress: CGFloat, primary: UIColor, onPrimary: UIColor, outline: UIColor) {
+         guard size.width > 0.0, size.height > 0.0 else { return }
+         let progress = min(1.0, max(0.0, progress))
+diff --git a/submodules/GalleryUI/Sources/AyuGalleryMenuIcons.swift b/submodules/GalleryUI/Sources/AyuGalleryMenuIcons.swift
+new file mode 100644
+index 00000000..ff19eece
+--- /dev/null
++++ b/submodules/GalleryUI/Sources/AyuGalleryMenuIcons.swift
+@@ -0,0 +1,18 @@
++import Foundation
++import UIKit
++import Display
++import AppBundle
++
++/// Selection mark for the video settings menu (speed, quality). The stock mark was a check
++/// tinted plain white, which vanished whenever the menu background was light (Material
++/// Design 3 uses flat light panels); it now follows the menu's text colour, and in Material
++/// Design 3 it is an M3 radio button like the rest of that style.
++func ayuGalleryMenuSelectionIcon(_ selected: Bool, color: UIColor) -> UIImage? {
++    if AyuMaterialControls.isEnabled {
++        return generateImage(CGSize(width: 24.0, height: 24.0), rotatedContext: { size, context in
++            context.clear(CGRect(origin: .zero, size: size))
++            AyuMaterialSelectionDrawing.drawRadio(context: context, size: size, selected: selected, primary: color, outline: color.withAlphaComponent(0.55))
++        })
++    }
++    return selected ? generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: color) : UIImage()
++}
+diff --git a/submodules/GalleryUI/Sources/Items/UniversalVideoGalleryItem.swift b/submodules/GalleryUI/Sources/Items/UniversalVideoGalleryItem.swift
+index 7636bd18..1c00a0fb 100644
+--- a/submodules/GalleryUI/Sources/Items/UniversalVideoGalleryItem.swift
++++ b/submodules/GalleryUI/Sources/Items/UniversalVideoGalleryItem.swift
+@@ -3579,11 +3579,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
+                         let isSelected = abs(status.baseRate - rate) < 0.01
+                         items.append(.action(ContextMenuActionItem(text: text, icon: { _ in return nil }, iconSource: ContextMenuActionItemIconSource(size: CGSize(width: 24.0, height: 24.0), signal: sliderValuePromise.get()
+                         |> map { value in
+-                            if isSelected && value == nil {
+-                                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: .white)
+-                            } else {
+-                                return UIImage()
+-                            }
++                            return ayuGalleryMenuSelectionIcon(isSelected && value == nil, color: .white)
+                         }), action: { _, f in
+                             f(.default)
+                             
+@@ -3611,12 +3607,8 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
+                         } else {
+                             textLayout = .singleLine
+                         }
+-                        items.append(.action(ContextMenuActionItem(id: AnyHashable("q"), text: qualityText, textLayout: textLayout, icon: { _ in
+-                            if isSelected {
+-                                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: .white)
+-                            } else {
+-                                return UIImage()
+-                            }
++                        items.append(.action(ContextMenuActionItem(id: AnyHashable("q"), text: qualityText, textLayout: textLayout, icon: { theme in
++                            return ayuGalleryMenuSelectionIcon(isSelected, color: theme.contextMenu.primaryColor)
+                         }, action: { [weak strongSelf] _, f in
+                             f(.default)
+                             
+@@ -3665,12 +3657,8 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
+                                     qualityDebugText += ", \(dataSizeString(size, formatting: DataSizeStringFormatting(presentationData: strongSelf.presentationData)))"
+                                 }
+                             }
+-                            items.append(.action(ContextMenuActionItem(text: qualityTitle, textLayout: .secondLineWithValue("\(quality)p\(qualityDebugText)"), icon: { _ in
+-                                if isSelected {
+-                                    return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: .white)
+-                                } else {
+-                                    return UIImage()
+-                                }
++                            items.append(.action(ContextMenuActionItem(text: qualityTitle, textLayout: .secondLineWithValue("\(quality)p\(qualityDebugText)"), icon: { theme in
++                                return ayuGalleryMenuSelectionIcon(isSelected, color: theme.contextMenu.primaryColor)
+                             }, action: { [weak self] _, f in
+                                 f(.default)
+                                 
 diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
 new file mode 100644
-index 00000000..81872d3c
+index 00000000..d6f68519
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,99 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -755,6 +876,7 @@ index 00000000..81872d3c
 +    case hideTitles = 3
 +    case telegramGlass = 11
 +    case classicDesign = 21
++    case slowMotion = 25
 +    case relaunchInfo = 30
 +    case reset = 41
 +}
@@ -775,6 +897,12 @@ index 00000000..81872d3c
 +    var presentController: ((ViewController) -> Void)?
 +
 +    let arguments = AyuSectionedArguments(open: { id in
++        if id == AyuAppearancePlusRow.slowMotion.rawValue {
++            let steps = AyuAppearancePlus.slowMotionSteps
++            let current = AyuAppearancePlus.slowMotionFactor
++            AyuAppearancePlus.slowMotionFactor = steps.first(where: { $0 > current + 0.01 }) ?? steps[0]
++            return
++        }
 +        guard id == AyuAppearancePlusRow.reset.rawValue else { return }
 +        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
@@ -813,7 +941,8 @@ index 00000000..81872d3c
 +            .header(2, 10, ru ? "ЖИДКОЕ СТЕКЛО" : "LIQUID GLASS"),
 +            .toggle(2, AyuAppearancePlusRow.telegramGlass.rawValue, symbol("drop.fill", 0x32ADE6), ru ? "Стекло Telegram" : "Telegram glass", ru ? (systemGlassAvailable ? "Выключено — системное стекло iOS" : "Системное стекло требует iOS 26") : (systemGlassAvailable ? "Off: the system iOS glass" : "System glass needs iOS 26"), AyuAppearancePlus.glassStyle == .telegram),
 +            .header(3, 20, ru ? "ДИЗАЙН" : "DESIGN"),
-+            .toggle(3, AyuAppearancePlusRow.classicDesign.rawValue, symbol("clock.arrow.circlepath", 0xFF2D55), ru ? "Старый дизайн Telegram" : "Classic Telegram design", ru ? "Нижняя панель во всю ширину, как до Liquid Glass" : "Full-width tab bar as before Liquid Glass", AyuAppearancePlus.classicDesign)
++            .toggle(3, AyuAppearancePlusRow.classicDesign.rawValue, symbol("clock.arrow.circlepath", 0xFF2D55), ru ? "Старый дизайн Telegram" : "Classic Telegram design", ru ? "Как Telegram до Liquid Glass" : "Telegram before Liquid Glass", AyuAppearancePlus.classicDesign),
++            .link(3, AyuAppearancePlusRow.slowMotion.rawValue, symbol("tortoise.fill", 0x34C759), ru ? "Slow-Motion анимаций" : "Animation slow motion", AyuAppearancePlus.slowMotionFactor > 1.0 ? String(format: "%.0f×", AyuAppearancePlus.slowMotionFactor) : (ru ? "выкл." : "off"))
 +        ]
 +        if AyuAppearancePlus.needsRelaunch {
 +            entries.append(.info(3, AyuAppearancePlusRow.relaunchInfo.rawValue, ru ? "⚠️ Перезапустите приложение, чтобы применить стекло и дизайн." : "⚠️ Relaunch the app to apply the glass and design changes."))
@@ -829,10 +958,10 @@ index 00000000..81872d3c
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
 new file mode 100644
-index 00000000..63a59086
+index 00000000..2f6aac21
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,127 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -926,7 +1055,6 @@ index 00000000..63a59086
 +            .header(1, 0, ru ? "ИНТЕРФЕЙС" : "INTERFACE"),
 +            toggle(1, .playerDebugOverlay, symbol("ladybug.fill", 0xFF3B30), ru ? "Отладка плеера" : "Player debug overlay", ru ? "Состояние воспроизведения в правом нижнем углу плеера" : "Playback state in the player's bottom-right corner", settings.playerDebugOverlay),
 +            toggle(1, .fpsCounter, symbol("speedometer", 0x34C759), ru ? "Счётчик FPS" : "FPS counter", nil, settings.fpsCounter),
-+            toggle(1, .slowAnimations, symbol("tortoise.fill", 0xFF9500), ru ? "Медленные анимации" : "Slow animations", ru ? "В 4 раза медленнее" : "Four times slower", settings.slowAnimations),
 +            toggle(1, .highlightAyuViews, symbol("square.dashed", 0xAF52DE), ru ? "Подсветить элементы AyuGram" : "Outline AyuGram views", nil, settings.highlightAyuViews),
 +            .header(2, 10, ru ? "МУЗЫКА" : "MUSIC"),
 +            toggle(2, .forceStockMusicPlayer, symbol("music.note", 0xFF2D55), ru ? "Стандартный плеер Telegram" : "Stock Telegram player", ru ? "Вместо плеера AyuGram" : "Instead of the AyuGram player", settings.forceStockMusicPlayer),
@@ -960,6 +1088,107 @@ index 00000000..63a59086
 +        context.sharedContext.applicationBindings.presentNativeController(viewController)
 +    }
 +    return controller
++}
+diff --git a/submodules/SettingsUI/Sources/AyuEblanButton.swift b/submodules/SettingsUI/Sources/AyuEblanButton.swift
+new file mode 100644
+index 00000000..956e2c6d
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuEblanButton.swift
+@@ -0,0 +1,95 @@
++import Foundation
++import UIKit
++import Display
++import AccountContext
++
++/// Easter egg on the AyuGram settings page: pull the list down far enough and a «еблан»
++/// button pops out under the navigation bar; it opens the bundled picture.
++final class AyuEblanPullButton: UIButton {
++    private static let threshold: CGFloat = 80.0
++    private var shown = false
++    private var hideWork: DispatchWorkItem?
++    var open: (() -> Void)?
++
++    init() {
++        super.init(frame: CGRect(x: 0.0, y: 0.0, width: 132.0, height: 40.0))
++        var configuration = UIButton.Configuration.filled()
++        configuration.title = "еблан"
++        configuration.cornerStyle = .capsule
++        configuration.baseBackgroundColor = UIColor(rgb: 0xFF3B30)
++        configuration.baseForegroundColor = .white
++        configuration.contentInsets = NSDirectionalEdgeInsets(top: 8.0, leading: 22.0, bottom: 8.0, trailing: 22.0)
++        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
++            var attributes = attributes
++            attributes.font = UIFont.systemFont(ofSize: 17.0, weight: .heavy)
++            return attributes
++        }
++        self.configuration = configuration
++        self.alpha = 0.0
++        self.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
++        self.layer.shadowColor = UIColor.black.cgColor
++        self.layer.shadowOpacity = 0.25
++        self.layer.shadowRadius = 10.0
++        self.layer.shadowOffset = CGSize(width: 0.0, height: 4.0)
++        self.addTarget(self, action: #selector(self.tapped), for: .touchUpInside)
++    }
++
++    required init?(coder: NSCoder) { return nil }
++
++    @objc private func tapped() {
++        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
++        self.open?()
++    }
++
++    /// `pull` is how far past the top the list is dragged, in points.
++    func update(pull: CGFloat) {
++        if pull >= AyuEblanPullButton.threshold && !self.shown {
++            self.shown = true
++            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
++            UIView.animate(withDuration: 0.55, delay: 0.0, usingSpringWithDamping: 0.55, initialSpringVelocity: 0.8, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
++                self.alpha = 1.0
++                self.transform = .identity
++            })
++        }
++        if self.shown {
++            // Stay a few seconds after the list springs back, so it can be tapped.
++            self.hideWork?.cancel()
++            let work = DispatchWorkItem { [weak self] in self?.hide() }
++            self.hideWork = work
++            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0, execute: work)
++        }
++    }
++
++    private func hide() {
++        guard self.shown else { return }
++        self.shown = false
++        UIView.animate(withDuration: 0.3, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
++            self.alpha = 0.0
++            self.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
++        })
++    }
++}
++
++/// Full-screen viewer for the easter egg picture; tap anywhere to close.
++final class AyuEblanViewController: UIViewController {
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.view.backgroundColor = .black
++        let imageView = UIImageView(image: Bundle.main.path(forResource: "AyuEblan", ofType: "png").flatMap(UIImage.init(contentsOfFile:)))
++        imageView.contentMode = .scaleAspectFit
++        imageView.frame = self.view.bounds
++        imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        self.view.addSubview(imageView)
++        imageView.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
++        imageView.alpha = 0.0
++        UIView.animate(withDuration: 0.5, delay: 0.05, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.0, options: [], animations: {
++            imageView.transform = .identity
++            imageView.alpha = 1.0
++        })
++        self.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.close)))
++    }
++
++    @objc private func close() {
++        self.dismiss(animated: true)
++    }
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift b/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift
 new file mode 100644
@@ -1126,7 +1355,7 @@ index 00000000..4948ec0c
 +    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
-index e2236c5f..2a72509b 100644
+index e2236c5f..7b614897 100644
 --- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 @@ -16,6 +16,7 @@ import PeerNameColorScreen
@@ -1198,6 +1427,30 @@ index e2236c5f..2a72509b 100644
          ]
          let data = ItemListPresentationData(presentationData)
          let state = ItemListControllerState(presentationData: data, title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+@@ -111,6 +132,23 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+     let controller = ItemListController(context: context, state: signal)
+     push = { [weak controller] in controller?.push($0) }
+     navigation = { [weak controller] in controller?.navigationController as? NavigationController }
++    // Pull the page down to find the «еблан» button.
++    let eblan = AyuEblanPullButton()
++    eblan.open = {
++        let viewer = AyuEblanViewController()
++        viewer.modalPresentationStyle = .fullScreen
++        viewer.modalTransitionStyle = .crossDissolve
++        context.sharedContext.applicationBindings.presentNativeController(viewer)
++    }
++    controller.contentOffsetChanged = { [weak controller] offset, _ in
++        guard let controller, case let .known(value) = offset else { return }
++        if eblan.superview == nil {
++            controller.view.addSubview(eblan)
++        }
++        eblan.center = CGPoint(x: controller.view.bounds.midX, y: controller.view.safeAreaInsets.top + 66.0)
++        controller.view.bringSubviewToFront(eblan)
++        eblan.update(pull: -value)
++    }
+     return controller
+ }
+ 
 diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
 index 9743501e..496d3a52 100644
 --- a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
@@ -3220,10 +3473,19 @@ index 92d7de3d..af0dbefc 100644
                      return .single(.boolFalse)
                  }
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
-index ed6a26a2..eea3cf7b 100644
+index ed6a26a2..c3e5cc70 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
 +++ b/submodules/TelegramUI/Sources/AppDelegate.swift
-@@ -1471,6 +1471,12 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+@@ -453,6 +453,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         let statusBarHost = ApplicationStatusBarHost(scene: window.windowScene)
+         self.statusBarHost = statusBarHost
+         self.mainWindow = Window1(hostView: hostView, statusBarHost: statusBarHost)
++        // AyuGram Slow-Motion must be active before the first transition runs.
++        AyuAppearancePlus.applyAtLaunch()
+         if let traitCollection = window.rootViewController?.traitCollection {
+             if #available(iOS 13.0, *) {
+                 switch traitCollection.userInterfaceStyle {
+@@ -1471,6 +1473,12 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                      self.mainWindow.debugAction = nil
                      self.mainWindow.viewController = context.rootController
                      self.ayuPresentStartupNotice()
@@ -3238,7 +3500,7 @@ index ed6a26a2..eea3cf7b 100644
                          let layer = context.rootController.view.layer
 diff --git a/submodules/TelegramUI/Sources/AyuDeveloperOverlays.swift b/submodules/TelegramUI/Sources/AyuDeveloperOverlays.swift
 new file mode 100644
-index 00000000..84ec4f86
+index 00000000..64595ddf
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuDeveloperOverlays.swift
 @@ -0,0 +1,140 @@
@@ -3274,7 +3536,7 @@ index 00000000..84ec4f86
 +
 +    private func apply() {
 +        let settings = AyuDeveloperSettings.shared.current
-+        self.container?.window?.layer.speed = settings.slowAnimations ? 0.25 : 1.0
++        // Slowing animations lives in Appearance+ → Slow-Motion, which scales every animation.
 +        self.setFpsCounter(enabled: settings.fpsCounter)
 +        self.setHighlight(enabled: settings.highlightAyuViews)
 +    }
@@ -6143,6 +6405,74 @@ index 22ecc718..e27a8643 100644
              controllers.append(self.callListController!)
          }
          controllers.append(self.chatListController!)
+diff --git a/submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.h b/submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.h
+index 66022262..397bf9f9 100644
+--- a/submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.h
++++ b/submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.h
+@@ -2,6 +2,9 @@
+ #import <Foundation/Foundation.h>
+ 
+ double animationDurationFactorImpl();
++/// AyuGram Slow-Motion: multiplies every animation's duration (1 = off, up to 20).
++void ayuSetAnimationSlowMotionFactor(double factor);
++double ayuAnimationSlowMotionFactor(void);
+ 
+ CABasicAnimation * _Nonnull makeSpringAnimationImpl(NSString * _Nonnull keyPath, double duration);
+ CABasicAnimation * _Nonnull make26SpringAnimationImpl(NSString * _Nonnull keyPath, double duration);
+diff --git a/submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.m b/submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.m
+index 3191bf1b..6fc2e0cb 100644
+--- a/submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.m
++++ b/submodules/UIKitRuntimeUtils/Source/UIKitRuntimeUtils/UIKitUtils.m
+@@ -8,11 +8,46 @@
+ UIKIT_EXTERN float UIAnimationDragCoefficient();
+ #endif
+ 
++/// AyuGram Slow-Motion: one factor for every animation in the client, on device as well as in
++/// the simulator. Telegram's own animations already scale their durations by this function;
++/// UIKit block animations are scaled by the swizzles below once Slow-Motion is first enabled.
++static double ayuSlowMotionFactorValue = 1.0;
++
++@interface UIView (AyuSlowMotion)
++@end
++
++@implementation UIView (AyuSlowMotion)
++
+++ (void)_ayu_animateWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay options:(UIViewAnimationOptions)options animations:(void (^)(void))animations completion:(void (^ _Nullable)(BOOL))completion {
++    [self _ayu_animateWithDuration:duration * ayuSlowMotionFactorValue delay:delay * ayuSlowMotionFactorValue options:options animations:animations completion:completion];
++}
++
+++ (void)_ayu_animateWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay usingSpringWithDamping:(CGFloat)dampingRatio initialSpringVelocity:(CGFloat)velocity options:(UIViewAnimationOptions)options animations:(void (^)(void))animations completion:(void (^ _Nullable)(BOOL))completion {
++    [self _ayu_animateWithDuration:duration * ayuSlowMotionFactorValue delay:delay * ayuSlowMotionFactorValue usingSpringWithDamping:dampingRatio initialSpringVelocity:velocity / ayuSlowMotionFactorValue options:options animations:animations completion:completion];
++}
++
++@end
++
++void ayuSetAnimationSlowMotionFactor(double factor) {
++    ayuSlowMotionFactorValue = MAX(1.0, MIN(20.0, factor));
++    if (ayuSlowMotionFactorValue > 1.0) {
++        static dispatch_once_t onceToken;
++        dispatch_once(&onceToken, ^{
++            [RuntimeUtils swizzleClassMethodOfClass:[UIView class] currentSelector:@selector(animateWithDuration:delay:options:animations:completion:) newSelector:@selector(_ayu_animateWithDuration:delay:options:animations:completion:)];
++            [RuntimeUtils swizzleClassMethodOfClass:[UIView class] currentSelector:@selector(animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:) newSelector:@selector(_ayu_animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:)];
++        });
++    }
++}
++
++double ayuAnimationSlowMotionFactor(void) {
++    return ayuSlowMotionFactorValue;
++}
++
+ double animationDurationFactorImpl() {
+ #if TARGET_IPHONE_SIMULATOR
+-    return (double)UIAnimationDragCoefficient();
+-#endif   
+-    return 1.0f;
++    return (double)UIAnimationDragCoefficient() * ayuSlowMotionFactorValue;
++#endif
++    return ayuSlowMotionFactorValue;
+ }
+ 
+ @interface CASpringAnimation ()
 diff --git a/tools/ayu-tests/lyrics/main.swift b/tools/ayu-tests/lyrics/main.swift
 index d5420502..cb060390 100644
 --- a/tools/ayu-tests/lyrics/main.swift

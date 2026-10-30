@@ -1,0 +1,183 @@
+diff --git a/submodules/SettingsUI/Sources/AyuChatColorsController.swift b/submodules/SettingsUI/Sources/AyuChatColorsController.swift
+index 82b56cf..e208e3f 100644
+--- a/submodules/SettingsUI/Sources/AyuChatColorsController.swift
++++ b/submodules/SettingsUI/Sources/AyuChatColorsController.swift
+@@ -6,7 +6,7 @@ import AccountContext
+ import TelegramPresentationData
+ import LocalizedPeerData
+ 
+-final class AyuChatColorsController: UITableViewController {
++final class AyuChatColorsController: AyuPluginTableController {
+     private let context: AccountContext
+     private let pluginID: String
+     private var settings = AyuChatColorSettings()
+diff --git a/submodules/SettingsUI/Sources/AyuGroupMentionsController.swift b/submodules/SettingsUI/Sources/AyuGroupMentionsController.swift
+index 0c65868..ad3026d 100644
+--- a/submodules/SettingsUI/Sources/AyuGroupMentionsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGroupMentionsController.swift
+@@ -1,7 +1,7 @@
+ import UIKit
+ import TelegramCore
+ 
+-final class AyuGroupMentionsController: UITableViewController {
++final class AyuGroupMentionsController: AyuPluginTableController {
+     private let store: AyuGhostModeStore
+     private let pluginID: String
+     private let russian: Bool
+@@ -94,7 +94,7 @@ final class AyuGroupMentionsController: UITableViewController {
+     }
+ }
+ 
+-final class AyuReactionTotalController: UITableViewController {
++final class AyuReactionTotalController: AyuPluginTableController {
+     private let store: AyuGhostModeStore
+     private let pluginID: String
+     private let russian: Bool
+diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
+index cc813bf..9743501 100644
+--- a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
++++ b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
+@@ -9,11 +9,19 @@ import PresentationDataUtils
+ /// Shows a UIKit screen stack (the plugin list, its details and plugin settings) as a page of
+ /// Telegram's navigation stack instead of a sheet: pushed and popped like any settings page,
+ /// with the UIKit navigation bar painted in the list's colours.
+-final class AyuHostedNavigationScreen: ViewController {
++final class AyuHostedNavigationScreen: ViewController, AyuPluginPresentationHost {
++    private let presentNative: (UIViewController) -> Void
++
++    func presentPluginController(_ controller: UIViewController) {
++        self.presentNative(controller)
++    }
+     private let hosted: UINavigationController
+     private let backgroundColor: UIColor
+ 
+     init(context: AccountContext, root: UIViewController) {
++        self.presentNative = { controller in
++            context.sharedContext.applicationBindings.presentNativeController(controller)
++        }
+         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+         let theme = presentationData.theme
+         self.backgroundColor = theme.list.blocksBackgroundColor
+diff --git a/submodules/SettingsUI/Sources/AyuNativePluginSettingsController.swift b/submodules/SettingsUI/Sources/AyuNativePluginSettingsController.swift
+index afc9618..5955d7c 100644
+--- a/submodules/SettingsUI/Sources/AyuNativePluginSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuNativePluginSettingsController.swift
+@@ -51,7 +51,7 @@ public func ayuRunAutoArchiveIfDue(context: AccountContext) {
+ }
+ 
+ /// Settings of a built-in plugin, a page of the plugin list's UIKit stack.
+-final class AyuNativePluginSettingsController: UITableViewController {
++final class AyuNativePluginSettingsController: AyuPluginTableController {
+     private enum Row {
+         case enabled
+         case attachButton(AyuAttachButtonKey)
+diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
+index c4eb6ae..396637b 100644
+--- a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
++++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
+@@ -13,7 +13,7 @@ extension AyuPluginManifest {
+     }
+ }
+ 
+-final class AyuPluginDetailsController: UITableViewController {
++final class AyuPluginDetailsController: AyuPluginTableController {
+     private enum Row: Equatable {
+         case enable, cameraGesture, cameraHaptic, chatColors, mentionGroups, reactionTotals, formattedTimestamp
+         case game(AyuArcadeGame)
+diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
+index e7370f5..515572a 100644
+--- a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
++++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
+@@ -55,7 +55,7 @@ struct AyuPluginAlertAction {
+ /// The plugin list, laid out like exteraGram's PluginsActivity: a searchable list where each
+ /// plugin shows its name, version, author and description with an on/off switch, and "+"
+ /// installs a .plugin file.
+-final class AyuPluginManagerController: UITableViewController, UIDocumentPickerDelegate, UISearchBarDelegate {
++final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPickerDelegate, UISearchBarDelegate {
+     private let store: AyuGhostModeStore
+     private let russian: Bool
+     private let palette: AyuPreferencesPalette?
+diff --git a/submodules/SettingsUI/Sources/AyuPluginPresentation.swift b/submodules/SettingsUI/Sources/AyuPluginPresentation.swift
+new file mode 100644
+index 0000000..0373787
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuPluginPresentation.swift
+@@ -0,0 +1,26 @@
++import UIKit
++
++/// Telegram windows must register a native presentation to route touches to it.
++protocol AyuPluginPresentationHost: AnyObject {
++    func presentPluginController(_ controller: UIViewController)
++}
++
++class AyuPluginTableController: UITableViewController {
++    override func present(_ viewControllerToPresent: UIViewController, animated flag: Bool, completion: (() -> Void)? = nil) {
++        var ancestor = self.parent
++        while let current = ancestor {
++            if let host = current as? AyuPluginPresentationHost {
++                self.view.endEditing(true)
++                host.presentPluginController(viewControllerToPresent)
++                if let completion {
++                    if let coordinator = viewControllerToPresent.transitionCoordinator {
++                        coordinator.animate(alongsideTransition: nil, completion: { _ in completion() })
++                    } else { DispatchQueue.main.async(execute: completion) }
++                }
++                return
++            }
++            ancestor = current.parent
++        }
++        super.present(viewControllerToPresent, animated: flag, completion: completion)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift b/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift
+index 9682892..2709e0c 100644
+--- a/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift
++++ b/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift
+@@ -25,6 +25,24 @@ final class AyuAttachmentMenuController: ViewController {
+     private var restingPanelFrame = CGRect.zero
+     private var openingAnimator: UIViewPropertyAnimator?
+     private var closing = false
++    private var keyboardObserver: NSObjectProtocol?
++    private var keyboardHeight: CGFloat?
++
++    deinit {
++        if let observer = self.keyboardObserver { NotificationCenter.default.removeObserver(observer) }
++    }
++
++    private func trackKeyboard() {
++        self.keyboardObserver = NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] notification in
++            guard let self, let layout = self.layout,
++                  let end = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
++            let frame = self.view.convert(end, from: nil)
++            // A floating keyboard should not lift the entire attachment menu.
++            self.keyboardHeight = frame.width >= self.view.bounds.width * 0.75 ? max(0.0, self.view.bounds.maxY - frame.minY) : 0.0
++            let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
++            self.containerLayoutUpdated(layout, transition: .animated(duration: duration, curve: .easeInOut))
++        }
++    }
+ 
+     init(buttons: [AttachmentButtonType], theme: PresentationTheme, russian: Bool, sourceRect: CGRect?, sourceRectProvider: (() -> CGRect?)? = nil, choose: @escaping (AttachmentButtonType) -> Void) {
+         self.buttons = buttons
+@@ -43,6 +61,7 @@ final class AyuAttachmentMenuController: ViewController {
+         self.displayNode = ASDisplayNode()
+         self.displayNode.backgroundColor = .clear
+         self.displayNodeDidLoad()
++        self.trackKeyboard()
+         self.outside.addTarget(self, action: #selector(self.cancel), for: .touchUpInside)
+         self.view.addSubview(self.outside)
+         self.panel.effect = UIBlurEffect(style: self.theme.overallDarkAppearance ? .systemChromeMaterialDark : .systemChromeMaterialLight)
+@@ -117,9 +136,12 @@ final class AyuAttachmentMenuController: ViewController {
+         }
+         self.outside.frame = CGRect(origin: .zero, size: layout.size)
+         let width = min(280.0, layout.size.width - layout.safeInsets.left - layout.safeInsets.right - 32.0)
+-        let keyboardTop = layout.size.height - max(layout.inputHeight ?? 0.0, layout.intrinsicInsets.bottom)
++        let keyboardTop = layout.size.height - max(self.keyboardHeight ?? layout.inputHeight ?? 0.0, layout.intrinsicInsets.bottom)
+         let sourceRect = self.sourceRectProvider?() ?? self.sourceRect
+-        let bottom = min(sourceRect?.minY ?? (keyboardTop - 56.0), keyboardTop) - 8.0
++        // The paperclip frame can still belong to the keyboard's previous layout.
++        // Use the current keyboard edge for resting geometry; retain the live button
++        // only as the origin of the opening/closing animation.
++        let bottom = keyboardTop - 56.0 - 8.0
+         let top = max(layout.safeInsets.top, layout.statusBarHeight ?? 0.0) + 12.0
+         let desired = 20.0 + CGFloat(self.expanded ? self.rows.count : min(4, self.rows.count)) * 56.0
+         let height = min(desired, max(0.0, bottom - top))

@@ -145,6 +145,7 @@ def main():
                         errors.append(f'Actual plugin avatar SDK harness:\n{result.stdout}{result.stderr}')
                     else:
                         result = subprocess.run([*flags, '-typecheck', '-I', directory, str(manager),
+                                                 str(source / 'submodules/SettingsUI/Sources/AyuPluginPresentation.swift'),
                                                  str(source / 'submodules/SettingsUI/Sources/AyuPluginDetailsController.swift'),
                                                  str(source / 'submodules/SettingsUI/Sources/AyuGroupMentionsController.swift'),
                                                  str(source / 'submodules/SettingsUI/Sources/AyuPreferencesHubController.swift'),

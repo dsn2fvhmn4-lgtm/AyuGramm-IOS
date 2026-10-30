@@ -1,0 +1,456 @@
+diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
+index 7b2a77b..214e27c 100644
+--- a/submodules/TelegramUI/Sources/AyuLyrics.swift
++++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
+@@ -86,7 +86,7 @@ private final class AyuLyricsRequest {
+     }
+ 
+     private func search() {
+-        let cleanedTitle = self.title
++        let cleanedTitle = AyuMusicMetadata.searchTitle(self.title)
+             .replacingOccurrences(of: #"\s*[\(\[]\s*(?:feat\.?|ft\.?).*?[\)\]]"#, with: "", options: [.regularExpression, .caseInsensitive])
+             .trimmingCharacters(in: .whitespacesAndNewlines)
+         var queries: [String] = []
+diff --git a/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
+index 8e00857..b1932ec 100644
+--- a/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
++++ b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
+@@ -1,8 +1,13 @@
+ import UIKit
++import CoreImage
+ 
+ /// Draws the same shaped text twice, clipping the white layer to playback progress.
+ /// Word rectangles are cached; display ticks never reshape or cross-fade the text.
+ final class AyuLyricsLineLabel: UIView {
++    var isLyricActive = false { didSet { if oldValue != self.isLyricActive { self.setNeedsDisplay() } } }
++    private static let imageContext = CIContext(options: [.cacheIntermediates: false])
++    private var blurredImage: UIImage?
++
+     var text = "" { didSet { self.invalidateText() } }
+     var font = UIFont.boldSystemFont(ofSize: 30.0) { didSet { self.invalidateText() } }
+     var textColor = UIColor(white: 1.0, alpha: 0.32) { didSet { self.invalidateText() } }
+@@ -38,6 +43,7 @@ final class AyuLyricsLineLabel: UIView {
+ 
+     private func invalidateText() {
+         self.preparedWidth = -1.0
++        self.blurredImage = nil
+         self.accessibilityLabel = self.text
+         self.setNeedsDisplay()
+     }
+@@ -46,6 +52,7 @@ final class AyuLyricsLineLabel: UIView {
+         let width = max(1.0, width)
+         guard self.preparedWidth != width else { return }
+         self.preparedWidth = width
++        self.blurredImage = nil
+         self.container.size = CGSize(width: width, height: .greatestFiniteMagnitude)
+         self.storage.setAttributedString(NSAttributedString(string: self.text, attributes: [.font: self.font, .foregroundColor: self.textColor]))
+         self.manager.ensureLayout(for: self.container)
+@@ -92,6 +99,23 @@ final class AyuLyricsLineLabel: UIView {
+     override func draw(_ rect: CGRect) {
+         self.prepare(width: self.bounds.width)
+         let glyphs = self.manager.glyphRange(for: self.container)
++        if !self.isLyricActive, !self.words.isEmpty {
++            if self.blurredImage == nil, self.bounds.width > 0.0, self.bounds.height > 0.0 {
++                let format = UIGraphicsImageRendererFormat()
++                format.scale = 2.0
++                let original = UIGraphicsImageRenderer(size: self.bounds.size, format: format).image { _ in
++                    self.manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
++                }
++                if let input = CIImage(image: original), let filter = CIFilter(name: "CIGaussianBlur") {
++                    filter.setValue(input, forKey: kCIInputImageKey)
++                    filter.setValue(2.0, forKey: kCIInputRadiusKey)
++                    if let output = filter.outputImage, let image = Self.imageContext.createCGImage(output, from: input.extent) {
++                        self.blurredImage = UIImage(cgImage: image, scale: 2.0, orientation: .up)
++                    }
++                }
++            }
++            if let blurredImage = self.blurredImage { blurredImage.draw(in: self.bounds); return }
++        }
+         self.manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+         guard let context = UIGraphicsGetCurrentContext() else { return }
+         let path = CGMutablePath()
+diff --git a/submodules/TelegramUI/Sources/AyuLyricsPauseView.swift b/submodules/TelegramUI/Sources/AyuLyricsPauseView.swift
+new file mode 100644
+index 0000000..2531b43
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuLyricsPauseView.swift
+@@ -0,0 +1,28 @@
++import UIKit
++
++/// Instrumental-gap animation is driven by audio time, so it freezes exactly on pause.
++final class AyuLyricsPauseView: UIView {
++    private var time: Double?
++    private var start = 0.0
++    private var end = 0.0
++
++    override init(frame: CGRect) { super.init(frame: frame); self.isOpaque = false }
++    required init?(coder: NSCoder) { return nil }
++
++    func update(time: Double?, start: Double, end: Double) {
++        guard self.time != time || self.start != start || self.end != end else { return }
++        self.time = time; self.start = start; self.end = end
++        self.setNeedsDisplay()
++    }
++
++    override func draw(_ rect: CGRect) {
++        let progress = self.time.map { min(1.0, max(0.0, ($0 - self.start) / max(0.001, self.end - self.start))) } ?? 0.0
++        for index in 0 ..< 3 {
++            let lit = progress * 3.0 > Double(index)
++            let pulse = UIAccessibility.isReduceMotionEnabled ? 1.0 : self.time.map { 0.85 + 0.15 * sin(($0 - self.start) * 4.0 - Double(index)) } ?? 1.0
++            let radius = CGFloat(4.0 * pulse)
++            UIColor.white.withAlphaComponent(lit ? 0.95 : 0.22).setFill()
++            UIBezierPath(ovalIn: CGRect(x: CGFloat(index) * 18.0 + 5.0 - radius, y: self.bounds.midY - radius, width: radius * 2.0, height: radius * 2.0)).fill()
++        }
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuMusicMetadata.swift b/submodules/TelegramUI/Sources/AyuMusicMetadata.swift
+new file mode 100644
+index 0000000..c5b61bf
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuMusicMetadata.swift
+@@ -0,0 +1,31 @@
++import Foundation
++
++/// Normalize tags and common downloaded filenames without discarding live/remix versions.
++enum AyuMusicMetadata {
++    static func track(title: String?, artist: String?, filename: String?) -> (title: String, artist: String?) {
++        func clean(_ text: String?) -> String {
++            return (text ?? "").replacingOccurrences(of: "_", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
++        }
++        var name = clean(title)
++        if name.isEmpty { name = clean(filename) }
++        let suffix = (name as NSString).pathExtension.lowercased()
++        if ["mp3", "m4a", "aac", "flac", "ogg", "opus", "wav", "aiff", "alac"].contains(suffix) { name = (name as NSString).deletingPathExtension }
++        var performer = clean(artist)
++        if ["unknown", "unknown artist", "<unknown>", "неизвестный исполнитель"].contains(performer.lowercased()) { performer = "" }
++        if performer.isEmpty {
++            for separator in [" – ", " — ", " - "] {
++                let parts = name.components(separatedBy: separator)
++                if parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty {
++                    performer = parts[0]; name = parts[1]; break
++                }
++            }
++        }
++        return (name, performer.isEmpty ? nil : performer)
++    }
++
++    static func searchTitle(_ title: String) -> String {
++        return title.replacingOccurrences(of: #"\s*[\(\[]\s*(?:official\s+(?:audio|video|music\s+video|lyric\s+video)|lyrics?|audio|hq|hd|4k)\s*[\)\]]"#, with: "", options: [.regularExpression, .caseInsensitive])
++            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
++            .trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+index fdc47f0..e793034 100644
+--- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -2,6 +2,7 @@ import Foundation
+ import UIKit
+ import AVKit
+ import MediaPlayer
++import UniformTypeIdentifiers
+ import AsyncDisplayKit
+ import Display
+ import SwiftSignalKit
+@@ -15,7 +16,7 @@ import PhotoResources
+ /// Full-screen music player in the style of Apple Music: blurred artwork backdrop, large cover,
+ /// scrubber, transport controls, system volume, AirPlay, and time-synced lyrics. The queue
+ /// button opens Telegram's playlist screen, which keeps track picking and saved-music editing.
+-final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerController {
++final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerController, UIDocumentPickerDelegate {
+     private let context: AccountContext
+     private let chatLocation: ChatLocation
+     private let type: MediaManagerPlayerType
+@@ -26,6 +27,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+ 
+     private var playerView: AyuMusicPlayerView?
+     private var animatedIn = false
++    private var importingLyricsFor: String?
+     private var accountInUseDisposable: Disposable?
+ 
+     init(
+@@ -71,10 +73,42 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+         playerView.openQueue = { [weak self] in
+             self?.openQueue()
+         }
++        playerView.lyricsOptions = { [weak self] in self?.showLyricsOptions() }
+         self.playerView = playerView
+         self.displayNode.view.addSubview(playerView)
+     }
+ 
++    private func showLyricsOptions() {
++        let russian = self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let menu = UIAlertController(title: russian ? "Синхронизация слов" : "Lyrics synchronization", message: russian ? "Сдвиг сохраняется отдельно для каждой песни." : "Timing adjustment is saved for each track.", preferredStyle: .actionSheet)
++        for (title, offset) in [(russian ? "Слова раньше на 0,5 с" : "Lyrics 0.5 s earlier", 0.5), (russian ? "Слова позже на 0,5 с" : "Lyrics 0.5 s later", -0.5)] {
++            menu.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in self?.playerView?.adjustLyricsOffset(by: offset) }))
++        }
++        menu.addAction(UIAlertAction(title: russian ? "Сбросить сдвиг" : "Reset timing", style: .default, handler: { [weak self] _ in self?.playerView?.adjustLyricsOffset(by: nil) }))
++        menu.addAction(UIAlertAction(title: russian ? "Загрузить LRC или Lyricsfile" : "Import LRC or Lyricsfile", style: .default, handler: { [weak self] _ in
++            guard let self else { return }
++            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
++            picker.delegate = self
++            self.importingLyricsFor = self.playerView?.lyricsIdentity
++            self.context.sharedContext.applicationBindings.presentNativeController(picker)
++        }))
++        menu.addAction(UIAlertAction(title: russian ? "Отмена" : "Cancel", style: .cancel))
++        menu.popoverPresentationController?.sourceView = self.view
++        menu.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.maxY - 80.0, width: 1.0, height: 1.0)
++        self.context.sharedContext.applicationBindings.presentNativeController(menu)
++    }
++
++    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
++        guard let url = urls.first, self.importingLyricsFor == self.playerView?.lyricsIdentity else { return }
++        let access = url.startAccessingSecurityScopedResource()
++        defer { if access { url.stopAccessingSecurityScopedResource() } }
++        if let data = try? Data(contentsOf: url, options: .mappedIfSafe), data.count <= 1_048_576,
++           let source = String(data: data, encoding: .utf8), self.playerView?.importLyrics(source) == true { return }
++        let alert = UIAlertController(title: "AyuGram", message: "Не удалось прочитать тайминги. Поддерживаются LRC, Enhanced LRC и Lyricsfile 1.0.", preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: "OK", style: .default))
++        self.context.sharedContext.applicationBindings.presentNativeController(alert)
++    }
++
+     override func viewDidAppear(_ animated: Bool) {
+         super.viewDidAppear(animated)
+         self.playerView?.setHapticsActive(true)
+@@ -163,6 +197,10 @@ final class AyuMusicPlayerView: UIView {
+     private let russian: Bool
+ 
+     var requestDismiss: (() -> Void)?
++    var lyricsOptions: (() -> Void)?
++    private var lyricsOffset = 0.0
++    private var lyricsSettingsKey = ""
++    var lyricsIdentity: String? { return self.trackKey }
+     var openQueue: (() -> Void)?
+     var safeInsets = UIEdgeInsets()
+ 
+@@ -297,6 +335,8 @@ final class AyuMusicPlayerView: UIView {
+ 
+         self.lyricsButton.accessibilityLabel = self.russian ? "Слова" : "Lyrics"
+         self.lyricsButton.addTarget(self, action: #selector(self.lyricsPressed), for: .touchUpInside)
++        self.lyricsButton.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(self.lyricsHeld(_:)) ))
++        self.lyricsButton.accessibilityHint = self.russian ? "Удерживайте для загрузки текста и настройки синхронизации" : "Hold to import lyrics or adjust timing"
+         self.queueButton.setImage(ayuSymbol("list.bullet", size: 19.0, weight: .medium), for: .normal)
+         self.queueButton.accessibilityLabel = self.russian ? "Очередь" : "Queue"
+         self.queueButton.addTarget(self, action: #selector(self.queuePressed), for: .touchUpInside)
+@@ -323,7 +363,7 @@ final class AyuMusicPlayerView: UIView {
+         })
+ 
+         let displayLink = CADisplayLink(target: AyuWeakTarget(self), selector: #selector(AyuWeakTarget.tick))
+-        displayLink.preferredFramesPerSecond = 30
++        displayLink.preferredFramesPerSecond = 60
+         displayLink.add(to: .main, forMode: .common)
+         self.displayLink = displayLink
+     }
+@@ -388,6 +428,9 @@ final class AyuMusicPlayerView: UIView {
+             }
+         }
+ 
++        let metadata = AyuMusicMetadata.track(title: title, artist: performer, filename: fileReference?.media.fileName)
++        title = metadata.title.isEmpty ? nil : metadata.title
++        performer = metadata.artist
+         let trackKey = "\(state.item.stableId.hashValue)-\(title ?? "")-\(performer ?? "")"
+         if trackKey != self.trackKey {
+             self.trackKey = trackKey
+@@ -395,6 +438,9 @@ final class AyuMusicPlayerView: UIView {
+             self.prepareHaptics()
+             self.title = title ?? (self.russian ? "Неизвестный трек" : "Unknown Track")
+             self.artist = performer
++            let identity = "\(self.context.account.peerId.toInt64())|\(self.title)|\(performer ?? "")|\(Int(state.status.duration))"
++            self.lyricsSettingsKey = "ayu.lyrics." + Data(identity.utf8).base64EncodedString()
++            self.lyricsOffset = UserDefaults.standard.double(forKey: self.lyricsSettingsKey)
+             self.titleLabel.text = self.title
+             self.artistLabel.text = performer ?? (self.russian ? "Неизвестный исполнитель" : "Unknown Artist")
+             let emptyColor = UIColor(white: 0.22, alpha: 1.0)
+@@ -436,7 +482,7 @@ final class AyuMusicPlayerView: UIView {
+             self.remainingLabel.text = "-" + ayuFormatTime(max(0.0, status.duration - timestamp))
+         }
+         if self.showsLyrics {
+-            self.lyricsView.update(timestamp: timestamp)
++            self.lyricsView.update(timestamp: timestamp + self.lyricsOffset)
+         }
+     }
+ 
+@@ -514,6 +560,28 @@ final class AyuMusicPlayerView: UIView {
+         self.openQueue?()
+     }
+ 
++    @objc private func lyricsHeld(_ gesture: UILongPressGestureRecognizer) {
++        if gesture.state == .began { self.lyricsOptions?() }
++    }
++
++    func adjustLyricsOffset(by amount: Double?) {
++        self.lyricsOffset = amount.map { max(-30.0, min(30.0, self.lyricsOffset + $0)) } ?? 0.0
++        UserDefaults.standard.set(self.lyricsOffset, forKey: self.lyricsSettingsKey)
++        self.tick()
++    }
++
++    func importLyrics(_ source: String) -> Bool {
++        var lines = ayuParseLyricsfile(source, duration: self.status?.duration)
++        if lines.isEmpty { lines = ayuParseLrc(source, duration: self.status?.duration) }
++        guard !lines.isEmpty else { return false }
++        self.lyricsDisposable?.dispose()
++        self.lyricsTrackKey = self.trackKey
++        self.lyricsView.set(lyrics: .synced(lines), loading: false, russian: self.russian)
++        if !self.showsLyrics { self.lyricsPressed() }
++        self.tick()
++        return true
++    }
++
+     @objc private func lyricsPressed() {
+         self.showsLyrics = !self.showsLyrics
+         self.updateLyricsButton()
+@@ -521,7 +589,7 @@ final class AyuMusicPlayerView: UIView {
+             self.loadLyrics()
+             self.lyricsView.isHidden = false
+         }
+-        UIView.animate(withDuration: 0.45, delay: 0.0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0.0, options: [.beginFromCurrentState], animations: {
++        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0.0 : 0.45, delay: 0.0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0.0, options: [.beginFromCurrentState], animations: {
+             self.lyricsView.alpha = self.showsLyrics ? 1.0 : 0.0
+             self.layoutContent()
+         }, completion: { _ in
+@@ -630,14 +698,14 @@ final class AyuMusicPlayerView: UIView {
+         let artworkTop = insets.top + 34.0
+         if self.showsLyrics {
+             // Compact header: small cover with title beside it, lyrics below.
+-            let small: CGFloat = 64.0
++            let small: CGFloat = 48.0
+             self.setArtworkFrame(CGRect(x: left, y: artworkTop, width: small, height: small), cornerRadius: 6.0)
+             let textX = left + small + 14.0
+             let textWidth = contentWidth - small - 14.0
+-            self.titleLabel.font = ayuMusicFont(ofSize: 17.0)
+-            self.artistLabel.font = ayuMusicFont(ofSize: 17.0)
+-            self.titleLabel.frame = CGRect(x: textX, y: artworkTop + 10.0, width: textWidth, height: 22.0)
+-            self.artistLabel.frame = CGRect(x: textX, y: artworkTop + 33.0, width: textWidth, height: 22.0)
++            self.titleLabel.font = ayuMusicFont(ofSize: 16.0)
++            self.artistLabel.font = ayuMusicFont(ofSize: 15.0)
++            self.titleLabel.frame = CGRect(x: textX, y: artworkTop + 3.0, width: textWidth, height: 22.0)
++            self.artistLabel.frame = CGRect(x: textX, y: artworkTop + 25.0, width: textWidth, height: 22.0)
+             let lyricsTop = artworkTop + small + 12.0
+             self.lyricsView.frame = CGRect(x: insets.left, y: lyricsTop, width: size.width - insets.left - insets.right, height: max(0.0, scrubberY - 8.0 - lyricsTop))
+         } else {
+@@ -838,6 +906,10 @@ private final class AyuLyricsView: UIView {
+     private var currentIndex: Int?
+     private var activeIndices: Set<Int> = []
+     private let timingLabel = UILabel()
++    private var pauseViews: [Int: AyuLyricsPauseView] = [:]
++    private var currentPauseIndex: Int?
++    private var pauseStarts: [Int: Double] = [:]
++    private var pauseEnds: [Int: Double] = [:]
+     private var russian = false
+     private var userScrollUntil: Double = 0.0
+ 
+@@ -877,6 +949,11 @@ private final class AyuLyricsView: UIView {
+             label.removeFromSuperview()
+         }
+         self.lineLabels = []
++        for pause in self.pauseViews.values { pause.removeFromSuperview() }
++        self.pauseViews = [:]
++        self.pauseStarts = [:]
++        self.pauseEnds = [:]
++        self.currentPauseIndex = nil
+         self.lines = []
+         self.currentIndex = nil
+         self.activeIndices = []
+@@ -919,6 +996,21 @@ private final class AyuLyricsView: UIView {
+                 label.words = self.lines[index].words
+             }
+         }
++        var sungUntil = 0.0
++        for index in self.lines.indices {
++            let empty = self.lines[index].words.isEmpty
++            let start = empty ? self.lines[index].time : sungUntil
++            let end = empty ? self.lines[index].endTime : self.lines[index].time
++            sungUntil = max(sungUntil, self.lines[index].endTime)
++            if end - start >= 2.5 {
++                let pause = AyuLyricsPauseView(frame: .zero)
++                self.pauseViews[index] = pause
++                self.pauseStarts[index] = start
++                self.pauseEnds[index] = end
++                if empty { self.lineLabels[index].isHidden = true }
++                self.scrollView.addSubview(pause)
++            }
++        }
+         self.timingLabel.isHidden = !synced
+         self.updateTimingLabel(index: nil)
+         self.setNeedsLayout()
+@@ -948,7 +1040,12 @@ private final class AyuLyricsView: UIView {
+         let side: CGFloat = 28.0
+         let width = self.bounds.width - side * 2.0
+         var y: CGFloat = self.bounds.height * 0.2
+-        for label in self.lineLabels {
++        for (index, label) in self.lineLabels.enumerated() {
++            if let pause = self.pauseViews[index] {
++                pause.frame = CGRect(x: side, y: y, width: width, height: 34.0)
++                y += 52.0
++            }
++            if label.isHidden { continue }
+             let size = label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+             label.bounds = CGRect(origin: CGPoint(), size: CGSize(width: width, height: ceil(size.height)))
+             label.center = CGPoint(x: side + width / 2.0, y: y + ceil(size.height) / 2.0)
+@@ -962,12 +1059,28 @@ private final class AyuLyricsView: UIView {
+             return
+         }
+         let index = AyuLyricsPlayback.lineIndex(self.lines, at: timestamp)
+-        let active = Set(AyuLyricsPlayback.visibleLines(self.lines, at: timestamp))
++        let pauseIndex = self.pauseViews.keys.first(where: { index in
++            let start = self.pauseStarts[index] ?? 0.0
++            return timestamp >= start && timestamp < (self.pauseEnds[index] ?? self.lines[index].time)
++        })
++        for (index, pause) in self.pauseViews {
++            pause.update(time: index == pauseIndex ? timestamp : nil, start: self.pauseStarts[index] ?? 0.0, end: self.pauseEnds[index] ?? self.lines[index].time)
++        }
++        if pauseIndex != self.currentPauseIndex {
++            self.currentPauseIndex = pauseIndex
++            if let pauseIndex, let pause = self.pauseViews[pauseIndex], CACurrentMediaTime() > self.userScrollUntil {
++                let target = max(0.0, min(pause.frame.minY - self.bounds.height * 0.25, self.scrollView.contentSize.height - self.bounds.height))
++                UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0.0 : 0.42, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: { self.scrollView.contentOffset.y = target })
++            }
++        }
++        let active = pauseIndex == nil ? Set(AyuLyricsPlayback.visibleLines(self.lines, at: timestamp)) : Set<Int>()
+         for previous in self.activeIndices.subtracting(active) {
++            self.lineLabels[previous].isLyricActive = false
+             self.lineLabels[previous].setProgresses([])
+         }
+         self.activeIndices = active
+         for activeIndex in active {
++            self.lineLabels[activeIndex].isLyricActive = true
+             let words = self.lines[activeIndex].words
+             self.lineLabels[activeIndex].setProgresses(words.map { AyuLyricsPlayback.progress($0, at: timestamp) }, emptyLineActive: words.isEmpty)
+         }
+@@ -975,7 +1088,7 @@ private final class AyuLyricsView: UIView {
+             let previous = self.currentIndex
+             self.currentIndex = index
+             self.updateTimingLabel(index: index)
+-            UIView.animate(withDuration: 0.35, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
++            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0.0 : 0.3, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                 if let previous, previous < self.lineLabels.count {
+                     self.lineLabels[previous].transform = .identity
+                 }
+@@ -983,10 +1096,10 @@ private final class AyuLyricsView: UIView {
+                     self.lineLabels[index].transform = CGAffineTransform(scaleX: 1.03, y: 1.03)
+                 }
+             })
+-            if let index, index < self.lineLabels.count, CACurrentMediaTime() > self.userScrollUntil {
++            if pauseIndex == nil, let index, index < self.lineLabels.count, CACurrentMediaTime() > self.userScrollUntil {
+                 let label = self.lineLabels[index]
+                 let targetY = max(0.0, min(label.frame.minY - self.bounds.height * 0.25, self.scrollView.contentSize.height - self.bounds.height))
+-                UIView.animate(withDuration: 0.6, delay: 0.0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
++                UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0.0 : 0.42, delay: 0.0, usingSpringWithDamping: 0.92, initialSpringVelocity: 0.0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                     self.scrollView.contentOffset = CGPoint(x: 0.0, y: targetY)
+                 })
+             }
+diff --git a/tools/ayu-tests/lyrics/main.swift b/tools/ayu-tests/lyrics/main.swift
+index 2bde8bd..9897686 100644
+--- a/tools/ayu-tests/lyrics/main.swift
++++ b/tools/ayu-tests/lyrics/main.swift
+@@ -83,3 +83,10 @@ check(AyuLyricsYaml.parse("version: '1.0'\nmetadata: !!unsafe value\n") == nil,
+ check(AyuLyricsYaml.parse(String(repeating: "x", count: 1_048_577)) == nil, "Bound response size")
+ check(AyuLyricsYaml.parse("version: '1.0'\nmetadata:\n  title: 'It''s a test'\n  artist: \"Escaped \\\"quote\\\"\"\n") != nil, "Read single and double quoted scalars")
+ print("PASS: lyrics timings, audio-clock progress, seeks, overlap and safe YAML parsing")
++
++let fileTags = AyuMusicMetadata.track(title: nil, artist: nil, filename: "Artist — Long_Song (Official Audio).flac")
++check(fileTags.artist == "Artist" && fileTags.title == "Long Song (Official Audio)", "Recover artist and title from downloaded filenames")
++check(AyuMusicMetadata.searchTitle(fileTags.title) == "Long Song", "Remove upload labels for lookup")
++check(AyuMusicMetadata.searchTitle("Long Song (Live)") == "Long Song (Live)", "Preserve performance variants with different timing")
++let realTags = AyuMusicMetadata.track(title: "A - B", artist: "Band", filename: "other.mp3")
++check(realTags.title == "A - B" && realTags.artist == "Band", "Keep embedded tags when present")

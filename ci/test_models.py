@@ -33,6 +33,7 @@ def run(source: Path):
         subprocess.run([str(output / 'native-iosplug-tests'),
                         str(Path(__file__).resolve().parents[1] / 'plug')], check=True)
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
+                        str(source / 'submodules/TelegramUI/Sources/AyuMusicMetadata.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsTiming.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsYaml.swift'),
                         str(source / 'tools/ayu-tests/lyrics/main.swift'),

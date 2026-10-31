@@ -19,7 +19,11 @@ its own **JavaScriptCore virtual machine on its own serial queue**:
 ## Install
 
 - Plugins screen → **+** → pick a `.js` or `.ayujs` file, or
-- tap a `.ayujs` / `.ayu.js` file in a chat.
+- tap a `.ayujs` / `.ayu.js` file in a chat, or
+- Plugins screen → **bag icon** (Catalog) → pick a plugin from
+  [murk-sus/AyuGramm-Plugins](https://github.com/murk-sus/AyuGramm-Plugins). The download must
+  match the SHA-256 and `@id` in the catalog's `index.json`; a newer catalog version shows
+  **Update**. To publish a plugin, open a pull request there.
 
 The confirmation shows the plugin's header and what it may do. Toggle, restart (tap) and delete
 (swipe) in the *Code plugins · JavaScript* section.

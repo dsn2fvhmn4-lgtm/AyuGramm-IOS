@@ -1,9 +1,9 @@
 diff --git a/submodules/AccountContext/Sources/AyuScriptCatalog.swift b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
 new file mode 100644
-index 00000000..a0a94b43
+index 00000000..cef838c4
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,163 @@
 +import Foundation
 +import CryptoKit
 +
@@ -21,6 +21,16 @@ index 00000000..a0a94b43
 +        public let url: String
 +        public let sha256: String
 +        public let size: Int?
++        /// "js" for code plugins, "iosplug" for native plugin cards; older catalogs omit it.
++        public let kind: String?
++
++        public var isNativeCard: Bool {
++            return self.kind == "iosplug"
++        }
++
++        public var fileExtension: String {
++            return self.isNativeCard ? "iosplug" : "ayu.js"
++        }
 +    }
 +
 +    public enum Failure: LocalizedError {
@@ -107,20 +117,28 @@ index 00000000..a0a94b43
 +        })
 +    }
 +
-+    /// Downloads, verifies and installs (or updates) a catalog plugin.
-+    public func install(_ entry: Entry, completion: @escaping (Result<Void, Error>) -> Void) {
++    /// Downloads a catalog file and checks it against the index's SHA-256.
++    public func download(_ entry: Entry, completion: @escaping (Result<Data, Failure>) -> Void) {
 +        guard let url = URL(string: entry.url) else {
-+            completion(.failure(Failure.invalidCatalog))
++            completion(.failure(.invalidCatalog))
 +            return
 +        }
-+        self.fetch(url, limit: 512 * 1024, completion: { result in
++        self.fetch(url, limit: entry.isNativeCard ? 64 * 1024 : 512 * 1024, completion: { result in
 +            switch result {
 +            case let .success(data):
 +                let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-+                guard digest == entry.sha256.lowercased() else {
-+                    completion(.failure(Failure.checksumMismatch))
-+                    return
-+                }
++                completion(digest == entry.sha256.lowercased() ? .success(data) : .failure(.checksumMismatch))
++            case let .failure(error):
++                completion(.failure(error))
++            }
++        })
++    }
++
++    /// Downloads, verifies and installs (or updates) a catalog code plugin.
++    public func install(_ entry: Entry, completion: @escaping (Result<Void, Error>) -> Void) {
++        self.download(entry, completion: { result in
++            switch result {
++            case let .success(data):
 +                guard AyuScriptRuntime.shared.preview(data, filename: entry.id + ".ayu.js")?.id == entry.id else {
 +                    completion(.failure(Failure.identityMismatch))
 +                    return
@@ -966,10 +984,10 @@ index de8b2b31..e7d07943 100644
                          strongSelf.setRevealOptionsOpened(item.hasActiveRevealControls, animated: true)
 diff --git a/submodules/Display/Source/AyuAppearancePlus.swift b/submodules/Display/Source/AyuAppearancePlus.swift
 new file mode 100644
-index 00000000..454dd164
+index 00000000..2137ae4d
 --- /dev/null
 +++ b/submodules/Display/Source/AyuAppearancePlus.swift
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,110 @@
 +import Foundation
 +import UIKitRuntimeUtils
 +
@@ -992,6 +1010,7 @@ index 00000000..454dd164
 +    private static let glassStyleKey = "ayu.appearance.glassStyle"
 +    private static let classicDesignKey = "ayu.appearance.classicDesign"
 +    private static let slowMotionKey = "ayu.appearance.slowMotion"
++    private static let noGlassKey = "ayu.appearance.noGlass"
 +
 +    /// Slow-Motion choices for every animation in the client.
 +    public static let slowMotionSteps: [Double] = [1.0, 2.0, 3.0, 5.0, 10.0]
@@ -1016,6 +1035,13 @@ index 00000000..454dd164
 +    /// Values that only take effect after relaunch, captured at first access.
 +    public static let launchGlassStyle: GlassStyle = AyuAppearancePlus.glassStyle
 +    public static let launchClassicDesign: Bool = AyuAppearancePlus.classicDesign
++    public static let launchNoGlass: Bool = AyuAppearancePlus.noGlass
++
++    /// Old-Telegram look without any glass: every glass surface is drawn flat. Off by default.
++    public static var noGlass: Bool {
++        get { return UserDefaults.standard.bool(forKey: noGlassKey) }
++        set { set(newValue, forKey: noGlassKey) }
++    }
 +
 +    public static var hideContactsTab: Bool {
 +        get { return UserDefaults.standard.bool(forKey: hideContactsKey) }
@@ -1045,17 +1071,18 @@ index 00000000..454dd164
 +
 +    /// True when Telegram's own glass renderer must replace the system one this launch.
 +    public static var usesTelegramGlassThisLaunch: Bool {
-+        return AyuAppearancePlus.launchGlassStyle == .telegram || AyuAppearancePlus.launchClassicDesign
++        return AyuAppearancePlus.launchGlassStyle == .telegram || AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.launchNoGlass
 +    }
 +
 +    public static var needsRelaunch: Bool {
-+        return AyuAppearancePlus.glassStyle != AyuAppearancePlus.launchGlassStyle || AyuAppearancePlus.classicDesign != AyuAppearancePlus.launchClassicDesign
++        return AyuAppearancePlus.glassStyle != AyuAppearancePlus.launchGlassStyle || AyuAppearancePlus.classicDesign != AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.noGlass != AyuAppearancePlus.launchNoGlass
 +    }
 +
 +    public static func resetAll() {
 +        _ = AyuAppearancePlus.launchGlassStyle
 +        _ = AyuAppearancePlus.launchClassicDesign
-+        for key in [hideContactsKey, hideCallsKey, hideTabTitlesKey, glassStyleKey, classicDesignKey, slowMotionKey] {
++        _ = AyuAppearancePlus.launchNoGlass
++        for key in [hideContactsKey, hideCallsKey, hideTabTitlesKey, glassStyleKey, classicDesignKey, slowMotionKey, noGlassKey] {
 +            UserDefaults.standard.removeObject(forKey: key)
 +        }
 +        ayuSetAnimationSlowMotionFactor(1.0)
@@ -1066,8 +1093,140 @@ index 00000000..454dd164
 +        // Capture launch values before the first write changes what they would read.
 +        _ = AyuAppearancePlus.launchGlassStyle
 +        _ = AyuAppearancePlus.launchClassicDesign
++        _ = AyuAppearancePlus.launchNoGlass
 +        UserDefaults.standard.set(value, forKey: key)
 +        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++}
+diff --git a/submodules/Display/Source/AyuExtras.swift b/submodules/Display/Source/AyuExtras.swift
+new file mode 100644
+index 00000000..3c439276
+--- /dev/null
++++ b/submodules/Display/Source/AyuExtras.swift
+@@ -0,0 +1,125 @@
++import Foundation
++import UIKit
++import ImageIO
++import UniformTypeIdentifiers
++
++/// Settings → AyuGram → Privacy & extras. Local switches, all off by default, stored in
++/// UserDefaults under "ayu.extra.*" (TelegramCore reads `cleanLinks` by the same key).
++public enum AyuExtras {
++    public static let didChangeNotification = Notification.Name("AyuGram.ExtrasChanged")
++
++    public enum Key: String, CaseIterable {
++        /// Photos sent as files lose their real metadata (GPS, camera, dates) and get fake values.
++        case spoofPhotoMetadata
++        /// Files from the gallery are sent under a random name instead of IMG_1234.HEIC.
++        case randomFileNames
++        /// The app switcher shows a blurred snapshot.
++        case blurInAppSwitcher
++        /// No vibration feedback anywhere in the app.
++        case disableHaptics
++        /// Calls start only after a confirmation.
++        case confirmCalls
++        /// The screen stays on while the music player is open.
++        case keepScreenOnInPlayer
++        /// The music player opens with the lyrics shown.
++        case autoOpenLyrics
++        /// The music player keeps the last playback speed.
++        case rememberPlaybackSpeed
++        /// utm_*, fbclid, gclid, si and similar are removed from links you send.
++        case cleanLinks
++    }
++
++    public static func isOn(_ key: Key) -> Bool {
++        return UserDefaults.standard.bool(forKey: "ayu.extra." + key.rawValue)
++    }
++
++    public static func set(_ key: Key, _ value: Bool) {
++        UserDefaults.standard.set(value, forKey: "ayu.extra." + key.rawValue)
++        if key == .disableHaptics {
++            AyuExtras.hapticsDisabled = value
++        }
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++
++    /// Read on every haptic, so cached.
++    public private(set) static var hapticsDisabled: Bool = UserDefaults.standard.bool(forKey: "ayu.extra." + Key.disableHaptics.rawValue)
++
++    public static var playbackSpeed: Double {
++        get {
++            let value = UserDefaults.standard.double(forKey: "ayu.extra.playbackSpeed")
++            return value > 0.0 ? value : 1.0
++        }
++        set { UserDefaults.standard.set(newValue, forKey: "ayu.extra.playbackSpeed") }
++    }
++
++    // MARK: File names
++
++    /// `IMG_4821.HEIC` → `a8f3k2q9.heic` when random names are on.
++    public static func outgoingFileName(_ name: String) -> String {
++        guard AyuExtras.isOn(.randomFileNames) else { return name }
++        let ext = (name as NSString).pathExtension.lowercased()
++        let letters = Array("abcdefghijklmnopqrstuvwxyz0123456789")
++        let stem = String((0 ..< 10).map { _ in letters.randomElement()! })
++        return ext.isEmpty ? stem : stem + "." + ext
++    }
++
++    // MARK: Photo metadata
++
++    /// Re-encodes an image with only fake metadata: no GPS, no real camera, lens, serial
++    /// numbers, software or dates; orientation is kept so the photo looks the same.
++    /// Returns nil for data that is not an image, so the caller sends the original.
++    public static func spoofedImageData(_ data: Data) -> Data? {
++        guard let source = CGImageSourceCreateWithData(data as CFData, nil), let type = CGImageSourceGetType(source), CGImageSourceGetCount(source) > 0 else {
++            return nil
++        }
++        if let utType = UTType(type as String), !utType.conforms(to: .image) || utType.conforms(to: .gif) {
++            return nil
++        }
++        guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
++            return nil
++        }
++        let original = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
++        let output = NSMutableData()
++        guard let destination = CGImageDestinationCreateWithData(output as CFMutableData, type, 1, nil) else {
++            return nil
++        }
++        let fake = AyuExtras.fakeCamera()
++        var properties: [CFString: Any] = [
++            kCGImageDestinationLossyCompressionQuality: 0.95,
++            kCGImagePropertyTIFFDictionary: [
++                kCGImagePropertyTIFFMake: fake.make,
++                kCGImagePropertyTIFFModel: fake.model,
++                kCGImagePropertyTIFFSoftware: "Shish s maslom 1.0",
++                kCGImagePropertyTIFFDateTime: fake.date
++            ] as [CFString: Any],
++            kCGImagePropertyExifDictionary: [
++                kCGImagePropertyExifDateTimeOriginal: fake.date,
++                kCGImagePropertyExifDateTimeDigitized: fake.date,
++                kCGImagePropertyExifLensModel: fake.lens,
++                kCGImagePropertyExifUserComment: "Shish s maslom"
++            ] as [CFString: Any]
++        ]
++        if let orientation = original?[kCGImagePropertyOrientation] {
++            properties[kCGImagePropertyOrientation] = orientation
++        }
++        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
++        guard CGImageDestinationFinalize(destination) else {
++            return nil
++        }
++        return output as Data
++    }
++
++    private static func fakeCamera() -> (make: String, model: String, lens: String, date: String) {
++        let cameras: [(String, String, String)] = [
++            ("Nokia", "3310", "Nokia 3310 front camera"),
++            ("Kodak", "EasyShare C143", "Kodak 36-108mm"),
++            ("Sony Ericsson", "K750i", "Sony Ericsson 2MP"),
++            ("Canon", "PowerShot A520", "Canon 5.8-23.2mm"),
++            ("Siemens", "C65", "Siemens VGA")
++        ]
++        let camera = cameras.randomElement()!
++        let year = Int.random(in: 2004 ... 2012)
++        let date = String(format: "%04d:%02d:%02d %02d:%02d:%02d", year, Int.random(in: 1 ... 12), Int.random(in: 1 ... 28), Int.random(in: 0 ... 23), Int.random(in: 0 ... 59), Int.random(in: 0 ... 59))
++        return (camera.0, camera.1, camera.2, date)
 +    }
 +}
 diff --git a/submodules/Display/Source/AyuSettingsTransfer.swift b/submodules/Display/Source/AyuSettingsTransfer.swift
@@ -1395,11 +1554,63 @@ index e53d8ae6..955824c1 100644
          if #available(iOS 8.2, *) {
              return UIFont.boldSystemFont(ofSize: size)
          } else {
+diff --git a/submodules/Display/Source/HapticFeedback.swift b/submodules/Display/Source/HapticFeedback.swift
+index 9b585969..b008034d 100644
+--- a/submodules/Display/Source/HapticFeedback.swift
++++ b/submodules/Display/Source/HapticFeedback.swift
+@@ -144,6 +144,10 @@ public final class HapticFeedback {
+     
+     @available(iOSApplicationExtension 10.0, iOS 10.0, *)
+     private func withImpl(_ f: (HapticFeedbackImpl) -> Void) {
++        // AyuGram Privacy & extras: "No vibration".
++        if AyuExtras.hapticsDisabled {
++            return
++        }
+         if self.impl == nil {
+             self.impl = HapticFeedbackImpl()
+         }
 diff --git a/submodules/LegacyMediaPickerUI/Sources/LegacyMediaPickers.swift b/submodules/LegacyMediaPickerUI/Sources/LegacyMediaPickers.swift
-index da2cc21b..b5cf90fb 100644
+index da2cc21b..dc394d8d 100644
 --- a/submodules/LegacyMediaPickerUI/Sources/LegacyMediaPickers.swift
 +++ b/submodules/LegacyMediaPickerUI/Sources/LegacyMediaPickers.swift
-@@ -405,15 +405,16 @@ public func legacyAssetPickerEnqueueMessages(
+@@ -130,6 +130,36 @@ private enum LegacyAssetVideoData {
+     case tempFile(path: String, dimensions: CGSize, duration: Double)
+ }
+ 
++/// AyuGram: a temporary copy of an image with fake metadata, or nil to send the original.
++private func ayuSpoofedImageFile(data: Data?) -> String? {
++    guard let data, let spoofed = AyuExtras.spoofedImageData(data) else {
++        return nil
++    }
++    let path = NSTemporaryDirectory() + "ayu-clean-\(Int64.random(in: 1 ... Int64.max))"
++    do {
++        try spoofed.write(to: URL(fileURLWithPath: path), options: .atomic)
++        return path
++    } catch {
++        return nil
++    }
++}
++
++/// The library photo's current version as data (synchronous; may download from iCloud).
++private func ayuPhotoLibraryImageData(_ asset: PHAsset) -> Data? {
++    guard asset.mediaType == .image else {
++        return nil
++    }
++    let options = PHImageRequestOptions()
++    options.isSynchronous = true
++    options.isNetworkAccessAllowed = true
++    options.version = .current
++    var result: Data?
++    PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options, resultHandler: { data, _, _, _ in
++        result = data
++    })
++    return result
++}
++
+ private enum LegacyAssetItem {
+     case image(data: LegacyAssetImageData, thumbnail: UIImage?, caption: NSAttributedString?, stickers: [FileMediaReference], video: LegacyAssetVideoData?, adjustments: TGVideoEditAdjustments?)
+     case file(data: LegacyAssetImageData, thumbnail: UIImage?, mimeType: String, name: String, caption: NSAttributedString?)
+@@ -405,15 +435,16 @@ public func legacyAssetPickerEnqueueMessages(
                                      var randomId: Int64 = 0
                                      arc4random_buf(&randomId, 8)
                                      let tempFilePath = NSTemporaryDirectory() + "\(randomId).jpeg"
@@ -1419,6 +1630,37 @@ index da2cc21b..b5cf90fb 100644
                                              let _ = try? scaledImageData.write(to: URL(fileURLWithPath: tempFilePath))
  
                                              let resource = LocalFileReferenceMediaResource(localFilePath: tempFilePath, randomId: randomId)
+@@ -700,8 +731,10 @@ public func legacyAssetPickerEnqueueMessages(
+                                     
+                                     var randomId: Int64 = 0
+                                     arc4random_buf(&randomId, 8)
+-                                    let resource = LocalFileReferenceMediaResource(localFilePath: path, randomId: randomId)
+-                                    let media = TelegramMediaFile(fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: randomId), partialReference: nil, resource: resource, previewRepresentations: previewRepresentations, videoThumbnails: [], immediateThumbnailData: nil, mimeType: mimeType, size: engineFileSize(path), attributes: [.FileName(fileName: name)], alternativeRepresentations: [])
++                                    // AyuGram: fake photo metadata and random file names (Privacy & extras).
++                                    let ayuPath = ayuSpoofedImageFile(data: AyuExtras.isOn(.spoofPhotoMetadata) ? try? Data(contentsOf: URL(fileURLWithPath: path)) : nil) ?? path
++                                    let resource = LocalFileReferenceMediaResource(localFilePath: ayuPath, randomId: randomId)
++                                    let media = TelegramMediaFile(fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: randomId), partialReference: nil, resource: resource, previewRepresentations: previewRepresentations, videoThumbnails: [], immediateThumbnailData: nil, mimeType: mimeType, size: engineFileSize(ayuPath), attributes: [.FileName(fileName: AyuExtras.outgoingFileName(name))], alternativeRepresentations: [])
+                                     
+                                     var attributes: [EngineMessage.Attribute] = []
+                                     let text = trimChatInputText(convertMarkdownToAttributes(caption ?? NSAttributedString()))
+@@ -753,8 +786,15 @@ public func legacyAssetPickerEnqueueMessages(
+                                 case let .asset(asset):
+                                     var randomId: Int64 = 0
+                                     arc4random_buf(&randomId, 8)
+-                                    let resource = PhotoLibraryMediaResource(localIdentifier: asset.localIdentifier, uniqueId: Int64.random(in: Int64.min ... Int64.max))
+-                                    let media = TelegramMediaFile(fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: randomId), partialReference: nil, resource: resource, previewRepresentations: [], videoThumbnails: [], immediateThumbnailData: nil, mimeType: mimeType, size: nil, attributes: [.FileName(fileName: name)], alternativeRepresentations: [])
++                                    // AyuGram: with fake metadata on, a photo is sent from a cleaned copy.
++                                    let media: TelegramMediaFile
++                                    if AyuExtras.isOn(.spoofPhotoMetadata), let ayuPath = ayuSpoofedImageFile(data: ayuPhotoLibraryImageData(asset)) {
++                                        let resource = LocalFileReferenceMediaResource(localFilePath: ayuPath, randomId: randomId)
++                                        media = TelegramMediaFile(fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: randomId), partialReference: nil, resource: resource, previewRepresentations: [], videoThumbnails: [], immediateThumbnailData: nil, mimeType: mimeType, size: engineFileSize(ayuPath), attributes: [.FileName(fileName: AyuExtras.outgoingFileName(name))], alternativeRepresentations: [])
++                                    } else {
++                                        let resource = PhotoLibraryMediaResource(localIdentifier: asset.localIdentifier, uniqueId: Int64.random(in: Int64.min ... Int64.max))
++                                        media = TelegramMediaFile(fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: randomId), partialReference: nil, resource: resource, previewRepresentations: [], videoThumbnails: [], immediateThumbnailData: nil, mimeType: mimeType, size: nil, attributes: [.FileName(fileName: AyuExtras.outgoingFileName(name))], alternativeRepresentations: [])
++                                    }
+                                     
+                                     var attributes: [EngineMessage.Attribute] = []
+                                     let text = trimChatInputText(convertMarkdownToAttributes(caption ?? NSAttributedString()))
 diff --git a/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift b/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
 index c0725e00..eb4ff908 100644
 --- a/submodules/MediaPickerUI/Sources/MediaPickerScreen.swift
@@ -1433,12 +1675,186 @@ index c0725e00..eb4ff908 100644
              } else if case .assets(nil, let mode) = controller.subject {
                  switch mode {
                  case .createSticker, .createAvatar:
+diff --git a/submodules/MediaPlayer/Sources/AyuEqualizer.swift b/submodules/MediaPlayer/Sources/AyuEqualizer.swift
+new file mode 100644
+index 00000000..0679ace4
+--- /dev/null
++++ b/submodules/MediaPlayer/Sources/AyuEqualizer.swift
+@@ -0,0 +1,107 @@
++import Foundation
++import AudioToolbox
++
++/// AyuGram equalizer: ten bands on the player's existing NBandEQ unit, for music and video
++/// sound (voice and video messages keep Telegram's own gain). Changes apply while playing.
++public enum AyuEqualizer {
++    public static let didChangeNotification = Notification.Name("AyuGram.EqualizerChanged")
++    public static let frequencies: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
++    public static let gainRange: ClosedRange<Float> = -12.0 ... 12.0
++
++    public struct Preset {
++        public let id: String
++        public let nameRu: String
++        public let nameEn: String
++        public let gains: [Float]
++
++        public func name(_ russian: Bool) -> String {
++            return russian ? self.nameRu : self.nameEn
++        }
++    }
++
++    public static let presets: [Preset] = [
++        Preset(id: "flat", nameRu: "Ровно", nameEn: "Flat", gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
++        Preset(id: "bass", nameRu: "Басы", nameEn: "Bass boost", gains: [7, 6, 5, 3, 1, 0, 0, 0, 0, 0]),
++        Preset(id: "megabass", nameRu: "Мега-басы", nameEn: "Mega bass", gains: [10, 9, 7, 4, 1, 0, -1, -1, 0, 0]),
++        Preset(id: "bassReducer", nameRu: "Меньше басов", nameEn: "Bass reducer", gains: [-7, -6, -5, -3, -1, 0, 0, 0, 0, 0]),
++        Preset(id: "treble", nameRu: "Высокие", nameEn: "Treble boost", gains: [0, 0, 0, 0, 0, 1, 3, 5, 6, 7]),
++        Preset(id: "loudness", nameRu: "Громкость", nameEn: "Loudness", gains: [6, 5, 2, 0, -1, 0, 0, 2, 5, 6]),
++        Preset(id: "vocal", nameRu: "Вокал", nameEn: "Vocal", gains: [-2, -2, -1, 1, 3, 4, 3, 2, 0, -1]),
++        Preset(id: "rock", nameRu: "Рок", nameEn: "Rock", gains: [5, 4, 3, 1, -1, -1, 1, 3, 4, 5]),
++        Preset(id: "pop", nameRu: "Поп", nameEn: "Pop", gains: [-1, 0, 2, 4, 5, 4, 2, 0, -1, -1]),
++        Preset(id: "electronic", nameRu: "Электроника", nameEn: "Electronic", gains: [5, 4, 1, 0, -2, 2, 1, 1, 4, 5]),
++        Preset(id: "hiphop", nameRu: "Хип-хоп", nameEn: "Hip-hop", gains: [6, 5, 2, 3, -1, -1, 1, -1, 2, 3]),
++        Preset(id: "classical", nameRu: "Классика", nameEn: "Classical", gains: [4, 3, 2, 1, -1, -1, 0, 2, 3, 4]),
++        Preset(id: "headphones", nameRu: "Наушники", nameEn: "Headphones", gains: [3, 2, 0, -1, -1, 0, 1, 3, 4, 3])
++    ]
++
++    private static let enabledKey = "ayu.eq.enabled"
++    private static let gainsKey = "ayu.eq.gains"
++    private static let presetKey = "ayu.eq.preset"
++
++    public static var isEnabled: Bool {
++        get { return UserDefaults.standard.bool(forKey: enabledKey) }
++        set {
++            UserDefaults.standard.set(newValue, forKey: enabledKey)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
++    public static var gains: [Float] {
++        get {
++            let stored = (UserDefaults.standard.array(forKey: gainsKey) as? [NSNumber])?.map { $0.floatValue } ?? []
++            guard stored.count == frequencies.count else { return Array(repeating: 0.0, count: frequencies.count) }
++            return stored.map { min(gainRange.upperBound, max(gainRange.lowerBound, $0)) }
++        }
++        set {
++            let clamped = newValue.prefix(frequencies.count).map { min(gainRange.upperBound, max(gainRange.lowerBound, $0)) }
++            UserDefaults.standard.set(clamped.map { NSNumber(value: $0) }, forKey: gainsKey)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
++    /// The preset the gains came from; nil once a band was moved by hand.
++    public static var presetId: String? {
++        get { return UserDefaults.standard.string(forKey: presetKey) }
++        set { UserDefaults.standard.set(newValue, forKey: presetKey) }
++    }
++
++    public static func apply(preset: Preset) {
++        UserDefaults.standard.set(preset.id, forKey: presetKey)
++        AyuEqualizer.gains = preset.gains
++    }
++
++    /// Negative headroom so boosted bands do not clip.
++    public static var preampGain: Float {
++        let peak = AyuEqualizer.gains.max() ?? 0.0
++        return -max(0.0, peak) * 0.6
++    }
++
++    /// Must run before the unit is initialized.
++    static func prepare(_ unit: AudioUnit) {
++        var count = UInt32(frequencies.count)
++        AudioUnitSetProperty(unit, kAUNBandEQProperty_NumberOfBands, kAudioUnitScope_Global, 0, &count, UInt32(MemoryLayout<UInt32>.size))
++    }
++
++    /// Writes the bands; with `active` false every band is bypassed (the unit is transparent).
++    static func apply(to unit: AudioUnit, active: Bool) {
++        let enabled = active && AyuEqualizer.isEnabled
++        let gains = AyuEqualizer.gains
++        for (index, frequency) in frequencies.enumerated() {
++            let band = AudioUnitParameterID(index)
++            let type: Int
++            if index == 0 {
++                type = Int(kAUNBandEQFilterType_LowShelf)
++            } else if index == frequencies.count - 1 {
++                type = Int(kAUNBandEQFilterType_HighShelf)
++            } else {
++                type = Int(kAUNBandEQFilterType_Parametric)
++            }
++            AudioUnitSetParameter(unit, kAUNBandEQParam_FilterType + band, kAudioUnitScope_Global, 0, AudioUnitParameterValue(type), 0)
++            AudioUnitSetParameter(unit, kAUNBandEQParam_Frequency + band, kAudioUnitScope_Global, 0, frequency, 0)
++            AudioUnitSetParameter(unit, kAUNBandEQParam_Bandwidth + band, kAudioUnitScope_Global, 0, 1.0, 0)
++            AudioUnitSetParameter(unit, kAUNBandEQParam_Gain + band, kAudioUnitScope_Global, 0, enabled ? gains[index] : 0.0, 0)
++            AudioUnitSetParameter(unit, kAUNBandEQParam_BypassBand + band, kAudioUnitScope_Global, 0, enabled ? 0.0 : 1.0, 0)
++        }
++    }
++}
+diff --git a/submodules/MediaPlayer/Sources/MediaPlayerAudioRenderer.swift b/submodules/MediaPlayer/Sources/MediaPlayerAudioRenderer.swift
+index 9145478f..d351812a 100644
+--- a/submodules/MediaPlayer/Sources/MediaPlayerAudioRenderer.swift
++++ b/submodules/MediaPlayer/Sources/MediaPlayerAudioRenderer.swift
+@@ -237,6 +237,7 @@ private final class AudioPlayerRendererContext {
+     var mixerAudioUnit: AudioComponentInstance?
+     var equalizerAudioUnit: AudioComponentInstance?
+     var outputAudioUnit: AudioComponentInstance?
++    private var ayuEqualizerObserver: NSObjectProtocol?
+     
+     var bufferContextId: Int32!
+     let bufferContext: Atomic<AudioPlayerRendererBufferContext>
+@@ -305,12 +306,32 @@ private final class AudioPlayerRendererContext {
+                 }
+             }
+         }
++
++        self.ayuEqualizerObserver = NotificationCenter.default.addObserver(forName: AyuEqualizer.didChangeNotification, object: nil, queue: nil, using: { [weak self] _ in
++            audioPlayerRendererQueue.async {
++                self?.ayuApplyEqualizer()
++            }
++        })
++    }
++
++    /// AyuGram equalizer for music and video sound; voice and video messages keep their gain.
++    private func ayuApplyEqualizer() {
++        guard let equalizerAudioUnit = self.equalizerAudioUnit, !self.forAudioVideoMessage else {
++            return
++        }
++        AyuEqualizer.apply(to: equalizerAudioUnit, active: true)
++        if !self.soundMuted {
++            AudioUnitSetParameter(equalizerAudioUnit, kAUNBandEQParam_GlobalGain, kAudioUnitScope_Global, 0, AyuEqualizer.isEnabled ? AyuEqualizer.preampGain : 0.0, 0)
++        }
+     }
+     
+     deinit {
+         assert(audioPlayerRendererQueue.isCurrent())
+         
+         self.audioSessionDisposable.dispose()
++        if let ayuEqualizerObserver = self.ayuEqualizerObserver {
++            NotificationCenter.default.removeObserver(ayuEqualizerObserver)
++        }
+         
+         unregisterPlayerRendererBufferContext(self.bufferContextId)
+         
+@@ -638,10 +659,15 @@ private final class AudioPlayerRendererContext {
+             AudioUnitSetProperty(outputAudioUnit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maximumFramesPerSlice, 4)
+             
+             AudioUnitSetParameter(mixerAudioUnit, kMultiChannelMixerParam_Volume, kAudioUnitScope_Input, 0, Float32(self.volume) * (self.soundMuted ? 0.0 : 1.0), 0)
++            AyuEqualizer.prepare(equalizerAudioUnit)
+                         
+             guard AUGraphInitialize(audioGraph) == noErr else {
+                 return
+             }
++            AyuEqualizer.apply(to: equalizerAudioUnit, active: !self.forAudioVideoMessage)
++            if !self.forAudioVideoMessage && !self.soundMuted && AyuEqualizer.isEnabled {
++                AudioUnitSetParameter(equalizerAudioUnit, kAUNBandEQParam_GlobalGain, kAudioUnitScope_Global, 0, AyuEqualizer.preampGain, 0)
++            }
+             
+             print("\(CFAbsoluteTimeGetCurrent()) MediaPlayerAudioRenderer initialize audio unit: \((CFAbsoluteTimeGetCurrent() - startTime) * 1000.0) ms")
+             
 diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
 new file mode 100644
-index 00000000..884153e7
+index 00000000..23228043
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,111 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -1458,6 +1874,7 @@ index 00000000..884153e7
 +    case hideTitles = 3
 +    case telegramGlass = 11
 +    case classicDesign = 21
++    case noGlass = 22
 +    case slowMotion = 25
 +    case relaunchInfo = 30
 +    case settingsRows = 35
@@ -1506,6 +1923,7 @@ index 00000000..884153e7
 +        case .hideTitles: AyuAppearancePlus.hideTabTitles = value
 +        case .telegramGlass: AyuAppearancePlus.glassStyle = value ? .telegram : .system
 +        case .classicDesign: AyuAppearancePlus.classicDesign = value
++        case .noGlass: AyuAppearancePlus.noGlass = value
 +        default: break
 +        }
 +    })
@@ -1530,6 +1948,7 @@ index 00000000..884153e7
 +            .toggle(2, AyuAppearancePlusRow.telegramGlass.rawValue, symbol("drop.fill", 0x32ADE6), ru ? "Стекло Telegram" : "Telegram glass", ru ? (systemGlassAvailable ? "Выключено — системное стекло iOS" : "Системное стекло требует iOS 26") : (systemGlassAvailable ? "Off: the system iOS glass" : "System glass needs iOS 26"), AyuAppearancePlus.glassStyle == .telegram),
 +            .header(3, 20, ru ? "ДИЗАЙН" : "DESIGN"),
 +            .toggle(3, AyuAppearancePlusRow.classicDesign.rawValue, symbol("clock.arrow.circlepath", 0xFF2D55), ru ? "Старый дизайн Telegram" : "Classic Telegram design", ru ? "Как Telegram до Liquid Glass" : "Telegram before Liquid Glass", AyuAppearancePlus.classicDesign),
++            .toggle(3, AyuAppearancePlusRow.noGlass.rawValue, symbol("square.slash", 0x8E8E93), ru ? "Без стекла" : "No glass", ru ? "Плоские панели везде: папки, чаты, настройки, кнопки" : "Flat panels everywhere: folders, chats, settings, buttons", AyuAppearancePlus.noGlass),
 +            .link(3, AyuAppearancePlusRow.slowMotion.rawValue, symbol("tortoise.fill", 0x34C759), ru ? "Slow-Motion анимаций" : "Animation slow motion", AyuAppearancePlus.slowMotionFactor > 1.0 ? String(format: "%.0f×", AyuAppearancePlus.slowMotionFactor) : (ru ? "выкл." : "off"))
 +        ]
 +        if AyuAppearancePlus.needsRelaunch {
@@ -1781,6 +2200,360 @@ index 00000000..956e2c6d
 +        self.dismiss(animated: true)
 +    }
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuEqualizerController.swift b/submodules/SettingsUI/Sources/AyuEqualizerController.swift
+new file mode 100644
+index 00000000..eb8ebd67
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuEqualizerController.swift
+@@ -0,0 +1,263 @@
++import Foundation
++import UIKit
++import Display
++import AccountContext
++import UniversalMediaPlayer
++
++/// Settings → AyuGram → Equalizer (also from the player menu): ten bands, presets, live.
++final class AyuEqualizerViewController: UIViewController {
++    private let russian: Bool
++    private let palette: AyuPreferencesPalette
++    var close: (() -> Void)?
++
++    private let enabledSwitch = UISwitch()
++    private let presetsStack = UIStackView()
++    private var presetButtons: [String: UIButton] = [:]
++    private var sliders: [UISlider] = []
++    private var valueLabels: [UILabel] = []
++    private var observer: NSObjectProtocol?
++
++    init(russian: Bool, palette: AyuPreferencesPalette) {
++        self.russian = russian
++        self.palette = palette
++        super.init(nibName: nil, bundle: nil)
++        self.title = russian ? "Эквалайзер" : "Equalizer"
++    }
++
++    required init?(coder: NSCoder) { return nil }
++
++    deinit {
++        if let observer = self.observer {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.view.backgroundColor = self.palette.background
++        let back = UIBarButtonItem(image: UIImage(systemName: "chevron.backward", withConfiguration: UIImage.SymbolConfiguration(weight: .semibold)), style: .plain, target: self, action: #selector(self.backTapped))
++        back.accessibilityLabel = self.russian ? "Назад" : "Back"
++        self.navigationItem.leftBarButtonItem = back
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.russian ? "Сброс" : "Reset", style: .plain, target: self, action: #selector(self.resetTapped))
++
++        let scroll = UIScrollView()
++        scroll.alwaysBounceVertical = true
++        scroll.translatesAutoresizingMaskIntoConstraints = false
++        self.view.addSubview(scroll)
++
++        let content = UIStackView()
++        content.axis = .vertical
++        content.spacing = 16.0
++        content.translatesAutoresizingMaskIntoConstraints = false
++        scroll.addSubview(content)
++        NSLayoutConstraint.activate([
++            scroll.topAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.topAnchor),
++            scroll.bottomAnchor.constraint(equalTo: self.view.bottomAnchor),
++            scroll.leadingAnchor.constraint(equalTo: self.view.leadingAnchor),
++            scroll.trailingAnchor.constraint(equalTo: self.view.trailingAnchor),
++            content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 16.0),
++            content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -24.0),
++            content.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: 16.0),
++            content.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -16.0)
++        ])
++
++        content.addArrangedSubview(self.makeSwitchPanel())
++        content.addArrangedSubview(self.makeCaption(self.russian ? "ПРЕСЕТЫ" : "PRESETS"))
++        content.addArrangedSubview(self.makePresets())
++        content.addArrangedSubview(self.makeCaption(self.russian ? "ПОЛОСЫ" : "BANDS"))
++        content.addArrangedSubview(self.makeBands())
++        let footer = self.makeCaption(self.russian
++            ? "Работает для музыки и звука видео во время воспроизведения. Голосовые и кружки не меняются. Громкие пресеты автоматически снижают общий уровень, чтобы не было искажений."
++            : "Applies to music and video sound while playing. Voice and video messages are not changed. Loud presets lower the overall level automatically to avoid distortion.")
++        footer.numberOfLines = 0
++        content.addArrangedSubview(footer)
++
++        self.observer = NotificationCenter.default.addObserver(forName: AyuEqualizer.didChangeNotification, object: nil, queue: .main, using: { [weak self] _ in
++            self?.refresh()
++        })
++        self.refresh()
++    }
++
++    @objc private func backTapped() {
++        if let close = self.close { close() } else { self.dismiss(animated: true) }
++    }
++
++    @objc private func resetTapped() {
++        if let flat = AyuEqualizer.presets.first {
++            AyuEqualizer.apply(preset: flat)
++        }
++    }
++
++    private func makeCaption(_ text: String) -> UILabel {
++        let label = UILabel()
++        label.text = text
++        label.font = .systemFont(ofSize: 13.0)
++        label.textColor = self.palette.secondary
++        return label
++    }
++
++    private func makePanel() -> UIView {
++        let panel = UIView()
++        panel.backgroundColor = self.palette.panel
++        panel.layer.cornerRadius = 12.0
++        return panel
++    }
++
++    private func makeSwitchPanel() -> UIView {
++        let panel = self.makePanel()
++        let label = UILabel()
++        label.text = self.russian ? "Эквалайзер" : "Equalizer"
++        label.font = .systemFont(ofSize: 17.0)
++        label.textColor = self.palette.text
++        self.enabledSwitch.onTintColor = self.palette.accent
++        self.enabledSwitch.addTarget(self, action: #selector(self.switchChanged), for: .valueChanged)
++        for view in [label, self.enabledSwitch] as [UIView] {
++            view.translatesAutoresizingMaskIntoConstraints = false
++            panel.addSubview(view)
++        }
++        NSLayoutConstraint.activate([
++            panel.heightAnchor.constraint(equalToConstant: 52.0),
++            label.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16.0),
++            label.centerYAnchor.constraint(equalTo: panel.centerYAnchor),
++            self.enabledSwitch.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -16.0),
++            self.enabledSwitch.centerYAnchor.constraint(equalTo: panel.centerYAnchor)
++        ])
++        return panel
++    }
++
++    @objc private func switchChanged() {
++        AyuEqualizer.isEnabled = self.enabledSwitch.isOn
++    }
++
++    private func makePresets() -> UIView {
++        let scroll = UIScrollView()
++        scroll.showsHorizontalScrollIndicator = false
++        self.presetsStack.axis = .horizontal
++        self.presetsStack.spacing = 8.0
++        self.presetsStack.translatesAutoresizingMaskIntoConstraints = false
++        scroll.addSubview(self.presetsStack)
++        for preset in AyuEqualizer.presets {
++            var configuration = UIButton.Configuration.filled()
++            configuration.title = preset.name(self.russian)
++            configuration.cornerStyle = .capsule
++            configuration.contentInsets = NSDirectionalEdgeInsets(top: 7.0, leading: 14.0, bottom: 7.0, trailing: 14.0)
++            let button = UIButton(configuration: configuration, primaryAction: UIAction(handler: { _ in
++                AyuEqualizer.apply(preset: preset)
++                if !AyuEqualizer.isEnabled {
++                    AyuEqualizer.isEnabled = true
++                }
++            }))
++            self.presetButtons[preset.id] = button
++            self.presetsStack.addArrangedSubview(button)
++        }
++        NSLayoutConstraint.activate([
++            scroll.heightAnchor.constraint(equalToConstant: 40.0),
++            self.presetsStack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
++            self.presetsStack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
++            self.presetsStack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
++            self.presetsStack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
++            self.presetsStack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor)
++        ])
++        return scroll
++    }
++
++    private func makeBands() -> UIView {
++        let panel = self.makePanel()
++        let row = UIStackView()
++        row.axis = .horizontal
++        row.distribution = .fillEqually
++        row.translatesAutoresizingMaskIntoConstraints = false
++        panel.addSubview(row)
++        let sliderLength: CGFloat = 200.0
++        for (index, frequency) in AyuEqualizer.frequencies.enumerated() {
++            let column = UIView()
++            let value = UILabel()
++            value.font = .monospacedDigitSystemFont(ofSize: 11.0, weight: .medium)
++            value.textColor = self.palette.text
++            value.textAlignment = .center
++            let name = UILabel()
++            name.text = frequency >= 1000 ? "\(Int(frequency / 1000))k" : "\(Int(frequency))"
++            name.font = .systemFont(ofSize: 11.0)
++            name.textColor = self.palette.secondary
++            name.textAlignment = .center
++            let slider = UISlider()
++            slider.minimumValue = AyuEqualizer.gainRange.lowerBound
++            slider.maximumValue = AyuEqualizer.gainRange.upperBound
++            slider.minimumTrackTintColor = self.palette.accent
++            slider.tag = index
++            slider.transform = CGAffineTransform(rotationAngle: -CGFloat.pi / 2.0)
++            slider.addTarget(self, action: #selector(self.sliderChanged(_:)), for: .valueChanged)
++            slider.accessibilityLabel = (self.russian ? "Полоса " : "Band ") + (name.text ?? "")
++            for view in [value, slider, name] as [UIView] {
++                view.translatesAutoresizingMaskIntoConstraints = false
++                column.addSubview(view)
++            }
++            NSLayoutConstraint.activate([
++                value.topAnchor.constraint(equalTo: column.topAnchor),
++                value.leadingAnchor.constraint(equalTo: column.leadingAnchor),
++                value.trailingAnchor.constraint(equalTo: column.trailingAnchor),
++                slider.centerXAnchor.constraint(equalTo: column.centerXAnchor),
++                slider.centerYAnchor.constraint(equalTo: column.topAnchor, constant: 22.0 + sliderLength / 2.0),
++                slider.widthAnchor.constraint(equalToConstant: sliderLength),
++                name.topAnchor.constraint(equalTo: column.topAnchor, constant: 30.0 + sliderLength),
++                name.leadingAnchor.constraint(equalTo: column.leadingAnchor),
++                name.trailingAnchor.constraint(equalTo: column.trailingAnchor),
++                name.bottomAnchor.constraint(equalTo: column.bottomAnchor)
++            ])
++            self.sliders.append(slider)
++            self.valueLabels.append(value)
++            row.addArrangedSubview(column)
++        }
++        NSLayoutConstraint.activate([
++            row.topAnchor.constraint(equalTo: panel.topAnchor, constant: 14.0),
++            row.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -14.0),
++            row.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 6.0),
++            row.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -6.0)
++        ])
++        return panel
++    }
++
++    @objc private func sliderChanged(_ slider: UISlider) {
++        var gains = AyuEqualizer.gains
++        guard slider.tag < gains.count else { return }
++        let rounded = (slider.value * 2.0).rounded() / 2.0
++        gains[slider.tag] = rounded
++        AyuEqualizer.presetId = nil
++        AyuEqualizer.gains = gains
++        if !AyuEqualizer.isEnabled {
++            AyuEqualizer.isEnabled = true
++        }
++    }
++
++    private func refresh() {
++        self.enabledSwitch.isOn = AyuEqualizer.isEnabled
++        let gains = AyuEqualizer.gains
++        for (index, slider) in self.sliders.enumerated() where index < gains.count {
++            if !slider.isTracking {
++                slider.value = gains[index]
++            }
++            let gain = gains[index]
++            self.valueLabels[index].text = gain == 0 ? "0" : String(format: gain == gain.rounded() ? "%+.0f" : "%+.1f", gain)
++        }
++        let selected = AyuEqualizer.isEnabled ? AyuEqualizer.presetId : nil
++        for (id, button) in self.presetButtons {
++            var configuration = button.configuration ?? UIButton.Configuration.filled()
++            let isSelected = id == selected
++            configuration.baseBackgroundColor = isSelected ? self.palette.accent : self.palette.panel
++            configuration.baseForegroundColor = isSelected ? .white : self.palette.text
++            button.configuration = configuration
++        }
++    }
++}
++
++/// The equalizer as a page of Telegram's navigation stack.
++public func ayuEqualizerController(context: AccountContext) -> ViewController {
++    let data = context.sharedContext.currentPresentationData.with { $0 }
++    let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
++    let root = AyuEqualizerViewController(russian: data.strings.baseLanguageCode.hasPrefix("ru"), palette: palette)
++    let screen = AyuHostedNavigationScreen(context: context, root: root)
++    root.close = { [weak screen] in
++        screen?.navigationController?.popViewController(animated: true)
++    }
++    return screen
++}
+diff --git a/submodules/SettingsUI/Sources/AyuExtrasController.swift b/submodules/SettingsUI/Sources/AyuExtrasController.swift
+new file mode 100644
+index 00000000..7f10b60f
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuExtrasController.swift
+@@ -0,0 +1,79 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++// Settings → AyuGram → Privacy & extras: local switches, all off by default.
++
++private func ayuExtrasSignal() -> Signal<Void, NoError> {
++    return Signal { subscriber in
++        subscriber.putNext(Void())
++        let observer = NotificationCenter.default.addObserver(forName: AyuExtras.didChangeNotification, object: nil, queue: .main, using: { _ in
++            subscriber.putNext(Void())
++        })
++        return ActionDisposable {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++}
++
++private struct AyuExtraRow {
++    let section: Int32
++    let id: Int32
++    let key: AyuExtras.Key
++    let symbol: String
++    let color: UInt32
++    let titleRu: String
++    let titleEn: String
++    let infoRu: String
++    let infoEn: String
++}
++
++private let ayuExtraRows: [AyuExtraRow] = [
++    AyuExtraRow(section: 1, id: 1, key: .spoofPhotoMetadata, symbol: "location.slash.fill", color: 0x34C759, titleRu: "Подмена метаданных фото", titleEn: "Fake photo metadata", infoRu: "Фото, отправленные файлом, теряют GPS, камеру и даты — вместо них фейковые данные", infoEn: "Photos sent as files lose GPS, camera and dates; fake values replace them"),
++    AyuExtraRow(section: 1, id: 2, key: .randomFileNames, symbol: "doc.badge.ellipsis", color: 0x5856D6, titleRu: "Случайные имена файлов", titleEn: "Random file names", infoRu: "IMG_4821.HEIC уходит как a8f3k2q9.heic", infoEn: "IMG_4821.HEIC is sent as a8f3k2q9.heic"),
++    AyuExtraRow(section: 1, id: 3, key: .cleanLinks, symbol: "link.badge.plus", color: 0x007AFF, titleRu: "Чистые ссылки", titleEn: "Clean links", infoRu: "Убирает utm_*, fbclid, si и другие метки слежки из отправляемых ссылок", infoEn: "Removes utm_*, fbclid, si and other trackers from links you send"),
++    AyuExtraRow(section: 1, id: 4, key: .blurInAppSwitcher, symbol: "eye.slash.fill", color: 0x8E8E93, titleRu: "Размытие в переключателе", titleEn: "Blur in app switcher", infoRu: "Чаты не видны в списке открытых приложений", infoEn: "Chats are hidden in the app switcher"),
++    AyuExtraRow(section: 1, id: 5, key: .confirmCalls, symbol: "phone.badge.checkmark", color: 0x34C759, titleRu: "Подтверждать звонки", titleEn: "Confirm calls", infoRu: "Без случайных звонков по нажатию", infoEn: "No accidental calls on a tap"),
++    AyuExtraRow(section: 2, id: 11, key: .disableHaptics, symbol: "iphone.slash", color: 0xFF9500, titleRu: "Без вибрации", titleEn: "No vibration", infoRu: "Отключает тактильный отклик во всём приложении", infoEn: "Turns off haptic feedback in the whole app"),
++    AyuExtraRow(section: 3, id: 21, key: .keepScreenOnInPlayer, symbol: "sun.max.fill", color: 0xFFCC00, titleRu: "Экран не гаснет в плеере", titleEn: "Keep screen on in player", infoRu: "Пока открыт музыкальный плеер", infoEn: "While the music player is open"),
++    AyuExtraRow(section: 3, id: 22, key: .autoOpenLyrics, symbol: "quote.bubble.fill", color: 0xFF2D55, titleRu: "Сразу показывать текст", titleEn: "Open lyrics automatically", infoRu: "Плеер открывается с текстом песни", infoEn: "The player opens with the lyrics"),
++    AyuExtraRow(section: 3, id: 23, key: .rememberPlaybackSpeed, symbol: "gauge.with.dots.needle.67percent", color: 0x32ADE6, titleRu: "Запоминать скорость", titleEn: "Remember speed", infoRu: "Последняя скорость музыки при открытии плеера", infoEn: "The last music speed when the player opens")
++]
++
++func ayuExtrasController(context: AccountContext) -> ViewController {
++    let arguments = AyuSectionedArguments(open: { _ in }, toggle: { id, value in
++        guard let row = ayuExtraRows.first(where: { $0.id == id }) else { return }
++        AyuExtras.set(row.key, value)
++    })
++
++    let signal = combineLatest(context.sharedContext.presentationData, ayuExtrasSignal())
++    |> deliverOnMainQueue
++    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        var entries: [AyuSectionedEntry] = []
++        let headers: [Int32: String] = [
++            1: ru ? "ПРИВАТНОСТЬ" : "PRIVACY",
++            2: ru ? "ИНТЕРФЕЙС" : "INTERFACE",
++            3: ru ? "МУЗЫКА" : "MUSIC"
++        ]
++        var lastSection: Int32 = 0
++        for row in ayuExtraRows {
++            if row.section != lastSection {
++                lastSection = row.section
++                entries.append(.header(row.section, (row.section - 1) * 10, headers[row.section] ?? ""))
++            }
++            entries.append(.toggle(row.section, row.id, AyuSettingsIcons.symbol(row.symbol, color: UIColor(rgb: row.color)), ru ? row.titleRu : row.titleEn, ru ? row.infoRu : row.infoEn, AyuExtras.isOn(row.key)))
++        }
++        entries.append(.info(3, 29, ru ? "В меню плеера (⋯ у текста) также есть таймер сна и эквалайзер." : "The player menu (⋯ next to the lyrics) also has a sleep timer and the equalizer."))
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Приватность и мелочи" : "Privacy & extras"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++    }
++    return ItemListController(context: context, state: signal)
++}
 diff --git a/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift b/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift
 new file mode 100644
 index 00000000..4948ec0c
@@ -1946,10 +2719,17 @@ index 00000000..4948ec0c
 +    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
-index e2236c5f..e66785d6 100644
+index e2236c5f..8f999179 100644
 --- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
-@@ -16,6 +16,7 @@ import PeerNameColorScreen
+@@ -10,12 +10,14 @@ import ItemListUI
+ import AccountContext
+ import TextFormat
+ import PeerNameColorScreen
++import UniversalMediaPlayer
+ 
+ // The AyuGram page and the screens it opens: Ghost Mode+, Local Premium, Message History.
+ 
  private enum AyuGramRow: Int32 {
      case ghostMode = 1
      case ghostModePlus = 2
@@ -1957,20 +2737,43 @@ index e2236c5f..e66785d6 100644
      case messageHistory = 11
      case mediaArchive = 12
      case localPremium = 21
-@@ -24,8 +25,12 @@ private enum AyuGramRow: Int32 {
+@@ -24,8 +26,33 @@ private enum AyuGramRow: Int32 {
      case interface = 24
      case navigationAndComposer = 25
      case peerSearch = 26
+-    case channel = 31
+-    case sourceCode = 32
 +    case appearancePlus = 27
 +    case lyricsSources = 28
 +    case whiteGram = 29
-     case channel = 31
-     case sourceCode = 32
-+    case developer = 41
++    case equalizer = 61
++    case extras = 62
++    case channel = 71
++    case sourceCode = 72
++    case developer = 81
++    case creditMurkGitHub = 91
++    case creditMurkTelegram = 92
++    case creditNeistvGitHub = 93
++    case creditNeistvTelegram = 94
++    case creditOwnerGitHub = 95
++    case creditOwnerTelegram = 96
++
++    /// Credits rows open their profile pages; t.me links stay inside the app.
++    var creditURL: String? {
++        switch self {
++        case .creditMurkGitHub: return "https://github.com/murk-sus"
++        case .creditMurkTelegram: return "https://t.me/asuka4scape_developer"
++        case .creditNeistvGitHub: return "https://github.com/neistv"
++        case .creditNeistvTelegram: return "https://t.me/neistv"
++        case .creditOwnerGitHub: return "https://github.com/dsn2fvhmn4-lgtm"
++        case .creditOwnerTelegram: return "https://t.me/neosay"
++        default: return nil
++        }
++    }
  }
  
  /// AyuGram preferences (AyuGramPreferencesActivity), opened from its own Settings row,
-@@ -42,6 +47,16 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -42,6 +69,20 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              push?(ayuGhostModeController(context: context))
          case .ghostModePlus:
              push?(ayuGhostModePlusController(context: context))
@@ -1984,10 +2787,25 @@ index e2236c5f..e66785d6 100644
 +            push?(ayuWhiteGramController(context: context))
 +        case .developer:
 +            push?(ayuDeveloperSettingsController(context: context))
++        case .equalizer:
++            push?(ayuEqualizerController(context: context))
++        case .extras:
++            push?(ayuExtrasController(context: context))
          case .messageHistory:
              push?(ayuMessageHistoryController(context: context))
          case .mediaArchive:
-@@ -75,6 +90,11 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -62,6 +103,10 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             ayuOpenChannel(context: context, navigation: navigation?())
+         case .sourceCode:
+             context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
++        case .creditMurkGitHub, .creditMurkTelegram, .creditNeistvGitHub, .creditNeistvTelegram, .creditOwnerGitHub, .creditOwnerTelegram:
++            if let url = row.creditURL {
++                context.sharedContext.openExternalUrl(context: context, urlContext: .generic, url: url, forceExternal: false, presentationData: context.sharedContext.currentPresentationData.with { $0 }, navigationController: navigation?(), dismissInput: {})
++            }
+         }
+     }, toggle: { _, _ in })
+     let icons: [AyuGramRow: UIImage?] = [
+@@ -75,8 +120,21 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
          .interface: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x32ADE6)),
          .navigationAndComposer: AyuSettingsIcons.symbol("slider.horizontal.3", color: UIColor(rgb: 0x5856D6)),
          .peerSearch: AyuSettingsIcons.symbol("magnifyingglass", color: UIColor(rgb: 0x007AFF)),
@@ -1996,10 +2814,21 @@ index e2236c5f..e66785d6 100644
 +        .lyricsSources: AyuSettingsIcons.symbol("quote.bubble.fill", color: UIColor(rgb: 0xFF2D55)),
 +        .whiteGram: AyuSettingsIcons.symbol("sparkles", color: UIColor(rgb: 0x8E8E93)),
 +        .developer: AyuSettingsIcons.symbol("hammer.fill", color: UIColor(rgb: 0x8E8E93)),
++        .equalizer: AyuSettingsIcons.symbol("slider.vertical.3", color: UIColor(rgb: 0xFF2D55)),
++        .extras: AyuSettingsIcons.symbol("hand.raised.fill", color: UIColor(rgb: 0x34C759)),
          .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
-         .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
+-        .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
++        .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6)),
++        .creditMurkGitHub: AyuSettingsIcons.symbol("person.crop.circle.fill", color: UIColor(rgb: 0x8E5CF7)),
++        .creditMurkTelegram: AyuSettingsIcons.symbol("paperplane.fill", color: UIColor(rgb: 0x2AABEE)),
++        .creditNeistvGitHub: AyuSettingsIcons.symbol("person.crop.circle.fill", color: UIColor(rgb: 0xFF9500)),
++        .creditNeistvTelegram: AyuSettingsIcons.symbol("paperplane.fill", color: UIColor(rgb: 0x2AABEE)),
++        .creditOwnerGitHub: AyuSettingsIcons.symbol("folder.fill", color: UIColor(rgb: 0x34C759)),
++        .creditOwnerTelegram: AyuSettingsIcons.symbol("paperplane.fill", color: UIColor(rgb: 0x2AABEE))
      ]
-@@ -90,6 +110,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+     func link(_ section: Int32, _ row: AyuGramRow, _ title: String, _ label: String = "") -> AyuSectionedEntry {
+         return .link(section, row.rawValue, icons[row] ?? nil, title, label)
+@@ -90,6 +148,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              .header(1, 0, AyuStrings.ghostEssentials.text(ru)),
              link(1, .ghostMode, "Ghost Mode"),
              link(1, .ghostModePlus, "Ghost Mode+"),
@@ -2007,23 +2836,35 @@ index e2236c5f..e66785d6 100644
              .header(2, 10, AyuStrings.spyEssentials.text(ru)),
              link(2, .messageHistory, AyuStrings.messageHistory.text(ru)),
              link(2, .mediaArchive, AyuStrings.mediaArchive.text(ru)),
-@@ -100,9 +121,14 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -100,9 +159,24 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              link(3, .peerSearch, ru ? "Поиск каналов и людей" : "Find channels and people"),
              link(3, .interface, ru ? "Интерфейс и чаты" : "Interface & Chats"),
              link(3, .navigationAndComposer, ru ? "Навигация и редактор" : "Navigation and composer"),
+-            .header(4, 30, AyuStrings.links.text(ru)),
+-            link(4, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
+-            link(4, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub")
 +            link(3, .appearancePlus, ru ? "Оформление+" : "Appearance+"),
 +            link(3, .lyricsSources, ru ? "Источники текстов песен" : "Lyrics sources"),
 +            link(3, .whiteGram, "WhiteGram"),
-             .header(4, 30, AyuStrings.links.text(ru)),
-             link(4, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
--            link(4, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub")
-+            link(4, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub"),
-+            .header(5, 40, ru ? "ОТЛАДКА" : "DEBUGGING"),
-+            link(5, .developer, ru ? "Для разработчиков" : "Developer", AyuDeveloperSettings.shared.current.anyEnabled ? (ru ? "вкл." : "on") : "")
++            .header(4, 60, ru ? "ЕЩЁ" : "MORE"),
++            link(4, .equalizer, ru ? "Эквалайзер" : "Equalizer", AyuEqualizer.isEnabled ? (ru ? "вкл." : "on") : ""),
++            link(4, .extras, ru ? "Приватность и мелочи" : "Privacy & extras"),
++            .header(5, 70, AyuStrings.links.text(ru)),
++            link(5, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
++            link(5, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub"),
++            .header(6, 80, ru ? "ОТЛАДКА" : "DEBUGGING"),
++            link(6, .developer, ru ? "Для разработчиков" : "Developer", AyuDeveloperSettings.shared.current.anyEnabled ? (ru ? "вкл." : "on") : ""),
++            .header(7, 90, ru ? "КТО ДЕЛАЛ" : "CREDITS"),
++            link(7, .creditMurkGitHub, "murk-sus", "GitHub"),
++            link(7, .creditMurkTelegram, "@asuka4scape_developer", "Telegram"),
++            link(7, .creditNeistvGitHub, "neistv", "GitHub"),
++            link(7, .creditNeistvTelegram, "@neistv", "Telegram"),
++            link(7, .creditOwnerGitHub, ru ? "Создатель репозитория" : "Repository owner", "GitHub"),
++            link(7, .creditOwnerTelegram, "@neosay", "Telegram")
          ]
          let data = ItemListPresentationData(presentationData)
          let state = ItemListControllerState(presentationData: data, title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-@@ -111,6 +137,23 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -111,6 +185,23 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
      let controller = ItemListController(context: context, state: signal)
      push = { [weak controller] in controller?.push($0) }
      navigation = { [weak controller] in controller?.navigationController as? NavigationController }
@@ -2734,10 +3575,10 @@ index 00000000..62b1c72a
 +    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-index 515572a7..72d151ea 100644
+index 515572a7..83f28c81 100644
 --- a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -41,6 +41,34 @@ private final class AyuPluginListCell: UITableViewCell {
+@@ -41,6 +41,42 @@ private final class AyuPluginListCell: UITableViewCell {
      required init?(coder: NSCoder) { return nil }
  }
  
@@ -2762,8 +3603,16 @@ index 515572a7..72d151ea 100644
 +    func lineCount(id: String) -> Int
 +    func preview(_ data: Data, filename: String) -> AyuCodePluginItem?
 +    func install(_ data: Data, filename: String) throws
-+    /// The online plugin store, or nil when the host has none.
-+    func makeCatalogController(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?) -> UIViewController?
++    /// The online plugin store, or nil when the host has none. Native cards it downloads go
++    /// back through `importFile`, so the list's own confirmation and install path apply.
++    func makeCatalogController(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?, importFile: @escaping (URL, String) -> Void, nativeState: @escaping (String) -> AyuCatalogNativeState) -> UIViewController?
++}
++
++/// Install state of a native plugin card, answered by the plugin list.
++struct AyuCatalogNativeState {
++    let installed: Bool
++    /// nil when the installed plugin carries no version (built-in cards).
++    let version: String?
 +}
 +
 +/// Posted by the code-plugin runtime whenever its list changes.
@@ -2772,7 +3621,7 @@ index 515572a7..72d151ea 100644
  struct AyuPluginAlertAction {
      enum Style {
          case `default`
-@@ -127,7 +155,9 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -127,7 +163,9 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          let refresh = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(self.updateCatalogTapped))
          refresh.accessibilityLabel = self.russian ? "Обновить список поддержки плагинов" : "Refresh plugin support list"
          self.catalogRefresh = refresh
@@ -2783,7 +3632,7 @@ index 515572a7..72d151ea 100644
          // A real table header reserves space for search on every supported iOS version.
          // The navigation-integrated search bar could overlay and clip the first plugin row.
          let search = UISearchBar(frame: CGRect(x: 0.0, y: 0.0, width: self.tableView.bounds.width, height: 56.0))
-@@ -147,11 +177,20 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -147,11 +185,20 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
              guard let self, self.viewIfLoaded?.window != nil else { return }
              self.reload()
          })
@@ -2804,7 +3653,7 @@ index 515572a7..72d151ea 100644
      }
      override func viewWillAppear(_ animated: Bool) {
          super.viewWillAppear(animated)
-@@ -208,9 +247,15 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -208,9 +255,15 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
              [plugin.title(self.russian), plugin.author, plugin.summary(self.russian)].contains { $0.localizedCaseInsensitiveContains(self.query) }
          }
      }
@@ -2821,7 +3670,7 @@ index 515572a7..72d151ea 100644
              self.tableView.backgroundView = nil
              return
          }
-@@ -220,7 +265,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -220,7 +273,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          label.textColor = self.palette?.secondary ?? .secondaryLabel
          label.font = .preferredFont(forTextStyle: .subheadline)
          if self.query.isEmpty {
@@ -2830,18 +3679,30 @@ index 515572a7..72d151ea 100644
          } else {
              label.text = self.russian ? "Ничего не найдено." : "Nothing found."
          }
-@@ -234,6 +279,10 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -234,6 +287,22 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          ])
          self.tableView.backgroundView = container
      }
 +    @objc private func storeTapped() {
-+        guard !self.reading, !self.applying, let controller = self.codePlugins?.makeCatalogController(russian: self.russian, palette: self.palette, presentAlert: self.presentAlert) else { return }
++        guard !self.reading, !self.applying, let controller = self.codePlugins?.makeCatalogController(russian: self.russian, palette: self.palette, presentAlert: self.presentAlert, importFile: { [weak self] url, filename in
++            guard let self else { return }
++            self.navigationController?.popToViewController(self, animated: true)
++            self.readImport(url, filename: filename)
++        }, nativeState: { [weak self] id in
++            if let plugin = self?.store.current.plugins.installed.first(where: { $0.manifest.id == id }) {
++                return AyuCatalogNativeState(installed: true, version: plugin.manifest.version)
++            }
++            if let native = AyuNativePlugin(rawValue: id), AyuNativePlugins.isInstalled(native) {
++                return AyuCatalogNativeState(installed: true, version: nil)
++            }
++            return AyuCatalogNativeState(installed: false, version: nil)
++        }) else { return }
 +        self.navigationController?.pushViewController(controller, animated: true)
 +    }
      @objc private func installTapped() {
          guard !self.reading, !self.applying else { return }
          let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
-@@ -260,15 +309,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -260,15 +329,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          if let close = self.close { close() } else { self.dismiss(animated: true) }
      }
      /// Section 0 lists the built-in plugins, section 1 the `.plugin` files.
@@ -2865,7 +3726,7 @@ index 515572a7..72d151ea 100644
          let isLast = section == 1 ? !self.items.isEmpty : (self.items.isEmpty && !self.nativeItems.isEmpty)
          guard isLast else { return nil }
          return self.russian ? "Нажми на плагин, чтобы открыть его настройки." : "Tap a plugin to open its settings."
-@@ -299,10 +354,54 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -299,10 +374,54 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          }
          AyuNativePlugins.setEnabled(plugin, toggle.isOn)
      }
@@ -2920,7 +3781,7 @@ index 515572a7..72d151ea 100644
          let cell = AyuPluginListCell()
          cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
          cell.iconView.image = self.pluginIcon(32.0)
-@@ -388,6 +487,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -388,6 +507,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
      override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
          tableView.deselectRow(at: indexPath, animated: true)
          guard !self.reading, !self.applying else { return }
@@ -2942,7 +3803,7 @@ index 515572a7..72d151ea 100644
          if indexPath.section == 0 {
              let nativeItems = self.nativeItems
              guard indexPath.row < nativeItems.count, let controller = self.nativePluginSettings?(nativeItems[indexPath.row]) else { return }
-@@ -404,12 +518,42 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -404,12 +538,42 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          controller.pluginIcon = self.pluginIcon
          return controller
      }
@@ -2987,10 +3848,10 @@ index 515572a7..72d151ea 100644
              return
 diff --git a/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift b/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
 new file mode 100644
-index 00000000..d43bd5a4
+index 00000000..a1a78060
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,348 @@
 +import Foundation
 +import UIKit
 +import AccountContext
@@ -3011,11 +3872,15 @@ index 00000000..d43bd5a4
 +    private var query = ""
 +    private var installing = Set<String>()
 +    private var observer: NSObjectProtocol?
++    private let importFile: ((URL, String) -> Void)?
++    private let nativeState: ((String) -> AyuCatalogNativeState)?
 +
-+    init(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?) {
++    init(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?, importFile: ((URL, String) -> Void)?, nativeState: ((String) -> AyuCatalogNativeState)?) {
 +        self.russian = russian
 +        self.palette = palette
 +        self.presentAlert = presentAlert
++        self.importFile = importFile
++        self.nativeState = nativeState
 +        super.init(style: .insetGrouped)
 +        self.title = russian ? "Каталог" : "Catalog"
 +    }
@@ -3159,6 +4024,12 @@ index 00000000..d43bd5a4
 +    }
 +
 +    private func status(_ entry: AyuScriptCatalog.Entry) -> Status {
++        if entry.isNativeCard {
++            let state = self.nativeState?(entry.id) ?? AyuCatalogNativeState(installed: false, version: nil)
++            guard state.installed else { return .available }
++            guard let version = state.version else { return .installed }
++            return AyuScriptCatalog.isNewer(entry.version, than: version) ? .update(version) : .installed
++        }
 +        guard let version = self.installed[entry.id] else { return .available }
 +        return AyuScriptCatalog.isNewer(entry.version, than: version) ? .update(version) : .installed
 +    }
@@ -3235,6 +4106,11 @@ index 00000000..d43bd5a4
 +
 +    private func confirm(_ entry: AyuScriptCatalog.Entry) {
 +        guard !self.installing.contains(entry.id) else { return }
++        if entry.isNativeCard {
++            // The plugin list shows its own confirmation for native cards.
++            self.installNativeCard(entry)
++            return
++        }
 +        let status = self.status(entry)
 +        var message = entry.author + "\n" + entry.id + " · " + entry.version
 +        if case let .update(version) = status {
@@ -3283,6 +4159,31 @@ index 00000000..d43bd5a4
 +        })
 +    }
 +
++    private func installNativeCard(_ entry: AyuScriptCatalog.Entry) {
++        guard let importFile = self.importFile else { return }
++        self.installing.insert(entry.id)
++        self.reload()
++        AyuScriptCatalog.shared.download(entry, completion: { [weak self] result in
++            guard let self else { return }
++            self.installing.remove(entry.id)
++            self.reload()
++            switch result {
++            case let .success(data):
++                let filename = entry.id + "." + entry.fileExtension
++                let url = FileManager.default.temporaryDirectory.appendingPathComponent("ayu-catalog", isDirectory: true).appendingPathComponent(filename)
++                do {
++                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
++                    try data.write(to: url, options: .atomic)
++                    importFile(url, filename)
++                } catch {
++                    self.alert(title: self.russian ? "Не удалось установить" : "Could not install", message: error.localizedDescription)
++                }
++            case let .failure(error):
++                self.alert(title: self.russian ? "Не удалось установить" : "Could not install", message: error.localizedDescription)
++            }
++        })
++    }
++
 +    private func alert(title: String, message: String) {
 +        self.showAlert(title: title, message: message, actions: [AyuPluginAlertAction(title: "OK", style: .default, handler: nil)])
 +    }
@@ -3301,7 +4202,7 @@ index 00000000..d43bd5a4
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift b/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift
 new file mode 100644
-index 00000000..698373d4
+index 00000000..72fbeb3b
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift
 @@ -0,0 +1,44 @@
@@ -3341,8 +4242,8 @@ index 00000000..698373d4
 +        try self.runtime.install(data, filename: filename)
 +    }
 +
-+    func makeCatalogController(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?) -> UIViewController? {
-+        return AyuScriptCatalogController(russian: russian, palette: palette, presentAlert: presentAlert)
++    func makeCatalogController(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?, importFile: @escaping (URL, String) -> Void, nativeState: @escaping (String) -> AyuCatalogNativeState) -> UIViewController? {
++        return AyuScriptCatalogController(russian: russian, palette: palette, presentAlert: presentAlert, importFile: importFile, nativeState: nativeState)
 +    }
 +
 +    private func item(_ plugin: AyuScriptRuntime.Plugin, activity: [String]) -> AyuCodePluginItem {
@@ -3411,7 +4312,7 @@ index 00000000..8729d0f7
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuWhiteGramController.swift b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
 new file mode 100644
-index 00000000..5dac2a53
+index 00000000..8208a878
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
 @@ -0,0 +1,279 @@
@@ -3655,7 +4556,7 @@ index 00000000..5dac2a53
 +            .header(2, 7, ru ? "ИНТЕРФЕЙС" : "INTERFACE"),
 +            row(2, .disableSwipeToRecordStory, symbol("camera.badge.ellipsis", 0xFF9500), ru ? "Без камеры историй по свайпу" : "No story camera on pull", ru ? "Оттягивание списка чатов не открывает камеру" : "Pulling the chat list does not open the camera", AyuWhiteGram.disableSwipeToRecordStory),
 +            row(2, .squareAvatars, symbol("square.fill", 0xFF9500), ru ? "Квадратные аватары" : "Square avatars", nil, AyuWhiteGram.squareAvatars),
-+            row(2, .oledMode, symbol("moon.fill", 0x000000), ru ? "OLED-режим" : "OLED mode", ru ? "Тёмная тема — чистый чёрный (после перезапуска)" : "Dark theme in true black (after relaunch)", AyuWhiteGram.oledMode),
++            row(2, .oledMode, symbol("moon.fill", 0x000000), ru ? "OLED-режим" : "OLED mode", ru ? "Чёрный фон, тёмная клавиатура и серые сообщения в любой теме (после перезапуска)" : "Black background, dark keyboard and gray messages in any theme (after relaunch)", AyuWhiteGram.oledMode),
 +            link(2, .stickerSize, symbol("face.smiling.inverse", 0xFFCC00), ru ? "Размер стикеров" : "Sticker size", percent(AyuWhiteGram.stickerScale)),
 +            row(2, .hideGalleryCamera, symbol("camera.fill", 0x8E8E93), ru ? "Без камеры в галерее" : "No camera in gallery", ru ? "Плитка камеры при выборе вложений" : "Camera tile when attaching", AyuWhiteGram.hideGalleryCamera),
 +            row(2, .hideBusinessBotPanel, symbol("briefcase.fill", 0x34C759), ru ? "Скрыть панель бизнес-бота" : "Hide business bot panel", nil, AyuWhiteGram.hideBusinessBotPanel),
@@ -4383,6 +5284,81 @@ index 00000000..a9f3c1f0
 +        if Thread.isMainThread { post() } else { DispatchQueue.main.async(execute: post) }
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLinkCleaner.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLinkCleaner.swift
+new file mode 100644
+index 00000000..fce12c14
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuLinkCleaner.swift
+@@ -0,0 +1,69 @@
++import Foundation
++
++/// AyuGram Privacy & extras "Clean links": tracking parameters are removed from links in
++/// messages you send. The switch lives in Display (`AyuExtras`), read here by its key.
++public enum AyuLinkCleaner {
++    public static var isEnabled: Bool {
++        return UserDefaults.standard.bool(forKey: "ayu.extra.cleanLinks")
++    }
++
++    private static let exactNames: Set<String> = [
++        "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "yclid", "ysclid", "twclid", "ttclid",
++        "igsh", "igshid", "si", "mc_cid", "mc_eid", "_hsenc", "_hsmi", "mkt_tok", "vero_id",
++        "oly_anon_id", "oly_enc_id", "rb_clickid", "s_cid", "wickedid", "ref_src", "ref_url",
++        "share_id", "sharer_id", "xmt", "_openstat", "srsltid"
++    ]
++    private static let prefixes = ["utm_", "pk_", "mtm_", "hsa_", "ga_"]
++
++    private static let linkPattern = try? NSRegularExpression(pattern: "https?://[^\\s<>\"«»]+", options: [.caseInsensitive])
++
++    /// Returns `text` with every tracking parameter dropped from its links.
++    public static func clean(_ text: String) -> String {
++        guard text.contains("?"), let pattern = AyuLinkCleaner.linkPattern else {
++            return text
++        }
++        let nsText = text as NSString
++        var result = text
++        let matches = pattern.matches(in: text, options: [], range: NSRange(location: 0, length: nsText.length))
++        for match in matches.reversed() {
++            var link = nsText.substring(with: match.range)
++            // Trailing punctuation belongs to the sentence, not the link.
++            var trailing = ""
++            while let last = link.last, ".,!?;:)]".contains(last) {
++                trailing.insert(last, at: trailing.startIndex)
++                link.removeLast()
++            }
++            let cleaned = AyuLinkCleaner.cleanLink(link)
++            guard cleaned != link, let range = Range(match.range, in: result) else {
++                continue
++            }
++            result.replaceSubrange(range, with: cleaned + trailing)
++        }
++        return result
++    }
++
++    static func cleanLink(_ link: String) -> String {
++        guard let questionMark = link.firstIndex(of: "?") else {
++            return link
++        }
++        let base = String(link[..<questionMark])
++        var rest = String(link[link.index(after: questionMark)...])
++        var fragment = ""
++        if let hash = rest.firstIndex(of: "#") {
++            fragment = String(rest[hash...])
++            rest = String(rest[..<hash])
++        }
++        let parameters = rest.split(separator: "&", omittingEmptySubsequences: true)
++        let kept = parameters.filter { parameter in
++            let name = parameter.split(separator: "=", maxSplits: 1).first.map { String($0).lowercased() } ?? ""
++            if AyuLinkCleaner.exactNames.contains(name) {
++                return false
++            }
++            return !AyuLinkCleaner.prefixes.contains(where: { name.hasPrefix($0) })
++        }
++        guard kept.count != parameters.count else {
++            return link
++        }
++        return base + (kept.isEmpty ? "" : "?" + kept.joined(separator: "&")) + fragment
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
 new file mode 100644
 index 00000000..2dccce2c
@@ -4727,11 +5703,24 @@ index 00000000..6435c251
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
-index b6a6358d..56b96207 100644
+index b6a6358d..72b2b552 100644
 --- a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
 +++ b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
-@@ -730,7 +730,7 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
+@@ -728,9 +728,20 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
+ }
+ 
  public func enqueueMessages(account: Account, peerId: PeerId, messages: [EnqueueMessage]) -> Signal<[MessageId?], NoError> {
++    // AyuGram Privacy & extras "Clean links": tracking parameters leave the links first.
++    let messages: [EnqueueMessage] = !AyuLinkCleaner.isEnabled ? messages : messages.map { message in
++        guard case let .message(text, attributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = message,
++              !attributes.contains(where: { attribute in
++                  if let entities = attribute as? TextEntitiesMessageAttribute { return !entities.entities.isEmpty }
++                  return false
++              }) else { return message }
++        let cleaned = AyuLinkCleaner.clean(text)
++        guard cleaned != text else { return message }
++        return .message(text: cleaned, attributes: attributes, inlineStickers: inlineStickers, mediaReference: mediaReference, threadId: threadId, replyToMessageId: replyToMessageId, replyToStoryId: replyToStoryId, localGroupingKey: localGroupingKey, correlationId: correlationId, bubbleUpEmojiOrStickersets: bubbleUpEmojiOrStickersets)
++    }
      let plugins = account.network.ayuGhostMode.current.plugins
      let pluginMessages: [EnqueueMessage]
 -    if plugins.installed.contains(where: { $0.enabled && $0.manifest.actions.contains(where: { $0.kind == .outgoingReplace }) }) {
@@ -4739,7 +5728,7 @@ index b6a6358d..56b96207 100644
          pluginMessages = messages.map { message in
              guard peerId.namespace != Namespaces.Peer.SecretChat,
                    case let .message(text, attributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = message,
-@@ -739,8 +739,10 @@ public func enqueueMessages(account: Account, peerId: PeerId, messages: [Enqueue
+@@ -739,8 +750,10 @@ public func enqueueMessages(account: Account, peerId: PeerId, messages: [Enqueue
                        if let entities = attribute as? TextEntitiesMessageAttribute { return !entities.entities.isEmpty }
                        return false
                    }) else { return message }
@@ -4891,6 +5880,51 @@ index 3f0398e9..fb744066 100644
      }
      return theme
  }
+diff --git a/submodules/TelegramPresentationData/Sources/PresentationData.swift b/submodules/TelegramPresentationData/Sources/PresentationData.swift
+index cd15c713..5b08028e 100644
+--- a/submodules/TelegramPresentationData/Sources/PresentationData.swift
++++ b/submodules/TelegramPresentationData/Sources/PresentationData.swift
+@@ -78,6 +78,28 @@ public struct PresentationChatBubbleCorners: Equatable, Hashable {
+     }
+ }
+ 
++/// WhiteGram OLED mode, read once per launch: whatever theme is selected, the app uses
++/// Telegram's true-black night theme with gray bubbles, a dark keyboard and a black wallpaper.
++private let ayuOledModeEnabled: Bool = AyuWhiteGram.oledMode
++private let ayuOledLock = NSLock()
++private var ayuOledThemes: [UInt32: PresentationTheme] = [:]
++
++private func ayuOledTheme(from theme: PresentationTheme) -> PresentationTheme {
++    let accent = theme.list.itemAccentColor.rgb
++    ayuOledLock.lock()
++    defer { ayuOledLock.unlock() }
++    if let cached = ayuOledThemes[accent] {
++        return cached
++    }
++    if ayuOledThemes.values.contains(where: { $0 === theme }) {
++        return theme
++    }
++    let base = makeDefaultDarkPresentationTheme(preview: false)
++    let oled = customizeDefaultDarkPresentationTheme(theme: base, editing: true, title: nil, accentColor: UIColor(rgb: accent), backgroundColors: [], bubbleColors: [0x3a3a3c, 0x3a3a3c], animateBubbleColors: false, wallpaper: .color(0x000000))
++    ayuOledThemes[accent] = oled
++    return oled
++}
++
+ public final class PresentationData: Equatable {
+     public let strings: PresentationStrings
+     public let theme: PresentationTheme
+@@ -94,9 +116,9 @@ public final class PresentationData: Equatable {
+     
+     public init(strings: PresentationStrings, theme: PresentationTheme, autoNightModeTriggered: Bool, chatWallpaper: TelegramWallpaper, chatFontSize: PresentationFontSize, chatBubbleCorners: PresentationChatBubbleCorners, listsFontSize: PresentationFontSize, dateTimeFormat: PresentationDateTimeFormat, nameDisplayOrder: PresentationPersonNameOrder, nameSortOrder: PresentationPersonNameOrder, reduceMotion: Bool, largeEmoji: Bool) {
+         self.strings = strings
+-        self.theme = theme
++        self.theme = ayuOledModeEnabled ? ayuOledTheme(from: theme) : theme
+         self.autoNightModeTriggered = autoNightModeTriggered
+-        self.chatWallpaper = chatWallpaper
++        self.chatWallpaper = ayuOledModeEnabled ? .color(0x000000) : chatWallpaper
+         self.chatFontSize = chatFontSize
+         self.chatBubbleCorners = chatBubbleCorners
+         self.listsFontSize = listsFontSize
 diff --git a/submodules/TelegramPresentationData/Sources/PresentationThemeEssentialGraphics.swift b/submodules/TelegramPresentationData/Sources/PresentationThemeEssentialGraphics.swift
 index 4d80c191..6374b809 100644
 --- a/submodules/TelegramPresentationData/Sources/PresentationThemeEssentialGraphics.swift
@@ -5030,6 +6064,83 @@ index b614fcf2..31271733 100644
          } else {
              self.counterTextNode.attributedText = NSAttributedString(string: "", font: counterFont, textColor: .black)
          }
+diff --git a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
+index 24b4fba6..f2454837 100644
+--- a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
++++ b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
+@@ -567,6 +567,9 @@ public class GlassBackgroundView: UIView {
+     public private(set) var params: Params?
+         
+     public static var useCustomGlassImpl: Bool = false
++    /// AyuGram "No glass" (old Telegram look): every glass surface becomes a flat, opaque
++    /// fill with no blur, sheen or shadow. Requires `useCustomGlassImpl`; set once at launch.
++    public static var flatMode: Bool = false
+     
+     public override init(frame: CGRect) {
+         if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl {
+@@ -621,6 +624,10 @@ public class GlassBackgroundView: UIView {
+         if let nativeParamsView = self.nativeParamsView {
+             self.addSubview(nativeParamsView)
+         }
++        if GlassBackgroundView.flatMode {
++            self.legacyView?.isHidden = true
++            self.shadowView?.isHidden = true
++        }
+         if let legacyView = self.legacyView {
+             self.addSubview(legacyView)
+             let glassHighlightRecognizer = GlassHighlightGestureRecognizer(target: self, action: #selector(self.onHighlightGesture(_:)))
+@@ -808,12 +815,32 @@ public class GlassBackgroundView: UIView {
+                         borderWidthFactor = 1.0
+                     }
+                 }
++                if GlassBackgroundView.flatMode {
++                    let flatColor: UIColor
++                    switch tintColor.kind {
++                    case .panel:
++                        flatColor = isDark ? UIColor(rgb: 0x1c1c1d) : UIColor(rgb: 0xf7f7f7)
++                    case .clear:
++                        flatColor = UIColor(white: 0.0, alpha: isDark ? 0.45 : 0.25)
++                    case let .custom(_, color):
++                        flatColor = color.cgColor.alpha < 0.01 ? UIColor(white: 0.0, alpha: 0.25) : color.withAlphaComponent(1.0)
++                    }
++                    let radii: CornerRadii
++                    switch shape {
++                    case let .roundedRect(cornerRadius):
++                        radii = CornerRadii(radius: cornerRadius)
++                    case let .customRoundedRect(cornerRadii):
++                        radii = GlassBackgroundView.clampedCornerRadii(size: size, cornerRadii: cornerRadii)
++                    }
++                    foregroundView.image = GlassBackgroundView.generateFlatImage(cornerRadii: radii, inset: shadowInset, fillColor: flatColor)
++                } else {
+                 switch shape {
+                 case let .roundedRect(cornerRadius):
+                     foregroundView.image = GlassBackgroundView.generateLegacyGlassImage(size: CGSize(width: cornerRadius * 2.0, height: cornerRadius * 2.0), inset: shadowInset, borderWidthFactor: borderWidthFactor, isDark: isDark, fillColor: fillColor)
+                 case let .customRoundedRect(cornerRadii):
+                     foregroundView.image = GlassBackgroundView.generateLegacyGlassImage(cornerRadii: GlassBackgroundView.clampedCornerRadii(size: size, cornerRadii: cornerRadii), inset: shadowInset, borderWidthFactor: borderWidthFactor, isDark: isDark, fillColor: fillColor)
+                 }
++                }
+                 #if DEBUG
+                 //foregroundView.image = nil
+                 #endif
+@@ -1407,6 +1434,18 @@ public extension GlassBackgroundView {
+         }.stretchableImage(withLeftCapWidth: Int(size.width * 0.5), topCapHeight: Int(size.height * 0.5))
+     }
+     
++    /// A plain rounded fill laid out like the legacy glass image (same caps and inset).
++    static func generateFlatImage(cornerRadii: CornerRadii, inset: CGFloat, fillColor: UIColor) -> UIImage {
++        let metrics = legacyResizableImageMetrics(cornerRadii: cornerRadii, inset: inset)
++        return UIGraphicsImageRenderer(size: metrics.imageSize).image { ctx in
++            let context = ctx.cgContext
++            context.clear(CGRect(origin: CGPoint(), size: metrics.imageSize))
++            context.setFillColor(fillColor.cgColor)
++            context.addPath(GlassBackgroundView.generateRoundedRectPath(rect: metrics.innerRect, cornerRadii: cornerRadii))
++            context.fillPath()
++        }.stretchableImage(withLeftCapWidth: metrics.leftCapWidth, topCapHeight: metrics.topCapHeight)
++    }
++
+     static func generateLegacyGlassImage(cornerRadii: CornerRadii, inset: CGFloat, borderWidthFactor: CGFloat = 1.0, isDark: Bool, fillColor: UIColor) -> UIImage {
+         let metrics = legacyResizableImageMetrics(cornerRadii: cornerRadii, inset: inset)
+         let size = metrics.imageSize
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 index 80a7b214..70d9d233 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
@@ -5044,8 +6155,50 @@ index 80a7b214..70d9d233 100644
              result.append((section, sectionItems))
          }
      }
+diff --git a/submodules/TelegramUI/Sources/AccountContext.swift b/submodules/TelegramUI/Sources/AccountContext.swift
+index ad077f5c..b9aa9653 100644
+--- a/submodules/TelegramUI/Sources/AccountContext.swift
++++ b/submodules/TelegramUI/Sources/AccountContext.swift
+@@ -30,6 +30,7 @@ import DirectMediaImageCache
+ import WalletContext
+ import WalletConnectScreen
+ import AlertUI
++import LocalizedPeerData
+ import MetalEngine
+ 
+ private final class DeviceSpecificContactImportContext {
+@@ -1014,6 +1015,29 @@ public final class AccountContextImpl: AccountContext {
+     }
+     
+     public func requestCall(peerId: EnginePeer.Id, isVideo: Bool, completion: @escaping () -> Void) {
++        // AyuGram Privacy & extras: calls start only after a confirmation.
++        guard AyuExtras.isOn(.confirmCalls) else {
++            self.ayuPerformRequestCall(peerId: peerId, isVideo: isVideo, completion: completion)
++            return
++        }
++        let presentationData = self.sharedContext.currentPresentationData.with { $0 }
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let _ = (self.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
++        |> deliverOnMainQueue).start(next: { [weak self] peer in
++            guard let self else { return }
++            let name = peer?.compactDisplayTitle ?? ""
++            let title = isVideo ? (ru ? "Видеозвонок" : "Video call") : (ru ? "Звонок" : "Call")
++            let text = ru ? "Позвонить \(name)?" : "Call \(name)?"
++            self.sharedContext.mainWindow?.present(textAlertController(context: self, title: title, text: text, actions: [
++                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
++                TextAlertAction(type: .defaultAction, title: ru ? "Позвонить" : "Call", action: { [weak self] in
++                    self?.ayuPerformRequestCall(peerId: peerId, isVideo: isVideo, completion: completion)
++                })
++            ]), on: .root)
++        })
++    }
++
++    private func ayuPerformRequestCall(peerId: EnginePeer.Id, isVideo: Bool, completion: @escaping () -> Void) {
+         guard let callResult = self.sharedContext.callManager?.requestCall(context: self, peerId: peerId, isVideo: isVideo, endCurrentIfAny: false) else {
+             return
+         }
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
-index ed6a26a2..8cee4376 100644
+index ed6a26a2..af9e2d74 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
 +++ b/submodules/TelegramUI/Sources/AppDelegate.swift
 @@ -453,6 +453,10 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
@@ -5072,6 +6225,43 @@ index ed6a26a2..8cee4376 100644
                      
                      if firstTime {
                          let layer = context.rootController.view.layer
+@@ -2117,7 +2127,28 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         }))
+     }
+ 
++    /// AyuGram Privacy & extras: the blur that covers the app in the app switcher.
++    private var ayuSwitcherBlurView: UIView?
++
++    private func ayuUpdateSwitcherBlur(active: Bool) {
++        if active, AyuExtras.isOn(.blurInAppSwitcher), self.ayuSwitcherBlurView == nil, let window = self.window {
++            let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterial))
++            blur.frame = window.bounds
++            blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++            window.addSubview(blur)
++            self.ayuSwitcherBlurView = blur
++        } else if !active, let blur = self.ayuSwitcherBlurView {
++            self.ayuSwitcherBlurView = nil
++            UIView.animate(withDuration: 0.2, animations: {
++                blur.alpha = 0.0
++            }, completion: { _ in
++                blur.removeFromSuperview()
++            })
++        }
++    }
++
+     func handleWillResignActive() {
++        self.ayuUpdateSwitcherBlur(active: true)
+         self.isActiveValue = false
+         self.isActivePromise.set(false)
+         self.clearNotificationsManager?.commitNow()
+@@ -2224,6 +2255,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+     }
+ 
+     func handleDidBecomeActive() {
++        self.ayuUpdateSwitcherBlur(active: false)
+         self.isInForegroundValue = true
+         self.isInForegroundPromise.set(true)
+         self.isActiveValue = true
 diff --git a/submodules/TelegramUI/Sources/AyuDeveloperOverlays.swift b/submodules/TelegramUI/Sources/AyuDeveloperOverlays.swift
 new file mode 100644
 index 00000000..64595ddf
@@ -5219,10 +6409,10 @@ index 00000000..64595ddf
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
-index 288cdcfe..b6e612de 100644
+index 288cdcfe..38c81a43 100644
 --- a/submodules/TelegramUI/Sources/AyuLyrics.swift
 +++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
-@@ -1,11 +1,34 @@
+@@ -1,11 +1,39 @@
  import Foundation
  import SwiftSignalKit
 +import TelegramCore
@@ -5254,13 +6444,52 @@ index 288cdcfe..b6e612de 100644
 +/// keeps the best candidate: word timing over line timing over plain text, never a different
 +/// song or recording. Only track metadata is sent; audio is never uploaded.
  func ayuFetchLyrics(title: String, artist: String?, duration: Double) -> Signal<AyuLyrics, NoError> {
++    // Sped-up / slowed uploads: find the original without a length lock, then stretch its
++    // timeline by how much faster or slower this file is.
++    if let tempo = AyuMusicMetadata.tempoVariant(title) {
++        return ayuFetchTempoVariantLyrics(originalTitle: tempo.title, variant: tempo.variant, title: title, artist: artist, duration: duration)
++    }
      return Signal { subscriber in
 -        let request = AyuLyricsRequest(title: title, artist: artist, duration: duration, completion: { result in
 +        let request = AyuLyricsRequest(title: title, artist: artist, duration: duration, settings: AyuLyricsProviderSettings.current, completion: { result in
              subscriber.putNext(result)
              subscriber.putCompletion()
          })
-@@ -20,183 +43,255 @@ private final class AyuLyricsRequest {
+@@ -16,187 +44,292 @@ func ayuFetchLyrics(title: String, artist: String?, duration: Double) -> Signal<
+     }
+ }
+ 
++/// The original's lyrics for a sped-up / slowed file, stretched to it and cached per file.
++private func ayuFetchTempoVariantLyrics(originalTitle: String, variant: AyuMusicMetadata.TempoVariant, title: String, artist: String?, duration: Double) -> Signal<AyuLyrics, NoError> {
++    return Signal { subscriber in
++        let key = AyuLyricsCache.key(title: title, artist: artist, duration: duration)
++        if let cached = AyuLyricsCache.load(key: key) {
++            subscriber.putNext(cached)
++            subscriber.putCompletion()
++            return ActionDisposable {}
++        }
++        weak var requestRef: AyuLyricsRequest?
++        let request = AyuLyricsRequest(title: originalTitle, artist: artist, duration: 0.0, settings: AyuLyricsProviderSettings.current, completion: { result in
++            var factor = variant.defaultFactor
++            if duration > 0.0, let source = requestRef?.deliveredSourceDuration, source > 0.0, variant.factorRange.contains(duration / source) {
++                factor = duration / source
++            }
++            let scaled = ayuScaleLyrics(result, by: factor)
++            if case .synced = scaled {
++                AyuLyricsCache.save(scaled, key: key)
++            }
++            subscriber.putNext(scaled)
++            subscriber.putCompletion()
++        })
++        requestRef = request
++        request.start()
++        return ActionDisposable {
++            request.cancel()
++        }
++    }
++}
++
+ private final class AyuLyricsRequest {
      private let title: String
      private let artist: String?
      private let duration: Double
@@ -5286,6 +6515,8 @@ index 288cdcfe..b6e612de 100644
 +    private var graceScheduled = false
      private var cacheKey: String { AyuLyricsCache.key(title: self.title, artist: self.artist, duration: self.duration) }
 -    private var fallbackLyrics: AyuLyrics?
++    /// Length of the recording the delivered lyrics were timed for, when a source says.
++    private(set) var deliveredSourceDuration: Double?
  
 -    init(title: String, artist: String?, duration: Double, completion: @escaping (AyuLyrics) -> Void) {
 +    init(title: String, artist: String?, duration: Double, settings: AyuLyricsProviderSettings, completion: @escaping (AyuLyrics) -> Void) {
@@ -5446,6 +6677,7 @@ index 288cdcfe..b6e612de 100644
 +        let elapsed = Date().timeIntervalSince(self.startedAt)
 +        if let candidate {
 +            if cache { AyuLyricsCache.save(candidate.lyrics, key: self.cacheKey) }
++            self.deliveredSourceDuration = candidate.sourceDuration
 +            AyuLyricsDiagnostics.shared.record(source: candidate.source, score: candidate.source == "cache" ? nil : candidate.score, elapsed: elapsed)
 +            AyuDevLog.shared.log("lyrics", "\(self.artist ?? "-") – \(self.title): \(candidate.source) q\(candidate.quality) \(Int(candidate.score * 100))%")
 +            self.completion(candidate.lyrics)
@@ -5552,10 +6784,8 @@ index 288cdcfe..b6e612de 100644
 +    private func json(_ response: Response) -> Any? {
 +        guard case let .ok(data) = response else { return nil }
 +        return try? JSONSerialization.jsonObject(with: data)
-     }
- 
--    private func load(_ url: URL, completion: @escaping (Any?) -> Void) {
--        if self.isCancelled {
++    }
++
 +    // MARK: LRCLIB
 +
 +    private var lrclibBase: String {
@@ -5577,9 +6807,11 @@ index 288cdcfe..b6e612de 100644
 +            }
 +            return nil
 +        }
-+        return AyuLyricsCandidate(lyrics: lyrics, source: source, score: score)
-+    }
-+
++        return AyuLyricsCandidate(lyrics: lyrics, source: source, score: score, sourceDuration: record["duration"] as? Double)
+     }
+ 
+-    private func load(_ url: URL, completion: @escaping (Any?) -> Void) {
+-        if self.isCancelled {
 +    private func lrclib() {
 +        guard let artist = self.artist, !artist.isEmpty, var components = URLComponents(string: self.lrclibBase + "/api/get") else {
 +            self.lrclibSearch(queries: AyuLyricsLookup.queries(title: self.title, artist: self.artist), index: 0)
@@ -5643,7 +6875,7 @@ index 288cdcfe..b6e612de 100644
      }
  
      private static func lyrics(from record: [String: Any], duration: Double) -> AyuLyrics? {
-@@ -214,4 +309,105 @@ private final class AyuLyricsRequest {
+@@ -214,4 +347,140 @@ private final class AyuLyricsRequest {
          }
          return nil
      }
@@ -5668,11 +6900,44 @@ index 288cdcfe..b6e612de 100644
 +            guard let self else { return }
 +            let songs = ((self.json(response) as? [String: Any])?["result"] as? [String: Any])?["songs"] as? [[String: Any]] ?? []
 +            let ranked = ayuRankNetEaseSongs(songs, title: self.title, artist: self.artist, duration: self.duration)
++            // A title that is a line of the song ("Кровавым пожаром…"): check the hits' lyrics.
++            if ranked.isEmpty, AyuMusicMetadata.normalizedKey(self.title).split(separator: " ").count >= 3 {
++                let hits = songs.prefix(4).compactMap { song -> (id: Int64, seconds: Double)? in
++                    guard let id = (song["id"] as? NSNumber)?.int64Value else { return nil }
++                    return (id, ((song["dt"] as? NSNumber)?.doubleValue ?? 0.0) / 1000.0)
++                }
++                self.netEaseByLyricLine(hits, index: 0)
++                return
++            }
 +            self.netEaseLyrics(Array(ranked.prefix(2)), index: 0)
 +        })
 +    }
 +
-+    private func netEaseLyrics(_ songs: [(id: Int64, score: Double, delta: Double)], index: Int) {
++    /// Accepts a hit only when its lyrics contain most words of the title line.
++    private func netEaseByLyricLine(_ hits: [(id: Int64, seconds: Double)], index: Int) {
++        guard index < hits.count, let url = URL(string: "https://music.163.com/api/song/lyric/v1?id=\(hits[index].id)&lv=1&kv=1&tv=-1&yv=1") else {
++            self.providerDone()
++            return
++        }
++        let hit = hits[index]
++        self.load(url, headers: AyuLyricsRequest.netEaseHeaders, completion: { [weak self] response in
++            guard let self else { return }
++            let record = self.json(response) as? [String: Any] ?? [:]
++            let yrc = ((record["yrc"] as? [String: Any])?["lyric"] as? String).map(ayuParseYrc) ?? []
++            let lrc = ((record["lrc"] as? [String: Any])?["lyric"] as? String).map { ayuParseLrc($0, duration: self.duration) } ?? []
++            let lines = yrc.isEmpty ? lrc : yrc
++            if ayuLyricsContainLine(lines.map { $0.text }, line: self.title) {
++                let sameRecording = self.duration <= 0.0 || hit.seconds <= 0.0 || abs(hit.seconds - self.duration) <= 3.0
++                let lyrics: AyuLyrics = sameRecording ? .synced(lines) : .plain(lines.map { $0.text }.filter { !$0.isEmpty }.joined(separator: "\n"))
++                self.offer(AyuLyricsCandidate(lyrics: lyrics, source: "NetEase (by line)", score: 0.72, sourceDuration: hit.seconds > 0.0 ? hit.seconds : nil))
++                self.providerDone()
++            } else {
++                self.netEaseByLyricLine(hits, index: index + 1)
++            }
++        })
++    }
++
++    private func netEaseLyrics(_ songs: [(id: Int64, score: Double, delta: Double, seconds: Double)], index: Int) {
 +        guard index < songs.count else {
 +            self.providerDone()
 +            return
@@ -5691,12 +6956,14 @@ index 288cdcfe..b6e612de 100644
 +                    !ayuIsLyricsCredit(line.replacingOccurrences(of: #"^\s*(\[[0-9:\.]+\])+"#, with: "", options: .regularExpression))
 +                }.joined(separator: "\n"), duration: self.duration)
 +            } ?? []
-+            let sameRecording = song.delta <= 3.0
++            // Without a length (tempo variants) any recording's timeline is usable after scaling.
++            let sameRecording = self.duration <= 0.0 || song.delta <= 3.0
++            let sourceDuration: Double? = song.seconds > 0.0 ? song.seconds : nil
 +            if sameRecording && !yrc.isEmpty {
-+                self.offer(AyuLyricsCandidate(lyrics: .synced(yrc), source: "NetEase (words)", score: song.score))
++                self.offer(AyuLyricsCandidate(lyrics: .synced(yrc), source: "NetEase (words)", score: song.score, sourceDuration: sourceDuration))
 +                self.providerDone()
 +            } else if sameRecording && !lrc.isEmpty {
-+                self.offer(AyuLyricsCandidate(lyrics: .synced(lrc), source: "NetEase", score: song.score))
++                self.offer(AyuLyricsCandidate(lyrics: .synced(lrc), source: "NetEase", score: song.score, sourceDuration: sourceDuration))
 +                self.providerDone()
 +            } else if !lrc.isEmpty || !yrc.isEmpty {
 +                let lines = (yrc.isEmpty ? lrc : yrc).map { $0.text }.filter { !$0.isEmpty }
@@ -6434,10 +7701,10 @@ index 2531b43e..6a2f0307 100644
  }
 diff --git a/submodules/TelegramUI/Sources/AyuLyricsProviders.swift b/submodules/TelegramUI/Sources/AyuLyricsProviders.swift
 new file mode 100644
-index 00000000..52ed31b8
+index 00000000..8f85b450
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuLyricsProviders.swift
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,177 @@
 +import Foundation
 +
 +/// A lyrics result from one source, with how sure we are it belongs to the playing track.
@@ -6446,6 +7713,8 @@ index 00000000..52ed31b8
 +    let source: String
 +    /// 0…1 match confidence (title/artist/duration).
 +    let score: Double
++    /// Length of the recording these lyrics were timed for, when the source says.
++    var sourceDuration: Double? = nil
 +
 +    /// Word timing beats line timing beats plain text; instrumental is a definite answer.
 +    var quality: Int {
@@ -6471,6 +7740,43 @@ index 00000000..52ed31b8
 +            return lhsValue < rhsValue
 +        })
 +    }
++}
++
++/// Stretches a timeline: `factor` is file time per original time.
++func ayuScaleLyrics(_ lyrics: AyuLyrics, by factor: Double) -> AyuLyrics {
++    guard case let .synced(lines) = lyrics, abs(factor - 1.0) > 0.001 else {
++        return lyrics
++    }
++    return .synced(lines.map { line in
++        AyuLyricsLine(time: line.time * factor, endTime: line.endTime * factor, text: line.text, words: line.words.map { word in
++            AyuLyricsWord(time: word.time * factor, endTime: word.endTime * factor, text: word.text)
++        }, exactWordTiming: line.exactWordTiming)
++    })
++}
++
++/// True when most words of `line` appear, in order, within a few lines of the lyrics —
++/// a filename that is a quoted line of the song, typos and all.
++func ayuLyricsContainLine(_ lyrics: [String], line: String) -> Bool {
++    let wanted = AyuMusicMetadata.normalizedKey(line).split(separator: " ").map(String.init)
++    guard wanted.count >= 3 else { return false }
++    let lines = lyrics.map { AyuMusicMetadata.normalizedKey($0) }.filter { !$0.isEmpty }
++    guard !lines.isEmpty else { return false }
++    for start in 0 ..< lines.count {
++        let window = lines[start ..< min(lines.count, start + 2)].joined(separator: " ").split(separator: " ").map(String.init)
++        var position = 0
++        var found = 0
++        for word in wanted {
++            if let index = window[position...].firstIndex(where: { $0 == word || ($0.count >= 5 && word.count >= 5 && $0.prefix(4) == word.prefix(4)) }) {
++                found += 1
++                position = index + 1
++                if position >= window.count { break }
++            }
++        }
++        if Double(found) / Double(wanted.count) >= 0.7 {
++            return true
++        }
++    }
++    return false
 +}
 +
 +/// Credit lines lyrics services put first ("作词 : …", "Composed by : …").
@@ -6565,22 +7871,22 @@ index 00000000..52ed31b8
 +}
 +
 +/// NetEase cloudsearch songs → (id, score, |duration delta|), best first, at least 0.6.
-+func ayuRankNetEaseSongs(_ songs: [[String: Any]], title: String, artist: String?, duration: Double) -> [(id: Int64, score: Double, delta: Double)] {
-+    return songs.compactMap { song -> (id: Int64, score: Double, delta: Double)? in
++func ayuRankNetEaseSongs(_ songs: [[String: Any]], title: String, artist: String?, duration: Double) -> [(id: Int64, score: Double, delta: Double, seconds: Double)] {
++    return songs.compactMap { song -> (id: Int64, score: Double, delta: Double, seconds: Double)? in
 +        guard let id = (song["id"] as? NSNumber)?.int64Value, let name = song["name"] as? String else { return nil }
 +        let artistList = (song["ar"] as? [[String: Any]]) ?? (song["artists"] as? [[String: Any]]) ?? []
 +        let artists = artistList.compactMap { $0["name"] as? String }.joined(separator: ", ")
 +        let milliseconds = (song["dt"] as? NSNumber)?.doubleValue ?? (song["duration"] as? NSNumber)?.doubleValue ?? 0.0
 +        let seconds = milliseconds / 1000.0
 +        let score = AyuMusicMetadata.matchScore(candidateTitle: name, candidateArtist: artists.isEmpty ? nil : artists, candidateDuration: seconds > 0.0 ? seconds : nil, title: title, artist: artist, duration: duration)
-+        return (id, score, seconds > 0.0 && duration > 0.0 ? abs(seconds - duration) : 0.0)
++        return (id, score, seconds > 0.0 && duration > 0.0 ? abs(seconds - duration) : 0.0, seconds)
 +    }.filter { $0.score >= 0.6 }.sorted(by: { $0.score > $1.score })
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuMusicMetadata.swift b/submodules/TelegramUI/Sources/AyuMusicMetadata.swift
-index c5b61bf2..2987a9b6 100644
+index c5b61bf2..0512a738 100644
 --- a/submodules/TelegramUI/Sources/AyuMusicMetadata.swift
 +++ b/submodules/TelegramUI/Sources/AyuMusicMetadata.swift
-@@ -1,31 +1,163 @@
+@@ -1,31 +1,206 @@
  import Foundation
  
 -/// Normalize tags and common downloaded filenames without discarding live/remix versions.
@@ -6667,6 +7973,47 @@ index c5b61bf2..2987a9b6 100644
 +            return String(text.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
 +        }
 +        return text
++    }
++
++    /// Sped-up / nightcore and slowed / daycore re-uploads of a song.
++    enum TempoVariant: Equatable {
++        case spedUp
++        case slowed
++
++        /// File time per original time when the original's length is unknown.
++        var defaultFactor: Double {
++            return self == .spedUp ? 0.8 : 1.25
++        }
++
++        /// Plausible range of that factor; outside it the original's length is not trusted.
++        var factorRange: ClosedRange<Double> {
++            return self == .spedUp ? 0.55 ... 0.97 : 1.03 ... 1.8
++        }
++    }
++
++    /// "Song (sped up)", "Song - slowed + reverb", "Song [ускоренная версия]" → the original title.
++    static func tempoVariant(_ title: String) -> (title: String, variant: TempoVariant)? {
++        let lower = title.lowercased()
++        let variant: TempoVariant
++        if ["sped up", "speed up", "speeded up", "spedup", "nightcore", "ускорен", "спид ап", "speed version"].contains(where: { lower.contains($0) }) {
++            variant = .spedUp
++        } else if ["slowed", "замедлен", "daycore", "slow version", "slow + reverb"].contains(where: { lower.contains($0) }) {
++            variant = .slowed
++        } else {
++            return nil
++        }
++        var value = title
++        let patterns = [
++            #"\s*[\(\[\{][^\)\]\}]*(?:sped|speed|nightcore|slowed|slow\s|reverb|ускор|замедл|daycore|спид)[^\)\]\}]*[\)\]\}]"#,
++            #"\s*(?:-|–|—|\||~)\s*(?:super\s+)?(?:sped\s*up|speed(?:ed)?\s*up|slowed(?:\s*(?:\+|and|&)?\s*reverb)?|nightcore|daycore|ускоренн\w*(?:\s+версия)?|замедленн\w*(?:\s+версия)?)\s*$"#,
++            #"\s+(?:super\s+)?(?:sped\s*up|speed\s*up|slowed(?:\s*\+?\s*reverb)?|nightcore|daycore)\s*$"#
++        ]
++        for pattern in patterns {
++            value = value.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
++        }
++        value = value.trimmingCharacters(in: .whitespacesAndNewlines)
++        guard !value.isEmpty, value != title else { return nil }
++        return (value, variant)
      }
  
      static func searchTitle(_ title: String) -> String {
@@ -6701,6 +8048,8 @@ index c5b61bf2..2987a9b6 100644
 +                result.append(" ")
 +            }
 +        }
++        // Typos and stretched words in uploads: "Booom" meets "Boom".
++        result = result.replacingOccurrences(of: #"(\p{L})\1{2,}"#, with: "$1$1", options: .regularExpression)
 +        return result.split(separator: " ").joined(separator: " ")
 +    }
 +
@@ -6754,10 +8103,32 @@ index c5b61bf2..2987a9b6 100644
 +    }
  }
 diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
-index 1a77683e..878dccc6 100644
+index 1a77683e..0bc42fdb 100644
 --- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
 +++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
-@@ -82,6 +82,23 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+@@ -12,6 +12,7 @@ import TelegramUIPreferences
+ import UniversalMediaPlayer
+ import AccountContext
+ import PhotoResources
++import SettingsUI
+ 
+ /// Full-screen music player in the style of Apple Music: blurred artwork backdrop, large cover,
+ /// scrubber, transport controls, system volume, AirPlay, and time-synced lyrics. The queue
+@@ -59,8 +60,13 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+ 
+     deinit {
+         self.accountInUseDisposable?.dispose()
++        self.ayuIdleTimerDisposable?.dispose()
+     }
+ 
++    /// AyuGram Privacy & extras: "Keep the screen on in the player".
++    private var ayuIdleTimerDisposable: Disposable?
++    private var ayuAppliedOpenExtras = false
++
+     override func loadDisplayNode() {
+         self.displayNode = ASDisplayNode()
+         self.displayNode.backgroundColor = .clear
+@@ -82,6 +88,23 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
              menu.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in self?.playerView?.adjustLyricsOffset(by: offset) }))
          }
          menu.addAction(UIAlertAction(title: russian ? "Сбросить сдвиг" : "Reset timing", style: .default, handler: { [weak self] _ in self?.playerView?.adjustLyricsOffset(by: nil) }))
@@ -6781,7 +8152,69 @@ index 1a77683e..878dccc6 100644
          menu.addAction(UIAlertAction(title: russian ? "Загрузить LRC или Lyricsfile" : "Import LRC or Lyricsfile", style: .default, handler: { [weak self] _ in
              guard let self else { return }
              let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
-@@ -126,7 +143,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+@@ -89,6 +112,38 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+             self.importingLyricsFor = self.playerView?.lyricsIdentity
+             self.context.sharedContext.applicationBindings.presentNativeController(picker)
+         }))
++        menu.addAction(UIAlertAction(title: (russian ? "Эквалайзер" : "Equalizer") + (AyuEqualizer.isEnabled ? " ✓" : ""), style: .default, handler: { [weak self] _ in
++            guard let self else { return }
++            let controller = ayuEqualizerController(context: self.context)
++            self.dismiss(completion: { [weak navigation = self.parentNavigationController] in
++                navigation?.pushViewController(controller)
++            })
++        }))
++        let sleepTitle: String
++        if let remaining = AyuSleepTimer.remainingMinutes {
++            sleepTitle = russian ? "Таймер сна: ещё \(remaining) мин" : "Sleep timer: \(remaining) min left"
++        } else {
++            sleepTitle = russian ? "Таймер сна" : "Sleep timer"
++        }
++        menu.addAction(UIAlertAction(title: sleepTitle, style: .default, handler: { [weak self] _ in self?.showSleepTimerOptions() }))
++        menu.addAction(UIAlertAction(title: russian ? "Отмена" : "Cancel", style: .cancel))
++        menu.popoverPresentationController?.sourceView = self.view
++        menu.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.maxY - 80.0, width: 1.0, height: 1.0)
++        self.context.sharedContext.applicationBindings.presentNativeController(menu)
++    }
++
++    private func showSleepTimerOptions() {
++        let russian = self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let menu = UIAlertController(title: russian ? "Таймер сна" : "Sleep timer", message: russian ? "Музыка остановится через выбранное время." : "Music stops after the chosen time.", preferredStyle: .actionSheet)
++        for minutes in [5, 15, 30, 45, 60, 90] {
++            menu.addAction(UIAlertAction(title: russian ? "\(minutes) мин" : "\(minutes) min", style: .default, handler: { [weak self] _ in
++                guard let self else { return }
++                AyuSleepTimer.start(minutes: minutes, context: self.context, type: self.type)
++            }))
++        }
++        if AyuSleepTimer.remainingMinutes != nil {
++            menu.addAction(UIAlertAction(title: russian ? "Выключить таймер" : "Turn off timer", style: .destructive, handler: { _ in AyuSleepTimer.cancel() }))
++        }
+         menu.addAction(UIAlertAction(title: russian ? "Отмена" : "Cancel", style: .cancel))
+         menu.popoverPresentationController?.sourceView = self.view
+         menu.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.maxY - 80.0, width: 1.0, height: 1.0)
+@@ -109,6 +164,13 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+     override func viewDidAppear(_ animated: Bool) {
+         super.viewDidAppear(animated)
+         self.playerView?.setHapticsActive(true)
++        if AyuExtras.isOn(.keepScreenOnInPlayer), self.ayuIdleTimerDisposable == nil {
++            self.ayuIdleTimerDisposable = self.context.sharedContext.applicationBindings.pushIdleTimerExtension()
++        }
++        if !self.ayuAppliedOpenExtras {
++            self.ayuAppliedOpenExtras = true
++            self.playerView?.applyOpenExtras()
++        }
+         if !self.animatedIn {
+             self.animatedIn = true
+             self.playerView?.animateIn()
+@@ -118,6 +180,8 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+     override func viewWillDisappear(_ animated: Bool) {
+         super.viewWillDisappear(animated)
+         self.playerView?.setHapticsActive(false)
++        self.ayuIdleTimerDisposable?.dispose()
++        self.ayuIdleTimerDisposable = nil
+     }
+ 
+     override func dismiss(completion: (() -> Void)? = nil) {
+@@ -126,7 +190,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
              self.finishDismiss(completion: completion)
              return
          }
@@ -6790,7 +8223,7 @@ index 1a77683e..878dccc6 100644
              self?.finishDismiss(completion: completion)
          })
      }
-@@ -145,7 +162,10 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+@@ -145,7 +209,10 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
          guard let playerView = self.playerView else {
              return
          }
@@ -6802,7 +8235,7 @@ index 1a77683e..878dccc6 100644
          playerView.safeInsets = UIEdgeInsets(top: max(layout.statusBarHeight ?? 0.0, layout.safeInsets.top), left: layout.safeInsets.left, bottom: max(layout.intrinsicInsets.bottom, layout.safeInsets.bottom), right: layout.safeInsets.right)
          playerView.setNeedsLayout()
      }
-@@ -239,6 +259,21 @@ final class AyuMusicPlayerView: UIView {
+@@ -239,6 +306,21 @@ final class AyuMusicPlayerView: UIView {
      private var showsLyrics = false
      private var isScrubbing = false
      private var dragOffset: CGFloat = 0.0
@@ -6824,7 +8257,7 @@ index 1a77683e..878dccc6 100644
  
      init(context: AccountContext, type: MediaManagerPlayerType) {
          self.queueView = AyuMusicQueueView(context: context)
-@@ -265,6 +300,10 @@ final class AyuMusicPlayerView: UIView {
+@@ -265,6 +347,10 @@ final class AyuMusicPlayerView: UIView {
          self.artworkShadow.layer.shadowOffset = CGSize(width: 0.0, height: 12.0)
          self.artworkShadow.addSubview(self.artworkNode.view)
          self.addSubview(self.artworkShadow)
@@ -6835,7 +8268,7 @@ index 1a77683e..878dccc6 100644
  
          self.titleLabel.font = ayuMusicFont(ofSize: 21.0)
          self.titleLabel.textColor = .white
-@@ -355,6 +394,8 @@ final class AyuMusicPlayerView: UIView {
+@@ -355,6 +441,8 @@ final class AyuMusicPlayerView: UIView {
  
          let pan = UIPanGestureRecognizer(target: self, action: #selector(self.dismissPan(_:)))
          self.addGestureRecognizer(pan)
@@ -6844,7 +8277,7 @@ index 1a77683e..878dccc6 100644
  
          self.stateDisposable = (context.sharedContext.mediaManager.musicMediaPlayerState
          |> deliverOnMainQueue).startStrict(next: { [weak self] value in
-@@ -362,7 +403,11 @@ final class AyuMusicPlayerView: UIView {
+@@ -362,7 +450,11 @@ final class AyuMusicPlayerView: UIView {
          })
  
          let displayLink = CADisplayLink(target: AyuWeakTarget(self), selector: #selector(AyuWeakTarget.tick))
@@ -6857,7 +8290,7 @@ index 1a77683e..878dccc6 100644
          displayLink.add(to: .main, forMode: .common)
          self.displayLink = displayLink
      }
-@@ -372,6 +417,9 @@ final class AyuMusicPlayerView: UIView {
+@@ -372,6 +464,9 @@ final class AyuMusicPlayerView: UIView {
      }
  
      deinit {
@@ -6867,7 +8300,7 @@ index 1a77683e..878dccc6 100644
          self.hapticsResource?.dispose()
          self.stateDisposable?.dispose()
          self.lyricsDisposable?.dispose()
-@@ -381,14 +429,29 @@ final class AyuMusicPlayerView: UIView {
+@@ -381,14 +476,29 @@ final class AyuMusicPlayerView: UIView {
      // MARK: State
  
      private func update(state value: (Account, SharedMediaPlayerItemPlaybackStateOrLoading, MediaManagerPlayerType)?) {
@@ -6900,7 +8333,7 @@ index 1a77683e..878dccc6 100644
              return
          }
          self.hadState = true
-@@ -428,21 +491,53 @@ final class AyuMusicPlayerView: UIView {
+@@ -428,21 +538,53 @@ final class AyuMusicPlayerView: UIView {
              }
          }
  
@@ -6955,7 +8388,7 @@ index 1a77683e..878dccc6 100644
              let emptyColor = UIColor(white: 0.22, alpha: 1.0)
              self.artworkNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: false, emptyColor: emptyColor))
              self.backdropNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: true, emptyColor: emptyColor, drawPlaceholderWhenEmpty: false))
-@@ -478,12 +573,22 @@ final class AyuMusicPlayerView: UIView {
+@@ -478,12 +620,22 @@ final class AyuMusicPlayerView: UIView {
          self.musicHaptics.tick(time: timestamp, playing: hapticsPlaying && self.musicHapticsEnabled && self.musicHapticsActive && !self.isScrubbing && self.window != nil && UIApplication.shared.applicationState == .active)
          if !self.isScrubbing {
              self.scrubber.progress = status.duration > 0.0 ? CGFloat(timestamp / status.duration) : 0.0
@@ -6980,7 +8413,7 @@ index 1a77683e..878dccc6 100644
      }
  
      func setHapticsActive(_ active: Bool) {
-@@ -535,6 +640,7 @@ final class AyuMusicPlayerView: UIView {
+@@ -535,6 +687,7 @@ final class AyuMusicPlayerView: UIView {
          }
          let timestamp = Double(fraction) * status.duration
          self.isScrubbing = !finished
@@ -6988,7 +8421,7 @@ index 1a77683e..878dccc6 100644
          self.elapsedLabel.text = ayuFormatTime(timestamp)
          self.remainingLabel.text = "-" + ayuFormatTime(max(0.0, status.duration - timestamp))
          if finished {
-@@ -542,6 +648,109 @@ final class AyuMusicPlayerView: UIView {
+@@ -542,6 +695,120 @@ final class AyuMusicPlayerView: UIView {
          }
      }
  
@@ -7084,7 +8517,18 @@ index 1a77683e..878dccc6 100644
 +        return self.status?.baseRate ?? 1.0
 +    }
 +
++    /// AyuGram Privacy & extras when the player opens: lyrics and the remembered speed.
++    func applyOpenExtras() {
++        if AyuExtras.isOn(.autoOpenLyrics), !self.showsLyrics {
++            self.lyricsPressed()
++        }
++        if AyuExtras.isOn(.rememberPlaybackSpeed), abs(AyuExtras.playbackSpeed - self.playbackRate) > 0.01 {
++            self.control(.setBaseRate(AudioPlaybackRate(AyuExtras.playbackSpeed)))
++        }
++    }
++
 +    func setPlaybackRate(_ rate: Double) {
++        AyuExtras.playbackSpeed = rate
 +        self.control(.setBaseRate(AudioPlaybackRate(rate)))
 +        self.debugOverlay.note(String(format: "rate %.2fx", rate))
 +    }
@@ -7098,7 +8542,7 @@ index 1a77683e..878dccc6 100644
      // MARK: Actions
  
      @objc private func previousPressed() {
-@@ -568,7 +777,13 @@ final class AyuMusicPlayerView: UIView {
+@@ -568,7 +835,13 @@ final class AyuMusicPlayerView: UIView {
          } else { self.queueView.isHidden = true }
          self.queueButton.backgroundColor = self.showsQueue ? UIColor.white.withAlphaComponent(0.2) : .clear
          self.queueButton.layer.cornerRadius = 22.0
@@ -7113,7 +8557,7 @@ index 1a77683e..878dccc6 100644
      }
  
      @objc private func lyricsHeld(_ gesture: UILongPressGestureRecognizer) {
-@@ -633,6 +848,13 @@ final class AyuMusicPlayerView: UIView {
+@@ -633,6 +906,13 @@ final class AyuMusicPlayerView: UIView {
                  return
              }
              self.lyricsView.set(lyrics: lyrics, loading: false, russian: self.russian)
@@ -7127,7 +8571,7 @@ index 1a77683e..878dccc6 100644
              self.tick()
          })
      }
-@@ -652,7 +874,7 @@ final class AyuMusicPlayerView: UIView {
+@@ -652,7 +932,7 @@ final class AyuMusicPlayerView: UIView {
              self.artworkShadow.layer.shadowOpacity = self.isPaused ? 0.15 : 0.35
          }
          if animated {
@@ -7136,7 +8580,7 @@ index 1a77683e..878dccc6 100644
          } else {
              apply()
          }
-@@ -743,6 +965,9 @@ final class AyuMusicPlayerView: UIView {
+@@ -743,6 +1023,9 @@ final class AyuMusicPlayerView: UIView {
              self.lyricsView.frame = CGRect(x: insets.left, y: artworkTop, width: size.width - insets.left - insets.right, height: max(0.0, scrubberY - 8.0 - artworkTop))
          }
          self.updateArtworkScale(animated: false)
@@ -7146,7 +8590,7 @@ index 1a77683e..878dccc6 100644
      }
  
      private func setArtworkFrame(_ frame: CGRect, cornerRadius: CGFloat) {
-@@ -759,12 +984,26 @@ final class AyuMusicPlayerView: UIView {
+@@ -759,12 +1042,26 @@ final class AyuMusicPlayerView: UIView {
      // MARK: Presentation
  
      func animateIn() {
@@ -7177,7 +8621,7 @@ index 1a77683e..878dccc6 100644
              completion()
          })
      }
-@@ -786,18 +1025,22 @@ final class AyuMusicPlayerView: UIView {
+@@ -786,18 +1083,22 @@ final class AyuMusicPlayerView: UIView {
      }
  
      @objc private func dismissPan(_ recognizer: UIPanGestureRecognizer) {
@@ -7203,7 +8647,7 @@ index 1a77683e..878dccc6 100644
                      self.transform = .identity
                  })
              }
-@@ -937,6 +1180,15 @@ private final class AyuLyricsView: UIView {
+@@ -937,6 +1238,15 @@ private final class AyuLyricsView: UIView {
      private var pauseEnds: [Int: Double] = [:]
      private var russian = false
      private var userScrollUntil: Double = 0.0
@@ -7219,7 +8663,7 @@ index 1a77683e..878dccc6 100644
  
      override init(frame: CGRect) {
          super.init(frame: frame)
-@@ -981,6 +1233,8 @@ private final class AyuLyricsView: UIView {
+@@ -981,6 +1291,8 @@ private final class AyuLyricsView: UIView {
          self.currentPauseIndex = nil
          self.lines = []
          self.currentIndex = nil
@@ -7228,7 +8672,7 @@ index 1a77683e..878dccc6 100644
          self.activeIndices = []
          self.russian = russian
          self.scrollView.contentOffset = CGPoint()
-@@ -1008,7 +1262,7 @@ private final class AyuLyricsView: UIView {
+@@ -1008,7 +1320,7 @@ private final class AyuLyricsView: UIView {
          for (index, text) in texts.enumerated() {
              let label = AyuLyricsLineLabel(frame: .zero)
              label.text = text
@@ -7237,7 +8681,7 @@ index 1a77683e..878dccc6 100644
              label.textColor = UIColor(white: 1.0, alpha: synced ? 0.32 : 0.85)
              label.tag = index
              if synced {
-@@ -1036,16 +1290,17 @@ private final class AyuLyricsView: UIView {
+@@ -1036,16 +1348,17 @@ private final class AyuLyricsView: UIView {
                  self.scrollView.addSubview(pause)
              }
          }
@@ -7259,7 +8703,7 @@ index 1a77683e..878dccc6 100644
      }
  
      @objc private func lineTapped(_ recognizer: UITapGestureRecognizer) {
-@@ -1097,10 +1352,10 @@ private final class AyuLyricsView: UIView {
+@@ -1097,10 +1410,10 @@ private final class AyuLyricsView: UIView {
          if pauseIndex != self.currentPauseIndex {
              self.currentPauseIndex = pauseIndex
              if let pauseIndex, let pause = self.pauseViews[pauseIndex], CACurrentMediaTime() > self.userScrollUntil {
@@ -7272,7 +8716,7 @@ index 1a77683e..878dccc6 100644
          let active = pauseIndex == nil ? Set(AyuLyricsPlayback.visibleLines(self.lines, at: timestamp)) : Set<Int>()
          for previous in self.activeIndices.subtracting(active) {
              self.lineLabels[previous].isLyricActive = false
-@@ -1113,24 +1368,67 @@ private final class AyuLyricsView: UIView {
+@@ -1113,24 +1426,67 @@ private final class AyuLyricsView: UIView {
              self.lineLabels[activeIndex].setProgresses(words.map { AyuLyricsPlayback.progress($0, at: timestamp) }, emptyLineActive: words.isEmpty)
          }
          if index != self.currentIndex {
@@ -7460,6 +8904,49 @@ index 00000000..8e070628
 +    override func layoutSubviews() {
 +        super.layoutSubviews()
 +        self.label.frame = self.bounds.insetBy(dx: 6.0, dy: 5.0)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuSleepTimer.swift b/submodules/TelegramUI/Sources/AyuSleepTimer.swift
+new file mode 100644
+index 00000000..a9264b73
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuSleepTimer.swift
+@@ -0,0 +1,37 @@
++import Foundation
++import SwiftSignalKit
++import AccountContext
++import TelegramUIPreferences
++
++/// The music player's sleep timer: pauses playback after the chosen time, even with the
++/// player closed. One timer for the app; starting a new one replaces it.
++enum AyuSleepTimer {
++    private static var timer: SwiftSignalKit.Timer?
++    private static var fireDate: Date?
++
++    static var remainingMinutes: Int? {
++        guard let fireDate = AyuSleepTimer.fireDate else { return nil }
++        let seconds = fireDate.timeIntervalSinceNow
++        return seconds > 0.0 ? max(1, Int((seconds / 60.0).rounded(.up))) : nil
++    }
++
++    static func start(minutes: Int, context: AccountContext, type: MediaManagerPlayerType) {
++        AyuSleepTimer.cancel()
++        let interval = Double(minutes) * 60.0
++        AyuSleepTimer.fireDate = Date().addingTimeInterval(interval)
++        let mediaManager = context.sharedContext.mediaManager
++        let timer = SwiftSignalKit.Timer(timeout: interval, repeat: false, completion: {
++            mediaManager.playlistControl(.playback(.pause), type: type)
++            AyuSleepTimer.timer = nil
++            AyuSleepTimer.fireDate = nil
++        }, queue: Queue.mainQueue())
++        AyuSleepTimer.timer = timer
++        timer.start()
++    }
++
++    static func cancel() {
++        AyuSleepTimer.timer?.invalidate()
++        AyuSleepTimer.timer = nil
++        AyuSleepTimer.fireDate = nil
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuToast.swift b/submodules/TelegramUI/Sources/AyuToast.swift
@@ -7897,20 +9384,22 @@ index 32f76b24..bc64daf9 100644
                      |> filter { $0.isComplete }
                      |> take(1)
 diff --git a/submodules/TelegramUI/Sources/SharedAccountContext.swift b/submodules/TelegramUI/Sources/SharedAccountContext.swift
-index 0e23ec68..3669e4b8 100644
+index 0e23ec68..3ff37b71 100644
 --- a/submodules/TelegramUI/Sources/SharedAccountContext.swift
 +++ b/submodules/TelegramUI/Sources/SharedAccountContext.swift
-@@ -539,7 +539,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+@@ -539,7 +539,10 @@ public final class SharedAccountContextImpl: SharedAccountContext {
          let _ = immediateExperimentalUISettingsValue.swap(initialPresentationDataAndSettings.experimentalUISettings)
          
          // Material Design 3 has no Liquid Glass: panels take the flat custom glass instead.
 -        GlassBackgroundView.useCustomGlassImpl = immediateExperimentalUISettingsValue.with({ $0.fakeGlass }) || AyuMaterialControls.isEnabled
 +        // AyuGram Appearance+: Telegram's own glass instead of the system one (also for the classic design).
 +        GlassBackgroundView.useCustomGlassImpl = immediateExperimentalUISettingsValue.with({ $0.fakeGlass }) || AyuMaterialControls.isEnabled || AyuAppearancePlus.usesTelegramGlassThisLaunch
++        // AyuGram "No glass": the custom renderer draws every glass surface flat.
++        GlassBackgroundView.flatMode = AyuAppearancePlus.launchNoGlass
          ManagedAudioSessionImpl.respectsSystemRecordingInput = immediateExperimentalUISettingsValue.with({ $0.respectSystemMicrophone })
          
          self.experimentalUISettingsDisposable = (self.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.experimentalUISettings])
-@@ -548,7 +549,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+@@ -548,7 +551,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                  let _ = immediateExperimentalUISettingsValue.swap(settings)
                  
                  flatBuffers_checkedGet = settings.checkSerializedData
@@ -7919,7 +9408,7 @@ index 0e23ec68..3669e4b8 100644
                  ManagedAudioSessionImpl.respectsSystemRecordingInput = settings.respectSystemMicrophone
              }
          })
-@@ -1864,8 +1865,9 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+@@ -1864,8 +1867,9 @@ public final class SharedAccountContextImpl: SharedAccountContext {
              // AyuGram: optional Voice Memos style player for voice messages.
              return AyuVoicePlayerController(context: context, type: type)
          }
@@ -8086,7 +9575,7 @@ index 3191bf1b..6fc2e0cb 100644
  
  @interface CASpringAnimation ()
 diff --git a/tools/ayu-tests/lyrics/main.swift b/tools/ayu-tests/lyrics/main.swift
-index d5420502..cb060390 100644
+index d5420502..a77318a3 100644
 --- a/tools/ayu-tests/lyrics/main.swift
 +++ b/tools/ayu-tests/lyrics/main.swift
 @@ -4,6 +4,10 @@ func check(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -8100,7 +9589,7 @@ index d5420502..cb060390 100644
  
  // Synthetic text only: timings exercise pauses, overlapping vocals, whitespace and Unicode.
  let document = """
-@@ -109,3 +113,64 @@ AyuLyricsCache.save(.notFound, key: "miss", directory: cacheDirectory, now: cach
+@@ -109,3 +113,73 @@ AyuLyricsCache.save(.notFound, key: "miss", directory: cacheDirectory, now: cach
  check(AyuLyricsCache.load(key: "miss", directory: cacheDirectory, now: cacheDate) == nil, "A failed lookup does not become a permanent miss")
  AyuLyricsCache.save(.plain("Fixture text"), key: "plain", directory: cacheDirectory, now: cacheDate)
  check(AyuLyricsCache.load(key: "plain", directory: cacheDirectory, now: cacheDate.addingTimeInterval(7 * 3600)) == nil, "Retry plain lyrics sooner to discover new word sync")
@@ -8146,6 +9635,15 @@ index d5420502..cb060390 100644
 +check(AyuLyricsCandidate.best([rightLine, rightWords])?.source == "NetEase", "Word timing wins between good matches")
 +let ranked = ayuRankNetEaseSongs([["id": 1, "name": "Numb", "ar": [["name": "Linkin Park"]], "dt": 187000], ["id": 2, "name": "Numb (Live)", "ar": [["name": "Linkin Park"]], "dt": 260000], ["id": 3, "name": "Faint", "ar": [["name": "Linkin Park"]], "dt": 162000]], title: "Numb", artist: "Linkin Park", duration: 186)
 +check(ranked.first?.id == 1 && !ranked.contains(where: { $0.id == 3 }), "Rank NetEase hits: \(ranked)")
++check(AyuMusicMetadata.tempoVariant("Boom Boom Boom Boom (sped up)")?.title == "Boom Boom Boom Boom" && AyuMusicMetadata.tempoVariant("Boom Boom Boom Boom (sped up)")?.variant == .spedUp, "Sped-up label")
++check(AyuMusicMetadata.tempoVariant("Искала - slowed + reverb")?.title == "Искала" && AyuMusicMetadata.tempoVariant("Искала - slowed + reverb")?.variant == .slowed, "Slowed label")
++check(AyuMusicMetadata.tempoVariant("Кукла колдуна [ускоренная версия]")?.title == "Кукла колдуна", "Russian sped-up label")
++check(AyuMusicMetadata.tempoVariant("Speed of Sound") == nil && AyuMusicMetadata.tempoVariant("Группа крови") == nil, "No false tempo variants")
++check(AyuMusicMetadata.similarity("Boom Boom Booom Boom", "Boom, Boom, Boom, Boom!!") == 1.0, "Stretched letters match")
++let scaled = ayuScaleLyrics(.synced([AyuLyricsLine(time: 10.0, endTime: 20.0, text: "a", words: [AyuLyricsWord(time: 10.0, endTime: 15.0, text: "a")], exactWordTiming: true)]), by: 0.8)
++if case let .synced(scaledLines) = scaled { check(abs(scaledLines[0].time - 8.0) < 0.001 && abs(scaledLines[0].words[0].endTime - 12.0) < 0.001, "Tempo scaling") } else { check(false, "Tempo scaling kind") }
++check(ayuLyricsContainLine(["И вновь продолжается бой", "Кровавым пожаром зажглась заря над рекой"], line: "Кровавым пожаром зажглась заря"), "Lyric line found")
++check(!ayuLyricsContainLine(["Совсем другая песня", "про что-то ещё"], line: "Кровавым пожаром зажглась заря"), "Lyric line rejected")
 +print("PASS: lyrics providers (YRC, custom servers, templates, ranking)")
 +
 +// Offline timing by sound: lines land on the voiced stretches of the track.

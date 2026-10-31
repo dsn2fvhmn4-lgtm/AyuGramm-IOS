@@ -106,6 +106,45 @@ draw the plugin's own settings (tap the plugin in the list; lyrics plugins also 
 *Lyrics sources*). `ayu.settings.get(key)` reads a value (`"1"`/`"0"` for switches); the
 `settingsChange` event reports changes.
 
+### Interface API
+
+Every call is declarative: the plugin describes, AyuGram draws, and everything a plugin created
+disappears when it stops. Each group needs a permission in the header, e.g.
+`// @permissions ui, menu, overlay` (`# @permissions …` in Python, `"permissions": ["ui"]` in a
+Rust manifest). The install confirmation lists them; a call without its permission fails with a
+console error.
+
+| Call | Permission | Effect |
+| --- | --- | --- |
+| `ayu.ui.alert({ title, message, buttons: [{ id, title, style }] }, fn)` | `ui` | alert; `fn(buttonId)` |
+| `ayu.ui.sheet({ title, message, items: [{ id, title }] }, fn)` | `ui` | action sheet; `fn(itemId or null)` |
+| `ayu.ui.menu.add({ id, title, icon })` / `remove(id)` | `menu` | item in the message menu (5 per plugin, SF Symbol `icon`); taps send `menuAction` `{ itemId, messageId, peerId, text }` |
+| `ayu.ui.profile.addBlock({ peerId?, block: { id, title, text } })` / `removeBlock(id)` | `profile` | text block in user profiles (all, or one `peerId`) |
+| `ayu.ui.profile.addButton({ peerId?, button: { id, title } })` / `removeButton(id)` | `profile` | button in profiles; taps send `profileButton` `{ buttonId, peerId }` |
+| `ayu.ui.overlay.create({ id, effect, amount, speed, color })` / `update(id, …)` / `remove(id)` | `overlay` | particles over the whole app: `snow`, `leaves`, `rain`, `stars`, `confetti`; `amount`/`speed` 0.1–3; never takes touches, paused by Reduce Motion |
+| `ayu.ui.overlay.addText({ id, text, anchor, size, color })` | `overlay` | text pinned to `topLeft`, `topRight`, `bottomLeft`, `bottomRight` or `center` |
+| `ayu.ui.font.set({ element, size })` / `reset(element)` | `fonts` | `messages` or `lists` text size in points (12–30), applied when the appearance is rebuilt |
+| `ayu.ui.badge.add({ peerId, badge: { text } })` / `remove({ peerId })` | `badges` | badge beside a chat's name in the chat list |
+| `ayu.registry.developers.isVerified(peerId)` / `info(peerId)` | — | AyuGram for iOS team label (Telegram user id) |
+| `ayu.clipboard.write(text)` | `clipboard` | copy text |
+| `ayu.device.info()` | `device` | `{ battery, charging, orientation, lowPowerMode, reduceMotion, locale }` |
+| `ayu.haptics.play(style)` | `haptics` | `light`, `medium`, `heavy`, `soft`, `rigid`, `selection`, `success`, `warning`, `error` (off with “No vibration”) |
+
+`peerId` is the value plugins receive in events and hook contexts. Python has the same names
+(`ayu.ui.menu.add({...})`, `ayu.call('device.info')`); Rust has `ayugram_plugin::call(op, json)`
+and helpers in `ayugram_plugin::ui`.
+
+### Events
+
+`load`, `unload`, `chatOpen`, `chatClose`, `profileOpen`, `profileClose`, `screenChange`,
+`appForeground`, `appBackground`, `settingsChange`, `menuAction`, `profileButton`, `uiResult`
+and, for injecting plugins, `trackChange`.
+
+### Setting types
+
+`ayu.settings.declare` accepts `toggle`, `text`, `slider` (`min`, `max`, `step`), `color`
+(`#RRGGBB`), `select` (`options: [{ value, title }]`) and `preview` (read-only text).
+
 ## Safe zone
 
 - Ordinary plugins (outgoing text, switching features off, storage, toasts, settings) install

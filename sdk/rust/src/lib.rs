@@ -136,6 +136,53 @@ pub mod player {
     }
 }
 
+/// Calls any extended API (`ui.menu.add`, `ui.overlay.create`, `device.info`, …) with a JSON
+/// object of arguments, e.g. `call("ui.menu.add", r#"{"id":"note","title":"Save note"}"#)`.
+/// Needs the matching `"permissions"` in the manifest.
+pub fn call(op: &str, args_json: &str) -> Option<String> {
+    let body = args_json.trim();
+    let inner = body.strip_prefix('{').and_then(|rest| rest.strip_suffix('}')).unwrap_or("").trim();
+    let message = if inner.is_empty() {
+        format!(r#"{{"op":{}}}"#, json::quote(op))
+    } else {
+        format!(r#"{{"op":{},{}}}"#, json::quote(op), inner)
+    };
+    request(&message)
+}
+
+/// The app's own interface, described by the plugin and drawn by AyuGram.
+pub mod ui {
+    use super::{call, json};
+
+    /// An alert; the chosen button id arrives as the `uiResult` event (`on("uiResult", …)`).
+    pub fn alert(request_id: &str, title: &str, message: &str, buttons: &[(&str, &str)]) {
+        let buttons: Vec<String> = buttons.iter().map(|(id, title)| format!(r#"{{"id":{},"title":{}}}"#, json::quote(id), json::quote(title))).collect();
+        call("ui.alert", &format!(r#"{{"requestId":{},"title":{},"message":{},"buttons":[{}]}}"#, json::quote(request_id), json::quote(title), json::quote(message), buttons.join(",")));
+    }
+
+    /// A message menu item; taps arrive as the `menuAction` event.
+    pub fn menu_add(id: &str, title: &str) {
+        call("ui.menu.add", &format!(r#"{{"id":{},"title":{}}}"#, json::quote(id), json::quote(title)));
+    }
+
+    pub fn menu_remove(id: &str) {
+        call("ui.menu.remove", &format!(r#"{{"id":{}}}"#, json::quote(id)));
+    }
+
+    /// Falling particles over the app: "snow", "leaves", "rain", "stars", "confetti".
+    pub fn overlay(id: &str, effect: &str, amount: f64, speed: f64) {
+        call("ui.overlay.create", &format!(r#"{{"id":{},"effect":{},"amount":{},"speed":{}}}"#, json::quote(id), json::quote(effect), amount, speed));
+    }
+
+    pub fn overlay_remove(id: &str) {
+        call("ui.overlay.remove", &format!(r#"{{"id":{}}}"#, json::quote(id)));
+    }
+
+    pub fn badge(peer_id: i64, text: &str) {
+        call("ui.badge.add", &format!(r#"{{"peerId":"{}","badge":{{"text":{}}}}}"#, peer_id, json::quote(text)));
+    }
+}
+
 /// Context handed to text hooks.
 pub struct Context {
     pub peer_id: String,

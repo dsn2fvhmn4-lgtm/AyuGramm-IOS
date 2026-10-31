@@ -43325,7 +43325,7 @@ index e1ba816d..c81d46f8 100644
              let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: Font.semibold(22.0), textColor: item.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), alignment: .center, cutout: nil, insets: UIEdgeInsets()))
              let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.text, font: Font.regular(14.0), textColor: item.theme.list.freeTextColor), backgroundColor: nil, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), alignment: .center, lineSpacing: 0.1, cutout: nil, insets: UIEdgeInsets()))
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
-index 0695a0dd..fc0ee963 100644
+index 0695a0dd..a44c8dd1 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 @@ -116,8 +116,10 @@ enum AyuSettingsEntry: ItemListNodeEntry {
@@ -43336,7 +43336,7 @@ index 0695a0dd..fc0ee963 100644
 +/// which the app reports to Telegram's servers.
  func ayuAppVersion() -> String {
 -    return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-+    return "27.1.0"
++    return "27.0.1"
  }
  
  struct AyuSectionedArguments {
@@ -49172,24 +49172,19 @@ index 0e23ec68..2fd33a21 100644
          }
          return OverlayAudioPlayerControllerImpl(context: context, chatLocation: chatLocation, type: type, initialMessageId: initialMessageId, initialOrder: initialOrder, playlistLocation: playlistLocation, parentNavigationController: parentNavigationController)
 diff --git a/submodules/TelegramUI/Sources/SharedMediaPlayer.swift b/submodules/TelegramUI/Sources/SharedMediaPlayer.swift
-index 740fdbcb..e9825d0c 100644
+index 740fdbcb..060102a3 100644
 --- a/submodules/TelegramUI/Sources/SharedMediaPlayer.swift
 +++ b/submodules/TelegramUI/Sources/SharedMediaPlayer.swift
-@@ -250,6 +250,13 @@ final class SharedMediaPlayer {
+@@ -250,6 +250,8 @@ final class SharedMediaPlayer {
                      }
                      if let playbackItem = strongSelf.playbackItem {
                          playbackItem.setForceAudioToSpeaker(strongSelf.forceAudioToSpeaker)
 +                        // AyuGram "Don't play the next voice message": a voice or video message stops at its end.
-+                        var ayuStopsAtEnd = false
-+                        if let playbackData = state.item?.playbackData, case .voice = playbackData.type {
-+                            ayuStopsAtEnd = UserDefaults.standard.bool(forKey: "ayu.extra.noAutoplayNextVoice")
-+                        } else if let playbackData = state.item?.playbackData, case .instantVideo = playbackData.type {
-+                            ayuStopsAtEnd = UserDefaults.standard.bool(forKey: "ayu.extra.noAutoplayNextVoice")
-+                        }
++                        let ayuStopsAtEnd = strongSelf.type == .voice && UserDefaults.standard.bool(forKey: "ayu.extra.noAutoplayNextVoice")
                          playbackItem.setActionAtEnd({
                              Queue.mainQueue().async {
                                  if let strongSelf = self {
-@@ -258,6 +265,10 @@ final class SharedMediaPlayer {
+@@ -258,6 +260,10 @@ final class SharedMediaPlayer {
                                              strongSelf.playbackItem?.seek(0.0)
                                              strongSelf.playbackItem?.play()
                                          default:

@@ -126,6 +126,7 @@ console error.
 | `ayu.ui.font.set({ element, size })` / `reset(element)` | `fonts` | `messages` or `lists` text size in points (12–30), applied when the appearance is rebuilt |
 | `ayu.ui.badge.add({ peerId, badge: { text } })` / `remove({ peerId })` | `badges` | badge beside a chat's name in the chat list |
 | `ayu.registry.developers.isVerified(peerId)` / `info(peerId)` | — | AyuGram for iOS team label (Telegram user id) |
+| `ayu.ui.gifts.catalog.list(fn)` → Promise | — | Telegram's gift catalog, read-only: `[{ giftId, title, stars, fileId, limited, remains, total, soldOut }]` (Python: `ayu.ui.gifts.catalog.list(fn)`) |
 | `ayu.clipboard.write(text)` | `clipboard` | copy text |
 | `ayu.device.info()` | `device` | `{ battery, charging, orientation, lowPowerMode, reduceMotion, locale }` |
 | `ayu.haptics.play(style)` | `haptics` | `light`, `medium`, `heavy`, `soft`, `rigid`, `selection`, `success`, `warning`, `error` (off with “No vibration”) |
@@ -137,8 +138,8 @@ and helpers in `ayugram_plugin::ui`.
 ### Events
 
 `load`, `unload`, `chatOpen`, `chatClose`, `profileOpen`, `profileClose`, `screenChange`,
-`appForeground`, `appBackground`, `settingsChange`, `menuAction`, `profileButton`, `uiResult`
-and, for injecting plugins, `trackChange`.
+`appForeground`, `appBackground`, `accountChange` (`{ accountId }`), `settingsChange`, `menuAction`,
+`profileButton`, `uiResult` and, for injecting plugins, `trackChange`.
 
 ### Setting types
 

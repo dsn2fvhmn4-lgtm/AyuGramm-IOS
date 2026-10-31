@@ -1,3 +1,154 @@
+diff --git a/submodules/AccountContext/Sources/AyuScriptCatalog.swift b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
+new file mode 100644
+index 00000000..a0a94b43
+--- /dev/null
++++ b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
+@@ -0,0 +1,145 @@
++import Foundation
++import CryptoKit
++
++/// The online catalog of code plugins (by default github.com/murk-sus/AyuGramm-Plugins).
++/// Downloads are integrity-checked against the SHA-256 published in the index and must declare
++/// the same @id; installation still goes through the runtime's usual confirmation path.
++public final class AyuScriptCatalog {
++    public struct Entry: Codable, Equatable {
++        public let id: String
++        public let name: String
++        public let author: String
++        public let version: String
++        public let description: String
++        public let tags: [String]?
++        public let url: String
++        public let sha256: String
++        public let size: Int?
++    }
++
++    public enum Failure: LocalizedError {
++        case network
++        case invalidCatalog
++        case tooLarge
++        case checksumMismatch
++        case identityMismatch
++
++        public var errorDescription: String? {
++            let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true
++            switch self {
++            case .network: return ru ? "Каталог недоступен. Проверьте подключение." : "The catalog is unreachable. Check the connection."
++            case .invalidCatalog: return ru ? "Каталог повреждён или имеет неизвестный формат." : "The catalog is damaged or in an unknown format."
++            case .tooLarge: return ru ? "Плагин больше 512 КБ." : "The plugin is larger than 512 KB."
++            case .checksumMismatch: return ru ? "Файл не совпадает с каталогом (SHA-256). Установка отменена." : "The file does not match the catalog (SHA-256). Installation cancelled."
++            case .identityMismatch: return ru ? "@id файла не совпадает с каталогом." : "The file's @id does not match the catalog."
++            }
++        }
++    }
++
++    public static let shared = AyuScriptCatalog()
++    public static let defaultURL = "https://raw.githubusercontent.com/murk-sus/AyuGramm-Plugins/main/index.json"
++    private static let urlKey = "ayu.plugins.catalogURL"
++
++    /// The catalog address; a custom one lets anyone host their own collection.
++    public var catalogURL: String {
++        get { return UserDefaults.standard.string(forKey: AyuScriptCatalog.urlKey) ?? AyuScriptCatalog.defaultURL }
++        set {
++            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
++            if trimmed.isEmpty || trimmed == AyuScriptCatalog.defaultURL {
++                UserDefaults.standard.removeObject(forKey: AyuScriptCatalog.urlKey)
++            } else {
++                UserDefaults.standard.set(trimmed, forKey: AyuScriptCatalog.urlKey)
++            }
++        }
++    }
++
++    private let session: URLSession = {
++        let configuration = URLSessionConfiguration.ephemeral
++        configuration.timeoutIntervalForRequest = 15.0
++        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
++        return URLSession(configuration: configuration)
++    }()
++
++    private init() {}
++
++    private func fetch(_ url: URL, limit: Int, completion: @escaping (Result<Data, Failure>) -> Void) {
++        guard url.scheme?.lowercased() == "https" else {
++            DispatchQueue.main.async { completion(.failure(.network)) }
++            return
++        }
++        self.session.dataTask(with: url, completionHandler: { data, response, _ in
++            let result: Result<Data, Failure>
++            if let http = response as? HTTPURLResponse, http.statusCode == 200, let data {
++                result = data.count <= limit ? .success(data) : .failure(.tooLarge)
++            } else {
++                result = .failure(.network)
++            }
++            DispatchQueue.main.async { completion(result) }
++        }).resume()
++    }
++
++    public func load(completion: @escaping (Result<[Entry], Failure>) -> Void) {
++        guard let url = URL(string: self.catalogURL) else {
++            completion(.failure(.invalidCatalog))
++            return
++        }
++        self.fetch(url, limit: 2 * 1024 * 1024, completion: { result in
++            switch result {
++            case let .success(data):
++                struct Index: Codable { let format: String; let plugins: [Entry] }
++                guard let index = try? JSONDecoder().decode(Index.self, from: data), index.format == "ayugram-plugin-catalog" else {
++                    completion(.failure(.invalidCatalog))
++                    return
++                }
++                let valid = index.plugins.filter { entry in
++                    entry.sha256.count == 64 && URL(string: entry.url)?.scheme?.lowercased() == "https" && !entry.id.isEmpty
++                }
++                completion(.success(valid.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })))
++            case let .failure(error):
++                completion(.failure(error))
++            }
++        })
++    }
++
++    /// Downloads, verifies and installs (or updates) a catalog plugin.
++    public func install(_ entry: Entry, completion: @escaping (Result<Void, Error>) -> Void) {
++        guard let url = URL(string: entry.url) else {
++            completion(.failure(Failure.invalidCatalog))
++            return
++        }
++        self.fetch(url, limit: 512 * 1024, completion: { result in
++            switch result {
++            case let .success(data):
++                let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
++                guard digest == entry.sha256.lowercased() else {
++                    completion(.failure(Failure.checksumMismatch))
++                    return
++                }
++                guard AyuScriptRuntime.shared.preview(data, filename: entry.id + ".ayu.js")?.id == entry.id else {
++                    completion(.failure(Failure.identityMismatch))
++                    return
++                }
++                do {
++                    try AyuScriptRuntime.shared.install(data, filename: entry.id + ".ayu.js")
++                    completion(.success(()))
++                } catch {
++                    completion(.failure(error))
++                }
++            case let .failure(error):
++                completion(.failure(error))
++            }
++        })
++    }
++
++    /// True when `available` is a newer dotted version than `installed` ("1.10" > "1.9").
++    public static func isNewer(_ available: String, than installed: String) -> Bool {
++        let lhs = available.split(separator: ".").map { Int($0.filter(\.isNumber)) ?? 0 }
++        let rhs = installed.split(separator: ".").map { Int($0.filter(\.isNumber)) ?? 0 }
++        for index in 0 ..< max(lhs.count, rhs.count) {
++            let a = index < lhs.count ? lhs[index] : 0
++            let b = index < rhs.count ? rhs[index] : 0
++            if a != b { return a > b }
++        }
++        return false
++    }
++}
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 new file mode 100644
 index 00000000..ab6788ff
@@ -2583,10 +2734,10 @@ index 00000000..62b1c72a
 +    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-index 515572a7..4bcabb31 100644
+index 515572a7..72d151ea 100644
 --- a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -41,6 +41,32 @@ private final class AyuPluginListCell: UITableViewCell {
+@@ -41,6 +41,34 @@ private final class AyuPluginListCell: UITableViewCell {
      required init?(coder: NSCoder) { return nil }
  }
  
@@ -2611,6 +2762,8 @@ index 515572a7..4bcabb31 100644
 +    func lineCount(id: String) -> Int
 +    func preview(_ data: Data, filename: String) -> AyuCodePluginItem?
 +    func install(_ data: Data, filename: String) throws
++    /// The online plugin store, or nil when the host has none.
++    func makeCatalogController(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?) -> UIViewController?
 +}
 +
 +/// Posted by the code-plugin runtime whenever its list changes.
@@ -2619,7 +2772,18 @@ index 515572a7..4bcabb31 100644
  struct AyuPluginAlertAction {
      enum Style {
          case `default`
-@@ -147,11 +173,20 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -127,7 +155,9 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+         let refresh = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(self.updateCatalogTapped))
+         refresh.accessibilityLabel = self.russian ? "Обновить список поддержки плагинов" : "Refresh plugin support list"
+         self.catalogRefresh = refresh
+-        self.navigationItem.rightBarButtonItems = [install, refresh]
++        let store = UIBarButtonItem(image: UIImage(systemName: "bag"), style: .plain, target: self, action: #selector(self.storeTapped))
++        store.accessibilityLabel = self.russian ? "Каталог плагинов" : "Plugin catalog"
++        self.navigationItem.rightBarButtonItems = self.codePlugins == nil ? [install, refresh] : [install, store, refresh]
+         // A real table header reserves space for search on every supported iOS version.
+         // The navigation-integrated search bar could overlay and clip the first plugin row.
+         let search = UISearchBar(frame: CGRect(x: 0.0, y: 0.0, width: self.tableView.bounds.width, height: 56.0))
+@@ -147,11 +177,20 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
              guard let self, self.viewIfLoaded?.window != nil else { return }
              self.reload()
          })
@@ -2640,7 +2804,7 @@ index 515572a7..4bcabb31 100644
      }
      override func viewWillAppear(_ animated: Bool) {
          super.viewWillAppear(animated)
-@@ -208,9 +243,15 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -208,9 +247,15 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
              [plugin.title(self.russian), plugin.author, plugin.summary(self.russian)].contains { $0.localizedCaseInsensitiveContains(self.query) }
          }
      }
@@ -2657,16 +2821,27 @@ index 515572a7..4bcabb31 100644
              self.tableView.backgroundView = nil
              return
          }
-@@ -220,7 +261,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -220,7 +265,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          label.textColor = self.palette?.secondary ?? .secondaryLabel
          label.font = .preferredFont(forTextStyle: .subheadline)
          if self.query.isEmpty {
 -            label.text = self.russian ? "Плагины не найдены.\n\nНажмите «+», чтобы установить файл .iosplug или .plugin." : "No plugins found.\n\nTap + to install a .iosplug or .plugin file."
-+            label.text = self.russian ? "Плагины не найдены.\n\nНажмите «+», чтобы установить файл .iosplug, .plugin или код-плагин .js." : "No plugins found.\n\nTap + to install a .iosplug, .plugin or .js code plugin."
++            label.text = self.russian ? "Плагины не найдены.\n\nНажмите «+», чтобы установить файл .iosplug, .plugin или код-плагин .js, или откройте каталог (значок сумки)." : "No plugins found.\n\nTap + to install a .iosplug, .plugin or .js code plugin, or open the catalog (the bag icon)."
          } else {
              label.text = self.russian ? "Ничего не найдено." : "Nothing found."
          }
-@@ -260,15 +301,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -234,6 +279,10 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+         ])
+         self.tableView.backgroundView = container
+     }
++    @objc private func storeTapped() {
++        guard !self.reading, !self.applying, let controller = self.codePlugins?.makeCatalogController(russian: self.russian, palette: self.palette, presentAlert: self.presentAlert) else { return }
++        self.navigationController?.pushViewController(controller, animated: true)
++    }
+     @objc private func installTapped() {
+         guard !self.reading, !self.applying else { return }
+         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+@@ -260,15 +309,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          if let close = self.close { close() } else { self.dismiss(animated: true) }
      }
      /// Section 0 lists the built-in plugins, section 1 the `.plugin` files.
@@ -2690,7 +2865,7 @@ index 515572a7..4bcabb31 100644
          let isLast = section == 1 ? !self.items.isEmpty : (self.items.isEmpty && !self.nativeItems.isEmpty)
          guard isLast else { return nil }
          return self.russian ? "Нажми на плагин, чтобы открыть его настройки." : "Tap a plugin to open its settings."
-@@ -299,10 +346,54 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -299,10 +354,54 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          }
          AyuNativePlugins.setEnabled(plugin, toggle.isOn)
      }
@@ -2745,7 +2920,7 @@ index 515572a7..4bcabb31 100644
          let cell = AyuPluginListCell()
          cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
          cell.iconView.image = self.pluginIcon(32.0)
-@@ -388,6 +479,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -388,6 +487,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
      override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
          tableView.deselectRow(at: indexPath, animated: true)
          guard !self.reading, !self.applying else { return }
@@ -2767,7 +2942,7 @@ index 515572a7..4bcabb31 100644
          if indexPath.section == 0 {
              let nativeItems = self.nativeItems
              guard indexPath.row < nativeItems.count, let controller = self.nativePluginSettings?(nativeItems[indexPath.row]) else { return }
-@@ -404,12 +510,42 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -404,12 +518,42 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          controller.pluginIcon = self.pluginIcon
          return controller
      }
@@ -2810,13 +2985,328 @@ index 515572a7..4bcabb31 100644
          if (filename as NSString).pathExtension.lowercased() == AyuNativePluginCard.fileExtension {
              self.readNativeCard(url, picker: picker)
              return
+diff --git a/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift b/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
+new file mode 100644
+index 00000000..d43bd5a4
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
+@@ -0,0 +1,308 @@
++import Foundation
++import UIKit
++import AccountContext
++
++/// The plugin store: code plugins from the online catalog (github.com/murk-sus/AyuGramm-Plugins)
++/// with search, one-tap install verified by SHA-256 and an "update available" mark.
++final class AyuScriptCatalogController: AyuPluginTableController, UISearchBarDelegate {
++    private enum State {
++        case loading
++        case loaded([AyuScriptCatalog.Entry])
++        case failed(String)
++    }
++
++    private let russian: Bool
++    private let palette: AyuPreferencesPalette?
++    private let presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?
++    private var state: State = .loading
++    private var query = ""
++    private var installing = Set<String>()
++    private var observer: NSObjectProtocol?
++
++    init(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?) {
++        self.russian = russian
++        self.palette = palette
++        self.presentAlert = presentAlert
++        super.init(style: .insetGrouped)
++        self.title = russian ? "Каталог" : "Catalog"
++    }
++
++    required init?(coder: NSCoder) { return nil }
++
++    deinit {
++        if let observer = self.observer {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.edgesForExtendedLayout = []
++        let back = UIBarButtonItem(image: UIImage(systemName: "chevron.backward", withConfiguration: UIImage.SymbolConfiguration(weight: .semibold)), style: .plain, target: self, action: #selector(self.backTapped))
++        back.accessibilityLabel = self.russian ? "Назад" : "Back"
++        self.navigationItem.leftBarButtonItem = back
++        let search = UISearchBar(frame: CGRect(x: 0.0, y: 0.0, width: self.tableView.bounds.width, height: 56.0))
++        search.delegate = self
++        search.searchBarStyle = .minimal
++        search.placeholder = self.russian ? "Поиск плагинов" : "Search plugins"
++        search.autoresizingMask = [.flexibleWidth]
++        search.searchTextField.returnKeyType = .done
++        self.tableView.tableHeaderView = search
++        self.tableView.keyboardDismissMode = .onDrag
++        self.tableView.rowHeight = UITableView.automaticDimension
++        self.tableView.estimatedRowHeight = 110.0
++        self.tableView.backgroundColor = self.palette?.background ?? .systemGroupedBackground
++        let refresh = UIRefreshControl()
++        refresh.addTarget(self, action: #selector(self.refreshPulled), for: .valueChanged)
++        self.refreshControl = refresh
++        self.observer = NotificationCenter.default.addObserver(forName: ayuCodePluginsDidChangeNotification, object: nil, queue: .main, using: { [weak self] _ in
++            self?.reload()
++        })
++        self.load()
++    }
++
++    @objc private func backTapped() {
++        self.navigationController?.popViewController(animated: true)
++    }
++
++    @objc private func refreshPulled() {
++        self.load()
++    }
++
++    private func load() {
++        if case .failed = self.state { self.state = .loading }
++        self.reload()
++        AyuScriptCatalog.shared.load(completion: { [weak self] result in
++            guard let self else { return }
++            self.refreshControl?.endRefreshing()
++            switch result {
++            case let .success(entries):
++                self.state = .loaded(entries)
++            case let .failure(error):
++                if case .loaded = self.state {
++                    self.alert(title: self.russian ? "Каталог не обновлён" : "Catalog not updated", message: error.localizedDescription)
++                } else {
++                    self.state = .failed(error.localizedDescription)
++                }
++            }
++            self.reload()
++        })
++    }
++
++    private var installed: [String: String] {
++        var result: [String: String] = [:]
++        for plugin in AyuScriptRuntime.shared.plugins {
++            result[plugin.id] = plugin.version
++        }
++        return result
++    }
++
++    private var entries: [AyuScriptCatalog.Entry] {
++        guard case let .loaded(all) = self.state else { return [] }
++        guard !self.query.isEmpty else { return all }
++        return all.filter { entry in
++            ([entry.name, entry.author, entry.description, entry.id] + (entry.tags ?? [])).contains { $0.localizedCaseInsensitiveContains(self.query) }
++        }
++    }
++
++    private func reload() {
++        self.tableView.reloadData()
++        let message: String?
++        switch self.state {
++        case .loading:
++            message = self.russian ? "Загрузка каталога…" : "Loading the catalog…"
++        case let .failed(text):
++            message = text + (self.russian ? "\n\nПотяните вниз, чтобы повторить." : "\n\nPull down to retry.")
++        case .loaded:
++            message = self.entries.isEmpty ? (self.russian ? "Ничего не найдено." : "Nothing found.") : nil
++        }
++        guard let message else {
++            self.tableView.backgroundView = nil
++            return
++        }
++        let label = UILabel()
++        label.numberOfLines = 0
++        label.textAlignment = .center
++        label.textColor = self.palette?.secondary ?? .secondaryLabel
++        label.font = .preferredFont(forTextStyle: .subheadline)
++        label.text = message
++        let container = UIView()
++        label.translatesAutoresizingMaskIntoConstraints = false
++        container.addSubview(label)
++        NSLayoutConstraint.activate([
++            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
++            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32.0),
++            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32.0)
++        ])
++        self.tableView.backgroundView = container
++    }
++
++    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
++        self.query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
++        self.reload()
++    }
++
++    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
++        searchBar.resignFirstResponder()
++    }
++
++    override func numberOfSections(in tableView: UITableView) -> Int { return 1 }
++
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
++        return self.entries.count
++    }
++
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        guard case .loaded = self.state, !self.entries.isEmpty else { return nil }
++        return self.russian
++            ? "Плагины из github.com/murk-sus/AyuGramm-Plugins. Каждый файл проверяется по SHA-256 из каталога. Свой плагин можно прислать pull request'ом."
++            : "Plugins from github.com/murk-sus/AyuGramm-Plugins. Every file is checked against the catalog's SHA-256. Send your own plugin as a pull request."
++    }
++
++    private enum Status {
++        case available
++        case installed
++        case update(String)
++    }
++
++    private func status(_ entry: AyuScriptCatalog.Entry) -> Status {
++        guard let version = self.installed[entry.id] else { return .available }
++        return AyuScriptCatalog.isNewer(entry.version, than: version) ? .update(version) : .installed
++    }
++
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let entries = self.entries
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        guard indexPath.row < entries.count else { return cell }
++        let entry = entries[indexPath.row]
++        let primary = self.palette?.text ?? .label
++        let secondary = self.palette?.secondary ?? .secondaryLabel
++        let accent = self.palette?.accent ?? .systemBlue
++        cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
++        cell.textLabel?.numberOfLines = 2
++        cell.detailTextLabel?.numberOfLines = 0
++        let title = NSMutableAttributedString(string: entry.name, attributes: [.font: UIFont.systemFont(ofSize: 17.0, weight: .semibold), .foregroundColor: primary])
++        title.append(NSAttributedString(string: "  " + entry.version, attributes: [.font: UIFont.systemFont(ofSize: 13.0), .foregroundColor: secondary]))
++        cell.textLabel?.attributedText = title
++        let detail = NSMutableAttributedString(string: entry.author, attributes: [.font: UIFont.systemFont(ofSize: 14.0, weight: .medium), .foregroundColor: accent])
++        if !entry.description.isEmpty {
++            detail.append(NSAttributedString(string: "\n" + entry.description, attributes: [.font: UIFont.systemFont(ofSize: 14.0), .foregroundColor: secondary]))
++        }
++        if let tags = entry.tags, !tags.isEmpty {
++            detail.append(NSAttributedString(string: "\n" + tags.map { "#" + $0 }.joined(separator: " "), attributes: [.font: UIFont.systemFont(ofSize: 13.0), .foregroundColor: secondary.withAlphaComponent(0.8)]))
++        }
++        cell.detailTextLabel?.attributedText = detail
++        cell.accessoryView = self.actionView(entry)
++        cell.selectionStyle = .default
++        return cell
++    }
++
++    private func actionView(_ entry: AyuScriptCatalog.Entry) -> UIView {
++        if self.installing.contains(entry.id) {
++            let spinner = UIActivityIndicatorView(style: .medium)
++            spinner.startAnimating()
++            return spinner
++        }
++        let accent = self.palette?.accent ?? .systemBlue
++        let title: String
++        let filled: Bool
++        var enabled = true
++        switch self.status(entry) {
++        case .available:
++            title = self.russian ? "Установить" : "Install"
++            filled = false
++        case .update:
++            title = self.russian ? "Обновить" : "Update"
++            filled = true
++        case .installed:
++            title = self.russian ? "Установлен" : "Installed"
++            filled = false
++            enabled = false
++        }
++        var configuration = UIButton.Configuration.plain()
++        configuration.attributedTitle = AttributedString(title, attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 14.0, weight: .semibold)]))
++        configuration.baseForegroundColor = enabled ? (filled ? .white : accent) : (self.palette?.secondary ?? .secondaryLabel)
++        configuration.background.backgroundColor = filled ? accent : (enabled ? accent.withAlphaComponent(0.14) : .clear)
++        configuration.background.cornerRadius = 14.0
++        configuration.contentInsets = NSDirectionalEdgeInsets(top: 5.0, leading: 12.0, bottom: 5.0, trailing: 12.0)
++        let button = UIButton(configuration: configuration, primaryAction: UIAction(handler: { [weak self] _ in
++            self?.confirm(entry)
++        }))
++        button.isEnabled = enabled
++        button.sizeToFit()
++        return button
++    }
++
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        let entries = self.entries
++        guard indexPath.row < entries.count else { return }
++        self.confirm(entries[indexPath.row])
++    }
++
++    private func confirm(_ entry: AyuScriptCatalog.Entry) {
++        guard !self.installing.contains(entry.id) else { return }
++        let status = self.status(entry)
++        var message = entry.author + "\n" + entry.id + " · " + entry.version
++        if case let .update(version) = status {
++            message += (self.russian ? " (установлена \(version))" : " (installed \(version))")
++        }
++        if let size = entry.size {
++            message += " · " + ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
++        }
++        if !entry.description.isEmpty {
++            message += "\n\n" + entry.description
++        }
++        message += self.russian
++            ? "\n\nПлагин выполняется как код на этом устройстве. Он сможет изменять или полностью заменять обработку исходящего текста и отключать функции приложения. Доступа к сети и аккаунту у него нет."
++            : "\n\nThe plugin runs as code on this device. It can change or fully replace outgoing-text handling and switch app features off. It has no network or account access."
++        let title: String
++        let action: String
++        switch status {
++        case .available:
++            title = self.russian ? "Установить плагин?" : "Install plugin?"
++            action = self.russian ? "Установить" : "Install"
++        case .update:
++            title = self.russian ? "Обновить плагин?" : "Update plugin?"
++            action = self.russian ? "Обновить" : "Update"
++        case .installed:
++            title = entry.name
++            action = self.russian ? "Переустановить" : "Reinstall"
++        }
++        self.showAlert(title: title, message: message, actions: [
++            AyuPluginAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel, handler: nil),
++            AyuPluginAlertAction(title: action, style: .default, handler: { [weak self] in
++                self?.install(entry)
++            })
++        ])
++    }
++
++    private func install(_ entry: AyuScriptCatalog.Entry) {
++        self.installing.insert(entry.id)
++        self.reload()
++        AyuScriptCatalog.shared.install(entry, completion: { [weak self] result in
++            guard let self else { return }
++            self.installing.remove(entry.id)
++            self.reload()
++            if case let .failure(error) = result {
++                self.alert(title: self.russian ? "Не удалось установить" : "Could not install", message: error.localizedDescription)
++            }
++        })
++    }
++
++    private func alert(title: String, message: String) {
++        self.showAlert(title: title, message: message, actions: [AyuPluginAlertAction(title: "OK", style: .default, handler: nil)])
++    }
++
++    private func showAlert(title: String?, message: String, actions: [AyuPluginAlertAction]) {
++        if let presentAlert = self.presentAlert {
++            presentAlert(title, message, actions)
++            return
++        }
++        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
++        for action in actions {
++            alert.addAction(UIAlertAction(title: action.title, style: action.style == .cancel ? .cancel : .default, handler: { _ in action.handler?() }))
++        }
++        self.present(alert, animated: true)
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift b/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift
 new file mode 100644
-index 00000000..80e64c66
+index 00000000..698373d4
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,44 @@
 +import Foundation
++import UIKit
 +import AccountContext
 +
 +/// Bridges the plugin list to the JavaScript code-plugin runtime in AccountContext.
@@ -2849,6 +3339,10 @@ index 00000000..80e64c66
 +
 +    func install(_ data: Data, filename: String) throws {
 +        try self.runtime.install(data, filename: filename)
++    }
++
++    func makeCatalogController(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?) -> UIViewController? {
++        return AyuScriptCatalogController(russian: russian, palette: palette, presentAlert: presentAlert)
 +    }
 +
 +    private func item(_ plugin: AyuScriptRuntime.Plugin, activity: [String]) -> AyuCodePluginItem {

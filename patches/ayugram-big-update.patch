@@ -485,7 +485,7 @@ index 00000000..f84f8c1c
 +}
 diff --git a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
 new file mode 100644
-index 00000000..b8774687
+index 00000000..6a1da611
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
 @@ -0,0 +1,290 @@
@@ -671,7 +671,7 @@ index 00000000..b8774687
 +                return (String(id.prefix(64)), String(title.prefix(64)), (item["style"] as? String) == "destructive")
 +            }
 +            let finish: (String?) -> Void = { choice in
-+                AyuPluginUI.send("uiResult", to: pluginId, ["requestId": requestId, "choice": choice ?? NSNull()])
++                AyuPluginUI.send("uiResult", to: pluginId, ["requestId": requestId, "choice": choice.map { $0 as Any } ?? NSNull()])
 +            }
 +            DispatchQueue.main.async {
 +                if op == "ui.alert" {
@@ -746,7 +746,7 @@ index 00000000..b8774687
 +        case "registry.isVerified":
 +            guard let peer = peerId() else { return ["verified": false] }
 +            let entry = AyuVerifiedRegistry.shared.entry(peerId: peer)
-+            return ["verified": entry != nil, "kind": entry?.kind ?? NSNull(), "text": entry?.text ?? NSNull()]
++            return ["verified": entry != nil, "kind": entry.map { $0.kind as Any } ?? NSNull(), "text": entry.map { $0.text as Any } ?? NSNull()]
 +        case "clipboard.write":
 +            guard allowed(.clipboard) else { return nil }
 +            let text = string("text", 10000)
@@ -39119,7 +39119,7 @@ index 00000000..6326e07b
 +}
 diff --git a/submodules/Display/Source/AyuOverlayEffects.swift b/submodules/Display/Source/AyuOverlayEffects.swift
 new file mode 100644
-index 00000000..2303e1be
+index 00000000..8174ffde
 --- /dev/null
 +++ b/submodules/Display/Source/AyuOverlayEffects.swift
 @@ -0,0 +1,301 @@
@@ -39291,7 +39291,7 @@ index 00000000..2303e1be
 +    private func relayout() {
 +        let bounds = self.rootView.bounds
 +        let paused = UIAccessibility.isReduceMotionEnabled
-+        for (id, emitter) in self.emitters {
++        for emitter in self.emitters.values {
 +            emitter.frame = bounds
 +            emitter.emitterPosition = CGPoint(x: bounds.midX, y: -20.0)
 +            emitter.emitterSize = CGSize(width: bounds.width * 1.3, height: 1.0)

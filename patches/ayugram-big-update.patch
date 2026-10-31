@@ -150,10 +150,10 @@ index 00000000..792a5b39
 +}
 diff --git a/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift b/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift
 new file mode 100644
-index 00000000..6a910a32
+index 00000000..aaa92ec6
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift
-@@ -0,0 +1,287 @@
+@@ -0,0 +1,289 @@
 +import Foundation
 +import TelegramCore
 +import AyuPluginEngines
@@ -379,7 +379,8 @@ index 00000000..6a910a32
 +            answer = nil
 +        case "storage.get":
 +            let key = object["key"] as? String ?? ""
-+            answer = ["value": AyuScriptRuntime.storageValue(pluginId: self.id, key: key) ?? NSNull()]
++            let value: Any = AyuScriptRuntime.storageValue(pluginId: self.id, key: key).map { $0 as Any } ?? NSNull()
++            answer = ["value": value]
 +        case "storage.set":
 +            let key = object["key"] as? String ?? ""
 +            if !AyuScriptRuntime.setStorageValue(pluginId: self.id, key: key, value: object["value"] as? String) {
@@ -391,7 +392,8 @@ index 00000000..6a910a32
 +            self.addSummary("settings")
 +            answer = nil
 +        case "setting.get":
-+            answer = ["value": AyuPluginSettings.value(pluginId: self.id, key: object["key"] as? String ?? "") ?? NSNull()]
++            let value: Any = AyuPluginSettings.value(pluginId: self.id, key: object["key"] as? String ?? "").map { $0 as Any } ?? NSNull()
++            answer = ["value": value]
 +        case "player.state":
 +            guard self.requireInject("ayu.player") else { return nil }
 +            answer = AyuPluginAppBridge.playerState?() ?? [:]
@@ -46959,7 +46961,7 @@ index 00000000..8e070628
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuPluginPlayerBridge.swift b/submodules/TelegramUI/Sources/AyuPluginPlayerBridge.swift
 new file mode 100644
-index 00000000..d11d63ce
+index 00000000..5ad94609
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPluginPlayerBridge.swift
 @@ -0,0 +1,109 @@
@@ -46981,7 +46983,7 @@ index 00000000..d11d63ce
 +    var state: [String: Any] {
 +        self.lock.lock()
 +        defer { self.lock.unlock() }
-+        return ["title": self.title, "artist": self.artist ?? NSNull(), "duration": self.duration, "position": self.position, "playing": self.playing]
++        return ["title": self.title, "artist": self.artist.map { $0 as Any } ?? NSNull(), "duration": self.duration, "position": self.position, "playing": self.playing]
 +    }
 +
 +    /// A new track: plugins subscribed to `trackChange` hear about it.
@@ -46992,7 +46994,7 @@ index 00000000..d11d63ce
 +        self.duration = duration
 +        self.position = 0.0
 +        self.lock.unlock()
-+        AyuScriptRuntime.shared.emit("trackChange", ["title": title, "artist": artist ?? NSNull(), "duration": duration])
++        AyuScriptRuntime.shared.emit("trackChange", ["title": title, "artist": artist.map { $0 as Any } ?? NSNull(), "duration": duration])
 +    }
 +
 +    func progress(position: Double, duration: Double, playing: Bool) {

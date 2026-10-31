@@ -38508,10 +38508,39 @@ index 00000000..390b547e
 +#ifdef __cplusplus
 +}
 +#endif
+diff --git a/submodules/CallListUI/Sources/CallListController.swift b/submodules/CallListUI/Sources/CallListController.swift
+index fce45a17..d8d31e1f 100644
+--- a/submodules/CallListUI/Sources/CallListController.swift
++++ b/submodules/CallListUI/Sources/CallListController.swift
+@@ -143,7 +143,7 @@ public final class CallListController: TelegramBaseController {
+             if useSpecialTabBarIcons() {
+                 icon = UIImage(bundleImageName: "Chat List/Tabs/Holiday/IconCalls")
+             } else {
+-                icon = UIImage(bundleImageName: "Chat List/Tabs/IconCalls")
++                icon = AyuTools.tabIcon("calls") ?? UIImage(bundleImageName: "Chat List/Tabs/IconCalls")
+             }
+             self.tabBarItem.title = self.presentationData.strings.Calls_TabTitle
+             self.tabBarItem.image = icon
 diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
-index c7df9084..86601806 100644
+index c7df9084..c810f86d 100644
 --- a/submodules/ChatListUI/Sources/ChatListController.swift
 +++ b/submodules/ChatListUI/Sources/ChatListController.swift
+@@ -349,12 +349,12 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
+                     if useSpecialTabBarIcons() {
+                         icon = UIImage(bundleImageName: "Chat List/Tabs/Holiday/IconChats")
+                     } else {
+-                        icon = UIImage(bundleImageName: "Chat List/Tabs/IconChats")
++                        icon = AyuTools.tabIcon("chats") ?? UIImage(bundleImageName: "Chat List/Tabs/IconChats")
+                     }
+-                    
++
+                     self.tabBarItem.image = icon
+                     self.tabBarItem.selectedImage = icon
+-                    if !self.presentationData.reduceMotion {
++                    if !self.presentationData.reduceMotion && AyuTools.iconPack == .telegram {
+                         self.tabBarItem.animationName = "TabChats"
+                         self.tabBarItem.animationOffset = CGPoint(x: 0.0, y: UIScreenPixel)
+                     }
 @@ -3186,6 +3186,10 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController
                  guard let self else {
                      return
@@ -38731,6 +38760,19 @@ index 3c29bc97..ea858a4a 100644
                      }
                  }
              }
+diff --git a/submodules/ContactListUI/Sources/ContactsController.swift b/submodules/ContactListUI/Sources/ContactsController.swift
+index a63049e1..cbe00124 100644
+--- a/submodules/ContactListUI/Sources/ContactsController.swift
++++ b/submodules/ContactListUI/Sources/ContactsController.swift
+@@ -163,7 +163,7 @@ public class ContactsController: ViewController {
+         if useSpecialTabBarIcons() {
+             icon = UIImage(bundleImageName: "Chat List/Tabs/Holiday/IconContacts")
+         } else {
+-            icon = UIImage(bundleImageName: "Chat List/Tabs/IconContacts")
++            icon = AyuTools.tabIcon("contacts") ?? UIImage(bundleImageName: "Chat List/Tabs/IconContacts")
+         }
+         
+         self.tabBarItem.image = icon
 diff --git a/submodules/Display/Source/AyuAppearancePlus.swift b/submodules/Display/Source/AyuAppearancePlus.swift
 new file mode 100644
 index 00000000..037ede6e
@@ -39886,6 +39928,121 @@ index 00000000..9809f9ba
 +        return self.rows.contains(where: { row in
 +            row.section == section && hidden.contains(row.key) && (itemId == AnyHashable(Int(row.itemId)) || itemId == AnyHashable(row.itemId))
 +        })
++    }
++}
+diff --git a/submodules/Display/Source/AyuTools.swift b/submodules/Display/Source/AyuTools.swift
+new file mode 100644
+index 00000000..9558d5f9
+--- /dev/null
++++ b/submodules/Display/Source/AyuTools.swift
+@@ -0,0 +1,109 @@
++import Foundation
++import UIKit
++
++/// Settings → AyuGram → Tools: VirusTotal, AI shortening, voice changer, icon packs.
++/// API keys are the user's own; nothing is sent anywhere until the user taps a check.
++public enum AyuTools {
++    public static let didChangeNotification = Notification.Name("AyuGram.ToolsChanged")
++    private static let key = "ayu.tools."
++
++    // MARK: VirusTotal
++
++    public static var virusTotalKey: String {
++        get { return UserDefaults.standard.string(forKey: key + "vtKey") ?? "" }
++        set { set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), "vtKey") }
++    }
++
++    // MARK: AI shortening (any OpenAI-compatible chat completions endpoint)
++
++    public static let defaultAIEndpoint = "https://api.openai.com/v1/chat/completions"
++    public static let defaultAIModel = "gpt-4o-mini"
++
++    public static var aiEndpoint: String {
++        get { let value = UserDefaults.standard.string(forKey: key + "aiEndpoint") ?? ""; return value.isEmpty ? defaultAIEndpoint : value }
++        set { set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), "aiEndpoint") }
++    }
++
++    public static var aiModel: String {
++        get { let value = UserDefaults.standard.string(forKey: key + "aiModel") ?? ""; return value.isEmpty ? defaultAIModel : value }
++        set { set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), "aiModel") }
++    }
++
++    public static var aiKey: String {
++        get { return UserDefaults.standard.string(forKey: key + "aiKey") ?? "" }
++        set { set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), "aiKey") }
++    }
++
++    // MARK: Voice changer
++
++    public enum Voice: String, CaseIterable {
++        case off
++        case high
++        case low
++        case robot
++
++        public func title(_ russian: Bool) -> String {
++            switch self {
++            case .off: return russian ? "Выключен" : "Off"
++            case .high: return russian ? "Высокий голос" : "High voice"
++            case .low: return russian ? "Низкий голос" : "Low voice"
++            case .robot: return russian ? "Робот" : "Robot"
++            }
++        }
++
++        /// Pitch ratio for the shifter (1 = unchanged).
++        public var pitch: Double {
++            switch self {
++            case .off, .robot: return 1.0
++            case .high: return 1.45
++            case .low: return 0.72
++            }
++        }
++    }
++
++    public static var voice: Voice {
++        get { return Voice(rawValue: UserDefaults.standard.string(forKey: key + "voice") ?? "") ?? .off }
++        set { set(newValue.rawValue, "voice") }
++    }
++
++    // MARK: Icon packs (tab bar)
++
++    public enum IconPack: String, CaseIterable {
++        case telegram
++        case symbols
++        case outline
++
++        public func title(_ russian: Bool) -> String {
++            switch self {
++            case .telegram: return "Telegram"
++            case .symbols: return russian ? "SF Symbols (залитые)" : "SF Symbols (filled)"
++            case .outline: return russian ? "SF Symbols (контурные)" : "SF Symbols (outline)"
++            }
++        }
++    }
++
++    public static var iconPack: IconPack {
++        get { return IconPack(rawValue: UserDefaults.standard.string(forKey: key + "iconPack") ?? "") ?? .telegram }
++        set { set(newValue.rawValue, "iconPack") }
++    }
++
++    /// The tab bar icon of the chosen pack ("chats", "contacts", "calls", "settings"), or nil for
++    /// Telegram's own. Applies when the tabs are next built (after a relaunch).
++    public static func tabIcon(_ tab: String) -> UIImage? {
++        let names: [String: (filled: String, outline: String)] = [
++            "chats": ("bubble.left.and.bubble.right.fill", "bubble.left.and.bubble.right"),
++            "contacts": ("person.crop.circle.fill", "person.crop.circle"),
++            "calls": ("phone.fill", "phone"),
++            "settings": ("gearshape.fill", "gearshape")
++        ]
++        let pack = AyuTools.iconPack
++        guard pack != .telegram, let pair = names[tab] else { return nil }
++        let configuration = UIImage.SymbolConfiguration(pointSize: 21.0, weight: .regular)
++        return UIImage(systemName: pack == .symbols ? pair.filled : pair.outline, withConfiguration: configuration)?.withRenderingMode(.alwaysTemplate)
++    }
++
++    private static func set(_ value: Any, _ name: String) {
++        UserDefaults.standard.set(value, forKey: key + name)
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +}
 diff --git a/submodules/Display/Source/AyuWhiteGram.swift b/submodules/Display/Source/AyuWhiteGram.swift
@@ -41736,7 +41893,7 @@ index 00000000..60c8da29
 +    return ItemListController(context: context, state: signal)
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
-index e2236c5f..814050f1 100644
+index e2236c5f..c4f64303 100644
 --- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 @@ -10,12 +10,14 @@ import ItemListUI
@@ -41754,7 +41911,7 @@ index e2236c5f..814050f1 100644
      case messageHistory = 11
      case mediaArchive = 12
      case localPremium = 21
-@@ -24,16 +26,81 @@ private enum AyuGramRow: Int32 {
+@@ -24,16 +26,82 @@ private enum AyuGramRow: Int32 {
      case interface = 24
      case navigationAndComposer = 25
      case peerSearch = 26
@@ -41774,6 +41931,7 @@ index e2236c5f..814050f1 100644
 +    case extras = 62
 +    case customization = 63
 +    case glass = 64
++    case tools = 65
 +    case channel = 71
 +    case sourceCode = 72
 +    case developer = 81
@@ -41838,7 +41996,7 @@ index e2236c5f..814050f1 100644
          guard let row = AyuGramRow(rawValue: id) else {
              return
          }
-@@ -42,6 +109,36 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -42,6 +110,38 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              push?(ayuGhostModeController(context: context))
          case .ghostModePlus:
              push?(ayuGhostModePlusController(context: context))
@@ -41872,10 +42030,12 @@ index e2236c5f..814050f1 100644
 +            push?(ayuCustomizationController(context: context))
 +        case .glass:
 +            push?(ayuGlassController(context: context))
++        case .tools:
++            push?(ayuToolsController(context: context))
          case .messageHistory:
              push?(ayuMessageHistoryController(context: context))
          case .mediaArchive:
-@@ -62,6 +159,10 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -62,6 +162,10 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              ayuOpenChannel(context: context, navigation: navigation?())
          case .sourceCode:
              context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
@@ -41886,7 +42046,7 @@ index e2236c5f..814050f1 100644
          }
      }, toggle: { _, _ in })
      let icons: [AyuGramRow: UIImage?] = [
-@@ -75,8 +176,29 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -75,8 +179,30 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
          .interface: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x32ADE6)),
          .navigationAndComposer: AyuSettingsIcons.symbol("slider.horizontal.3", color: UIColor(rgb: 0x5856D6)),
          .peerSearch: AyuSettingsIcons.symbol("magnifyingglass", color: UIColor(rgb: 0x007AFF)),
@@ -41905,6 +42065,7 @@ index e2236c5f..814050f1 100644
 +        .extras: AyuSettingsIcons.symbol("hand.raised.fill", color: UIColor(rgb: 0x34C759)),
 +        .customization: AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0xAF52DE)),
 +        .glass: AyuSettingsIcons.symbol("drop.halffull", color: UIColor(rgb: 0x32ADE6)),
++        .tools: AyuSettingsIcons.symbol("wrench.and.screwdriver.fill", color: UIColor(rgb: 0x8E8E93)),
          .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
 -        .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
 +        .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6)),
@@ -41917,7 +42078,7 @@ index e2236c5f..814050f1 100644
      ]
      func link(_ section: Int32, _ row: AyuGramRow, _ title: String, _ label: String = "") -> AyuSectionedEntry {
          return .link(section, row.rawValue, icons[row] ?? nil, title, label)
-@@ -85,11 +207,12 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -85,11 +211,12 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
      |> deliverOnMainQueue
      |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
          let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
@@ -41931,7 +42092,7 @@ index e2236c5f..814050f1 100644
              .header(2, 10, AyuStrings.spyEssentials.text(ru)),
              link(2, .messageHistory, AyuStrings.messageHistory.text(ru)),
              link(2, .mediaArchive, AyuStrings.mediaArchive.text(ru)),
-@@ -100,17 +223,66 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -100,17 +227,67 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              link(3, .peerSearch, ru ? "Поиск каналов и людей" : "Find channels and people"),
              link(3, .interface, ru ? "Интерфейс и чаты" : "Interface & Chats"),
              link(3, .navigationAndComposer, ru ? "Навигация и редактор" : "Navigation and composer"),
@@ -41953,6 +42114,7 @@ index e2236c5f..814050f1 100644
 +            link(5, .extras, ru ? "Приватность и мелочи" : "Privacy & extras"),
 +            link(5, .customization, ru ? "Кастомизация" : "Customization", AyuCustomization.hasColors || !AyuCustomization.peerBadges.isEmpty || !AyuCustomization.myBadge.isEmpty ? (ru ? "вкл." : "on") : ""),
 +            link(5, .glass, ru ? "Стекло и пузыри" : "Glass and bubbles", AyuGlass.bubbleStyle != .none ? AyuGlass.bubbleStyle.title(ru) : ""),
++            link(5, .tools, ru ? "Инструменты" : "Tools", ru ? "VirusTotal, ИИ, голос" : "VirusTotal, AI, voice"),
 +            .header(6, 70, AyuStrings.links.text(ru)),
 +            link(6, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
 +            link(6, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub"),
@@ -43839,6 +44001,144 @@ index 00000000..8729d0f7
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
 +    }
 +    return ItemListController(context: context, state: signal)
++}
+diff --git a/submodules/SettingsUI/Sources/AyuToolsController.swift b/submodules/SettingsUI/Sources/AyuToolsController.swift
+new file mode 100644
+index 00000000..966f158f
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuToolsController.swift
+@@ -0,0 +1,132 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++// Settings → AyuGram → Tools: VirusTotal, AI shortening, voice changer, icon packs, traffic masking.
++
++private func ayuToolsSignal() -> Signal<Void, NoError> {
++    return Signal { subscriber in
++        subscriber.putNext(Void())
++        let observer = NotificationCenter.default.addObserver(forName: AyuTools.didChangeNotification, object: nil, queue: .main, using: { _ in
++            subscriber.putNext(Void())
++        })
++        return ActionDisposable {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++}
++
++private enum AyuToolsRow: Int32 {
++    case virusTotalHeader = 0
++    case virusTotalKey = 1
++    case virusTotalInfo = 2
++    case aiHeader = 10
++    case aiEndpoint = 11
++    case aiModel = 12
++    case aiKey = 13
++    case aiInfo = 14
++    case voiceHeader = 20
++    case voice = 21
++    case voiceInfo = 22
++    case iconsHeader = 30
++    case iconPack = 31
++    case iconsInfo = 32
++    case trafficHeader = 40
++    case traffic = 41
++    case trafficInfo = 42
++}
++
++func ayuToolsController(context: AccountContext) -> ViewController {
++    var push: ((ViewController) -> Void)?
++
++    func ask(_ title: String, _ message: String, _ current: String, secure: Bool, _ save: @escaping (String) -> Void) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
++        alert.addTextField { field in
++            field.text = current
++            field.isSecureTextEntry = secure
++            field.autocapitalizationType = .none
++            field.autocorrectionType = .no
++        }
++        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++            save(alert?.textFields?.first?.text ?? "")
++        }))
++        context.sharedContext.applicationBindings.presentNativeController(alert)
++    }
++
++    func choose<T>(_ title: String, _ items: [T], _ current: T, _ name: @escaping (T) -> String, _ isSame: @escaping (T, T) -> Bool, _ pick: @escaping (T) -> Void) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let sheet = UIAlertController(title: title, message: nil, preferredStyle: .actionSheet)
++        for item in items {
++            sheet.addAction(UIAlertAction(title: name(item) + (isSame(item, current) ? " ✓" : ""), style: .default, handler: { _ in pick(item) }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(sheet)
++    }
++
++    let arguments = AyuSectionedArguments(open: { id in
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        switch AyuToolsRow(rawValue: id) {
++        case .virusTotalKey?:
++            ask("VirusTotal", ru ? "Ключ API с virustotal.com (бесплатный аккаунт → API key)." : "Your API key from virustotal.com (free account → API key).", AyuTools.virusTotalKey, secure: true, { AyuTools.virusTotalKey = $0 })
++        case .aiEndpoint?:
++            ask(ru ? "Адрес ИИ" : "AI address", ru ? "Любой OpenAI-совместимый адрес chat/completions (https://)." : "Any OpenAI-compatible chat/completions address (https://).", AyuTools.aiEndpoint, secure: false, { AyuTools.aiEndpoint = $0 })
++        case .aiModel?:
++            ask(ru ? "Модель" : "Model", ru ? "Например gpt-4o-mini." : "For example gpt-4o-mini.", AyuTools.aiModel, secure: false, { AyuTools.aiModel = $0 })
++        case .aiKey?:
++            ask(ru ? "Ключ ИИ" : "AI key", ru ? "Ключ вашего провайдера ИИ. Текст сообщения уходит провайдеру только при нажатии «Сократить (ИИ)»." : "Your AI provider key. A message's text goes to the provider only when you tap Shorten (AI).", AyuTools.aiKey, secure: true, { AyuTools.aiKey = $0 })
++        case .voice?:
++            choose(ru ? "Голос" : "Voice", AyuTools.Voice.allCases, AyuTools.voice, { $0.title(ru) }, { $0 == $1 }, { AyuTools.voice = $0 })
++        case .iconPack?:
++            choose(ru ? "Иконки" : "Icons", AyuTools.IconPack.allCases, AyuTools.iconPack, { $0.title(ru) }, { $0 == $1 }, { AyuTools.iconPack = $0 })
++        case .traffic?:
++            push?(context.sharedContext.makeProxySettingsController(context: context))
++        default:
++            break
++        }
++    }, toggle: { _, _ in })
++
++    let signal = combineLatest(context.sharedContext.presentationData, ayuToolsSignal())
++    |> deliverOnMainQueue
++    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        func symbol(_ name: String, _ color: UInt32) -> UIImage? {
++            return AyuSettingsIcons.symbol(name, color: UIColor(rgb: color))
++        }
++        let isSet = { (value: String) -> String in value.isEmpty ? (ru ? "не задан" : "not set") : (ru ? "задан" : "set") }
++        let entries: [AyuSectionedEntry] = [
++            .header(1, AyuToolsRow.virusTotalHeader.rawValue, "VIRUSTOTAL"),
++            .link(1, AyuToolsRow.virusTotalKey.rawValue, symbol("checkmark.shield.fill", 0x34C759), ru ? "Ключ API" : "API key", isSet(AyuTools.virusTotalKey)),
++            .info(1, AyuToolsRow.virusTotalInfo.rawValue, ru ? "В меню сообщения появятся «Проверить ссылку» и «Проверить файл». Файлы проверяются по SHA-256 и никуда не загружаются." : "The message menu gets Check link and Check file. Files are checked by SHA-256 and never uploaded."),
++            .header(2, AyuToolsRow.aiHeader.rawValue, ru ? "СОКРАЩЕНИЕ СООБЩЕНИЙ (ИИ)" : "SHORTEN MESSAGES (AI)"),
++            .link(2, AyuToolsRow.aiEndpoint.rawValue, symbol("network", 0x007AFF), ru ? "Адрес" : "Address", URL(string: AyuTools.aiEndpoint)?.host ?? ""),
++            .link(2, AyuToolsRow.aiModel.rawValue, symbol("cpu.fill", 0x5856D6), ru ? "Модель" : "Model", AyuTools.aiModel),
++            .link(2, AyuToolsRow.aiKey.rawValue, symbol("key.fill", 0xFF9500), ru ? "Ключ" : "Key", isSet(AyuTools.aiKey)),
++            .info(2, AyuToolsRow.aiInfo.rawValue, ru ? "«Сократить (ИИ)» появится в меню длинных сообщений. Работает с OpenAI и любым совместимым сервисом по вашему ключу." : "Shorten (AI) appears in the menu of long messages. Works with OpenAI and any compatible service with your key."),
++            .header(3, AyuToolsRow.voiceHeader.rawValue, ru ? "ИЗМЕНЕНИЕ ГОЛОСА" : "VOICE CHANGER"),
++            .link(3, AyuToolsRow.voice.rawValue, symbol("waveform.badge.mic", 0xFF2D55), ru ? "Голос в голосовых" : "Voice messages", AyuTools.voice.title(ru)),
++            .info(3, AyuToolsRow.voiceInfo.rawValue, ru ? "Голос меняется прямо при записи голосового сообщения." : "The voice changes while a voice message is recorded."),
++            .header(4, AyuToolsRow.iconsHeader.rawValue, ru ? "ИКОНКИ" : "ICONS"),
++            .link(4, AyuToolsRow.iconPack.rawValue, symbol("square.grid.2x2.fill", 0x32ADE6), ru ? "Набор иконок вкладок" : "Tab icon pack", AyuTools.iconPack.title(ru)),
++            .info(4, AyuToolsRow.iconsInfo.rawValue, ru ? "Иконки нижней панели меняются после перезапуска." : "Tab bar icons change after a relaunch."),
++            .header(5, AyuToolsRow.trafficHeader.rawValue, ru ? "ТРАФИК" : "TRAFFIC"),
++            .link(5, AyuToolsRow.traffic.rawValue, symbol("network.badge.shield.half.filled", 0x8E8E93), ru ? "Маскировка трафика" : "Traffic masking", ""),
++            .info(5, AyuToolsRow.trafficInfo.rawValue, ru ? "Трафик Telegram маскируется через прокси: MTProxy с fake-TLS (ссылка с секретом ee…) выглядит как обычный HTTPS, а WEB-прокси работает через HTTPS/WebSocket. Нужен адрес прокси-сервера." : "Telegram traffic is masked through a proxy: MTProxy with fake-TLS (a secret starting with ee…) looks like plain HTTPS, and a WEB proxy runs over HTTPS/WebSocket. You need a proxy server address.")
++        ]
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Инструменты" : "Tools"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    push = { [weak controller] c in
++        (controller?.navigationController as? NavigationController)?.pushViewController(c)
++    }
++    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuWhiteGramController.swift b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
 new file mode 100644
@@ -46196,9 +46496,21 @@ index a16188b5..b587d3c1 100644
                      let attributedPrefix = NSMutableAttributedString(string: "  ")
                      attributedPrefix.addAttribute(ChatTextInputAttributes.customEmoji, value: ChatTextInputTextCustomEmojiAttribute(interactivelySelectedFromPackId: nil, fileId: verification.iconFileId, file: nil), range: NSMakeRange(0, 1))
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-index 84b887af..96e770ec 100644
+index 84b887af..92d346da 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
+@@ -6851,9 +6851,9 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
+             if useSpecialTabBarIcons() {
+                 icon = UIImage(bundleImageName: "Chat List/Tabs/Holiday/IconSettings")
+             } else {
+-                icon = UIImage(bundleImageName: "Chat List/Tabs/IconSettings")
++                icon = AyuTools.tabIcon("settings") ?? UIImage(bundleImageName: "Chat List/Tabs/IconSettings")
+             }
+-            
++
+             let tabBarItem: Signal<(String, UIImage?, UIImage?, String?, Bool, Bool), NoError> = combineLatest(queue: .mainQueue(), self.context.sharedContext.presentationData, notificationsAuthorizationStatus.get(), notificationsWarningSuppressed.get(), context.engine.notices.getServerProvidedSuggestions(), accountTabBarAvatar, accountTabBarAvatarBadge)
+             |> map { presentationData, notificationsAuthorizationStatus, notificationsWarningSuppressed, suggestions, accountTabBarAvatar, accountTabBarAvatarBadge -> (String, UIImage?, UIImage?, String?, Bool, Bool) in
+                 let notificationsWarning = shouldDisplayNotificationsPermissionWarning(status: notificationsAuthorizationStatus, suppressed:  notificationsWarningSuppressed)
 @@ -7073,6 +7073,7 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
      }
      
@@ -49001,6 +49313,178 @@ index 1a77683e..79f14646 100644
 +        }
 +    }
  }
+diff --git a/submodules/TelegramUI/Sources/AyuOnlineTools.swift b/submodules/TelegramUI/Sources/AyuOnlineTools.swift
+new file mode 100644
+index 00000000..124f460f
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuOnlineTools.swift
+@@ -0,0 +1,166 @@
++import Foundation
++import UIKit
++import CryptoKit
++import Display
++import TelegramCore
++import AccountContext
++
++/// VirusTotal checks and AI shortening from the message menu. Each runs only when the user taps
++/// it, with the user's own API key; files are checked by their SHA-256 and never uploaded.
++enum AyuOnlineTools {
++    private static let session: URLSession = {
++        let configuration = URLSessionConfiguration.ephemeral
++        configuration.timeoutIntervalForRequest = 30.0
++        return URLSession(configuration: configuration)
++    }()
++
++    static func present(_ context: AccountContext, title: String, message: String) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: ru ? "Скопировать" : "Copy", style: .default, handler: { _ in
++            UIPasteboard.general.string = message
++        }))
++        alert.addAction(UIAlertAction(title: "OK", style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(alert)
++    }
++
++    private static func missingKey(_ context: AccountContext, _ what: String) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        present(context, title: what, message: ru ? "Добавьте свой ключ API: AyuGram → Инструменты." : "Add your API key: AyuGram → Tools.")
++    }
++
++    // MARK: VirusTotal
++
++    static func firstUrl(in text: String) -> String? {
++        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
++        let range = NSRange(text.startIndex..., in: text)
++        return detector.firstMatch(in: text, options: [], range: range)?.url?.absoluteString
++    }
++
++    private static func stats(_ data: Data?) -> [String: Int]? {
++        guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let object = json["data"] as? [String: Any], let attributes = object["attributes"] as? [String: Any],
++              let stats = attributes["last_analysis_stats"] as? [String: Any] else { return nil }
++        var result: [String: Int] = [:]
++        for (key, value) in stats {
++            if let number = value as? NSNumber { result[key] = number.intValue }
++        }
++        return result
++    }
++
++    private static func verdict(_ stats: [String: Int], ru: Bool) -> String {
++        let malicious = stats["malicious"] ?? 0
++        let suspicious = stats["suspicious"] ?? 0
++        let harmless = stats["harmless"] ?? 0
++        let undetected = stats["undetected"] ?? 0
++        let head: String
++        if malicious > 0 {
++            head = ru ? "⛔️ Опасно" : "⛔️ Dangerous"
++        } else if suspicious > 0 {
++            head = ru ? "⚠️ Подозрительно" : "⚠️ Suspicious"
++        } else {
++            head = ru ? "✅ Угроз не найдено" : "✅ No threats found"
++        }
++        return head + "\n\n" + (ru ? "Вредоносно: \(malicious)\nПодозрительно: \(suspicious)\nБезопасно: \(harmless)\nНе определено: \(undetected)" : "Malicious: \(malicious)\nSuspicious: \(suspicious)\nHarmless: \(harmless)\nUndetected: \(undetected)")
++    }
++
++    static func checkUrl(context: AccountContext, url: String) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let key = AyuTools.virusTotalKey
++        guard !key.isEmpty else { return missingKey(context, "VirusTotal") }
++        let id = Data(url.utf8).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
++        guard let reportUrl = URL(string: "https://www.virustotal.com/api/v3/urls/" + id) else { return }
++        var request = URLRequest(url: reportUrl)
++        request.setValue(key, forHTTPHeaderField: "x-apikey")
++        session.dataTask(with: request, completionHandler: { data, response, _ in
++            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
++            if status == 200, let stats = stats(data) {
++                DispatchQueue.main.async { present(context, title: "VirusTotal", message: url + "\n\n" + verdict(stats, ru: ru)) }
++                return
++            }
++            if status == 404, let submitUrl = URL(string: "https://www.virustotal.com/api/v3/urls") {
++                // Not analysed yet: submit it, the report appears in about a minute.
++                var submit = URLRequest(url: submitUrl)
++                submit.httpMethod = "POST"
++                submit.setValue(key, forHTTPHeaderField: "x-apikey")
++                submit.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
++                var allowed = CharacterSet.alphanumerics
++                allowed.insert(charactersIn: "-._~")
++                submit.httpBody = ("url=" + (url.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")).data(using: .utf8)
++                session.dataTask(with: submit, completionHandler: { _, response, _ in
++                    let ok = (response as? HTTPURLResponse)?.statusCode == 200
++                    DispatchQueue.main.async {
++                        present(context, title: "VirusTotal", message: ok ? (ru ? "Ссылка отправлена на проверку. Повторите через минуту." : "The link was sent for analysis. Check again in a minute.") : (ru ? "VirusTotal не принял ссылку." : "VirusTotal did not accept the link."))
++                    }
++                }).resume()
++                return
++            }
++            DispatchQueue.main.async {
++                present(context, title: "VirusTotal", message: status == 401 ? (ru ? "Неверный ключ API." : "Invalid API key.") : (ru ? "Не удалось проверить (код \(status))." : "The check failed (code \(status))."))
++            }
++        }).resume()
++    }
++
++    static func checkFile(context: AccountContext, path: String, name: String) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let key = AyuTools.virusTotalKey
++        guard !key.isEmpty else { return missingKey(context, "VirusTotal") }
++        DispatchQueue.global(qos: .userInitiated).async {
++            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else { return }
++            let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
++            guard let url = URL(string: "https://www.virustotal.com/api/v3/files/" + hash) else { return }
++            var request = URLRequest(url: url)
++            request.setValue(key, forHTTPHeaderField: "x-apikey")
++            session.dataTask(with: request, completionHandler: { data, response, _ in
++                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
++                let message: String
++                if status == 200, let stats = stats(data) {
++                    message = name + "\n\n" + verdict(stats, ru: ru)
++                } else if status == 404 {
++                    message = name + "\n\n" + (ru ? "VirusTotal ещё не видел этот файл. AyuGram не загружает ваши файлы — проверить можно на virustotal.com вручную." : "VirusTotal has not seen this file. AyuGram never uploads your files; you can check it on virustotal.com yourself.")
++                } else if status == 401 {
++                    message = ru ? "Неверный ключ API." : "Invalid API key."
++                } else {
++                    message = ru ? "Не удалось проверить (код \(status))." : "The check failed (code \(status))."
++                }
++                DispatchQueue.main.async { present(context, title: "VirusTotal", message: message) }
++            }).resume()
++        }
++    }
++
++    // MARK: AI
++
++    static func shorten(context: AccountContext, text: String) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let key = AyuTools.aiKey
++        guard !key.isEmpty else { return missingKey(context, ru ? "Сокращение" : "Shorten") }
++        guard let url = URL(string: AyuTools.aiEndpoint), url.scheme?.lowercased() == "https" else {
++            return present(context, title: ru ? "Сокращение" : "Shorten", message: ru ? "Адрес ИИ должен начинаться с https://" : "The AI address must start with https://")
++        }
++        var request = URLRequest(url: url)
++        request.httpMethod = "POST"
++        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
++        request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
++        let body: [String: Any] = [
++            "model": AyuTools.aiModel,
++            "max_tokens": 300,
++            "messages": [
++                ["role": "system", "content": "Shorten the user's message to one to three sentences. Keep its language, names and numbers. Reply with the shortened text only."],
++                ["role": "user", "content": String(text.prefix(12000))]
++            ]
++        ]
++        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
++        session.dataTask(with: request, completionHandler: { data, response, _ in
++            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
++            var result: String?
++            if status == 200, let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++               let choices = json["choices"] as? [[String: Any]], let message = choices.first?["message"] as? [String: Any],
++               let content = message["content"] as? String {
++                result = content.trimmingCharacters(in: .whitespacesAndNewlines)
++            }
++            DispatchQueue.main.async {
++                present(context, title: ru ? "Кратко" : "Summary", message: result ?? (status == 401 ? (ru ? "Неверный ключ API." : "Invalid API key.") : (ru ? "ИИ не ответил (код \(status))." : "The AI did not answer (code \(status)).")))
++            }
++        }).resume()
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/AyuPlayerDebugOverlay.swift b/submodules/TelegramUI/Sources/AyuPlayerDebugOverlay.swift
 new file mode 100644
 index 00000000..8e070628
@@ -49714,6 +50198,88 @@ index 00000000..2ca4e2f8
 +        return generator.signature()
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/AyuVoiceChanger.swift b/submodules/TelegramUI/Sources/AyuVoiceChanger.swift
+new file mode 100644
+index 00000000..536bf25c
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuVoiceChanger.swift
+@@ -0,0 +1,76 @@
++import Foundation
++import Display
++
++/// AyuGram Voice Changer: processes the 16 kHz mono samples of a voice message before they are
++/// encoded. Pitch moves with two crossfaded read heads on a delay line, so the duration stays the
++/// same; "Robot" is a ring modulator.
++final class AyuVoiceChanger {
++    private static let bufferSize = 4096
++    private static let window = 960.0
++    private static let sampleRate = 16000.0
++
++    private let pitch: Double
++    private let robot: Bool
++    private var buffer = [Float](repeating: 0.0, count: AyuVoiceChanger.bufferSize)
++    private var writeIndex = 0
++    private var phase = 0.0
++    private var robotPhase = 0.0
++
++    /// nil when the voice changer is off.
++    static func makeIfEnabled() -> AyuVoiceChanger? {
++        let voice = AyuTools.voice
++        if voice == .off {
++            return nil
++        }
++        return AyuVoiceChanger(pitch: voice.pitch, robot: voice == .robot)
++    }
++
++    private init(pitch: Double, robot: Bool) {
++        self.pitch = pitch
++        self.robot = robot
++    }
++
++    private func read(delay: Double) -> Float {
++        let size = AyuVoiceChanger.bufferSize
++        var position = Double(self.writeIndex) - delay
++        while position < 0.0 {
++            position += Double(size)
++        }
++        let index = Int(position) % size
++        let next = (index + 1) % size
++        let fraction = Float(position - Double(Int(position)))
++        return self.buffer[index] * (1.0 - fraction) + self.buffer[next] * fraction
++    }
++
++    func process(_ samples: UnsafeMutablePointer<Int16>, count: Int) {
++        let size = AyuVoiceChanger.bufferSize
++        let window = AyuVoiceChanger.window
++        for i in 0 ..< count {
++            let input = Float(samples[i]) / 32768.0
++            self.buffer[self.writeIndex] = input
++            let output: Float
++            if self.robot {
++                output = input * Float(sin(self.robotPhase)) * 1.6
++                self.robotPhase += 2.0 * Double.pi * 70.0 / AyuVoiceChanger.sampleRate
++                if self.robotPhase > 2.0 * Double.pi {
++                    self.robotPhase -= 2.0 * Double.pi
++                }
++            } else {
++                let firstPhase = self.phase
++                var secondPhase = self.phase + 0.5
++                if secondPhase >= 1.0 {
++                    secondPhase -= 1.0
++                }
++                let first = self.read(delay: firstPhase * window + 1.0)
++                let second = self.read(delay: secondPhase * window + 1.0)
++                let firstGain = Float(sin(Double.pi * firstPhase) * sin(Double.pi * firstPhase))
++                let secondGain = Float(sin(Double.pi * secondPhase) * sin(Double.pi * secondPhase))
++                output = first * firstGain + second * secondGain
++                self.phase += (1.0 - self.pitch) / window
++                self.phase -= floor(self.phase)
++            }
++            self.writeIndex = (self.writeIndex + 1) % size
++            samples[i] = Int16(max(-32768.0, min(32767.0, output * 32767.0)))
++        }
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
 index 34bbb294..be09c205 100644
 --- a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
@@ -49803,13 +50369,54 @@ index 002e1ee8..c91eeb49 100644
                          shouldDismiss = true
                      }
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index a84cdf21..943b6306 100644
+index a84cdf21..a98e1291 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-@@ -2515,6 +2515,20 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2507,7 +2507,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             }
+             // Plugins belong to exteraGram: this opens the enabled plugins' actions for this chat.
+             if context.account.network.ayuGhostMode.current.plugins.installed.contains(where: { $0.enabled }), chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, message.id.peerId.namespace != Namespaces.Peer.SecretChat, EngineMessage(message).adAttribute == nil {
+-                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "exteraGram · Плагины" : "exteraGram · Plugins", icon: { theme in
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Плагины" : "AyuGram · Plugins", icon: { theme in
+                     return UIImage(systemName: "puzzlepiece.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+                 }, action: { controller, _ in
+                     controller?.dismiss(completion: {
+@@ -2515,6 +2515,52 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
                      })
                  })))
              }
++            // AyuGram tools: VirusTotal for a link or a downloaded file, AI shortening of long text.
++            if message.id.peerId.namespace != Namespaces.Peer.SecretChat, !chatPresentationInterfaceState.copyProtectionEnabled {
++                if let link = AyuOnlineTools.firstUrl(in: message.text) {
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "VirusTotal · Проверить ссылку" : "VirusTotal · Check link", icon: { theme in
++                        return UIImage(systemName: "checkmark.shield.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            AyuOnlineTools.checkUrl(context: context, url: link)
++                        })
++                    })))
++                }
++                if let file = message.media.first(where: { $0 is TelegramMediaFile }) as? TelegramMediaFile, let path = context.engine.resources.completedResourcePath(id: EngineMediaResource.Id(file.resource.id)) {
++                    let name = file.fileName ?? (ru ? "Файл" : "File")
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "VirusTotal · Проверить файл" : "VirusTotal · Check file", icon: { theme in
++                        return UIImage(systemName: "doc.badge.gearshape.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            AyuOnlineTools.checkFile(context: context, path: path, name: name)
++                        })
++                    })))
++                }
++                if message.text.count >= 200 {
++                    let text = message.text
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Сократить (ИИ)" : "Shorten (AI)", icon: { theme in
++                        return UIImage(systemName: "text.badge.minus")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            AyuOnlineTools.shorten(context: context, text: text)
++                        })
++                    })))
++                }
++            }
 +            // Code plugins' own items (`ayu.ui.menu.add`); a tap sends `menuAction` to that plugin
 +            // with this message's text, never to the others.
 +            if message.id.peerId.namespace != Namespaces.Peer.SecretChat, !chatPresentationInterfaceState.copyProtectionEnabled {
@@ -49867,6 +50474,27 @@ index 850d1c92..457985c5 100644
      if chatPresentationInterfaceState.peerIsBlocked {
          return nil
      }
+diff --git a/submodules/TelegramUI/Sources/ManagedAudioRecorder.swift b/submodules/TelegramUI/Sources/ManagedAudioRecorder.swift
+index 11a25bde..df6f639d 100644
+--- a/submodules/TelegramUI/Sources/ManagedAudioRecorder.swift
++++ b/submodules/TelegramUI/Sources/ManagedAudioRecorder.swift
+@@ -172,6 +172,8 @@ final class ManagedAudioRecorderContext {
+     private var peakCompressionFactor: Int = 1
+     
+     private var micLevelPeak: Int16 = 0
++    /// AyuGram Voice Changer, chosen when the recording starts.
++    private let ayuVoiceChanger = AyuVoiceChanger.makeIfEnabled()
+     private var micLevelPeakCount: Int = 0
+     private var audioLevelPeakUpdate: Double = 0.0
+     
+@@ -624,6 +626,7 @@ final class ManagedAudioRecorderContext {
+                 self.audioBuffer.append(currentEncoderPacket.assumingMemoryBound(to: UInt8.self), count: currentEncoderPacketSize)
+                 break
+             } else {
++                self.ayuVoiceChanger?.process(currentEncoderPacket.assumingMemoryBound(to: Int16.self), count: currentEncoderPacketSize / 2)
+                 self.processWaveformPreview(samples: currentEncoderPacket.assumingMemoryBound(to: Int16.self), count: currentEncoderPacketSize / 2)
+                 
+                 self.oggWriter.writeFrame(currentEncoderPacket.assumingMemoryBound(to: UInt8.self), frameByteCount: UInt(currentEncoderPacketSize))
 diff --git a/submodules/TelegramUI/Sources/OpenChatMessage.swift b/submodules/TelegramUI/Sources/OpenChatMessage.swift
 index 32f76b24..bc64daf9 100644
 --- a/submodules/TelegramUI/Sources/OpenChatMessage.swift

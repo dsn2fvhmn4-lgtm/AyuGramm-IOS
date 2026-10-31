@@ -485,10 +485,10 @@ index 00000000..f84f8c1c
 +}
 diff --git a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
 new file mode 100644
-index 00000000..6a1da611
+index 00000000..3b8b45df
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,305 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -527,6 +527,8 @@ index 00000000..6a1da611
 +    public var presentAlert: ((_ title: String, _ message: String, _ buttons: [(id: String, title: String, destructive: Bool)], _ completion: @escaping (String?) -> Void) -> Void)?
 +    /// Installed by TelegramUI: an action sheet of buttons.
 +    public var presentSheet: ((_ title: String, _ message: String?, _ items: [(id: String, title: String)], _ completion: @escaping (String?) -> Void) -> Void)?
++    /// Installed by TelegramUI: Telegram's gift catalog of the active account, as plain values.
++    public var loadGiftsCatalog: ((_ completion: @escaping ([[String: Any]]) -> Void) -> Void)?
 +
 +    private let lock = NSLock()
 +    private var menu: [MenuItem] = []
@@ -742,6 +744,19 @@ index 00000000..6a1da611
 +        case "ui.badge.remove":
 +            guard let peer = peerId() else { return nil }
 +            AyuPluginBadges.set(nil, peerId: peer, owner: pluginId)
++            return ["ok": true]
++        // Telegram's gift catalog (read-only); the list arrives as the "uiResult" event { requestId, choice }.
++        case "ui.gifts.catalog.list":
++            let requestId = string("requestId", 64)
++            DispatchQueue.main.async {
++                guard let load = AyuPluginUI.shared.loadGiftsCatalog else {
++                    AyuPluginUI.send("uiResult", to: pluginId, ["requestId": requestId, "choice": [] as [Any]])
++                    return
++                }
++                load { gifts in
++                    AyuPluginUI.send("uiResult", to: pluginId, ["requestId": requestId, "choice": gifts])
++                }
++            }
 +            return ["ok": true]
 +        case "registry.isVerified":
 +            guard let peer = peerId() else { return ["verified": false] }
@@ -979,10 +994,10 @@ index 00000000..19ba2967
 +}
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 new file mode 100644
-index 00000000..35c2222a
+index 00000000..54564e00
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-@@ -0,0 +1,820 @@
+@@ -0,0 +1,832 @@
 +import Foundation
 +import JavaScriptCore
 +import TelegramCore
@@ -1747,6 +1762,18 @@ index 00000000..35c2222a
 +                badge: Object.freeze({
 +                    add: (options) => host.call('ui.badge.add', options || {}),
 +                    remove: (options) => host.call('ui.badge.remove', options || {})
++                }),
++                // Telegram's gift catalog: [{ giftId, title, stars, fileId, limited, remains, total, soldOut }].
++                gifts: Object.freeze({
++                    catalog: Object.freeze({
++                        list: (fn) => new Promise((resolve) => {
++                            request('ui.gifts.catalog.list', {}, (value) => {
++                                const list = Array.isArray(value) ? value : [];
++                                if (typeof fn === 'function') fn(list);
++                                resolve(list);
++                            });
++                        })
++                    })
 +                })
 +            }),
 +            registry: Object.freeze({
@@ -2196,10 +2223,10 @@ index 00000000..b321163e
 +#endif
 diff --git a/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
 new file mode 100644
-index 00000000..de7cab35
+index 00000000..b3aa9f57
 --- /dev/null
 +++ b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
-@@ -0,0 +1,432 @@
+@@ -0,0 +1,438 @@
 +#include <AyuPluginEngines/AyuPluginEngines.h>
 +
 +#include <stdlib.h>
@@ -2307,7 +2334,13 @@ index 00000000..de7cab35
 +    "                args[key] = kwargs[key]\n"
 +    "            return _ayu_call(prefix + '.' + name, args)\n"
 +    "        return method\n"
++    "class _AyuGiftsCatalog:\n"
++    "    def list(self, fn):\n"
++    "        return _ayu_request('ui.gifts.catalog.list', {}, fn)\n"
++    "class _AyuGifts:\n"
++    "    catalog = _AyuGiftsCatalog()\n"
 +    "class _AyuUI:\n"
++    "    gifts = _AyuGifts()\n"
 +    "    menu = _AyuSection('ui.menu', ['add', 'remove'])\n"
 +    "    profile = _AyuSection('ui.profile', ['addBlock', 'removeBlock', 'addButton', 'removeButton'])\n"
 +    "    overlay = _AyuSection('ui.overlay', ['create', 'update', 'addText', 'remove'])\n"
@@ -38597,12 +38630,113 @@ index de8b2b31..b422dfca 100644
                      }
                      if !strongSelf.customAnimationInProgress {
                          strongSelf.setRevealOptionsOpened(item.hasActiveRevealControls, animated: true)
+diff --git a/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift b/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
+index 3c29bc97..ea858a4a 100644
+--- a/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
++++ b/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
+@@ -561,6 +561,71 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+     private var fixedMaskMode: Bool?
+     private var tearBands: [BubbleTearBand] = []
+ 
++    // AyuGram glass bubbles (AyuGlass): an effect under the bubble fill, clipped to the bubble
++    // by the backdrop's own shape mask, plus an optional outline.
++    private var ayuEffectView: UIVisualEffectView?
++    private var ayuOverlayView: UIView?
++    private var ayuForcesMask = false
++
++    private func ayuInsertBackgroundContent(_ backgroundContent: WallpaperBubbleBackgroundNode) {
++        self.insertSubnode(backgroundContent, at: 0)
++        if self.ayuEffectView != nil {
++            backgroundContent.alpha = AyuGlass.bubbleFillAlpha
++            self.view.bringSubviewToFront(backgroundContent.view)
++        } else {
++            backgroundContent.alpha = 1.0
++        }
++    }
++
++    /// Reads AyuGlass and installs or removes the bubble effect. Call before `setType`.
++    public func ayuUpdateGlass(cornerRadius: CGFloat) {
++        let effect = AyuGlass.makeBubbleEffect()
++        if let effect {
++            let effectView: UIVisualEffectView
++            if let current = self.ayuEffectView {
++                effectView = current
++                effectView.effect = effect
++            } else {
++                effectView = UIVisualEffectView(effect: effect)
++                effectView.isUserInteractionEnabled = false
++                effectView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++                effectView.frame = self.bounds
++                self.ayuEffectView = effectView
++                self.view.insertSubview(effectView, at: 0)
++            }
++            if let color = AyuGlass.bubbleOverlayColor {
++                let overlay = self.ayuOverlayView ?? UIView()
++                overlay.isUserInteractionEnabled = false
++                overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++                overlay.frame = self.bounds
++                overlay.backgroundColor = color
++                if overlay.superview == nil {
++                    self.view.insertSubview(overlay, aboveSubview: effectView)
++                }
++                self.ayuOverlayView = overlay
++            } else {
++                self.ayuOverlayView?.removeFromSuperview()
++                self.ayuOverlayView = nil
++            }
++        } else {
++            self.ayuEffectView?.removeFromSuperview()
++            self.ayuEffectView = nil
++            self.ayuOverlayView?.removeFromSuperview()
++            self.ayuOverlayView = nil
++        }
++        if AyuGlass.outline {
++            self.layer.borderWidth = 1.0
++            self.layer.borderColor = UIColor(white: 1.0, alpha: 0.35).cgColor
++            self.layer.cornerRadius = cornerRadius
++        } else if self.layer.borderWidth != 0.0 {
++            self.layer.borderWidth = 0.0
++            self.layer.cornerRadius = 0.0
++        }
++        self.ayuForcesMask = effect != nil || AyuGlass.outline
++        // The wallpaper-coloured bubble content fades like the regular fill.
++        self.backgroundContent?.alpha = effect != nil ? AyuGlass.bubbleFillAlpha : 1.0
++    }
++
+     
+     public var overrideMask: Bool = false {
+         didSet {
+@@ -620,7 +685,7 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+     }
+         
+     public func setType(type: ChatMessageBackgroundType, theme: ChatPresentationThemeData, essentialGraphics: PrincipalThemeEssentialGraphics, maskMode inputMaskMode: Bool, backgroundNode: WallpaperBackgroundNode?) {
+-        let maskMode = self.fixedMaskMode ?? inputMaskMode
++        let maskMode = self.fixedMaskMode ?? (inputMaskMode || self.ayuForcesMask)
+ 
+         if self.currentType != type || self.theme != theme || self.currentMaskMode != maskMode || self.essentialGraphics !== essentialGraphics || self.backgroundNode !== backgroundNode {
+             let typeUpdated = self.currentType != type || self.theme != theme || self.currentMaskMode != maskMode || self.backgroundNode !== backgroundNode
+@@ -668,13 +733,13 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+                     if let backgroundContent = backgroundNode?.makeBubbleBackground(for: .incoming) {
+                         backgroundContent.frame = self.bounds
+                         self.backgroundContent = backgroundContent
+-                        self.insertSubnode(backgroundContent, at: 0)
++                        self.ayuInsertBackgroundContent(backgroundContent)
+                     }
+                 case .outgoing:
+                     if let backgroundContent = backgroundNode?.makeBubbleBackground(for: .outgoing) {
+                         backgroundContent.frame = self.bounds
+                         self.backgroundContent = backgroundContent
+-                        self.insertSubnode(backgroundContent, at: 0)
++                        self.ayuInsertBackgroundContent(backgroundContent)
+                     }
+                 }
+             }
 diff --git a/submodules/Display/Source/AyuAppearancePlus.swift b/submodules/Display/Source/AyuAppearancePlus.swift
 new file mode 100644
-index 00000000..2137ae4d
+index 00000000..037ede6e
 --- /dev/null
 +++ b/submodules/Display/Source/AyuAppearancePlus.swift
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,120 @@
 +import Foundation
 +import UIKitRuntimeUtils
 +
@@ -38626,6 +38760,7 @@ index 00000000..2137ae4d
 +    private static let classicDesignKey = "ayu.appearance.classicDesign"
 +    private static let slowMotionKey = "ayu.appearance.slowMotion"
 +    private static let noGlassKey = "ayu.appearance.noGlass"
++    private static let blurGlassKey = "ayu.appearance.blurGlass"
 +
 +    /// Slow-Motion choices for every animation in the client.
 +    public static let slowMotionSteps: [Double] = [1.0, 2.0, 3.0, 5.0, 10.0]
@@ -38651,6 +38786,13 @@ index 00000000..2137ae4d
 +    public static let launchGlassStyle: GlassStyle = AyuAppearancePlus.glassStyle
 +    public static let launchClassicDesign: Bool = AyuAppearancePlus.classicDesign
 +    public static let launchNoGlass: Bool = AyuAppearancePlus.noGlass
++    public static let launchBlurGlass: Bool = AyuAppearancePlus.blurGlass
++
++    /// Glass panels and buttons become a plain blur. Not combined with "No glass".
++    public static var blurGlass: Bool {
++        get { return UserDefaults.standard.bool(forKey: blurGlassKey) }
++        set { set(newValue, forKey: blurGlassKey) }
++    }
 +
 +    /// Old-Telegram look without any glass: every glass surface is drawn flat. Off by default.
 +    public static var noGlass: Bool {
@@ -38686,18 +38828,19 @@ index 00000000..2137ae4d
 +
 +    /// True when Telegram's own glass renderer must replace the system one this launch.
 +    public static var usesTelegramGlassThisLaunch: Bool {
-+        return AyuAppearancePlus.launchGlassStyle == .telegram || AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.launchNoGlass
++        return AyuAppearancePlus.launchGlassStyle == .telegram || AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.launchNoGlass || AyuAppearancePlus.launchBlurGlass
 +    }
 +
 +    public static var needsRelaunch: Bool {
-+        return AyuAppearancePlus.glassStyle != AyuAppearancePlus.launchGlassStyle || AyuAppearancePlus.classicDesign != AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.noGlass != AyuAppearancePlus.launchNoGlass
++        return AyuAppearancePlus.glassStyle != AyuAppearancePlus.launchGlassStyle || AyuAppearancePlus.classicDesign != AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.noGlass != AyuAppearancePlus.launchNoGlass || AyuAppearancePlus.blurGlass != AyuAppearancePlus.launchBlurGlass
 +    }
 +
 +    public static func resetAll() {
 +        _ = AyuAppearancePlus.launchGlassStyle
 +        _ = AyuAppearancePlus.launchClassicDesign
 +        _ = AyuAppearancePlus.launchNoGlass
-+        for key in [hideContactsKey, hideCallsKey, hideTabTitlesKey, glassStyleKey, classicDesignKey, slowMotionKey, noGlassKey] {
++        _ = AyuAppearancePlus.launchBlurGlass
++        for key in [hideContactsKey, hideCallsKey, hideTabTitlesKey, glassStyleKey, classicDesignKey, slowMotionKey, noGlassKey, blurGlassKey] {
 +            UserDefaults.standard.removeObject(forKey: key)
 +        }
 +        ayuSetAnimationSlowMotionFactor(1.0)
@@ -38709,6 +38852,7 @@ index 00000000..2137ae4d
 +        _ = AyuAppearancePlus.launchGlassStyle
 +        _ = AyuAppearancePlus.launchClassicDesign
 +        _ = AyuAppearancePlus.launchNoGlass
++        _ = AyuAppearancePlus.launchBlurGlass
 +        UserDefaults.standard.set(value, forKey: key)
 +        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
@@ -38885,10 +39029,10 @@ index 00000000..3f28a738
 +}
 diff --git a/submodules/Display/Source/AyuExtras.swift b/submodules/Display/Source/AyuExtras.swift
 new file mode 100644
-index 00000000..7fe2e476
+index 00000000..2878b8b1
 --- /dev/null
 +++ b/submodules/Display/Source/AyuExtras.swift
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,139 @@
 +import Foundation
 +import UIKit
 +import ImageIO
@@ -38918,8 +39062,18 @@ index 00000000..7fe2e476
 +        case rememberPlaybackSpeed
 +        /// utm_*, fbclid, gclid, si and similar are removed from links you send.
 +        case cleanLinks
-+        /// The message history keeps no deleted or edited originals of the account's own messages.
-+        case skipOwnMessagesHistory
++        /// The message history keeps no deleted copies of the account's own messages.
++        case skipOwnDeleted
++        /// The message history keeps no originals of the account's own edited messages.
++        case skipOwnEdited
++        /// A ban keeps the chat open, with its title, photo and downloaded history.
++        case stayAfterBan
++        /// The other person's replies to your messages are faded.
++        case dimRepliesToMe
++        /// View-once photos and videos are saved to Photos when opened.
++        case saveViewOnce
++        /// Chat scrolling glides longer and settles softly.
++        case springScroll
 +        /// A voice or video message stops at its end instead of playing the next one.
 +        case noAutoplayNextVoice
 +    }
@@ -39115,6 +39269,115 @@ index 00000000..6326e07b
 +                completion(.failure(error))
 +            }
 +        })
++    }
++}
+diff --git a/submodules/Display/Source/AyuGlass.swift b/submodules/Display/Source/AyuGlass.swift
+new file mode 100644
+index 00000000..0b066c61
+--- /dev/null
++++ b/submodules/Display/Source/AyuGlass.swift
+@@ -0,0 +1,103 @@
++import Foundation
++import UIKit
++
++/// Glass looks for chat content (Settings → AyuGram → Glass): message bubbles, inline buttons,
++/// an outline around bubbles. Chats pick the values up when they are next laid out.
++public enum AyuGlass {
++    public enum BubbleStyle: String, CaseIterable {
++        case none
++        /// Liquid Glass on iOS 26+, a thin material before.
++        case glass
++        /// A vivid frosted surface with a cold tint.
++        case cold
++        /// The wallpaper is blurred behind the bubble; the bubble colour stays.
++        case blur
++
++        public func title(_ russian: Bool) -> String {
++            switch self {
++            case .none: return russian ? "Обычные" : "Regular"
++            case .glass: return russian ? "Стеклянные" : "Glass"
++            case .cold: return russian ? "Холодное стекло" : "Cold glass"
++            case .blur: return russian ? "Размытие фона" : "Background blur"
++            }
++        }
++    }
++
++    public static let didChangeNotification = Notification.Name("AyuGram.GlassChanged")
++
++    private static let key = "ayu.glass."
++
++    public static var bubbleStyle: BubbleStyle {
++        get { return BubbleStyle(rawValue: UserDefaults.standard.string(forKey: key + "bubble") ?? "") ?? .none }
++        set { set(newValue.rawValue, "bubble") }
++    }
++
++    /// The bubble colour shows through the glass instead of fully clear glass.
++    public static var tinted: Bool {
++        get { return UserDefaults.standard.bool(forKey: key + "tinted") }
++        set { set(newValue, "tinted") }
++    }
++
++    /// A thin line around every bubble.
++    public static var outline: Bool {
++        get { return UserDefaults.standard.bool(forKey: key + "outline") }
++        set { set(newValue, "outline") }
++    }
++
++    /// Inline buttons under messages drawn as glass.
++    public static var buttons: Bool {
++        get { return UserDefaults.standard.bool(forKey: key + "buttons") }
++        set { set(newValue, "buttons") }
++    }
++
++    /// Settings and profile sections drawn as glass instead of solid panels.
++    public static var lists: Bool {
++        get { return UserDefaults.standard.bool(forKey: key + "lists") }
++        set { set(newValue, "lists") }
++    }
++
++    /// Profile gifts drawn on glass backgrounds.
++    public static var gifts: Bool {
++        get { return UserDefaults.standard.bool(forKey: key + "gifts") }
++        set { set(newValue, "gifts") }
++    }
++
++    /// How opaque the bubble fill stays under the chosen style.
++    public static var bubbleFillAlpha: CGFloat {
++        switch AyuGlass.bubbleStyle {
++        case .none: return 1.0
++        case .glass, .cold: return AyuGlass.tinted ? 0.4 : 0.12
++        case .blur: return 0.72
++        }
++    }
++
++    /// The effect a bubble draws under its fill, or nil for none.
++    public static func makeBubbleEffect() -> UIVisualEffect? {
++        switch AyuGlass.bubbleStyle {
++        case .none:
++            return nil
++        case .glass:
++            if #available(iOS 26.0, *) {
++                return UIGlassEffect(style: .regular)
++            }
++            return UIBlurEffect(style: .systemThinMaterial)
++        case .cold:
++            return UIBlurEffect(style: .systemUltraThinMaterial)
++        case .blur:
++            return UIBlurEffect(style: .regular)
++        }
++    }
++
++    /// A colour laid over the effect (the cold tint), or nil.
++    public static var bubbleOverlayColor: UIColor? {
++        switch AyuGlass.bubbleStyle {
++        case .cold: return UIColor(red: 0.55, green: 0.8, blue: 1.0, alpha: 0.22)
++        default: return nil
++        }
++    }
++
++    private static func set(_ value: Any, _ name: String) {
++        UserDefaults.standard.set(value, forKey: key + name)
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +}
 diff --git a/submodules/Display/Source/AyuOverlayEffects.swift b/submodules/Display/Source/AyuOverlayEffects.swift
@@ -39831,6 +40094,29 @@ index 9b585969..b008034d 100644
          if self.impl == nil {
              self.impl = HapticFeedbackImpl()
          }
+diff --git a/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift b/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift
+index 3596b9d8..6382dbb9 100644
+--- a/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift
++++ b/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift
+@@ -13,6 +13,7 @@ import AppBundle
+ import LocalizedPeerData
+ import TooltipUI
+ import TelegramNotices
++import SaveToCameraRoll
+ 
+ private func galleryMediaForMedia(media: Media) -> Media? {
+     if let media = media as? TelegramMediaImage {
+@@ -513,6 +514,10 @@ public final class SecretMediaPreviewController: ViewController {
+         if let message = message {
+             if self.currentNodeMessageId != message.id {
+                 self.currentNodeMessageId = message.id
++                // AyuGram "Save view-once media to the gallery": a copy goes to Photos when it is opened.
++                if UserDefaults.standard.bool(forKey: "ayu.extra.saveViewOnce"), let media = message.media.first(where: { $0 is TelegramMediaImage || $0 is TelegramMediaFile }) {
++                    let _ = SaveToCameraRoll.saveToCameraRoll(context: self.context, userLocation: .peer(message.id.peerId), mediaReference: .message(message: MessageReference(message), media: media)).startStandalone()
++                }
+                 var tempFilePath: String?
+                 var duration: Double = 0.0
+                 for media in message.media {
 diff --git a/submodules/LegacyComponents/Sources/TGPhotoEditorSliderView.m b/submodules/LegacyComponents/Sources/TGPhotoEditorSliderView.m
 index 341c2ba1..d1547dd7 100644
 --- a/submodules/LegacyComponents/Sources/TGPhotoEditorSliderView.m
@@ -41050,10 +41336,10 @@ index 00000000..eb8ebd67
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuExtrasController.swift b/submodules/SettingsUI/Sources/AyuExtrasController.swift
 new file mode 100644
-index 00000000..f247ce4d
+index 00000000..4931c892
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuExtrasController.swift
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,128 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -41096,16 +41382,48 @@ index 00000000..f247ce4d
 +    AyuExtraRow(section: 1, id: 3, key: .cleanLinks, symbol: "link.badge.plus", color: 0x007AFF, titleRu: "Чистые ссылки", titleEn: "Clean links", infoRu: "Убирает utm_*, fbclid, si и другие метки слежки из отправляемых ссылок", infoEn: "Removes utm_*, fbclid, si and other trackers from links you send"),
 +    AyuExtraRow(section: 1, id: 4, key: .blurInAppSwitcher, symbol: "eye.slash.fill", color: 0x8E8E93, titleRu: "Размытие в переключателе", titleEn: "Blur in app switcher", infoRu: "Чаты не видны в списке открытых приложений", infoEn: "Chats are hidden in the app switcher"),
 +    AyuExtraRow(section: 1, id: 5, key: .confirmCalls, symbol: "phone.badge.checkmark", color: 0x34C759, titleRu: "Подтверждать звонки", titleEn: "Confirm calls", infoRu: "Без случайных звонков по нажатию", infoEn: "No accidental calls on a tap"),
-+    AyuExtraRow(section: 1, id: 6, key: .skipOwnMessagesHistory, symbol: "person.crop.circle.badge.xmark", color: 0xFF3B30, titleRu: "Не сохранять мои сообщения", titleEn: "Skip my messages", infoRu: "Мои удалённые и оригиналы моих изменённых не сохраняются (для ботов — свой переключатель в истории)", infoEn: "My deleted messages and originals of my edits are not kept (bots have their own switch in history)"),
++    AyuExtraRow(section: 1, id: 6, key: .saveViewOnce, symbol: "photo.badge.arrow.down.fill", color: 0x30B0C7, titleRu: "Одноразовые медиа в галерею", titleEn: "Save view-once media", infoRu: "Одноразовые фото, видео и кружки сохраняются в «Фото» при открытии. Отправитель об этом не узнает — используйте честно", infoEn: "View-once photos, videos and video messages are saved to Photos when opened. The sender is not told — use it fairly"),
 +    AyuExtraRow(section: 2, id: 11, key: .disableHaptics, symbol: "iphone.slash", color: 0xFF9500, titleRu: "Без вибрации", titleEn: "No vibration", infoRu: "Отключает тактильный отклик во всём приложении", infoEn: "Turns off haptic feedback in the whole app"),
++    AyuExtraRow(section: 2, id: 13, key: .springScroll, symbol: "arrow.up.and.down.text.horizontal", color: 0x32ADE6, titleRu: "Анимация прокрутки чата", titleEn: "Chat scrolling animation", infoRu: "Чат дольше скользит и мягко останавливается вместо резкой остановки", infoEn: "The chat glides longer and settles softly instead of stopping short"),
 +    AyuExtraRow(section: 3, id: 21, key: .keepScreenOnInPlayer, symbol: "sun.max.fill", color: 0xFFCC00, titleRu: "Экран не гаснет в плеере", titleEn: "Keep screen on in player", infoRu: "Пока открыт музыкальный плеер", infoEn: "While the music player is open"),
 +    AyuExtraRow(section: 3, id: 22, key: .autoOpenLyrics, symbol: "quote.bubble.fill", color: 0xFF2D55, titleRu: "Сразу показывать текст", titleEn: "Open lyrics automatically", infoRu: "Плеер открывается с текстом песни", infoEn: "The player opens with the lyrics"),
 +    AyuExtraRow(section: 3, id: 23, key: .rememberPlaybackSpeed, symbol: "gauge.with.dots.needle.67percent", color: 0x32ADE6, titleRu: "Запоминать скорость", titleEn: "Remember speed", infoRu: "Последняя скорость музыки при открытии плеера", infoEn: "The last music speed when the player opens"),
-+    AyuExtraRow(section: 3, id: 24, key: .noAutoplayNextVoice, symbol: "waveform.slash", color: 0xAF52DE, titleRu: "Не включать следующее голосовое", titleEn: "Don't play the next voice", infoRu: "Голосовое и кружок останавливаются в конце", infoEn: "Voice and video messages stop at their end")
++    AyuExtraRow(section: 3, id: 24, key: .noAutoplayNextVoice, symbol: "waveform.slash", color: 0xAF52DE, titleRu: "Не включать следующее голосовое", titleEn: "Don't play the next voice", infoRu: "Голосовое и кружок останавливаются в конце", infoEn: "Voice and video messages stop at their end"),
++    AyuExtraRow(section: 4, id: 31, key: .skipOwnDeleted, symbol: "trash.slash.fill", color: 0xFF3B30, titleRu: "Не показывать мои удалённые", titleEn: "Don't show my deleted", infoRu: "Свои удалённые сообщения не сохраняются — только чужие", infoEn: "Your own deleted messages are not kept, only other people's"),
++    AyuExtraRow(section: 4, id: 32, key: .skipOwnEdited, symbol: "pencil.slash", color: 0xFF9500, titleRu: "Не показывать оригинал моих изменённых", titleEn: "Don't show originals of my edits", infoRu: "Оригинал своих изменённых сообщений не сохраняется", infoEn: "The original text of your own edited messages is not kept"),
++    AyuExtraRow(section: 4, id: 33, key: .stayAfterBan, symbol: "door.left.hand.open", color: 0x8E8E93, titleRu: "Оставаться в чате после бана", titleEn: "Stay in chat after a ban", infoRu: "Чат не закрывается: название, фото и загруженная история остаются. Новых сообщений не будет — после бана сервер Telegram их не отдаёт", infoEn: "The chat stays open with its title, photo and downloaded history. New messages stop: after a ban Telegram's server no longer serves them"),
++    AyuExtraRow(section: 4, id: 34, key: .dimRepliesToMe, symbol: "arrowshape.turn.up.left.fill", color: 0x5856D6, titleRu: "Полупрозрачные ответы вам", titleEn: "Fade replies to you", infoRu: "Сообщения собеседника, отвечающие на ваши, становятся полупрозрачными", infoEn: "The other person's messages that reply to yours are faded")
 +]
 +
 +func ayuExtrasController(context: AccountContext) -> ViewController {
++    // 27.0.1 had one switch for both; it becomes the two new ones.
++    if UserDefaults.standard.bool(forKey: "ayu.extra.skipOwnMessagesHistory") {
++        AyuExtras.set(.skipOwnDeleted, true)
++        AyuExtras.set(.skipOwnEdited, true)
++        UserDefaults.standard.removeObject(forKey: "ayu.extra.skipOwnMessagesHistory")
++    }
 +    let arguments = AyuSectionedArguments(open: { id in
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        // Saved deleted / edited messages: clear one kind, or export everything as JSON.
++        if id == 36 || id == 37 {
++            let kind: AyuMessageHistoryRecord.Kind = id == 36 ? .deleted : .edited
++            let alert = UIAlertController(title: id == 36 ? (ru ? "Очистить удалённые?" : "Clear deleted?") : (ru ? "Очистить изменённые?" : "Clear edited?"), message: ru ? "Сохранённые копии удалятся навсегда." : "The saved copies are removed for good.", preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++            alert.addAction(UIAlertAction(title: ru ? "Очистить" : "Clear", style: .destructive, handler: { _ in
++                let _ = context.engine.messages.ayuClearHistory(kind: kind).startStandalone()
++            }))
++            context.sharedContext.applicationBindings.presentNativeController(alert)
++            return
++        }
++        if id == 38 {
++            let _ = (context.engine.messages.ayuExportHistory() |> deliverOnMainQueue).startStandalone(next: { data in
++                guard let data else { return }
++                let url = FileManager.default.temporaryDirectory.appendingPathComponent("AyuGram-messages.json")
++                guard (try? data.write(to: url, options: .atomic)) != nil else { return }
++                context.sharedContext.applicationBindings.presentNativeController(UIActivityViewController(activityItems: [url], applicationActivities: nil))
++            })
++            return
++        }
 +        // Download speed: Telegram's default, then 2, 4, 6, 8, 16 parallel parts.
 +        if id == 12 {
 +            let steps = [0, 2, 4, 6, 8, 16]
@@ -41127,7 +41445,8 @@ index 00000000..f247ce4d
 +        let headers: [Int32: String] = [
 +            1: ru ? "ПРИВАТНОСТЬ" : "PRIVACY",
 +            2: ru ? "ИНТЕРФЕЙС" : "INTERFACE",
-+            3: ru ? "МУЗЫКА" : "MUSIC"
++            3: ru ? "МУЗЫКА" : "MUSIC",
++            4: ru ? "СООБЩЕНИЯ" : "MESSAGES"
 +        ]
 +        var lastSection: Int32 = 0
 +        for row in ayuExtraRows {
@@ -41139,7 +41458,10 @@ index 00000000..f247ce4d
 +        }
 +        let threads = UserDefaults.standard.integer(forKey: "ayu.extra.downloadThreads")
 +        entries.insert(.link(2, 12, AyuSettingsIcons.symbol("arrow.down.circle.fill", color: UIColor(rgb: 0x007AFF)), ru ? "Скорость загрузки (потоки)" : "Download speed (threads)", threads == 0 ? (ru ? "стандарт" : "default") : "\(threads)"), at: entries.firstIndex(where: { $0.stableId > 12 }) ?? entries.count)
-+        entries.append(.info(3, 29, ru ? "В меню плеера (⋯ у текста) также есть таймер сна и эквалайзер." : "The player menu (⋯ next to the lyrics) also has a sleep timer and the equalizer."))
++        entries.insert(.info(3, 29, ru ? "В меню плеера (⋯ у текста) также есть таймер сна и эквалайзер." : "The player menu (⋯ next to the lyrics) also has a sleep timer and the equalizer."), at: entries.firstIndex(where: { $0.stableId > 29 }) ?? entries.count)
++        entries.append(.link(4, 36, AyuSettingsIcons.symbol("trash.fill", color: UIColor(rgb: 0xFF3B30)), ru ? "Очистить сохранённые удалённые" : "Clear saved deleted", ""))
++        entries.append(.link(4, 37, AyuSettingsIcons.symbol("eraser.fill", color: UIColor(rgb: 0xFF9500)), ru ? "Очистить сохранённые изменённые" : "Clear saved edits", ""))
++        entries.append(.link(4, 38, AyuSettingsIcons.symbol("square.and.arrow.up.fill", color: UIColor(rgb: 0x007AFF)), ru ? "Экспорт удалённых и изменённых" : "Export deleted and edited", "JSON"))
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Приватность и мелочи" : "Privacy & extras"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
@@ -41310,8 +41632,111 @@ index 00000000..4948ec0c
 +    presentController = { [weak controller] in controller?.present($0, in: .window(.root)) }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuGlassController.swift b/submodules/SettingsUI/Sources/AyuGlassController.swift
+new file mode 100644
+index 00000000..60c8da29
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuGlassController.swift
+@@ -0,0 +1,97 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import PresentationDataUtils
++import ItemListUI
++import AccountContext
++
++// Settings → AyuGram → Glass and bubbles.
++
++private func ayuGlassSignal() -> Signal<Void, NoError> {
++    return Signal { subscriber in
++        subscriber.putNext(Void())
++        var observers: [NSObjectProtocol] = []
++        for name in [AyuGlass.didChangeNotification, AyuAppearancePlus.didChangeNotification] {
++            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { _ in
++                subscriber.putNext(Void())
++            }))
++        }
++        return ActionDisposable {
++            for observer in observers {
++                NotificationCenter.default.removeObserver(observer)
++            }
++        }
++    }
++}
++
++private enum AyuGlassRow: Int32 {
++    case messagesHeader = 0
++    case bubbleStyle = 1
++    case tinted = 2
++    case outline = 3
++    case buttons = 4
++    case messagesInfo = 5
++    case interfaceHeader = 10
++    case lists = 11
++    case gifts = 12
++    case blurGlass = 13
++    case interfaceInfo = 14
++}
++
++func ayuGlassController(context: AccountContext) -> ViewController {
++    let arguments = AyuSectionedArguments(open: { id in
++        guard id == AyuGlassRow.bubbleStyle.rawValue else { return }
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let sheet = UIAlertController(title: ru ? "Пузыри сообщений" : "Message bubbles", message: nil, preferredStyle: .actionSheet)
++        for style in AyuGlass.BubbleStyle.allCases {
++            sheet.addAction(UIAlertAction(title: style.title(ru) + (style == AyuGlass.bubbleStyle ? " ✓" : ""), style: .default, handler: { _ in
++                AyuGlass.bubbleStyle = style
++            }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(sheet)
++    }, toggle: { id, value in
++        switch AyuGlassRow(rawValue: id) {
++        case .tinted?: AyuGlass.tinted = value
++        case .outline?: AyuGlass.outline = value
++        case .buttons?: AyuGlass.buttons = value
++        case .lists?: AyuGlass.lists = value
++        case .gifts?: AyuGlass.gifts = value
++        case .blurGlass?:
++            AyuAppearancePlus.blurGlass = value
++            if value { AyuAppearancePlus.noGlass = false }
++        default: break
++        }
++    })
++
++    let signal = combineLatest(context.sharedContext.presentationData, ayuGlassSignal())
++    |> deliverOnMainQueue
++    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        func symbol(_ name: String, _ color: UInt32) -> UIImage? {
++            return AyuSettingsIcons.symbol(name, color: UIColor(rgb: color))
++        }
++        var entries: [AyuSectionedEntry] = [
++            .header(1, AyuGlassRow.messagesHeader.rawValue, ru ? "СООБЩЕНИЯ" : "MESSAGES"),
++            .link(1, AyuGlassRow.bubbleStyle.rawValue, symbol("bubble.left.and.bubble.right.fill", 0x32ADE6), ru ? "Пузыри" : "Bubbles", AyuGlass.bubbleStyle.title(ru))
++        ]
++        if AyuGlass.bubbleStyle == .glass || AyuGlass.bubbleStyle == .cold {
++            entries.append(.toggle(1, AyuGlassRow.tinted.rawValue, symbol("paintpalette.fill", 0xAF52DE), ru ? "Тонированное стекло" : "Tinted glass", ru ? "Цвет пузыря просвечивает сквозь стекло" : "The bubble colour shows through the glass", AyuGlass.tinted))
++        }
++        entries.append(.toggle(1, AyuGlassRow.outline.rawValue, symbol("square.dashed", 0x8E8E93), ru ? "Обводка сообщений" : "Message outline", ru ? "Тонкая линия вокруг каждого пузыря" : "A thin line around every bubble", AyuGlass.outline))
++        entries.append(.toggle(1, AyuGlassRow.buttons.rawValue, symbol("rectangle.grid.1x2.fill", 0x007AFF), ru ? "Стеклянные кнопки" : "Glass inline buttons", ru ? "Кнопки под сообщениями из стекла" : "Inline buttons under messages drawn as glass", AyuGlass.buttons))
++        entries.append(.info(1, AyuGlassRow.messagesInfo.rawValue, ru ? "Стекло — Liquid Glass iOS 26 (на старых iOS — матовый материал). Холодное стекло — яркое матовое с холодным оттенком. Размытие фона — обои размываются под пузырём. Применяется к новым и прокрученным сообщениям." : "Glass is iOS 26 Liquid Glass (a frosted material on older iOS). Cold glass is a vivid frosted surface with a cold tint. Background blur blurs the wallpaper behind the bubble. Applies to messages as they are laid out."))
++        entries.append(.header(2, AyuGlassRow.interfaceHeader.rawValue, ru ? "ИНТЕРФЕЙС" : "INTERFACE"))
++        entries.append(.toggle(2, AyuGlassRow.lists.rawValue, symbol("list.bullet.rectangle.fill", 0x34C759), ru ? "Стеклянные настройки и профиль" : "Glass settings and profile", ru ? "Полупрозрачные панели на цветной подложке" : "Translucent panels on a tinted backdrop", AyuGlass.lists))
++        entries.append(.toggle(2, AyuGlassRow.gifts.rawValue, symbol("gift.fill", 0xFF9500), ru ? "Подарки на стекле" : "Glass gifts", ru ? "Подарки в профиле на стеклянном фоне" : "Profile gifts on glass backgrounds", AyuGlass.gifts))
++        entries.append(.toggle(2, AyuGlassRow.blurGlass.rawValue, symbol("aqi.medium", 0x5AC8FA), ru ? "Размытие вместо стекла" : "Blur instead of glass", ru ? "Панели и кнопки — простое размытие. Не сочетается с «Без стекла»" : "Panels and buttons become a plain blur. Not combined with No glass", AyuAppearancePlus.blurGlass))
++        entries.append(.info(2, AyuGlassRow.interfaceInfo.rawValue, ru ? "Стекло Telegram вместо системного и «Без стекла» — в «Внешний вид+». Настройки и профиль меняются после смены темы или перезапуска, размытие вместо стекла — после перезапуска." : "Telegram glass instead of the system one and No glass are in Appearance+. Settings and profile change after a theme change or relaunch; blur instead of glass after a relaunch."))
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Стекло и пузыри" : "Glass and bubbles"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
++    }
++    return ItemListController(context: context, state: signal)
++}
 diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
-index e2236c5f..47b7fcf0 100644
+index e2236c5f..814050f1 100644
 --- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 @@ -10,12 +10,14 @@ import ItemListUI
@@ -41329,7 +41754,7 @@ index e2236c5f..47b7fcf0 100644
      case messageHistory = 11
      case mediaArchive = 12
      case localPremium = 21
-@@ -24,16 +26,80 @@ private enum AyuGramRow: Int32 {
+@@ -24,16 +26,81 @@ private enum AyuGramRow: Int32 {
      case interface = 24
      case navigationAndComposer = 25
      case peerSearch = 26
@@ -41348,6 +41773,7 @@ index e2236c5f..47b7fcf0 100644
 +    case equalizer = 61
 +    case extras = 62
 +    case customization = 63
++    case glass = 64
 +    case channel = 71
 +    case sourceCode = 72
 +    case developer = 81
@@ -41412,7 +41838,7 @@ index e2236c5f..47b7fcf0 100644
          guard let row = AyuGramRow(rawValue: id) else {
              return
          }
-@@ -42,6 +108,34 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -42,6 +109,36 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              push?(ayuGhostModeController(context: context))
          case .ghostModePlus:
              push?(ayuGhostModePlusController(context: context))
@@ -41444,10 +41870,12 @@ index e2236c5f..47b7fcf0 100644
 +            push?(ayuExtrasController(context: context))
 +        case .customization:
 +            push?(ayuCustomizationController(context: context))
++        case .glass:
++            push?(ayuGlassController(context: context))
          case .messageHistory:
              push?(ayuMessageHistoryController(context: context))
          case .mediaArchive:
-@@ -62,6 +156,10 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -62,6 +159,10 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              ayuOpenChannel(context: context, navigation: navigation?())
          case .sourceCode:
              context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
@@ -41458,7 +41886,7 @@ index e2236c5f..47b7fcf0 100644
          }
      }, toggle: { _, _ in })
      let icons: [AyuGramRow: UIImage?] = [
-@@ -75,8 +173,28 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -75,8 +176,29 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
          .interface: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x32ADE6)),
          .navigationAndComposer: AyuSettingsIcons.symbol("slider.horizontal.3", color: UIColor(rgb: 0x5856D6)),
          .peerSearch: AyuSettingsIcons.symbol("magnifyingglass", color: UIColor(rgb: 0x007AFF)),
@@ -41476,6 +41904,7 @@ index e2236c5f..47b7fcf0 100644
 +        .equalizer: AyuSettingsIcons.symbol("slider.vertical.3", color: UIColor(rgb: 0xFF2D55)),
 +        .extras: AyuSettingsIcons.symbol("hand.raised.fill", color: UIColor(rgb: 0x34C759)),
 +        .customization: AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0xAF52DE)),
++        .glass: AyuSettingsIcons.symbol("drop.halffull", color: UIColor(rgb: 0x32ADE6)),
          .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
 -        .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6))
 +        .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6)),
@@ -41488,7 +41917,7 @@ index e2236c5f..47b7fcf0 100644
      ]
      func link(_ section: Int32, _ row: AyuGramRow, _ title: String, _ label: String = "") -> AyuSectionedEntry {
          return .link(section, row.rawValue, icons[row] ?? nil, title, label)
-@@ -85,11 +203,12 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -85,11 +207,12 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
      |> deliverOnMainQueue
      |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
          let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
@@ -41502,7 +41931,7 @@ index e2236c5f..47b7fcf0 100644
              .header(2, 10, AyuStrings.spyEssentials.text(ru)),
              link(2, .messageHistory, AyuStrings.messageHistory.text(ru)),
              link(2, .mediaArchive, AyuStrings.mediaArchive.text(ru)),
-@@ -100,17 +219,65 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+@@ -100,17 +223,66 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
              link(3, .peerSearch, ru ? "Поиск каналов и людей" : "Find channels and people"),
              link(3, .interface, ru ? "Интерфейс и чаты" : "Interface & Chats"),
              link(3, .navigationAndComposer, ru ? "Навигация и редактор" : "Navigation and composer"),
@@ -41523,6 +41952,7 @@ index e2236c5f..47b7fcf0 100644
 +            link(5, .equalizer, ru ? "Эквалайзер" : "Equalizer", AyuEqualizer.isEnabled ? (ru ? "вкл." : "on") : ""),
 +            link(5, .extras, ru ? "Приватность и мелочи" : "Privacy & extras"),
 +            link(5, .customization, ru ? "Кастомизация" : "Customization", AyuCustomization.hasColors || !AyuCustomization.peerBadges.isEmpty || !AyuCustomization.myBadge.isEmpty ? (ru ? "вкл." : "on") : ""),
++            link(5, .glass, ru ? "Стекло и пузыри" : "Glass and bubbles", AyuGlass.bubbleStyle != .none ? AyuGlass.bubbleStyle.title(ru) : ""),
 +            .header(6, 70, AyuStrings.links.text(ru)),
 +            link(6, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
 +            link(6, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub"),
@@ -44602,20 +45032,63 @@ index 00000000..2dccce2c
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-index b31c4441..d502cbf6 100644
+index b31c4441..768484db 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-@@ -159,7 +159,9 @@ func ayuArchiveMessage(transaction: Transaction, mediaBox: MediaBox, message: Me
+@@ -159,7 +159,11 @@ func ayuArchiveMessage(transaction: Transaction, mediaBox: MediaBox, message: Me
      let entities = ayuHistoryEntities(message.attributes)
      let contentChanged = updated.map { $0.text != message.text || !areMediaArraysEqual($0.media, message.media) || (state.saveFormatting && ayuHistoryEntities($0.attributes) != entities) } ?? true
      let isBot = (transaction.getPeer(message.id.peerId) as? TelegramUser)?.botInfo != nil || (message.author as? TelegramUser)?.botInfo != nil
 -    let shouldCapture = kind == .edited ? state.saveEdits : state.saveDeleted
-+    // AyuGram "Skip my messages": the account's own deletions and edits are not kept.
-+    let skipOwn = UserDefaults.standard.bool(forKey: "ayu.extra.skipOwnMessagesHistory") && !message.flags.contains(.Incoming)
++    // AyuGram "Don't show my deleted / my edited": the account's own messages are not kept.
++    let isOwn = !message.flags.contains(.Incoming)
++    let legacySkipOwn = UserDefaults.standard.bool(forKey: "ayu.extra.skipOwnMessagesHistory")
++    let skipOwn = isOwn && (legacySkipOwn || UserDefaults.standard.bool(forKey: kind == .edited ? "ayu.extra.skipOwnEdited" : "ayu.extra.skipOwnDeleted"))
 +    let shouldCapture = (kind == .edited ? state.saveEdits : state.saveDeleted) && !skipOwn
      if !peerAllows {
          state.remove(peerId: message.id.peerId.toInt64())
      } else if message.id.namespace != Namespaces.Message.Cloud || message.isCopyProtected() || ayuHistoryHasExpiringAttribute(message.attributes) || !updateAllows {
+@@ -256,6 +260,27 @@ public extension TelegramEngine.Messages {
+ }
+ 
+ public extension TelegramEngine.Messages {
++    /// Removes only deleted (or only edited) records; the other kind stays.
++    func ayuClearHistory(kind: AyuMessageHistoryRecord.Kind) -> Signal<Void, NoError> {
++        return self.account.postbox.transaction { transaction -> Void in
++            let previous = ayuPruneHistory(transaction: transaction)
++            var state = previous
++            state.clear(kind: kind)
++            transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in ayuEncodeHistoryState(state) })
++            ayuRemoveExpiredTombstones(transaction: transaction, previous: previous, updated: state)
++        }
++    }
++
++    /// The saved deleted and edited messages as JSON, for export to a file.
++    func ayuExportHistory() -> Signal<Data?, NoError> {
++        return self.account.postbox.transaction { transaction -> Data? in
++            let state = ayuPruneHistory(transaction: transaction)
++            let encoder = JSONEncoder()
++            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
++            return try? encoder.encode(state.records)
++        }
++    }
++
+     func ayuSetMediaArchiveLimits(fileMB: Int32, quotaMB: Int32) -> Signal<Bool, NoError> {
+         return self.account.postbox.transaction { transaction -> Bool in
+             let previous = ayuPruneHistory(transaction: transaction)
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
+index 5a5a6b96..ce96177f 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
+@@ -121,6 +121,8 @@ public struct AyuMessageHistoryState: Codable, Equatable {
+ 
+     public mutating func clear() { self.records.removeAll() }
+ 
++    public mutating func clear(kind: AyuMessageHistoryRecord.Kind) { self.records.removeAll { $0.kind == kind } }
++
+     public mutating func remove(peerId: Int64, messageId: Int32? = nil) {
+         self.records.removeAll { record in
+             record.peerId == peerId && (messageId == nil || record.messageId == messageId)
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuPeerArchive.swift b/submodules/TelegramCore/Sources/AyuGram/AyuPeerArchive.swift
 new file mode 100644
 index 00000000..894ec525
@@ -44885,6 +45358,26 @@ index 00000000..6435c251
 +        }
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuStayAfterBan.swift b/submodules/TelegramCore/Sources/AyuGram/AyuStayAfterBan.swift
+new file mode 100644
+index 00000000..88bf87c8
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuStayAfterBan.swift
+@@ -0,0 +1,14 @@
++import Foundation
++
++/// AyuGram "Stay in chat after being banned". A ban turns a channel into `channelForbidden`,
++/// which has no photo, username or colours; with the switch on, the chat keeps what it had and
++/// only its membership changes. New messages still stop: the server no longer serves the chat.
++enum AyuStayAfterBan {
++    static var isEnabled: Bool {
++        return UserDefaults.standard.bool(forKey: "ayu.extra.stayAfterBan")
++    }
++
++    static func merge(previous: TelegramChannel, banned: TelegramChannel) -> TelegramChannel {
++        return TelegramChannel(id: previous.id, accessHash: banned.accessHash ?? previous.accessHash, title: previous.title, username: previous.username, photo: previous.photo, creationDate: previous.creationDate, version: previous.version, participationStatus: .kicked, info: previous.info, flags: previous.flags, restrictionInfo: previous.restrictionInfo, adminRights: nil, bannedRights: banned.bannedRights, defaultBannedRights: previous.defaultBannedRights, usernames: previous.usernames, storiesHidden: previous.storiesHidden, nameColor: previous.nameColor, backgroundEmojiId: previous.backgroundEmojiId, profileColor: previous.profileColor, profileBackgroundEmojiId: previous.profileBackgroundEmojiId, emojiStatus: previous.emojiStatus, approximateBoostLevel: previous.approximateBoostLevel, subscriptionUntilDate: previous.subscriptionUntilDate, verificationIconFileId: previous.verificationIconFileId, sendPaidMessageStars: previous.sendPaidMessageStars, linkedMonoforumId: previous.linkedMonoforumId, linkedCommunityId: previous.linkedCommunityId)
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/Network/MultipartFetch.swift b/submodules/TelegramCore/Sources/Network/MultipartFetch.swift
 index 75d6f4f3..067b3229 100644
 --- a/submodules/TelegramCore/Sources/Network/MultipartFetch.swift
@@ -45056,12 +45549,26 @@ index 92d7de3d..af0dbefc 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramCore/Sources/UpdatePeers.swift b/submodules/TelegramCore/Sources/UpdatePeers.swift
+index d90af5f2..0d834405 100644
+--- a/submodules/TelegramCore/Sources/UpdatePeers.swift
++++ b/submodules/TelegramCore/Sources/UpdatePeers.swift
+@@ -333,6 +333,9 @@ public func updatePeersCustom(transaction: Transaction, peers: [Peer], update: (
+                 wasMember = previous.participationStatus == .member
+                 wasHidden = previous.storiesHidden
+                 updated = mergeChannel(lhs: previous, rhs: updatedChannel)
++                if AyuStayAfterBan.isEnabled, updatedChannel.participationStatus == .kicked, updatedChannel.photo.isEmpty {
++                    updated = AyuStayAfterBan.merge(previous: previous, banned: updatedChannel)
++                }
+             }
+             
+             if let updated = updated as? TelegramChannel {
 diff --git a/submodules/TelegramPresentationData/Sources/AyuCustomizedTheme.swift b/submodules/TelegramPresentationData/Sources/AyuCustomizedTheme.swift
 new file mode 100644
-index 00000000..fdc774b5
+index 00000000..78f17acc
 --- /dev/null
 +++ b/submodules/TelegramPresentationData/Sources/AyuCustomizedTheme.swift
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,106 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -45125,15 +45632,26 @@ index 00000000..fdc774b5
 +        let chatList = result.chatList.withUpdated(backgroundColor: listBackground, titleColor: chatTitle)
 +        result = PresentationTheme(name: result.name, index: result.index, referenceTheme: result.referenceTheme, overallDarkAppearance: result.overallDarkAppearance, intro: result.intro, passcode: result.passcode, rootController: result.rootController, list: list, chatList: chatList, chat: result.chat, actionSheet: result.actionSheet, contextMenu: result.contextMenu, inAppNotification: result.inAppNotification, chart: result.chart, preview: result.preview)
 +    }
++    // AyuGlass "Glass settings and profile": an accent-tinted backdrop under translucent,
++    // frosted-looking panels.
++    if AyuGlass.lists {
++        let dark = result.overallDarkAppearance
++        let accent = result.list.itemAccentColor
++        let backdrop = dark ? accent.withMultipliedBrightnessBy(0.18) : accent.mixedWith(.white, alpha: 0.85)
++        let panel = dark ? UIColor(white: 1.0, alpha: 0.09) : UIColor(white: 1.0, alpha: 0.62)
++        let separator = dark ? UIColor(white: 1.0, alpha: 0.12) : UIColor(white: 0.0, alpha: 0.08)
++        let list = result.list.withUpdated(blocksBackgroundColor: backdrop, modalBlocksBackgroundColor: backdrop, itemBlocksBackgroundColor: panel, itemModalBlocksBackgroundColor: panel, itemBlocksSeparatorColor: separator)
++        result = PresentationTheme(name: result.name, index: result.index, referenceTheme: result.referenceTheme, overallDarkAppearance: result.overallDarkAppearance, intro: result.intro, passcode: result.passcode, rootController: result.rootController, list: list, chatList: result.chatList, chat: result.chat, actionSheet: result.actionSheet, contextMenu: result.contextMenu, inAppNotification: result.inAppNotification, chart: result.chart, preview: result.preview)
++    }
 +    return result
 +}
 +
 +/// The theme with the user's colours, cached per input theme and settings revision.
 +func ayuCustomizedTheme(_ theme: PresentationTheme) -> PresentationTheme {
-+    guard AyuCustomization.hasColors else {
++    guard AyuCustomization.hasColors || AyuGlass.lists else {
 +        return theme
 +    }
-+    let revision = AyuCustomization.revision
++    let revision = AyuCustomization.revision * 2 + (AyuGlass.lists ? 1 : 0)
 +    ayuCustomLock.lock()
 +    defer { ayuCustomLock.unlock() }
 +    if let cached = ayuCustomThemes.first(where: { ($0.input === theme || $0.output === theme) && $0.revision == revision }) {
@@ -45281,6 +45799,52 @@ index dd4d37af..adb0feb1 100644
  }
  
  public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageActionButtonsNode/Sources/ChatMessageActionButtonsNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageActionButtonsNode/Sources/ChatMessageActionButtonsNode.swift
+index 9b2d1d75..930f9f1b 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageActionButtonsNode/Sources/ChatMessageActionButtonsNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageActionButtonsNode/Sources/ChatMessageActionButtonsNode.swift
+@@ -76,6 +76,8 @@ private final class ChatMessageActionButtonNode: ASDisplayNode {
+     
+     private var wallpaperBackgroundNode: WallpaperBackgroundNode?
+     private var backgroundContent: WallpaperBubbleBackgroundNode?
++    // AyuGram glass inline buttons (AyuGlass.buttons).
++    private var ayuGlassView: UIVisualEffectView?
+     private var backgroundColorNode: ASDisplayNode?
+     private var backgroundColorView: UIImageView?
+     
+@@ -408,7 +410,31 @@ private final class ChatMessageActionButtonNode: ASDisplayNode {
+                     } else {
+                         node.backgroundBlurView?.view.isHidden = false
+                     }
+-                    
++                    if AyuGlass.buttons {
++                        let glassView: UIVisualEffectView
++                        if let current = node.ayuGlassView {
++                            glassView = current
++                        } else {
++                            let effect: UIVisualEffect
++                            if #available(iOS 26.0, *) {
++                                effect = UIGlassEffect(style: .clear)
++                            } else {
++                                effect = UIBlurEffect(style: .systemUltraThinMaterial)
++                            }
++                            glassView = UIVisualEffectView(effect: effect)
++                            glassView.isUserInteractionEnabled = false
++                            node.ayuGlassView = glassView
++                            node.view.insertSubview(glassView, at: 0)
++                        }
++                        glassView.frame = CGRect(origin: CGPoint(), size: CGSize(width: max(0.0, width), height: 42.0))
++                        node.backgroundBlurView?.view.isHidden = true
++                        node.backgroundContent?.isHidden = true
++                    } else if let glassView = node.ayuGlassView {
++                        glassView.removeFromSuperview()
++                        node.ayuGlassView = nil
++                        node.backgroundContent?.isHidden = false
++                    }
++
+                     let rect = CGRect(origin: CGPoint(), size: CGSize(width: max(0.0, width), height: 42.0))
+                     let maskPath: CGPath?
+                     var needsMask = true
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
 index 25f0a555..4755a32f 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageAnimatedStickerItemNode/Sources/ChatMessageAnimatedStickerItemNode.swift
@@ -45296,7 +45860,7 @@ index 25f0a555..4755a32f 100644
          let emojiFile = self.emojiFile
          let telegramDice = self.telegramDice
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
-index 1047a0fd..57aff5c1 100644
+index 1047a0fd..aed34c5d 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
 @@ -2022,6 +2022,10 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
@@ -45310,16 +45874,35 @@ index 1047a0fd..57aff5c1 100644
  
          if item.context.account.network.ayuGhostMode.current.interface.hideFastShare, !isAd, !hasCommentButton(item: item) {
              needsShareButton = false
-@@ -3978,6 +3982,13 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+@@ -3974,10 +3978,31 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+         strongSelf.appliedItem = item
+         // AyuGram "Semi-transparent deleted messages": locally kept deleted messages are dimmed.
+         let ayuInterface = item.context.account.network.ayuGhostMode.current.interface
+-        let ayuDeletedAlpha: CGFloat = ayuInterface.semiTransparentDeletedMessages && item.content.firstMessage.attributes.contains(where: { $0 is AyuDeletedMessageAttribute }) ? max(0.01, 1.0 - CGFloat(ayuInterface.deletedMessageTransparency) / 100.0) : 1.0
++        var ayuDeletedAlpha: CGFloat = ayuInterface.semiTransparentDeletedMessages && item.content.firstMessage.attributes.contains(where: { $0 is AyuDeletedMessageAttribute }) ? max(0.01, 1.0 - CGFloat(ayuInterface.deletedMessageTransparency) / 100.0) : 1.0
++        // AyuGram "Semi-transparent replies to you": the other person's replies to your messages are faded.
++        let ayuFirstMessage = item.content.firstMessage
++        if ayuFirstMessage.flags.contains(.Incoming), UserDefaults.standard.bool(forKey: "ayu.extra.dimRepliesToMe") {
++            for attribute in ayuFirstMessage.attributes {
++                if let reply = attribute as? ReplyMessageAttribute, let replied = ayuFirstMessage.associatedMessages[reply.messageId], replied.author?.id == item.context.account.peerId {
++                    ayuDeletedAlpha *= 0.55
++                    break
++                }
++            }
++        }
          if strongSelf.mainContainerNode.alpha != ayuDeletedAlpha {
              strongSelf.mainContainerNode.alpha = ayuDeletedAlpha
          }
-+        // WhiteGram transparent / semi-transparent bubbles: fill, wallpaper backdrop and shadow.
-+        let ayuBubbleAlpha = AyuWhiteGram.bubbleFillAlpha
-+        if strongSelf.backgroundNode.alpha != ayuBubbleAlpha {
++        // WhiteGram transparent / semi-transparent bubbles and AyuGram glass bubbles: the fill and
++        // shadow fade; under glass the backdrop stays visible and draws the effect.
++        strongSelf.backgroundWallpaperNode.ayuUpdateGlass(cornerRadius: item.presentationData.chatBubbleCorners.mainRadius)
++        let ayuGlassOn = AyuGlass.bubbleStyle != .none
++        let ayuBubbleAlpha = min(AyuWhiteGram.bubbleFillAlpha, AyuGlass.bubbleFillAlpha)
++        let ayuBackdropAlpha = ayuGlassOn ? 1.0 : ayuBubbleAlpha
++        if strongSelf.backgroundNode.alpha != ayuBubbleAlpha || strongSelf.backgroundWallpaperNode.alpha != ayuBackdropAlpha {
 +            strongSelf.backgroundNode.alpha = ayuBubbleAlpha
-+            strongSelf.backgroundWallpaperNode.alpha = ayuBubbleAlpha
-+            strongSelf.shadowNode.alpha = ayuBubbleAlpha
++            strongSelf.backgroundWallpaperNode.alpha = ayuBackdropAlpha
++            strongSelf.shadowNode.alpha = ayuGlassOn ? 0.0 : ayuBubbleAlpha
 +        }
          strongSelf.appliedForwardInfo = ChatMessageAppliedForwardInfo(messageId: item.content.firstMessage.id, source: forwardSource, authorSignature: forwardAuthorSignature)
          strongSelf.updateAccessibilityData(accessibilityData)
@@ -45377,32 +45960,149 @@ index b614fcf2..31271733 100644
          } else {
              self.counterTextNode.attributedText = NSAttributedString(string: "", font: counterFont, textColor: .black)
          }
+diff --git a/submodules/TelegramUI/Components/CoreList/CoreListDemo/PhysicsScrollCore.swift b/submodules/TelegramUI/Components/CoreList/CoreListDemo/PhysicsScrollCore.swift
+index c27cd855..82bb0f0e 100644
+--- a/submodules/TelegramUI/Components/CoreList/CoreListDemo/PhysicsScrollCore.swift
++++ b/submodules/TelegramUI/Components/CoreList/CoreListDemo/PhysicsScrollCore.swift
+@@ -21,6 +21,12 @@ final class PhysicsScrollCore {
+     /// float with the content — the clampless analogue of the UIScrollView adapter's 10M canvas size.
+     static let sentinelDistance: CGFloat = 10_000_000
+ 
++    /// UIKit's normal deceleration, or AyuGram "Chat scrolling animation": a longer glide that
++    /// settles softly instead of stopping short.
++    static var decelerationRate: CGFloat {
++        return UserDefaults.standard.bool(forKey: "ayu.extra.springScroll") ? 0.9988 : 0.998
++    }
++
+     private var scale: CGFloat
+     /// Rubber-band coefficient used by the NEXT `makePhysics`. Default is touch's 0.55; the owning
+     /// engine sets it to `RubberBand.trackpadCoefficient` (0.715) for an indirect (trackpad) gesture so
+@@ -41,13 +47,13 @@ final class PhysicsScrollCore {
+         self.scale = Swift.max(scale, 1)
+         physics = ScrollPhysics(
+             x: ScrollAxis(offset: 0, min: 0, max: 0,
+-                          range: Swift.max(1, contentHost.bounds.width), rate: 0.998, scale: self.scale),
++                          range: Swift.max(1, contentHost.bounds.width), rate: PhysicsScrollCore.decelerationRate, scale: self.scale),
+             // Seeded FROM the host, not from 0: `offset` below is the physics axis, and the identity
+             // "physics offset == the host's bounds origin while nothing is in flight" must hold by
+             // construction, not by every caller happening to pass a zero-origin host.
+             y: ScrollAxis(offset: contentHost.bounds.origin.y,
+                           min: -PhysicsScrollCore.sentinelDistance, max: PhysicsScrollCore.sentinelDistance,
+-                          range: Swift.max(1, contentHost.bounds.height), rate: 0.998, scale: self.scale))
++                          range: Swift.max(1, contentHost.bounds.height), rate: PhysicsScrollCore.decelerationRate, scale: self.scale))
+     }
+ 
+     /// THE scroll position, in the list's coordinate — the physics axis, which the active driver advances
+@@ -273,9 +279,9 @@ final class PhysicsScrollCore {
+         let hi = maxEdge ?? (offset + PhysicsScrollCore.sentinelDistance)
+         return ScrollPhysics(
+             x: ScrollAxis(offset: 0, min: 0, max: 0,
+-                          range: Swift.max(1, contentHost.bounds.width), rate: 0.998, scale: scale, c: coefficient),
++                          range: Swift.max(1, contentHost.bounds.width), rate: PhysicsScrollCore.decelerationRate, scale: scale, c: coefficient),
+             y: ScrollAxis(offset: offset, min: lo, max: hi,
+-                          range: Swift.max(1, contentHost.bounds.height), rate: 0.998, scale: scale,
++                          range: Swift.max(1, contentHost.bounds.height), rate: PhysicsScrollCore.decelerationRate, scale: scale,
+                           vScale: release.multiplier, c: coefficient))
+     }
+ 
+diff --git a/submodules/TelegramUI/Components/Gifts/GiftItemComponent/Sources/GiftItemComponent.swift b/submodules/TelegramUI/Components/Gifts/GiftItemComponent/Sources/GiftItemComponent.swift
+index 7b0583fc..5a33c4e7 100644
+--- a/submodules/TelegramUI/Components/Gifts/GiftItemComponent/Sources/GiftItemComponent.swift
++++ b/submodules/TelegramUI/Components/Gifts/GiftItemComponent/Sources/GiftItemComponent.swift
+@@ -334,6 +334,7 @@ public final class GiftItemComponent: Component {
+         private let containerButton = HighlightTrackingButton()
+         
+         public let backgroundLayer = SimpleLayer()
++        private var ayuGlassView: UIVisualEffectView?
+         private var loadingBackground: ComponentView<Empty>?
+         
+         private let patternView = ComponentView<Empty>()
+@@ -1392,6 +1393,33 @@ public final class GiftItemComponent: Component {
+             
+             let backgroundFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((size.width - backgroundSize.width) / 2.0), y: floorToScreenPixels((size.height - backgroundSize.height) / 2.0)), size: backgroundSize)
+             transition.setFrame(layer: self.backgroundLayer, frame: backgroundFrame)
++            // AyuGlass "Glass gifts": profile gifts sit on glass; a plain background turns translucent.
++            if case .profile = component.mode, AyuGlass.gifts {
++                let glassView: UIVisualEffectView
++                if let current = self.ayuGlassView {
++                    glassView = current
++                } else {
++                    let effect: UIVisualEffect
++                    if #available(iOS 26.0, *) {
++                        effect = UIGlassEffect(style: .regular)
++                    } else {
++                        effect = UIBlurEffect(style: .systemThinMaterial)
++                    }
++                    glassView = UIVisualEffectView(effect: effect)
++                    glassView.isUserInteractionEnabled = false
++                    glassView.clipsToBounds = true
++                    self.ayuGlassView = glassView
++                    self.insertSubview(glassView, at: 0)
++                }
++                glassView.layer.cornerRadius = self.backgroundLayer.cornerRadius
++                transition.setFrame(view: glassView, frame: backgroundFrame)
++                if secondBackgroundColor == nil {
++                    self.backgroundLayer.backgroundColor = component.theme.list.itemBlocksBackgroundColor.withAlphaComponent(0.25).cgColor
++                }
++            } else if let glassView = self.ayuGlassView {
++                self.ayuGlassView = nil
++                glassView.removeFromSuperview()
++            }
+             transition.setFrame(view: self.containerButton, frame: CGRect(origin: .zero, size: size))
+             
+             var iconBackgroundSize: CGSize?
 diff --git a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
-index 24b4fba6..f2454837 100644
+index 24b4fba6..1e2191a7 100644
 --- a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
 +++ b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
-@@ -567,6 +567,9 @@ public class GlassBackgroundView: UIView {
+@@ -567,6 +567,14 @@ public class GlassBackgroundView: UIView {
      public private(set) var params: Params?
          
      public static var useCustomGlassImpl: Bool = false
 +    /// AyuGram "No glass" (old Telegram look): every glass surface becomes a flat, opaque
 +    /// fill with no blur, sheen or shadow. Requires `useCustomGlassImpl`; set once at launch.
 +    public static var flatMode: Bool = false
++    /// AyuGram "Replace Liquid Glass with blur": a plain blur in the glass shape instead of glass.
++    /// Requires `useCustomGlassImpl`; set once at launch.
++    public static var blurMode: Bool = false
++    private var ayuBlurView: UIVisualEffectView?
++    private var ayuBlurClippingContext: ClippingShapeContext?
      
      public override init(frame: CGRect) {
          if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl {
-@@ -621,6 +624,10 @@ public class GlassBackgroundView: UIView {
+@@ -621,6 +629,18 @@ public class GlassBackgroundView: UIView {
          if let nativeParamsView = self.nativeParamsView {
              self.addSubview(nativeParamsView)
          }
 +        if GlassBackgroundView.flatMode {
 +            self.legacyView?.isHidden = true
 +            self.shadowView?.isHidden = true
++        } else if GlassBackgroundView.blurMode, self.legacyView != nil {
++            self.legacyView?.isHidden = true
++            self.shadowView?.isHidden = true
++            let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
++            blurView.isUserInteractionEnabled = false
++            self.ayuBlurView = blurView
++            self.ayuBlurClippingContext = ClippingShapeContext(view: blurView)
++            self.addSubview(blurView)
 +        }
          if let legacyView = self.legacyView {
              self.addSubview(legacyView)
              let glassHighlightRecognizer = GlassHighlightGestureRecognizer(target: self, action: #selector(self.onHighlightGesture(_:)))
-@@ -808,12 +815,32 @@ public class GlassBackgroundView: UIView {
+@@ -721,6 +741,12 @@ public class GlassBackgroundView: UIView {
+             legacyView.update(size: size, shape: shape, style: style, transition: transition)
+             transition.setFrame(view: legacyView, frame: CGRect(origin: CGPoint(), size: size))
+             transition.setAlpha(view: legacyView, alpha: isVisible ? 1.0 : 0.0)
++            if let ayuBlurView = self.ayuBlurView {
++                self.ayuBlurClippingContext?.update(shape: shape, size: size, transition: transition)
++                transition.setFrame(view: ayuBlurView, frame: CGRect(origin: CGPoint(), size: size))
++                transition.setAlpha(view: ayuBlurView, alpha: isVisible ? 1.0 : 0.0)
++                ayuBlurView.overrideUserInterfaceStyle = isDark ? .dark : .light
++            }
+             
+             transition.setPosition(view: self.contentView, position: CGPoint(x: size.width * 0.5, y: size.height * 0.5))
+             transition.setBounds(view: self.contentView, bounds: CGRect(origin: CGPoint(), size: size))
+@@ -808,12 +834,32 @@ public class GlassBackgroundView: UIView {
                          borderWidthFactor = 1.0
                      }
                  }
@@ -45435,7 +46135,7 @@ index 24b4fba6..f2454837 100644
                  #if DEBUG
                  //foregroundView.image = nil
                  #endif
-@@ -1407,6 +1434,18 @@ public extension GlassBackgroundView {
+@@ -1407,6 +1453,18 @@ public extension GlassBackgroundView {
          }.stretchableImage(withLeftCapWidth: Int(size.width * 0.5), topCapHeight: Int(size.height * 0.5))
      }
      
@@ -48411,13 +49111,14 @@ index 00000000..8e070628
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuPluginPlayerBridge.swift b/submodules/TelegramUI/Sources/AyuPluginPlayerBridge.swift
 new file mode 100644
-index 00000000..a336335d
+index 00000000..ba172c25
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPluginPlayerBridge.swift
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,160 @@
 +import Foundation
 +import UIKit
 +import TelegramCore
++import SwiftSignalKit
 +import AccountContext
 +
 +/// What injecting plugins see of the music player (`ayu.player.state()`), kept by the player.
@@ -48459,6 +49160,36 @@ index 00000000..a336335d
 +
 +/// Connects the plugin runtime to the music player of `sharedContext`.
 +func ayuInstallPluginAppBridge(sharedContext: SharedAccountContext) {
++    // `ayu.ui.gifts.catalog.list`: the regular gifts of the active account's catalog.
++    AyuPluginUI.shared.loadGiftsCatalog = { [weak sharedContext] completion in
++        guard let sharedContext else { return completion([]) }
++        let _ = (sharedContext.activeAccountContexts
++        |> take(1)
++        |> mapToSignal { primary, _, _ -> Signal<[StarGift]?, NoError> in
++            guard let primary else { return .single(nil) }
++            return primary.engine.payments.cachedStarGifts() |> take(1)
++        }
++        |> deliverOnMainQueue).startStandalone(next: { gifts in
++            var result: [[String: Any]] = []
++            for gift in gifts ?? [] {
++                guard case let .generic(value) = gift else { continue }
++                var item: [String: Any] = [
++                    "giftId": String(value.id),
++                    "title": value.title ?? "",
++                    "stars": value.price,
++                    "fileId": String(value.file.fileId.id),
++                    "limited": value.availability != nil,
++                    "soldOut": value.soldOut != nil
++                ]
++                if let availability = value.availability {
++                    item["remains"] = availability.remains
++                    item["total"] = availability.total
++                }
++                result.append(item)
++            }
++            completion(result)
++        })
++    }
 +    // `ayu.ui.alert` / `ayu.ui.sheet`: the app draws them; a plugin only gets the chosen id.
 +    AyuPluginUI.shared.presentAlert = { [weak sharedContext] title, message, buttons, completion in
 +        guard let sharedContext else { return completion(nil) }
@@ -49057,6 +49788,20 @@ index ac8d62e4..96295712 100644
              self.updateRightNavigationButtons(presentationInterfaceState: self.presentationInterfaceState, transition: .immediate)
          } catch {
              let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+diff --git a/submodules/TelegramUI/Sources/ChatControllerContentData.swift b/submodules/TelegramUI/Sources/ChatControllerContentData.swift
+index 002e1ee8..c91eeb49 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerContentData.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerContentData.swift
+@@ -789,7 +789,8 @@ extension ChatControllerImpl {
+                     if let previous = strongSelf.state.peerView, let group = previous.peers[previous.peerId] as? TelegramGroup, group.membership != .Removed, let updatedGroup = peerView.peers[peerView.peerId] as? TelegramGroup, updatedGroup.membership == .Removed {
+                         shouldDismiss = true
+                     } else if let previous = strongSelf.state.peerView, let channel = previous.peers[previous.peerId] as? TelegramChannel, channel.participationStatus != .kicked, let updatedChannel = peerView.peers[peerView.peerId] as? TelegramChannel, updatedChannel.participationStatus == .kicked {
+-                        shouldDismiss = true
++                        // AyuGram "Stay in chat after being banned": the open chat stays readable.
++                        shouldDismiss = !UserDefaults.standard.bool(forKey: "ayu.extra.stayAfterBan")
+                     } else if let previous = strongSelf.state.peerView, let secretChat = previous.peers[previous.peerId] as? TelegramSecretChat, case .active = secretChat.embeddedState, let updatedSecretChat = peerView.peers[peerView.peerId] as? TelegramSecretChat, case .terminated = updatedSecretChat.embeddedState {
+                         shouldDismiss = true
+                     }
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 index a84cdf21..943b6306 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
@@ -49136,10 +49881,10 @@ index 32f76b24..bc64daf9 100644
                      |> filter { $0.isComplete }
                      |> take(1)
 diff --git a/submodules/TelegramUI/Sources/SharedAccountContext.swift b/submodules/TelegramUI/Sources/SharedAccountContext.swift
-index 0e23ec68..2fd33a21 100644
+index 0e23ec68..3d95bda0 100644
 --- a/submodules/TelegramUI/Sources/SharedAccountContext.swift
 +++ b/submodules/TelegramUI/Sources/SharedAccountContext.swift
-@@ -539,7 +539,10 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+@@ -539,7 +539,11 @@ public final class SharedAccountContextImpl: SharedAccountContext {
          let _ = immediateExperimentalUISettingsValue.swap(initialPresentationDataAndSettings.experimentalUISettings)
          
          // Material Design 3 has no Liquid Glass: panels take the flat custom glass instead.
@@ -49148,10 +49893,11 @@ index 0e23ec68..2fd33a21 100644
 +        GlassBackgroundView.useCustomGlassImpl = immediateExperimentalUISettingsValue.with({ $0.fakeGlass }) || AyuMaterialControls.isEnabled || AyuAppearancePlus.usesTelegramGlassThisLaunch
 +        // AyuGram "No glass": the custom renderer draws every glass surface flat.
 +        GlassBackgroundView.flatMode = AyuAppearancePlus.launchNoGlass || AyuAppearancePlus.launchClassicDesign
++        GlassBackgroundView.blurMode = AyuAppearancePlus.launchBlurGlass && !GlassBackgroundView.flatMode
          ManagedAudioSessionImpl.respectsSystemRecordingInput = immediateExperimentalUISettingsValue.with({ $0.respectSystemMicrophone })
          
          self.experimentalUISettingsDisposable = (self.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.experimentalUISettings])
-@@ -548,7 +551,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+@@ -548,7 +552,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                  let _ = immediateExperimentalUISettingsValue.swap(settings)
                  
                  flatBuffers_checkedGet = settings.checkSerializedData
@@ -49160,7 +49906,28 @@ index 0e23ec68..2fd33a21 100644
                  ManagedAudioSessionImpl.respectsSystemRecordingInput = settings.respectSystemMicrophone
              }
          })
-@@ -1864,8 +1867,9 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+@@ -828,7 +832,19 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+                 }
+             }))
+         })
+-        
++
++        // Code plugins: `ayu.on('accountChange', ({ accountId }) => …)` when the active account changes.
++        let _ = (self.activeAccountContexts
++        |> map { primary, _, _ -> EnginePeer.Id? in
++            return primary?.account.peerId
++        }
++        |> distinctUntilChanged
++        |> deliverOnMainQueue).startStandalone(next: { peerId in
++            if let peerId {
++                AyuScriptRuntime.shared.emit("accountChange", ["accountId": String(peerId.id._internalGetInt64Value())])
++            }
++        })
++
+         self.activeAccountsWithInfoPromise.set(self.activeAccountContexts
+         |> mapToSignal { primary, accounts, _ -> Signal<(primary: AccountRecordId?, accounts: [AccountWithInfo]), NoError> in
+             return combineLatest(accounts.map { _, context, _ -> Signal<AccountWithInfo?, NoError> in
+@@ -1864,8 +1880,9 @@ public final class SharedAccountContextImpl: SharedAccountContext {
              // AyuGram: optional Voice Memos style player for voice messages.
              return AyuVoicePlayerController(context: context, type: type)
          }

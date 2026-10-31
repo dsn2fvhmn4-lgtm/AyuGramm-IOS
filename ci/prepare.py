@@ -35,6 +35,7 @@ patches = [
     root / "patches" / "ayugram-music-inline-queue.patch",
     root / "patches" / "ayugram-fixed-player-fades.patch",
     root / "patches" / "ayugram-expanded-lyrics.patch",
+    root / "patches" / "ayugram-big-update.patch",
 ]
 for patch in patches:
     subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)
@@ -58,6 +59,11 @@ font_src = root / "assets" / "fonts" / "YSMusic-HeadlineBold.ttf"
 font_dst = source / "submodules" / "TelegramUI" / "Resources" / font_src.name
 font_dst.parent.mkdir(parents=True, exist_ok=True)
 shutil.copy2(font_src, font_dst)
+
+# AyuGram settings pull-down easter egg image, bundled the same way.
+eblan_src = root / "assets" / "easter" / "AyuEblan.png"
+if eblan_src.is_file():
+    shutil.copy2(eblan_src, source / "submodules" / "TelegramUI" / "Resources" / eblan_src.name)
 
 missing = missing_port_sources(source)
 if missing:

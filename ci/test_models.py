@@ -35,6 +35,8 @@ def run(source: Path):
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
                         str(source / 'submodules/TelegramUI/Sources/AyuMusicMetadata.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsLookup.swift'),
+                        str(source / 'submodules/TelegramUI/Sources/AyuLyricsProviders.swift'),
+                        str(source / 'submodules/TelegramUI/Sources/AyuLyricsAligner.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsTiming.swift'),
                         str(source / 'submodules/TelegramUI/Sources/AyuLyricsYaml.swift'),
                         str(source / 'tools/ayu-tests/lyrics/main.swift'),
@@ -60,7 +62,7 @@ def run(source: Path):
                         '-o', str(output / 'libPostbox.dylib')], check=True)
         ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
         models = [ayu / name for name in ('AyuIOSPluginEnvelope.swift', 'AyuNativeTextTools.swift', 'AyuReactionTotalSettings.swift', 'AyuGroupMentions.swift', 'AyuPluginCatalog.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuTextToolsPolicy.swift', 'AyuRegexSettings.swift',
-                                         'AyuArchiveFileStore.swift', 'AyuMessageHistoryState.swift')]
+                                         'AyuArchiveFileStore.swift', 'AyuMessageHistoryState.swift', 'AyuHooks.swift')]
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
                         '-D', 'AYU_POSTBOX_TESTS', '-I', str(output), '-L', str(output), '-lPostbox',
                         '-Xlinker', '-rpath', '-Xlinker', str(output),

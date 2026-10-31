@@ -30,6 +30,23 @@ Ghost Mode conflicts with [Telegram API Terms section 1.4](https://core.telegram
 
 The development sources add a local edit/deletion ledger, formatting and reaction snapshots, a bot-capture preference, message metadata, silent-send modes, local regex filtering and opt-in local media archiving. The build 8 preview is now published. See [history verification](docs/LOCAL_HISTORY.md) and the [complete parity checklist](docs/PARITY_CHECKLIST.md).
 
+## Big update (development source)
+
+- **Music player**: fast track skipping no longer closes the player (a transient empty state
+  is waited out); artwork, backdrop and titles cross-fade; 120 Hz; interruptible springs.
+- **Track recognition**: cleaner filename parsing, embedded ID3/iTunes tags, optional Shazam
+  (hold the lyrics button); lyrics candidates must match title/artist (Cyrillic-aware) and
+  duration; NetEase added for synced lyrics.
+- **Code plugins**: JavaScript in its own VM per plugin that can wrap or replace app handlers
+  and switch features off; JSON plugins unchanged. See [code plugins](docs/CODE_PLUGINS.md).
+- **Find channels and people**: live search, filters, t.me/@username/ID, and a local archive
+  that keeps names of deleted accounts and removed channels by their saved ID.
+- **Ghost Mode exceptions**: the chat header ghost button now toggles only that chat.
+- **Appearance+**: hide Contacts/Calls tabs and tab titles, Telegram vs system Liquid Glass,
+  classic full-width tab bar.
+- **Developer settings** (all off by default): player debug overlay, FPS counter, slow
+  animations, stock player, lyrics diagnostics, plugin console, verbose log.
+
 ## Chat appearance (development source)
 
 Open **Settings → AyuGram → Chat Appearance**. Per-account controls show/hide the header ghost button, display timestamp seconds, and customize deleted/edited labels. Empty labels use the current app language. Save labels applies text; switches apply immediately. Reset affects appearance only. Deleted-text capture remains a separate opt-in under Message History. These changes are part of the build 8 preview;

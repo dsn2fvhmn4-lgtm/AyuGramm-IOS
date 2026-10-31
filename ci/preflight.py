@@ -127,7 +127,7 @@ def main():
             models = [ayu / name for name in (
                 'AyuIOSPluginEnvelope.swift', 'AyuPythonRuntime.swift', 'AyuNativeTextTools.swift', 'AyuReactionTotalSettings.swift', 'AyuGroupMentions.swift', 'AyuPluginCatalog.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift',
                 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotSettings.swift',
-                'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuRegexSettings.swift')]
+                'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuRegexSettings.swift', 'AyuHooks.swift')]
             with tempfile.TemporaryDirectory(prefix='ayu-plugin-sdk-') as directory:
                 flags = ['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
                          '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator']

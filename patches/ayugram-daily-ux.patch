@@ -1,0 +1,1923 @@
+diff --git a/submodules/Display/Source/AyuAppearancePresetValues.swift b/submodules/Display/Source/AyuAppearancePresetValues.swift
+new file mode 100644
+index 00000000..94dc7638
+--- /dev/null
++++ b/submodules/Display/Source/AyuAppearancePresetValues.swift
+@@ -0,0 +1,95 @@
++import Foundation
++
++public enum AyuAppearancePreset: String, CaseIterable {
++    case midnight, paper, aurora, classic
++
++    public func title(_ ru: Bool) -> String {
++        switch self {
++        case .midnight: return ru ? "Полночь" : "Midnight"
++        case .paper: return ru ? "Бумага" : "Paper"
++        case .aurora: return ru ? "Северное сияние" : "Aurora"
++        case .classic: return ru ? "Классика" : "Classic"
++        }
++    }
++
++    public func description(_ ru: Bool) -> String {
++        switch self {
++        case .midnight: return ru ? "Тёмные цвета, тонкая обводка, спокойный плеер" : "Dark colors, fine borders and a calm player"
++        case .paper: return ru ? "Тёплый светлый фон, мягкие пузырьки и караоке" : "Warm light colors, soft bubbles and karaoke"
++        case .aurora: return ru ? "Фиолетово-бирюзовая палитра, стекло и свечение слов" : "Purple and teal colors, glass and glowing lyrics"
++        case .classic: return ru ? "Синие акценты, привычный шрифт и каскад слов" : "Blue accents, familiar type and cascading lyrics"
++        }
++    }
++
++    public var strings: [String: String] {
++        let colors: [String: String]
++        let font: String, bubble: String, lyrics: String, backdrop: String
++        switch self {
++        case .midnight:
++            colors = ["accent": "#A6A0FF", "outgoingBubble": "#373252", "outgoingText": "#FFFFFF", "incomingBubble": "#1D1C26", "incomingText": "#F3F1FA", "wallpaper": "#101016", "wallpaperSecond": "#191526", "listBackground": "#101016", "chatTitle": "#F3F1FA"]
++            font = "HelveticaNeue"; bubble = "none"; lyrics = "none"; backdrop = "midnight"
++        case .paper:
++            colors = ["accent": "#9D5B36", "outgoingBubble": "#E5D8C4", "outgoingText": "#302820", "incomingBubble": "#FFFCF5", "incomingText": "#302820", "wallpaper": "#F5EFE3", "wallpaperSecond": "#ECE2D1", "listBackground": "#F5EFE3", "chatTitle": "#302820"]
++            font = "AvenirNext-Regular"; bubble = "none"; lyrics = "karaoke"; backdrop = "artwork"
++        case .aurora:
++            colors = ["accent": "#57DCCF", "outgoingBubble": "#493973", "outgoingText": "#FFFFFF", "incomingBubble": "#20273B", "incomingText": "#E6FAF7", "wallpaper": "#101421", "wallpaperSecond": "#2D1D4D", "listBackground": "#101421", "chatTitle": "#E6FAF7"]
++            font = "AvenirNext-Regular"; bubble = "cold"; lyrics = "glow"; backdrop = "aurora"
++        case .classic:
++            colors = ["accent": "#1876D2", "outgoingBubble": "#D9EDFF", "outgoingText": "#142438", "incomingBubble": "#FFFFFF", "incomingText": "#142438", "wallpaper": "#EDF3F8", "wallpaperSecond": "#DDEAF5", "listBackground": "#EDF3F8", "chatTitle": "#142438"]
++            font = "HelveticaNeue"; bubble = "none"; lyrics = "cascade"; backdrop = "artwork"
++        }
++        var values = Dictionary(uniqueKeysWithValues: colors.map { ("ayu.custom." + $0.key, $0.value) })
++        values["ayu.wg.customFontName"] = font
++        values["ayu.wg.messageBorderColor"] = colors["accent"]
++        values["ayu.glass.bubble"] = bubble
++        values["ayu.player.lyricsStyle"] = lyrics
++        values["ayu.player.backdrop"] = backdrop
++        values["ayu.custom.presetBase"] = self == .midnight || self == .aurora ? "night" : "day"
++        return values
++    }
++
++    public var flags: [String: Bool] {
++        return ["ayu.wg.customFontEnabled": true, "ayu.wg.messageBorder": self == .midnight,
++                "ayu.wg.transparentBubbles": false, "ayu.wg.semiTransparentBubbles": false,
++                "ayu.glass.tinted": self == .aurora, "ayu.glass.outline": self == .aurora,
++                "ayu.glass.buttons": self == .aurora, "ayu.glass.lists": self == .aurora,
++                "ayu.glass.gifts": self == .aurora]
++    }
++}
++
++/// Only this fixed appearance subset participates in a preset or undo. Account policy,
++/// credentials, badges, plugin settings and unrelated preferences are never read or written.
++public enum AyuAppearancePresetStore {
++    private static let undoKey = "ayu.appearance.presetUndo.v1"
++    public static var keys: Set<String> {
++        return Set(AyuAppearancePreset.allCases.flatMap { Array($0.strings.keys) + Array($0.flags.keys) })
++    }
++
++    public static func canUndo(defaults: UserDefaults = .standard) -> Bool { return defaults.data(forKey: undoKey) != nil }
++
++    public static func apply(_ preset: AyuAppearancePreset, defaults: UserDefaults = .standard) throws {
++        guard !self.isApplied(preset, defaults: defaults) else { return }
++        var snapshot: [String: Any] = [:]
++        for key in self.keys { if let value = defaults.object(forKey: key) { snapshot[key] = value } }
++        let data = try PropertyListSerialization.data(fromPropertyList: snapshot, format: .binary, options: 0)
++        defaults.set(data, forKey: undoKey)
++        for key in self.keys { defaults.removeObject(forKey: key) }
++        for (key, value) in preset.strings { defaults.set(value, forKey: key) }
++        for (key, value) in preset.flags { defaults.set(value, forKey: key) }
++    }
++
++    @discardableResult
++    public static func undo(defaults: UserDefaults = .standard) throws -> Bool {
++        guard let data = defaults.data(forKey: undoKey) else { return false }
++        guard let snapshot = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any], Set(snapshot.keys).isSubset(of: self.keys) else { throw CocoaError(.fileReadCorruptFile) }
++        for key in self.keys { defaults.removeObject(forKey: key) }
++        for (key, value) in snapshot { defaults.set(value, forKey: key) }
++        defaults.removeObject(forKey: undoKey)
++        return true
++    }
++
++    public static func isApplied(_ preset: AyuAppearancePreset, defaults: UserDefaults = .standard) -> Bool {
++        return preset.strings.allSatisfy { defaults.string(forKey: $0.key) == $0.value }
++            && preset.flags.allSatisfy { (defaults.object(forKey: $0.key) as? Bool) == $0.value }
++    }
++}
+diff --git a/submodules/Display/Source/AyuCustomization.swift b/submodules/Display/Source/AyuCustomization.swift
+index 3f28a738..44225681 100644
+--- a/submodules/Display/Source/AyuCustomization.swift
++++ b/submodules/Display/Source/AyuCustomization.swift
+@@ -115,6 +115,7 @@ public enum AyuCustomization {
+     }
+ 
+     public static func resetAll() {
++        UserDefaults.standard.removeObject(forKey: AyuCustomization.key("presetBase"))
+         for color in Color.allCases {
+             UserDefaults.standard.removeObject(forKey: AyuCustomization.key(color.rawValue))
+         }
+@@ -125,7 +126,7 @@ public enum AyuCustomization {
+         AyuCustomization.changed()
+     }
+ 
+-    private static func changed() {
++    public static func changed() {
+         AyuCustomization.revision += 1
+         NotificationCenter.default.post(name: AyuCustomization.didChangeNotification, object: nil)
+     }
+@@ -152,6 +153,7 @@ public enum AyuCustomization {
+     ]
+ 
+     public static func apply(_ preset: Preset) {
++        UserDefaults.standard.removeObject(forKey: AyuCustomization.key("presetBase"))
+         for color in Color.allCases {
+             if let value = preset.colors[color] {
+                 UserDefaults.standard.set(value, forKey: AyuCustomization.key(color.rawValue))
+diff --git a/submodules/Display/Source/AyuPlayerTextStyle.swift b/submodules/Display/Source/AyuPlayerTextStyle.swift
+new file mode 100644
+index 00000000..60a6933a
+--- /dev/null
++++ b/submodules/Display/Source/AyuPlayerTextStyle.swift
+@@ -0,0 +1,39 @@
++import Foundation
++
++public enum AyuPlayerTextStyle: String, CaseIterable {
++    case none, karaoke, wave, glow, cascade
++
++    public static let didChangeNotification = Notification.Name("AyuGram.PlayerTextStyleChanged")
++    public static let defaultsKey = "ayu.player.lyricsStyle"
++    public static var current: AyuPlayerTextStyle {
++        get { return UserDefaults.standard.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .cascade }
++        set {
++            UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
++    public func title(_ ru: Bool) -> String {
++        switch self {
++        case .none: return ru ? "Без анимации" : "No animation"
++        case .karaoke: return ru ? "Караоке" : "Karaoke"
++        case .wave: return ru ? "Волна" : "Wave"
++        case .glow: return ru ? "Свечение" : "Glow"
++        case .cascade: return ru ? "Каскад" : "Cascade"
++        }
++    }
++
++    public func description(_ ru: Bool) -> String {
++        switch self {
++        case .none: return ru ? "Подсветка текущей строки без движения" : "Highlight the current line without motion"
++        case .karaoke: return ru ? "Плавное заполнение слов, без подъёма букв" : "Smooth word fill without moving letters"
++        case .wave: return ru ? "Буквы приподнимаются волной в такт словам" : "Letters rise in a wave as words are sung"
++        case .glow: return ru ? "Мягкое свечение спетых слов" : "Soft light follows the sung words"
++        case .cascade: return ru ? "Пружинная прокрутка и размытие соседних строк" : "Spring scrolling with blurred surrounding lines"
++        }
++    }
++
++    public func effective(reduceMotion: Bool) -> AyuPlayerTextStyle {
++        return reduceMotion ? .none : self
++    }
++}
+diff --git a/submodules/Display/Source/AyuWhiteGram.swift b/submodules/Display/Source/AyuWhiteGram.swift
+index f480a873..d2e6edc3 100644
+--- a/submodules/Display/Source/AyuWhiteGram.swift
++++ b/submodules/Display/Source/AyuWhiteGram.swift
+@@ -131,6 +131,11 @@ public enum AyuWhiteGram {
+         // Fonts are cached by Font; a new choice applies after relaunch.
+     }
+ 
++    public static func refreshAppearance() {
++        self.refreshCaches()
++        NotificationCenter.default.post(name: self.didChangeNotification, object: nil)
++    }
++
+     public static func resetAll() {
+         for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("ayu.wg.") {
+             UserDefaults.standard.removeObject(forKey: key)
+diff --git a/submodules/SettingsUI/Sources/AyuAppearancePresetsController.swift b/submodules/SettingsUI/Sources/AyuAppearancePresetsController.swift
+new file mode 100644
+index 00000000..f5b0a88f
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuAppearancePresetsController.swift
+@@ -0,0 +1,79 @@
++import UIKit
++import Display
++import AccountContext
++
++private final class AyuAppearancePresetsController: AyuDailyTableController {
++    override init(context: AccountContext) {
++        super.init(context: context)
++        self.title = self.ru ? "Готовые оформления" : "Appearance presets"
++    }
++    required init?(coder: NSCoder) { return nil }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 0 ? AyuAppearancePreset.allCases.count : 1 }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        guard section == 0 else { return nil }
++        return self.ru ? "Нажмите, чтобы применить цвета, пузырьки, шрифт и оформление плеера. Цвета и плеер обновляются сразу; шрифты и некоторые изображения — после перезапуска. Предыдущее оформление можно вернуть кнопкой ниже." : "Tap to apply colors, bubbles, font and player appearance. Colors and the player update immediately; fonts and some cached images need a relaunch. Restore your previous appearance below."
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        if indexPath.section == 1 {
++            let cell = self.cell(title: self.ru ? "Вернуть предыдущее оформление" : "Restore previous appearance")
++            cell.textLabel?.textColor = AyuAppearancePresetStore.canUndo() ? self.tableView.tintColor : .secondaryLabel
++            cell.selectionStyle = AyuAppearancePresetStore.canUndo() ? .default : .none
++            return cell
++        }
++        let preset = AyuAppearancePreset.allCases[indexPath.row]
++        let cell = self.cell(title: preset.title(self.ru), subtitle: preset.description(self.ru))
++        cell.accessoryType = AyuAppearancePresetStore.isApplied(preset) ? .checkmark : .none
++        if let value = preset.strings["ayu.custom.accent"].flatMap(AyuCustomization.parse) {
++            cell.imageView?.image = UIImage(systemName: "circle.fill")
++            cell.imageView?.tintColor = UIColor(rgb: value)
++        }
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        do {
++            if indexPath.section == 0 {
++                try AyuAppearancePresetStore.apply(AyuAppearancePreset.allCases[indexPath.row])
++            } else {
++                guard try AyuAppearancePresetStore.undo() else { return }
++            }
++            AyuWhiteGram.refreshAppearance()
++            AyuCustomization.changed()
++            NotificationCenter.default.post(name: AyuGlass.didChangeNotification, object: nil)
++            NotificationCenter.default.post(name: AyuPlayerTextStyle.didChangeNotification, object: nil)
++            self.tableView.reloadData()
++        } catch { self.showError(self.ru ? "Не удалось применить оформление." : "Could not apply the appearance.") }
++    }
++}
++
++func ayuAppearancePresetsController(context: AccountContext) -> ViewController {
++    return ayuDailyHost(context: context, root: AyuAppearancePresetsController(context: context))
++}
++
++private final class AyuPlayerTextSettingsController: AyuDailyTableController {
++    override init(context: AccountContext) {
++        super.init(context: context)
++        self.title = self.ru ? "Анимация текста в плеере" : "Player lyrics animation"
++    }
++    required init?(coder: NSCoder) { return nil }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return AyuPlayerTextStyle.allCases.count }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        return self.ru ? "Применяется сразу к словам песни. При включённом «Уменьшении движения» используется подсветка без перемещения букв." : "Applies immediately to lyrics. Reduce Motion uses highlighting without moving letters."
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let style = AyuPlayerTextStyle.allCases[indexPath.row]
++        let cell = self.cell(title: style.title(self.ru), subtitle: style.description(self.ru))
++        cell.accessoryType = style == AyuPlayerTextStyle.current ? .checkmark : .none
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        AyuPlayerTextStyle.current = AyuPlayerTextStyle.allCases[indexPath.row]
++        self.tableView.reloadData()
++    }
++}
++
++func ayuPlayerTextSettingsController(context: AccountContext) -> ViewController {
++    return ayuDailyHost(context: context, root: AyuPlayerTextSettingsController(context: context))
++}
+diff --git a/submodules/SettingsUI/Sources/AyuDailyTableController.swift b/submodules/SettingsUI/Sources/AyuDailyTableController.swift
+new file mode 100644
+index 00000000..7006a3b1
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuDailyTableController.swift
+@@ -0,0 +1,97 @@
++import UIKit
++import Display
++import SwiftSignalKit
++import AccountContext
++import TelegramPresentationData
++
++/// Native searchable lists hosted by Telegram's existing navigation/touch bridge.
++class AyuDailyTableController: AyuPluginTableController {
++    let context: AccountContext
++    var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
++    var presentation: PresentationData { return self.context.sharedContext.currentPresentationData.with { $0 } }
++    private var themeDisposable: Disposable?
++    var appearanceChanged: ((PresentationData) -> Void)?
++
++    init(context: AccountContext) {
++        self.context = context
++        super.init(style: .insetGrouped)
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.themeDisposable?.dispose() }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.tableView.rowHeight = UITableView.automaticDimension
++        self.tableView.estimatedRowHeight = 76.0
++        self.tableView.keyboardDismissMode = .onDrag
++        self.themeDisposable = (self.context.sharedContext.presentationData |> deliverOnMainQueue).start(next: { [weak self] data in
++            guard let self else { return }
++            self.overrideUserInterfaceStyle = data.theme.overallDarkAppearance ? .dark : .light
++            self.navigationController?.overrideUserInterfaceStyle = self.overrideUserInterfaceStyle
++            self.tableView.backgroundColor = data.theme.list.blocksBackgroundColor
++            self.tableView.tintColor = data.theme.list.itemAccentColor
++            let appearance = UINavigationBarAppearance()
++            appearance.configureWithOpaqueBackground()
++            appearance.backgroundColor = data.theme.list.blocksBackgroundColor
++            appearance.titleTextAttributes = [.foregroundColor: data.theme.list.itemPrimaryTextColor]
++            self.navigationController?.navigationBar.standardAppearance = appearance
++            self.navigationController?.navigationBar.scrollEdgeAppearance = appearance
++            self.navigationController?.navigationBar.compactAppearance = appearance
++            self.navigationController?.navigationBar.tintColor = data.theme.list.itemAccentColor
++            self.appearanceChanged?(data)
++            self.tableView.reloadData()
++        })
++    }
++
++    func cell(title: String, subtitle: String? = nil) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        let theme = self.presentation.theme.list
++        cell.backgroundColor = theme.itemBlocksBackgroundColor
++        cell.textLabel?.textColor = theme.itemPrimaryTextColor
++        cell.detailTextLabel?.textColor = theme.itemSecondaryTextColor
++        cell.textLabel?.font = .preferredFont(forTextStyle: .body)
++        cell.detailTextLabel?.font = .preferredFont(forTextStyle: .caption1)
++        cell.textLabel?.adjustsFontForContentSizeCategory = true
++        cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
++        cell.textLabel?.numberOfLines = 0
++        cell.detailTextLabel?.numberOfLines = 0
++        cell.textLabel?.text = title
++        cell.detailTextLabel?.text = subtitle
++        return cell
++    }
++
++    func installSearch(_ search: UISearchBar, filter: UISegmentedControl? = nil) {
++        search.searchBarStyle = .minimal
++        search.autocorrectionType = .no
++        let header = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: filter == nil ? 56 : 104))
++        search.frame = CGRect(x: 0, y: 0, width: 320, height: 56)
++        search.autoresizingMask = [.flexibleWidth]
++        header.addSubview(search)
++        if let filter {
++            filter.frame = CGRect(x: 16, y: 60, width: 288, height: 32)
++            filter.autoresizingMask = [.flexibleWidth]
++            header.addSubview(filter)
++        }
++        self.tableView.tableHeaderView = header
++    }
++
++    func showError(_ text: String) {
++        let alert = UIAlertController(title: "AyuGram", message: text, preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: "OK", style: .default))
++        self.present(alert, animated: true)
++    }
++}
++
++func ayuDailyHost(context: AccountContext, root: AyuDailyTableController) -> AyuHostedNavigationScreen {
++    let host = AyuHostedNavigationScreen(context: context, root: root)
++    root.appearanceChanged = { [weak host] data in
++        guard let host else { return }
++        host.statusBar.statusBarStyle = data.theme.rootController.statusBarStyle.style
++        host.displayNode.backgroundColor = data.theme.list.blocksBackgroundColor
++    }
++    let title = context.sharedContext.currentPresentationData.with { $0 }.strings.Common_Back
++    root.navigationItem.leftBarButtonItem = UIBarButtonItem(title: title, image: UIImage(systemName: "chevron.left"), primaryAction: UIAction(handler: { [weak host] _ in
++        host?.navigationController?.popViewController(animated: true)
++    }), menu: nil)
++    return host
++}
+diff --git a/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift b/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift
+index 4948ec0c..700ebc87 100644
+--- a/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift
+@@ -9,18 +9,18 @@ import ItemListUI
+ import AccountContext
+ import LocalizedPeerData
+ 
+-// Settings → AyuGram → Ghost Mode exceptions: chats where Ghost Mode never applies.
+-// The chat header's ghost button adds or removes the open chat from the same list.
++// Settings → AyuGram → Ghost Mode by chat: explicit on/off overrides for account defaults.
+ 
+ private enum AyuGhostExceptionsEntry: ItemListNodeEntry {
+     case add(String)
++    case enable(String)
+     case peer(Int32, Int64, String, String)
+     case removeAll(String)
+     case info(String)
+ 
+     var section: ItemListSectionId {
+         switch self {
+-        case .add: return 0
++        case .add, .enable: return 0
+         case .peer: return 1
+         case .removeAll, .info: return 2
+         }
+@@ -29,6 +29,7 @@ private enum AyuGhostExceptionsEntry: ItemListNodeEntry {
+     var stableId: Int64 {
+         switch self {
+         case .add: return 0
++        case .enable: return 1
+         case let .peer(index, _, _, _): return 100 + Int64(index)
+         case .removeAll: return 1_000_000
+         case .info: return 1_000_001
+@@ -41,7 +42,9 @@ private enum AyuGhostExceptionsEntry: ItemListNodeEntry {
+         let arguments = arguments as! AyuGhostExceptionsArguments
+         switch self {
+         case let .add(title):
+-            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: { arguments.add() })
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: { arguments.add(false) })
++        case let .enable(title):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: { arguments.add(true) })
+         case let .peer(_, peerId, title, label):
+             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: label, sectionId: self.section, style: .blocks, action: { arguments.remove(peerId) })
+         case let .removeAll(title):
+@@ -53,7 +56,7 @@ private enum AyuGhostExceptionsEntry: ItemListNodeEntry {
+ }
+ 
+ private struct AyuGhostExceptionsArguments {
+-    let add: () -> Void
++    let add: (Bool) -> Void
+     let remove: (Int64) -> Void
+     let removeAll: () -> Void
+ }
+@@ -72,13 +75,13 @@ func ayuGhostExceptionsController(context: AccountContext) -> ViewController {
+         }
+     }
+ 
+-    let arguments = AyuGhostExceptionsArguments(add: {
++    let arguments = AyuGhostExceptionsArguments(add: { enabled in
+         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         let filter: ChatListNodePeersFilter = [.excludeRecent, .doNotSearchMessages, .removeSearchHeader, .excludeSavedMessages, .excludeSecretChats]
+-        let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: filter, hasContactSelector: false, title: ru ? "Добавить исключение" : "Add exception"))
++        let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: filter, hasContactSelector: false, title: enabled ? (ru ? "Скрывать в чате" : "Hide in a chat") : (ru ? "Не скрывать в чате" : "Do not hide in a chat")))
+         controller.peerSelected = { [weak controller] peer, _ in
+-            update { $0.setException(true, peerId: peer.id.toInt64()) }
++            update { $0.setChatEnabled(enabled, peerId: peer.id.toInt64()) }
+             controller?.dismiss()
+         }
+         push?(controller)
+@@ -87,9 +90,9 @@ func ayuGhostExceptionsController(context: AccountContext) -> ViewController {
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         let actionSheet = ActionSheetController(presentationData: presentationData)
+         actionSheet.setItemGroups([ActionSheetItemGroup(items: [
+-            ActionSheetButtonItem(title: ru ? "Убрать из исключений" : "Remove exception", color: .destructive, action: { [weak actionSheet] in
++            ActionSheetButtonItem(title: ru ? "Использовать общие настройки" : "Use account settings", color: .accent, action: { [weak actionSheet] in
+                 actionSheet?.dismissAnimated()
+-                update { $0.setException(false, peerId: peerId) }
++                update { $0.resetChatOverride(peerId: peerId) }
+             })
+         ]), ActionSheetItemGroup(items: [
+             ActionSheetButtonItem(title: presentationData.strings.Common_Cancel, color: .accent, font: .bold, action: { [weak actionSheet] in
+@@ -98,12 +101,12 @@ func ayuGhostExceptionsController(context: AccountContext) -> ViewController {
+         ])])
+         presentController?(actionSheet)
+     }, removeAll: {
+-        update { $0.exceptionPeerIds = [] }
++        update { $0.exceptionPeerIds = []; $0.enabledPeerIds = [] }
+     })
+ 
+     let peers: Signal<(AyuGhostModeSettings, [Int64: EnginePeer]), NoError> = store.signal
+     |> mapToSignal { settings -> Signal<(AyuGhostModeSettings, [Int64: EnginePeer]), NoError> in
+-        let ids = settings.exceptionPeerIds.map { EnginePeer.Id($0) }
++        let ids = Array(Set(settings.exceptionPeerIds + settings.enabledPeerIds)).sorted().map { EnginePeer.Id($0) }
+         if ids.isEmpty {
+             return .single((settings, [:]))
+         }
+@@ -122,33 +125,25 @@ func ayuGhostExceptionsController(context: AccountContext) -> ViewController {
+     |> map { presentationData, value -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let (settings, peers) = value
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+-        var entries: [AyuGhostExceptionsEntry] = [.add(ru ? "Добавить чат…" : "Add chat…")]
+-        for (index, peerId) in settings.exceptionPeerIds.enumerated() {
++        var entries: [AyuGhostExceptionsEntry] = [.add(ru ? "Не скрывать в чате…" : "Do not hide in a chat…"), .enable(ru ? "Скрывать только в чате…" : "Hide in a specific chat…")]
++        for (index, peerId) in Array(Set(settings.exceptionPeerIds + settings.enabledPeerIds)).sorted().enumerated() {
+             let title: String
+-            let label: String
++            let label = settings.isExcepted(peerId: peerId) ? (ru ? "выключен" : "off") : (ru ? "включён" : "on")
+             if let peer = peers[peerId] {
+                 title = peer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
+-                switch peer {
+-                case .user: label = ru ? "личный" : "private"
+-                case .legacyGroup: label = ru ? "группа" : "group"
+-                case let .channel(channel):
+-                    if case .broadcast = channel.info { label = ru ? "канал" : "channel" } else { label = ru ? "группа" : "group" }
+-                default: label = ""
+-                }
+             } else {
+                 title = "ID \(peerId)"
+-                label = ru ? "не загружен" : "not loaded"
+             }
+             entries.append(.peer(Int32(index), peerId, title, label))
+         }
+-        if !settings.exceptionPeerIds.isEmpty {
+-            entries.append(.removeAll(ru ? "Удалить все исключения" : "Remove all exceptions"))
++        if !settings.exceptionPeerIds.isEmpty || !settings.enabledPeerIds.isEmpty {
++            entries.append(.removeAll(ru ? "Вернуть общие настройки для всех чатов" : "Use account settings for all chats"))
+         }
+         entries.append(.info(ru
+-            ? "В этих чатах прочтение и статус «печатает» отправляются как обычно, даже когда режим призрака включён. Кнопка-призрак в шапке чата добавляет или убирает текущий чат. Скрытие онлайна действует на весь аккаунт и исключений не имеет."
+-            : "In these chats read receipts and typing are sent normally even while Ghost Mode is on. The ghost button in a chat's header adds or removes that chat. Hiding online status applies to the whole account and has no exceptions."))
++            ? "Кнопка-призрак меняет только текущий чат: скрывает чтение, набор и загрузки. Индивидуальное включение работает и при выключенном общем режиме. Нажмите на чат, чтобы вернуть общие настройки. Скрытие онлайна настраивается отдельно для всего аккаунта."
++            : "The ghost button changes only its chat: read receipts, typing and uploads. A chat can have hiding enabled while the account-wide switches are off. Tap a chat to restore account settings. Online status is controlled separately for the whole account."))
+         let data = ItemListPresentationData(presentationData)
+-        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Исключения" : "Exceptions"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Призрак по чатам" : "Ghost Mode by chat"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
+     }
+     let controller = ItemListController(context: context, state: signal)
+diff --git a/submodules/SettingsUI/Sources/AyuGhostModeController.swift b/submodules/SettingsUI/Sources/AyuGhostModeController.swift
+index 08745cb8..7f15252a 100644
+--- a/submodules/SettingsUI/Sources/AyuGhostModeController.swift
++++ b/submodules/SettingsUI/Sources/AyuGhostModeController.swift
+@@ -85,12 +85,13 @@ public func ayuGhostModeController(context: AccountContext) -> ViewController {
+             return isRussian ? ru : en
+         }
+         var info = AyuStrings.othersDonTSeeYouRe.text(isRussian)
++        info += isRussian ? "\n\nЭто общие настройки. Индивидуальный режим из раздела «Призрак по чатам» имеет приоритет для чтения, набора и загрузок." : "\n\nThese are account defaults. Ghost Mode by chat overrides read receipts, typing and uploads for individual chats."
+         if store.hadLoadError {
+             info += AyuStrings.previousSettingsCouldnTReadDefaults.text(isRussian)
+         }
+         let entries: [AyuGhostModeEntry] = [
+             .header(AyuStrings.whatHide.text(isRussian)),
+-            .toggle(.all, title("Включить всё", "Turn everything on"), settings.allEnabled),
++            .toggle(.all, title("Все общие настройки", "All account defaults"), settings.allEnabled),
+             .toggle(.readReceipts, title("Не отмечать прочитанным", "Don't mark as read"), settings.hideReadReceipts),
+             .toggle(.online, title("Не показывать «в сети»", "Don't show online"), settings.hideOnline),
+             .toggle(.typing, title("Не показывать «печатает»", "Don't show typing"), settings.hideTyping),
+diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+index eb93ad83..a89a26f5 100644
+--- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+@@ -15,6 +15,7 @@ import UniversalMediaPlayer
+ // The AyuGram page and the screens it opens: Ghost Mode+, Local Premium, Message History.
+ 
+ private enum AyuGramRow: Int32 {
++    case quickSettings = -2
+     case ghostMode = 1
+     case ghostModePlus = 2
+     case ghostExceptions = 3
+@@ -41,6 +42,8 @@ private enum AyuGramRow: Int32 {
+     case customization = 63
+     case glass = 64
+     case tools = 65
++    case appearancePresets = 66
++    case playerText = 67
+     case channel = 71
+     case sourceCode = 72
+     case officialGroup = 73
+@@ -107,6 +110,12 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             return
+         }
+         switch row {
++        case .quickSettings:
++            push?(ayuQuickSettingsController(context: context))
++        case .appearancePresets:
++            push?(ayuAppearancePresetsController(context: context))
++        case .playerText:
++            push?(ayuPlayerTextSettingsController(context: context))
+         case .ghostMode:
+             push?(ayuGhostModeController(context: context))
+         case .ghostModePlus:
+@@ -172,6 +181,9 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+         }
+     }, toggle: { _, _ in })
+     let icons: [AyuGramRow: UIImage?] = [
++        .quickSettings: AyuSettingsIcons.symbol("magnifyingglass", color: UIColor(rgb: 0x007AFF)),
++        .appearancePresets: AyuSettingsIcons.symbol("paintpalette.fill", color: UIColor(rgb: 0xAF52DE)),
++        .playerText: AyuSettingsIcons.symbol("text.word.spacing", color: UIColor(rgb: 0xFF2D55)),
+         .ghostMode: AyuSettingsIcons.ghost(color: UIColor(rgb: 0x8E5CF7)),
+         .ghostModePlus: AyuSettingsIcons.ghost(color: UIColor(rgb: 0x5856D6), plus: true),
+         .messageHistory: AyuSettingsIcons.glyph("Item List/Icons/Clock", color: UIColor(rgb: 0xFF9500)),
+@@ -216,11 +228,12 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+     |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuSectionedEntry] = [
++            link(0, .quickSettings, ru ? "Поиск и избранное" : "Search and favorites"),
+             .logo(0, -1, .ayuGram, "AyuGram \(ayuAppVersion())", AyuStrings.justExteragramBasedClientTosBreaking.text(ru)),
+             .header(1, 0, AyuStrings.ghostEssentials.text(ru)),
+             link(1, .ghostMode, "Ghost Mode"),
+             link(1, .ghostModePlus, "Ghost Mode+"),
+-            link(1, .ghostExceptions, ru ? "Исключения призрака" : "Ghost Mode exceptions"),
++            link(1, .ghostExceptions, ru ? "Призрак по чатам" : "Ghost Mode by chat"),
+             .header(2, 10, AyuStrings.spyEssentials.text(ru)),
+             link(2, .messageHistory, AyuStrings.messageHistory.text(ru)),
+             link(2, .mediaArchive, AyuStrings.mediaArchive.text(ru)),
+@@ -247,6 +260,8 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             link(5, .customization, ru ? "Кастомизация" : "Customization", AyuCustomization.hasColors || !AyuCustomization.peerBadges.isEmpty || !AyuCustomization.myBadge.isEmpty ? (ru ? "вкл." : "on") : ""),
+             link(5, .glass, ru ? "Стекло и пузыри" : "Glass and bubbles", AyuGlass.bubbleStyle != .none ? AyuGlass.bubbleStyle.title(ru) : ""),
+             link(5, .tools, ru ? "Инструменты" : "Tools", ru ? "VirusTotal, ИИ, голос" : "VirusTotal, AI, voice"),
++            link(5, .appearancePresets, ru ? "Готовые оформления" : "Appearance presets"),
++            link(5, .playerText, ru ? "Анимация текста в плеере" : "Player lyrics animation", AyuPlayerTextStyle.current.title(ru)),
+             .header(6, 70, AyuStrings.links.text(ru)),
+             link(6, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
+             link(6, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub"),
+@@ -479,6 +494,7 @@ func ayuOpenChannel(context: AccountContext, navigation: NavigationController?)
+ /// `archiveOnly`: the saved messages themselves, on their own page so the settings page
+ /// stays short however many there are.
+ func ayuMessageHistoryController(context: AccountContext, messageId: EngineMessage.Id? = nil, archiveOnly: Bool = false) -> ViewController {
++    if archiveOnly { return ayuHistoryBrowserController(context: context, messageId: messageId) }
+     var push: ((ViewController) -> Void)?
+     var present: ((ViewController) -> Void)?
+     let arguments = AyuSettingsArguments(open: { id in
+@@ -508,18 +524,6 @@ func ayuMessageHistoryController(context: AccountContext, messageId: EngineMessa
+             guard let messageId else { return true }
+             return record.peerId == messageId.peerId.toInt64() && record.messageId == messageId.id
+         }
+-        if archiveOnly {
+-            var entries: [AyuSettingsEntry] = []
+-            if records.isEmpty {
+-                entries.append(.info(12, AyuStrings.archiveEmptyEntriesAppearAfterNew.text(ru)))
+-            } else {
+-                entries.append(contentsOf: records.reversed().map { .record($0) })
+-                entries.append(.clear(AyuStrings.clearArchive.text(ru)))
+-            }
+-            let data = ItemListPresentationData(presentationData)
+-            let state = ItemListControllerState(presentationData: data, title: .text(AyuStrings.savedMessagesArchive.text(ru)), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+-            return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
+-        }
+         var previewItems: [ChatPreviewMessageItem] = [
+             ChatPreviewMessageItem(outgoing: false, reply: nil, text: AyuStrings.meet7.text(ru), nameColor: .preset(.blue), backgroundEmojiId: nil, ayuEdited: history.saveEdits)
+         ]
+@@ -583,7 +587,7 @@ public func ayuMessageDetailsController(context: AccountContext, message: Engine
+     return controller
+ }
+ 
+-func ayuHistoryRecordController(context: AccountContext, recordId: Int32) -> ViewController {
++func ayuHistoryRecordDetailsController(context: AccountContext, recordId: Int32) -> ViewController {
+     var openAttachment: ((String) -> Void)?
+     let signal = combineLatest(context.sharedContext.presentationData, context.engine.messages.ayuMessageHistory())
+     |> deliverOnMainQueue
+diff --git a/submodules/SettingsUI/Sources/AyuHistoryBrowserController.swift b/submodules/SettingsUI/Sources/AyuHistoryBrowserController.swift
+new file mode 100644
+index 00000000..a57c3e8f
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuHistoryBrowserController.swift
+@@ -0,0 +1,202 @@
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++
++private final class AyuHistoryBrowserController: AyuDailyTableController, UISearchBarDelegate {
++    let messageId: EngineMessage.Id?
++    var openRecord: ((Int32) -> Void)?
++    private let search = UISearchBar()
++    private let filter = UISegmentedControl()
++    private var history = AyuMessageHistoryState()
++    private var records: [AyuMessageHistoryRecord] = []
++    private var disposable: Disposable?
++
++    init(context: AccountContext, messageId: EngineMessage.Id?) {
++        self.messageId = messageId
++        super.init(context: context)
++        self.title = self.ru ? "История сообщений" : "Message history"
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.disposable?.dispose() }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.search.delegate = self
++        self.search.placeholder = self.ru ? "Найти в сохранённых сообщениях" : "Search saved messages"
++        for (i, title) in (self.ru ? ["Все", "Изменённые", "Удалённые"] : ["All", "Edited", "Deleted"]).enumerated() {
++            self.filter.insertSegment(withTitle: title, at: i, animated: false)
++        }
++        self.filter.selectedSegmentIndex = 0
++        self.filter.addTarget(self, action: #selector(self.refresh), for: .valueChanged)
++        self.installSearch(self.search, filter: self.filter)
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.ru ? "Очистить" : "Clear", style: .plain, target: self, action: #selector(self.clearArchive))
++        self.disposable = (self.context.engine.messages.ayuMessageHistory() |> deliverOnMainQueue).start(next: { [weak self] history in
++            self?.history = history
++            self?.refresh()
++        })
++    }
++
++    @objc private func clearArchive() {
++        let alert = UIAlertController(title: self.ru ? "Очистить весь архив?" : "Clear the entire archive?", message: self.ru ? "Будут удалены сохранённые версии и вложения всех чатов этого аккаунта, включая скрытые текущим фильтром." : "Saved versions and attachments from all chats in this account will be removed, including records hidden by the current filter.", preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: self.ru ? "Отмена" : "Cancel", style: .cancel))
++        alert.addAction(UIAlertAction(title: self.ru ? "Очистить" : "Clear", style: .destructive, handler: { [weak self] _ in
++            guard let self else { return }
++            let _ = self.context.engine.messages.updateAyuMessageHistory(clear: true).startStandalone()
++        }))
++        self.present(alert, animated: true)
++    }
++
++    @objc private func refresh() {
++        self.records = self.history.records.filter { record in
++            if let id = self.messageId, record.peerId != id.peerId.toInt64() || record.messageId != id.id { return false }
++            if self.filter.selectedSegmentIndex == 1 && record.kind != .edited { return false }
++            if self.filter.selectedSegmentIndex == 2 && record.kind != .deleted { return false }
++            return AyuLocalSearch.matches(self.search.text ?? "", fields: [record.text, record.afterText ?? ""] + (record.attachments ?? []).map { $0.displayName })
++        }.sorted { $0.id > $1.id }
++        self.tableView.reloadData()
++    }
++
++    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) { self.refresh() }
++    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) { searchBar.resignFirstResponder() }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return max(1, self.records.count) }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        return self.ru ? "Хранятся последние 100 записей за 7 дней. Поиск выполняется только в локальном архиве этого аккаунта." : "The latest 100 records are kept for 7 days. Search uses only this account's local archive."
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        guard !self.records.isEmpty else {
++            let cell = self.cell(title: self.ru ? "Ничего не найдено" : "No matches", subtitle: self.ru ? "Измените запрос или фильтр. Новые записи появятся после изменений и удалений." : "Try another query or filter. New edits and deletions add records here.")
++            cell.selectionStyle = .none
++            return cell
++        }
++        let record = self.records[indexPath.row]
++        let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(record.capturedAt)), dateStyle: .short, timeStyle: .short)
++        let kind = record.kind == .edited ? (self.ru ? "Изменено" : "Edited") : (self.ru ? "Удалено" : "Deleted")
++        let preview = record.text.isEmpty ? (record.afterText ?? "") : record.text
++        let text = preview.isEmpty ? (record.attachments?.first?.displayName ?? (self.ru ? "Вложение" : "Attachment")) : String(preview.prefix(160))
++        let cell = self.cell(title: text, subtitle: kind + " · " + date)
++        cell.accessoryType = .disclosureIndicator
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard indexPath.row < self.records.count else { return }
++        self.search.resignFirstResponder()
++        self.openRecord?(self.records[indexPath.row].id)
++    }
++}
++
++private final class AyuHistoryComparisonController: AyuDailyTableController {
++    private let recordId: Int32
++    private var record: AyuMessageHistoryRecord?
++    private var versions: [AyuMessageHistoryRecord] = []
++    private var difference: AyuHistoryTextDiff.Result?
++    private var after: String?
++    private var comparesSavedVersions = false
++    private var disposable: Disposable?
++    var openVersion: ((Int32) -> Void)?
++    var openDetails: (() -> Void)?
++
++    init(context: AccountContext, recordId: Int32) {
++        self.recordId = recordId
++        super.init(context: context)
++        self.title = self.ru ? "Изменения сообщения" : "Message changes"
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.disposable?.dispose() }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.disposable = (self.context.engine.messages.ayuMessageHistory() |> deliverOnMainQueue).start(next: { [weak self] history in
++            guard let self else { return }
++            self.record = history.records.first { $0.id == self.recordId }
++            if let record = self.record {
++                self.versions = history.records.filter { $0.peerId == record.peerId && $0.messageId == record.messageId }.sorted { $0.id < $1.id }
++                self.after = record.kind == .edited ? (record.afterText ?? self.versions.first(where: { $0.id > record.id })?.text) : nil
++                self.comparesSavedVersions = record.kind == .edited && record.afterText == nil && self.after != nil
++                self.difference = self.after.map { AyuHistoryTextDiff.compare(before: record.text, after: $0) }
++            } else {
++                self.versions = []; self.after = nil; self.difference = nil
++            }
++            self.tableView.reloadData()
++        })
++    }
++
++    override func numberOfSections(in tableView: UITableView) -> Int { return self.record == nil ? 1 : 4 }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return section == 2 ? self.versions.count : 1 }
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        guard self.record != nil else { return nil }
++        switch section {
++        case 0: return self.ru ? "Было · удалённое выделено" : "Before · removed text highlighted"
++        case 1: return self.comparesSavedVersions ? (self.ru ? "Следующая сохранённая версия" : "Next saved version") : (self.ru ? "Стало · добавленное выделено" : "After · added text highlighted")
++        case 2: return self.ru ? "Сохранённые версии" : "Saved versions"
++        default: return nil
++        }
++    }
++
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        guard section == 1, self.comparesSavedVersions else { return nil }
++        return self.ru ? "Текст сразу после этой правки не сохранился. Показано сравнение со следующей доступной записью; между ними могли быть другие изменения." : "The immediate replacement was not saved. This compares the next available snapshot; other edits may have occurred in between."
++    }
++
++    private func textCell(_ text: String, spans: [AyuHistoryTextDiff.Span]?, before: Bool) -> UITableViewCell {
++        let cell = self.cell(title: text.isEmpty ? (self.ru ? "Пустой текст" : "Empty text") : text)
++        cell.selectionStyle = .none
++        if let spans, !text.isEmpty {
++            let rendered = NSMutableAttributedString(string: "")
++            for span in spans {
++                var attributes: [NSAttributedString.Key: Any] = [:]
++                if span.changed {
++                    attributes[.backgroundColor] = (before ? UIColor.systemRed : UIColor.systemGreen).withAlphaComponent(0.22)
++                    if before { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
++                    else { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
++                }
++                rendered.append(NSAttributedString(string: span.text, attributes: attributes))
++            }
++            cell.textLabel?.attributedText = rendered
++        }
++        return cell
++    }
++
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        guard let record else { return self.cell(title: self.ru ? "Запись удалена или срок хранения истёк" : "This record was cleared or expired") }
++        switch indexPath.section {
++        case 0: return self.textCell(record.text, spans: self.difference?.before, before: true)
++        case 1:
++            if let after { return self.textCell(after, spans: self.difference?.after, before: false) }
++            return self.cell(title: record.kind == .deleted ? (self.ru ? "Сообщение удалено" : "Message deleted") : (self.ru ? "Следующая версия не сохранена" : "The next version was not saved"))
++        case 2:
++            let version = self.versions[indexPath.row]
++            let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(version.capturedAt)), dateStyle: .medium, timeStyle: .medium)
++            let cell = self.cell(title: date, subtitle: version.kind == .edited ? (self.ru ? "Редактирование" : "Edit") : (self.ru ? "Удаление" : "Deletion"))
++            cell.accessoryType = version.id == self.recordId ? .checkmark : .disclosureIndicator
++            return cell
++        default:
++            let cell = self.cell(title: self.ru ? "Сведения, форматирование и вложения" : "Details, formatting and attachments")
++            cell.accessoryType = .disclosureIndicator
++            return cell
++        }
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard self.record != nil else { return }
++        if indexPath.section == 2, self.versions[indexPath.row].id != self.recordId { self.openVersion?(self.versions[indexPath.row].id) }
++        if indexPath.section == 3 { self.openDetails?() }
++    }
++}
++
++func ayuHistoryBrowserController(context: AccountContext, messageId: EngineMessage.Id?) -> ViewController {
++    let root = AyuHistoryBrowserController(context: context, messageId: messageId)
++    let host = ayuDailyHost(context: context, root: root)
++    root.openRecord = { [weak host] id in host?.push(ayuHistoryRecordController(context: context, recordId: id)) }
++    return host
++}
++
++func ayuHistoryRecordController(context: AccountContext, recordId: Int32) -> ViewController {
++    let root = AyuHistoryComparisonController(context: context, recordId: recordId)
++    let host = ayuDailyHost(context: context, root: root)
++    root.openVersion = { [weak host] id in host?.push(ayuHistoryRecordController(context: context, recordId: id)) }
++    root.openDetails = { [weak host] in host?.push(ayuHistoryRecordDetailsController(context: context, recordId: recordId)) }
++    return host
++}
+diff --git a/submodules/SettingsUI/Sources/AyuQuickSettingsController.swift b/submodules/SettingsUI/Sources/AyuQuickSettingsController.swift
+new file mode 100644
+index 00000000..ccb1e16b
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuQuickSettingsController.swift
+@@ -0,0 +1,178 @@
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++
++private final class AyuQuickSettingsController: AyuDailyTableController, UISearchBarDelegate {
++    private struct Entry {
++        let id: String
++        let title: String
++        let path: String
++        let keywords: String
++        let read: (() -> Bool)?
++        let write: ((Bool) throws -> Void)?
++        let page: (() -> ViewController)?
++    }
++    private let search = UISearchBar()
++    private let scope = UISegmentedControl()
++    private var entries: [Entry] = []
++    private var visible: [Entry] = []
++    private var favorites = Set<String>()
++    private var disposable: Disposable?
++    var openPage: ((ViewController) -> Void)?
++    private var favoritesKey: String { return "ayu.settings.favorites.\(self.context.account.peerId.toInt64())" }
++
++    override init(context: AccountContext) {
++        super.init(context: context)
++        self.title = self.ru ? "Поиск и избранное" : "Search and favorites"
++        self.favorites = Set(UserDefaults.standard.stringArray(forKey: self.favoritesKey) ?? [])
++        self.entries = self.makeEntries()
++    }
++    required init?(coder: NSCoder) { return nil }
++    deinit { self.disposable?.dispose() }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.search.delegate = self
++        self.search.placeholder = self.ru ? "Например: секунды, призрак, шрифт" : "Try: seconds, ghost, font"
++        for (index, text) in (self.ru ? ["Все настройки", "Избранное"] : ["All settings", "Favorites"]).enumerated() {
++            self.scope.insertSegment(withTitle: text, at: index, animated: false)
++        }
++        self.scope.selectedSegmentIndex = 0
++        self.scope.addTarget(self, action: #selector(self.refresh), for: .valueChanged)
++        self.installSearch(self.search, filter: self.scope)
++        self.disposable = (self.context.account.network.ayuGhostMode.signal |> deliverOnMainQueue).start(next: { [weak self] _ in self?.refresh() })
++        self.refresh()
++    }
++
++    override func viewWillAppear(_ animated: Bool) { super.viewWillAppear(animated); self.refresh() }
++
++    @objc private func refresh() {
++        let query = self.search.text ?? ""
++        self.visible = self.entries.filter {
++            (self.scope.selectedSegmentIndex == 0 || self.favorites.contains($0.id)) && AyuLocalSearch.matches(query, fields: [$0.title, $0.path, $0.keywords])
++        }.sorted { lhs, rhs in
++            let left = self.favorites.contains(lhs.id), right = self.favorites.contains(rhs.id)
++            if left != right { return left }
++            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
++        }
++        self.tableView.reloadData()
++    }
++
++    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) { self.refresh() }
++    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) { searchBar.resignFirstResponder() }
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return max(1, self.visible.count) }
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        return self.ru ? "Звезда закрепляет настройку для этого аккаунта. Переключатели работают прямо здесь; остальные строки открывают нужный раздел." : "Tap a star to save a favorite for this account. Switches work here; other rows open their settings page."
++    }
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        guard !self.visible.isEmpty else {
++            let cell = self.cell(title: self.ru ? "Ничего не найдено" : "No matches", subtitle: self.ru ? "Попробуйте другой запрос или добавьте настройки в избранное звёздочкой." : "Try another query or star a setting to add it to favorites.")
++            cell.selectionStyle = .none
++            return cell
++        }
++        let entry = self.visible[indexPath.row]
++        let cell = self.cell(title: entry.title, subtitle: entry.path)
++        let star = UIButton(type: .system)
++        star.setImage(UIImage(systemName: self.favorites.contains(entry.id) ? "star.fill" : "star"), for: .normal)
++        star.tintColor = self.favorites.contains(entry.id) ? .systemYellow : self.tableView.tintColor
++        star.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
++        star.accessibilityLabel = (self.favorites.contains(entry.id) ? (self.ru ? "Убрать из избранного: " : "Remove favorite: ") : (self.ru ? "В избранное: " : "Favorite: ")) + entry.title
++        star.addAction(UIAction(handler: { [weak self] _ in
++            guard let self else { return }
++            if self.favorites.contains(entry.id) { self.favorites.remove(entry.id) } else { self.favorites.insert(entry.id) }
++            UserDefaults.standard.set(self.favorites.sorted(), forKey: self.favoritesKey)
++            self.refresh()
++        }), for: .touchUpInside)
++        let accessory = UIView(frame: CGRect(x: 0, y: 0, width: entry.read == nil ? 44 : 100, height: 44))
++        accessory.addSubview(star)
++        if let read = entry.read, let write = entry.write {
++            let toggle = UISwitch()
++            toggle.center = CGPoint(x: 73, y: 22)
++            toggle.isOn = read()
++            toggle.accessibilityLabel = entry.title
++            toggle.addAction(UIAction(handler: { [weak self, weak toggle] _ in
++                guard let self, let toggle else { return }
++                do { try write(toggle.isOn) }
++                catch { toggle.isOn = read(); self.showError(self.ru ? "Не удалось сохранить настройку." : "Could not save the setting.") }
++            }), for: .valueChanged)
++            accessory.addSubview(toggle)
++            cell.selectionStyle = .none
++        }
++        cell.accessoryView = accessory
++        return cell
++    }
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard indexPath.row < self.visible.count, let page = self.visible[indexPath.row].page else { return }
++        self.search.resignFirstResponder()
++        self.openPage?(page())
++    }
++
++    private func makeEntries() -> [Entry] {
++        let context = self.context, store = self.context.account.network.ayuGhostMode, ru = self.ru
++        var result: [Entry] = []
++        func toggle(_ id: String, _ russian: String, _ english: String, _ group: String, _ path: WritableKeyPath<AyuGhostModeSettings, Bool>) {
++            result.append(Entry(id: id, title: ru ? russian : english, path: group, keywords: russian + " " + english, read: { store.current[keyPath: path] }, write: { value in try store.update { $0[keyPath: path] = value } }, page: nil))
++        }
++        func local(_ id: String, _ russian: String, _ english: String, _ group: String, _ read: @escaping () -> Bool, _ write: @escaping (Bool) -> Void) {
++            result.append(Entry(id: id, title: ru ? russian : english, path: group, keywords: russian + " " + english, read: read, write: write, page: nil))
++        }
++        func page(_ id: String, _ russian: String, _ english: String, _ keywords: String = "", _ create: @escaping () -> ViewController) {
++            result.append(Entry(id: "page." + id, title: ru ? russian : english, path: ru ? "Открыть раздел" : "Open settings page", keywords: russian + " " + english + " " + keywords, read: nil, write: nil, page: create))
++        }
++        let ghost = ru ? "Призрак · общие настройки" : "Ghost Mode · account settings"
++        toggle("ghost.read", "Скрывать прочтение", "Hide read receipts", ghost, \AyuGhostModeSettings.hideReadReceipts)
++        toggle("ghost.online", "Скрывать онлайн", "Hide online status", ghost, \AyuGhostModeSettings.hideOnline)
++        toggle("ghost.typing", "Скрывать набор текста", "Hide typing", ghost, \AyuGhostModeSettings.hideTyping)
++        toggle("ghost.upload", "Скрывать загрузки", "Hide uploads", ghost, \AyuGhostModeSettings.hideUploadProgress)
++        let interface = ru ? "Интерфейс и чаты" : "Interface and chats"
++        toggle("ui.messageShot", "Снимок сообщения", "MessageShot", interface, \AyuGhostModeSettings.interface.showMessageShot)
++        toggle("ui.reactions", "Панель реакций", "Reaction picker", interface, \AyuGhostModeSettings.interface.showReactionPicker)
++        toggle("ui.details", "Подробности сообщения", "Message details", interface, \AyuGhostModeSettings.interface.showMessageDetails)
++        toggle("ui.fastShare", "Скрыть быстрое перенаправление", "Hide quick share", interface, \AyuGhostModeSettings.interface.hideFastShare)
++        toggle("ui.stories", "Скрыть истории", "Hide stories", interface, \AyuGhostModeSettings.interface.hideStories)
++        toggle("ui.unread", "Скрыть счётчики непрочитанного", "Hide unread counters", interface, \AyuGhostModeSettings.interface.hideUnreadCounters)
++        toggle("ui.keyboard", "Скрывать клавиатуру при прокрутке", "Hide keyboard on scroll", interface, \AyuGhostModeSettings.interface.hideKeyboardOnScroll)
++        toggle("ui.format", "Панель форматирования", "Formatting toolbar", interface, \AyuGhostModeSettings.interface.formattingToolbar)
++        toggle("ui.doubleEdit", "Редактировать двойным нажатием", "Double tap to edit", interface, \AyuGhostModeSettings.interface.doubleTapToEdit)
++        let appearance = ru ? "Оформление" : "Appearance"
++        local("appearance.contacts", "Скрыть вкладку Контакты", "Hide Contacts tab", appearance, { AyuAppearancePlus.hideContactsTab }, { AyuAppearancePlus.hideContactsTab = $0 })
++        local("appearance.calls", "Скрыть вкладку Звонки", "Hide Calls tab", appearance, { AyuAppearancePlus.hideCallsTab }, { AyuAppearancePlus.hideCallsTab = $0 })
++        local("appearance.titles", "Скрыть подписи вкладок", "Hide tab titles", appearance, { AyuAppearancePlus.hideTabTitles }, { AyuAppearancePlus.hideTabTitles = $0 })
++        local("appearance.borders", "Обводка сообщений", "Message borders", appearance, { AyuWhiteGram.messageBorder }, { AyuWhiteGram.set($0, forKey: "messageBorder") })
++        local("appearance.compact", "Компактный список чатов", "Compact chat list", appearance, { AyuWhiteGram.compactChatList }, { AyuWhiteGram.set($0, forKey: "compactChatList") })
++        page("ghost", "Режим призрака", "Ghost Mode") { ayuGhostModeController(context: context) }
++        page("chatGhost", "Призрак по чатам", "Ghost Mode by chat", "исключения exceptions") { ayuGhostExceptionsController(context: context) }
++        page("ghostPlus", "Призрак+ и тихая отправка", "Ghost Mode+ and silent sending") { ayuGhostModePlusController(context: context) }
++        page("history", "Сохранение истории сообщений", "Message history settings", "удаления изменения deleted edited") { ayuMessageHistoryController(context: context) }
++        page("archive", "Поиск в удалённых и изменённых", "Search deleted and edited messages") { ayuHistoryBrowserController(context: context, messageId: nil) }
++        page("media", "Архив медиа", "Media archive") { AyuMediaArchiveScreen(context: context) }
++        page("filters", "Фильтры сообщений", "Message filters", "regex регулярные выражения") { ayuChatOptionsController(context: context, regex: true) }
++        page("interface", "Интерфейс и меню сообщений", "Interface and message menus") { ayuInterfacePageController(context: context) }
++        page("composer", "Навигация и редактор", "Navigation and composer") { ayuInterfacePageController(context: context, navigationOnly: true) }
++        page("general", "Общие настройки клиента", "General client settings") { ayuGeneralSettingsController(context: context) }
++        page("chats", "Чаты", "Chats", "сообщения sending отправка") { ayuChatsSettingsController(context: context) }
++        page("appearance", "Оформление чатов", "Chat appearance", "секунды seconds метки label размер size") { ayuSettingsCategoryController(context: context, category: 3) }
++        page("appearancePlus", "Оформление+", "Appearance+", "вкладки tabs стекло glass") { ayuAppearancePlusController(context: context) }
++        page("whiteGram", "Шрифты и оформление WhiteGram", "WhiteGram fonts and appearance", "font пузырьки bubble экспорт import") { ayuWhiteGramController(context: context) }
++        page("custom", "Цвета и кастомизация", "Colors and customization", "палитра wallpaper обои") { ayuCustomizationController(context: context) }
++        page("glass", "Стекло и пузыри", "Glass and bubbles") { ayuGlassController(context: context) }
++        page("presets", "Готовые оформления", "Appearance presets") { ayuAppearancePresetsController(context: context) }
++        page("lyricsMotion", "Анимация текста в плеере", "Player lyrics animation", "караоке karaoke волна wave свечение glow каскад cascade") { ayuPlayerTextSettingsController(context: context) }
++        page("lyrics", "Источники текстов песен", "Lyrics sources", "музыка music слова") { ayuLyricsSourcesController(context: context) }
++        page("equalizer", "Эквалайзер", "Equalizer", "звук audio music") { ayuEqualizerController(context: context) }
++        page("extras", "Приватность и мелочи", "Privacy and extras", "таймер player sleep") { ayuExtrasController(context: context) }
++        page("tools", "Инструменты", "Tools", "голос voice иконки icons ИИ AI VirusTotal") { ayuToolsController(context: context) }
++        page("people", "Поиск каналов и людей", "Find channels and people") { ayuPeerSearchController(context: context) }
++        return result
++    }
++}
++
++func ayuQuickSettingsController(context: AccountContext) -> ViewController {
++    let root = AyuQuickSettingsController(context: context)
++    let host = ayuDailyHost(context: context, root: root)
++    root.openPage = { [weak host] in host?.push($0) }
++    return host
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift
+index 6a3d7ecb..34371ed8 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift
+@@ -40,7 +40,7 @@ extension Network {
+     func requestAyuCloudRead<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), peerId: Int64? = nil) -> Signal<T, MTRpcError> {
+         return deferred {
+             let settings = self.ayuGhostMode.current
+-            if settings.hideReadReceipts && !(peerId.map { settings.isExcepted(peerId: $0) } ?? false) {
++            if (peerId.map { settings.effective(forPeer: $0) } ?? settings).hideReadReceipts {
+                 return .complete()
+             }
+             return self.request(data)
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
+index 179371b2..0c0f2eb3 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
+@@ -21,6 +21,9 @@ public struct AyuGhostModeSettings: Codable, Equatable {
+     /// Chats where Ghost Mode never applies: read receipts and typing go out normally.
+     /// Online status is account-wide and cannot be excepted per chat.
+     public var exceptionPeerIds: [Int64] = []
++    /// Explicit chat-local hiding, including when the account-wide switches are off.
++    /// Online presence remains account-wide and is never changed by a chat button.
++    public var enabledPeerIds: [Int64] = []
+ 
+     private enum CodingKeys: String, CodingKey {
+         case hideReadReceipts, hideOnline, hideTyping, hideUploadProgress, silentSendMode, regexFilters, appearance, mediaSend, interface
+@@ -28,7 +31,7 @@ public struct AyuGhostModeSettings: Codable, Equatable {
+         case hiddenMessages
+         case reactionDisplay
+         case plugins, advanced
+-        case exceptionPeerIds
++        case exceptionPeerIds, enabledPeerIds
+     }
+ 
+     public init(from decoder: Decoder) throws {
+@@ -48,7 +51,8 @@ public struct AyuGhostModeSettings: Codable, Equatable {
+         self.hiddenMessages = (try? values.decode(AyuHiddenMessagesSettings.self, forKey: .hiddenMessages)) ?? AyuHiddenMessagesSettings()
+         self.advanced = (try? values.decode(AyuAdvancedSettings.self, forKey: .advanced)) ?? AyuAdvancedSettings()
+         self.reactionDisplay = (try? values.decode(AyuReactionDisplaySettings.self, forKey: .reactionDisplay)) ?? AyuReactionDisplaySettings()
+-        self.exceptionPeerIds = Array(Set((try? values.decodeIfPresent([Int64].self, forKey: .exceptionPeerIds)) ?? [])).sorted()
++        self.exceptionPeerIds = Array(Set((try? values.decodeIfPresent([Int64].self, forKey: .exceptionPeerIds)) ?? [])).sorted().prefix(2000).map { $0 }
++        self.enabledPeerIds = Array(Set((try? values.decodeIfPresent([Int64].self, forKey: .enabledPeerIds)) ?? []).subtracting(self.exceptionPeerIds)).sorted().prefix(2000).map { $0 }
+         do {
+             self.plugins = try values.decodeIfPresent(AyuPluginRegistry.self, forKey: .plugins) ?? AyuPluginRegistry()
+             try self.plugins.validate()
+@@ -79,26 +83,62 @@ public struct AyuGhostModeSettings: Codable, Equatable {
+ 
+     /// Ghost Mode as it applies inside one chat.
+     public func isActive(inPeer peerId: Int64) -> Bool {
+-        return self.isActive && !self.isExcepted(peerId: peerId)
++        let value = self.effective(forPeer: peerId)
++        return value.hideReadReceipts || value.hideTyping || value.hideUploadProgress
+     }
+ 
+-    /// The policy with per-chat hiding cleared for an excepted chat.
++    /// Account policy with this chat's explicit override applied to local signals.
+     public func effective(forPeer peerId: Int64) -> AyuGhostModeSettings {
+-        guard self.isExcepted(peerId: peerId) else { return self }
+         var copy = self
+-        copy.hideReadReceipts = false
+-        copy.hideTyping = false
+-        copy.hideUploadProgress = false
++        if self.isExcepted(peerId: peerId) {
++            copy.hideReadReceipts = false
++            copy.hideTyping = false
++            copy.hideUploadProgress = false
++        } else if self.enabledPeerIds.contains(peerId) {
++            copy.hideReadReceipts = true
++            copy.hideTyping = true
++            copy.hideUploadProgress = true
++        }
+         return copy
+     }
+ 
+     public mutating func setException(_ excepted: Bool, peerId: Int64) {
++        self.enabledPeerIds.removeAll { $0 == peerId }
+         var set = Set(self.exceptionPeerIds)
+         if excepted { set.insert(peerId) } else { set.remove(peerId) }
+         // Bounded so a runaway caller cannot grow the settings file without limit.
+         self.exceptionPeerIds = Array(set).sorted().suffix(2000).map { $0 }
+     }
+ 
++    public mutating func setChatEnabled(_ enabled: Bool, peerId: Int64) {
++        if enabled {
++            self.exceptionPeerIds.removeAll { $0 == peerId }
++            self.enabledPeerIds.removeAll { $0 == peerId }
++            if self.enabledPeerIds.count >= 2000 { self.enabledPeerIds.removeFirst() }
++            self.enabledPeerIds.append(peerId)
++            self.enabledPeerIds.sort()
++        } else {
++            self.enabledPeerIds.removeAll { $0 == peerId }
++            self.exceptionPeerIds.removeAll { $0 == peerId }
++            if self.exceptionPeerIds.count >= 2000 { self.exceptionPeerIds.removeFirst() }
++            self.exceptionPeerIds.append(peerId)
++            self.exceptionPeerIds.sort()
++        }
++    }
++
++    public mutating func resetChatOverride(peerId: Int64) {
++        self.enabledPeerIds.removeAll { $0 == peerId }
++        self.exceptionPeerIds.removeAll { $0 == peerId }
++    }
++
++    public func shouldSendSilently(inPeer peerId: Int64) -> Bool {
++        switch self.silentSendMode {
++        case .never: return false
++        case .inGhostMode: return self.isActive(inPeer: peerId) || self.hideOnline
++        case .always: return true
++        }
++    }
++
+     public var shouldSendSilently: Bool {
+         switch self.silentSendMode {
+         case .never: return false
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuHistoryTextDiff.swift b/submodules/TelegramCore/Sources/AyuGram/AyuHistoryTextDiff.swift
+new file mode 100644
+index 00000000..98873b0b
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuHistoryTextDiff.swift
+@@ -0,0 +1,95 @@
++import Foundation
++
++/// Word-level changes with a bounded work budget. Text and composed Unicode characters
++/// are preserved exactly; long inputs fall back to one changed middle section.
++public enum AyuHistoryTextDiff {
++    public struct Span: Equatable {
++        public let text: String
++        public let changed: Bool
++        public init(text: String, changed: Bool) { self.text = text; self.changed = changed }
++    }
++
++    public struct Result: Equatable {
++        public let before: [Span]
++        public let after: [Span]
++    }
++
++    private static func tokens(_ text: String) -> [String] {
++        var result: [String] = []
++        var buffer = ""
++        var previous = -1
++        for character in text {
++            let kind = character.isWhitespace ? 0 : (character.isLetter || character.isNumber ? 1 : 2)
++            if kind != previous || kind == 2 {
++                if !buffer.isEmpty { result.append(buffer) }
++                buffer = ""
++            }
++            buffer.append(character)
++            previous = kind
++        }
++        if !buffer.isEmpty { result.append(buffer) }
++        return result
++    }
++
++    private static func append(_ text: String, changed: Bool, to spans: inout [Span]) {
++        guard !text.isEmpty else { return }
++        if let last = spans.last, last.changed == changed {
++            spans[spans.count - 1] = Span(text: last.text + text, changed: changed)
++        } else { spans.append(Span(text: text, changed: changed)) }
++    }
++
++    public static func compare(before: String, after: String) -> Result {
++        if before == after { return Result(before: [Span(text: before, changed: false)], after: [Span(text: after, changed: false)]) }
++        let a = self.tokens(before), b = self.tokens(after)
++        var left: [Span] = [], right: [Span] = []
++        if a.count > 500 || b.count > 500 {
++            let old = Array(before), new = Array(after)
++            var prefix = 0, suffix = 0
++            while prefix < min(old.count, new.count), old[prefix] == new[prefix] { prefix += 1 }
++            while suffix < min(old.count, new.count) - prefix, old[old.count - suffix - 1] == new[new.count - suffix - 1] { suffix += 1 }
++            for (characters, isBefore) in [(old, true), (new, false)] {
++                var spans: [Span] = []
++                self.append(String(characters.prefix(prefix)), changed: false, to: &spans)
++                self.append(String(characters[prefix..<(characters.count - suffix)]), changed: true, to: &spans)
++                self.append(String(characters.suffix(suffix)), changed: false, to: &spans)
++                if isBefore { left = spans } else { right = spans }
++            }
++            return Result(before: left, after: right)
++        }
++        let width = b.count + 1
++        var lengths = [Int](repeating: 0, count: (a.count + 1) * width)
++        for i in a.indices.reversed() {
++            for j in b.indices.reversed() {
++                lengths[i * width + j] = a[i] == b[j]
++                    ? lengths[(i + 1) * width + j + 1] + 1
++                    : max(lengths[(i + 1) * width + j], lengths[i * width + j + 1])
++            }
++        }
++        var i = 0, j = 0
++        while i < a.count || j < b.count {
++            if i < a.count, j < b.count, a[i] == b[j] {
++                self.append(a[i], changed: false, to: &left)
++                self.append(b[j], changed: false, to: &right)
++                i += 1; j += 1
++            } else if i < a.count && (j == b.count || lengths[(i + 1) * width + j] >= lengths[i * width + j + 1]) {
++                self.append(a[i], changed: true, to: &left); i += 1
++            } else {
++                self.append(b[j], changed: true, to: &right); j += 1
++            }
++        }
++        return Result(before: left, after: right)
++    }
++}
++
++public enum AyuLocalSearch {
++    public static func normalized(_ text: String) -> String {
++        return text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "ru_RU"))
++            .replacingOccurrences(of: "ё", with: "е")
++    }
++
++    public static func matches(_ query: String, fields: [String]) -> Bool {
++        let words = self.normalized(String(query.prefix(200))).split(whereSeparator: { $0.isWhitespace })
++        let haystack = self.normalized(fields.joined(separator: " "))
++        return words.allSatisfy { haystack.contains($0) }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
+index 768484db..7b5ef507 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
+@@ -174,7 +174,7 @@ func ayuArchiveMessage(transaction: Transaction, mediaBox: MediaBox, message: Me
+         let formatting = state.saveFormatting ? (try? encoder.encode(entities)) : nil
+         let reactions = state.saveReactions ? (try? encoder.encode(message.reactionsAttribute?.reactions ?? [])) : nil
+         let attachments = ayuCaptureAttachments(transaction: transaction, mediaBox: mediaBox, message: message, state: state)
+-        state.append(peerId: message.id.peerId.toInt64(), messageId: message.id.id, messageTimestamp: message.timestamp, kind: kind, text: message.text, now: now, formatting: formatting, reactions: reactions, attachments: attachments)
++        state.append(peerId: message.id.peerId.toInt64(), messageId: message.id.id, messageTimestamp: message.timestamp, kind: kind, text: message.text, now: now, formatting: formatting, reactions: reactions, attachments: attachments, afterText: kind == .edited ? updated?.text : nil)
+     }
+     if state != original {
+         ayuRemoveExpiredTombstones(transaction: transaction, previous: original, updated: state)
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
+index ce96177f..325bf7e2 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
+@@ -9,15 +9,18 @@ public struct AyuMessageHistoryRecord: Codable, Equatable {
+     public let capturedAt: Int64
+     public let kind: Kind
+     public let text: String
++    /// The server's replacement text captured in the same transaction as the old version.
++    /// Nil for deletions and records made before comparison support was added.
++    public let afterText: String?
+     public let formatting: Data?
+     public let reactions: Data?
+     public let attachments: [AyuArchivedAttachment]?
+ 
+     private enum CodingKeys: String, CodingKey {
+-        case id, peerId, messageId, messageTimestamp, capturedAt, kind, text, formatting, reactions, attachments
++        case id, peerId, messageId, messageTimestamp, capturedAt, kind, text, formatting, reactions, attachments, afterText
+     }
+ 
+-    public init(id: Int32, peerId: Int64, messageId: Int32, messageTimestamp: Int32, capturedAt: Int64, kind: Kind, text: String, formatting: Data?, reactions: Data?, attachments: [AyuArchivedAttachment]?) {
++    public init(id: Int32, peerId: Int64, messageId: Int32, messageTimestamp: Int32, capturedAt: Int64, kind: Kind, text: String, formatting: Data?, reactions: Data?, attachments: [AyuArchivedAttachment]?, afterText: String? = nil) {
+         self.id = id
+         self.peerId = peerId
+         self.messageId = messageId
+@@ -25,6 +28,7 @@ public struct AyuMessageHistoryRecord: Codable, Equatable {
+         self.capturedAt = capturedAt
+         self.kind = kind
+         self.text = text
++        self.afterText = afterText
+         self.formatting = formatting
+         self.reactions = reactions
+         self.attachments = attachments
+@@ -43,6 +47,7 @@ public struct AyuMessageHistoryRecord: Codable, Equatable {
+         }
+         self.kind = kind
+         self.text = try values.decode(String.self, forKey: .text)
++        self.afterText = try values.decodeIfPresent(String.self, forKey: .afterText)
+         self.formatting = try values.decodeIfPresent(Data.self, forKey: .formatting)
+         self.reactions = try values.decodeIfPresent(Data.self, forKey: .reactions)
+         self.attachments = try values.decodeIfPresent([AyuArchivedAttachment].self, forKey: .attachments)
+@@ -59,6 +64,7 @@ public struct AyuMessageHistoryRecord: Codable, Equatable {
+         // by default, so persist the primitive through the keyed String overload.
+         try values.encode(self.kind.rawValue, forKey: .kind)
+         try values.encode(self.text, forKey: .text)
++        try values.encodeIfPresent(self.afterText, forKey: .afterText)
+         try values.encodeIfPresent(self.formatting, forKey: .formatting)
+         try values.encodeIfPresent(self.reactions, forKey: .reactions)
+         try values.encodeIfPresent(self.attachments, forKey: .attachments)
+@@ -136,8 +142,8 @@ public struct AyuMessageHistoryState: Codable, Equatable {
+     public mutating func removeMedia(ids: Set<String>) {
+         self.records = self.records.compactMap { record in
+             let attachments = (record.attachments ?? []).filter { !ids.contains($0.id) }
+-            guard !record.text.isEmpty || !attachments.isEmpty else { return nil }
+-            return AyuMessageHistoryRecord(id: record.id, peerId: record.peerId, messageId: record.messageId, messageTimestamp: record.messageTimestamp, capturedAt: record.capturedAt, kind: record.kind, text: record.text, formatting: record.formatting, reactions: record.reactions, attachments: attachments.isEmpty ? nil : attachments)
++            guard !record.text.isEmpty || !(record.afterText ?? "").isEmpty || !attachments.isEmpty else { return nil }
++            return AyuMessageHistoryRecord(id: record.id, peerId: record.peerId, messageId: record.messageId, messageTimestamp: record.messageTimestamp, capturedAt: record.capturedAt, kind: record.kind, text: record.text, formatting: record.formatting, reactions: record.reactions, attachments: attachments.isEmpty ? nil : attachments, afterText: record.afterText)
+         }
+     }
+ 
+@@ -148,23 +154,24 @@ public struct AyuMessageHistoryState: Codable, Equatable {
+         }
+     }
+ 
+-    public mutating func append(peerId: Int64, messageId: Int32, messageTimestamp: Int32, kind: AyuMessageHistoryRecord.Kind, text: String, now: Int64, formatting: Data? = nil, reactions: Data? = nil, attachments: [AyuArchivedAttachment] = []) {
++    public mutating func append(peerId: Int64, messageId: Int32, messageTimestamp: Int32, kind: AyuMessageHistoryRecord.Kind, text: String, now: Int64, formatting: Data? = nil, reactions: Data? = nil, attachments: [AyuArchivedAttachment] = [], afterText: String? = nil) {
+         self.prune(now: now)
+         let keptAttachments = self.saveMedia ? Array(attachments.prefix(4)) : []
+-        guard (kind == .edited ? self.saveEdits : self.saveDeleted), !text.isEmpty || !keptAttachments.isEmpty else { return }
++        let afterText = kind == .edited ? afterText.flatMap { $0.utf8.count <= Self.maximumTextLength ? $0 : nil } : nil
++        guard (kind == .edited ? self.saveEdits : self.saveDeleted), !text.isEmpty || !(afterText ?? "").isEmpty || !keptAttachments.isEmpty else { return }
+         // Reject oversized content rather than silently truncating an archived version.
+         guard text.utf8.count <= Self.maximumTextLength else { return }
+         let formatting = self.saveFormatting && (formatting?.count ?? 0) <= 16_384 ? formatting : nil
+         let reactions = self.saveReactions && (reactions?.count ?? 0) <= 16_384 ? reactions : nil
+         let attachments: [AyuArchivedAttachment]? = keptAttachments.isEmpty ? nil : keptAttachments
+-        if let last = self.records.last(where: { $0.peerId == peerId && $0.messageId == messageId && $0.kind == kind }), last.text == text && last.formatting == formatting && last.reactions == reactions && last.attachments == attachments {
++        if let last = self.records.last(where: { $0.peerId == peerId && $0.messageId == messageId && $0.kind == kind }), last.text == text && last.afterText == afterText && last.formatting == formatting && last.reactions == reactions && last.attachments == attachments {
+             return
+         }
+         if self.nextId == Int32.max {
+             self.records.removeAll()
+             self.nextId = 1
+         }
+-        self.records.append(AyuMessageHistoryRecord(id: self.nextId, peerId: peerId, messageId: messageId, messageTimestamp: messageTimestamp, capturedAt: now, kind: kind, text: text, formatting: formatting, reactions: reactions, attachments: attachments))
++        self.records.append(AyuMessageHistoryRecord(id: self.nextId, peerId: peerId, messageId: messageId, messageTimestamp: messageTimestamp, capturedAt: now, kind: kind, text: text, formatting: formatting, reactions: reactions, attachments: attachments, afterText: afterText))
+         self.nextId += 1
+         self.prune(now: now)
+     }
+diff --git a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
+index 72b2b552..a7e16086 100644
+--- a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
++++ b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
+@@ -761,7 +761,7 @@ public func enqueueMessages(account: Account, peerId: PeerId, messages: [Enqueue
+     }
+     let ghostSettings = account.network.ayuGhostMode.current
+     let scheduledMessages: [EnqueueMessage]
+-    if ghostSettings.isActive, peerId.namespace != Namespaces.Peer.SecretChat,
++    if ghostSettings.isActive(inPeer: peerId.toInt64()) || ghostSettings.hideOnline, peerId.namespace != Namespaces.Peer.SecretChat,
+        let timestamp = ghostSettings.advanced.scheduledTimestamp(now: Int32(clamping: Int64(Date().timeIntervalSince1970))) {
+         scheduledMessages = pluginMessages.map { item in
+             guard case let .message(text, attributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = item,
+diff --git a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
+index f201b8bc..0e18602c 100644
+--- a/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
++++ b/submodules/TelegramCore/Sources/State/PendingMessageManager.swift
+@@ -1226,7 +1226,7 @@ public final class PendingMessageManager {
+                 var suggestedPost: Api.SuggestedPost?
+                 
+                 var flags: Int32 = 0
+-                if network.ayuGhostMode.current.shouldSendSilently { flags |= Int32(1 << 5) }
++                if network.ayuGhostMode.current.shouldSendSilently(inPeer: peer.id.toInt64()) { flags |= Int32(1 << 5) }
+                 
+                 for attribute in messages[0].0.attributes {
+                     if let replyAttribute = attribute as? ReplyMessageAttribute {
+@@ -1731,7 +1731,7 @@ public final class PendingMessageManager {
+                 var suggestedPost: Api.SuggestedPost?
+                 
+                 var flags: Int32 = 0
+-                if network.ayuGhostMode.current.shouldSendSilently { flags |= Int32(1 << 5) }
++                if network.ayuGhostMode.current.shouldSendSilently(inPeer: peer.id.toInt64()) { flags |= Int32(1 << 5) }
+                 
+                 var topMsgId: Int32?
+                 var monoforumPeerId: Api.InputPeer?
+diff --git a/submodules/TelegramPresentationData/Sources/AyuCustomizedTheme.swift b/submodules/TelegramPresentationData/Sources/AyuCustomizedTheme.swift
+index 78f17acc..cfae7e5e 100644
+--- a/submodules/TelegramPresentationData/Sources/AyuCustomizedTheme.swift
++++ b/submodules/TelegramPresentationData/Sources/AyuCustomizedTheme.swift
+@@ -38,6 +38,13 @@ private func ayuParted(_ colors: PresentationThemePartedColors, fill: UIColor?,
+ 
+ private func ayuApplyCustomization(_ theme: PresentationTheme) -> PresentationTheme {
+     var result = theme
++    // A complete preset needs a matching base for secondary text, panels and navigation.
++    // Keep the user's Telegram theme intact underneath so undo can restore it.
++    switch UserDefaults.standard.string(forKey: "ayu.custom.presetBase") {
++    case "night": result = makeDefaultPresentationTheme(reference: .night, serviceBackgroundColor: nil)
++    case "day": result = makeDefaultPresentationTheme(reference: .day, serviceBackgroundColor: nil)
++    default: break
++    }
+     if let accent = AyuCustomization.color(.accent) {
+         result = customizePresentationTheme(result, editing: false, accentColor: accent, outgoingAccentColor: nil, backgroundColors: [], bubbleColors: [], animateBubbleColors: nil)
+     }
+diff --git a/submodules/TelegramPresentationData/Sources/PresentationData.swift b/submodules/TelegramPresentationData/Sources/PresentationData.swift
+index c4ee8ccf..64928c5c 100644
+--- a/submodules/TelegramPresentationData/Sources/PresentationData.swift
++++ b/submodules/TelegramPresentationData/Sources/PresentationData.swift
+@@ -753,9 +753,19 @@ public func chatServiceBackgroundColor(wallpaper: TelegramWallpaper, mediaBox: M
+     }
+ }
+ 
++private func ayuCustomizationUpdates() -> Signal<Void, NoError> {
++    return Signal { subscriber in
++        let observer = NotificationCenter.default.addObserver(forName: AyuCustomization.didChangeNotification, object: nil, queue: .main, using: { _ in
++            subscriber.putNext(Void())
++        })
++        subscriber.putNext(Void())
++        return ActionDisposable { NotificationCenter.default.removeObserver(observer) }
++    }
++}
++
+ public func updatedPresentationData(accountManager: AccountManager<TelegramAccountManagerTypes>, applicationInForeground: Signal<Bool, NoError>, systemUserInterfaceStyle: Signal<WindowUserInterfaceStyle, NoError>) -> Signal<PresentationData, NoError> {
+-    return combineLatest(accountManager.sharedData(keys: [SharedDataKeys.localizationSettings, ApplicationSpecificSharedDataKeys.presentationThemeSettings, ApplicationSpecificSharedDataKeys.contactSynchronizationSettings]), systemUserInterfaceStyle)
+-    |> mapToSignal { sharedData, systemUserInterfaceStyle -> Signal<PresentationData, NoError> in
++    return combineLatest(accountManager.sharedData(keys: [SharedDataKeys.localizationSettings, ApplicationSpecificSharedDataKeys.presentationThemeSettings, ApplicationSpecificSharedDataKeys.contactSynchronizationSettings]), systemUserInterfaceStyle, ayuCustomizationUpdates())
++    |> mapToSignal { sharedData, systemUserInterfaceStyle, _ -> Signal<PresentationData, NoError> in
+         let themeSettings: PresentationThemeSettings
+         if let current = sharedData.entries[ApplicationSpecificSharedDataKeys.presentationThemeSettings]?.get(PresentationThemeSettings.self) {
+             themeSettings = current
+diff --git a/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
+index be269536..9d2e7cd8 100644
+--- a/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
++++ b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
+@@ -1,5 +1,8 @@
+ import UIKit
+ import CoreImage
++#if canImport(Display)
++import Display
++#endif
+ 
+ /// One lyrics line drawn the way Apple Music draws it, entirely with Core Animation layers:
+ ///
+@@ -13,6 +16,19 @@ import CoreImage
+ ///
+ /// Progress values come straight from the audio clock, so pausing freezes everything exactly.
+ final class AyuLyricsLineLabel: UIView {
++    var animationStyle = AyuPlayerTextStyle.current {
++        didSet { self.refreshMotion() }
++    }
++    private var effectiveStyle: AyuPlayerTextStyle { return self.animationStyle.effective(reduceMotion: UIAccessibility.isReduceMotionEnabled) }
++
++    func refreshMotion() {
++        self.layer.removeAnimation(forKey: "ayu.cascade")
++        self.dimLayer.removeAllAnimations()
++        self.blurLayer.removeAllAnimations()
++        for layer in self.wordLayers { layer.removeFromSuperlayer() }
++        self.wordLayers = []
++        self.invalidateText()
++    }
+     var text = "" { didSet { if oldValue != self.text { self.invalidateText() } } }
+     var font = UIFont.systemFont(ofSize: 32.0, weight: .bold) { didSet { self.invalidateText() } }
+     /// Colour of not-yet-sung and inactive text; sung text is always white.
+@@ -34,6 +50,7 @@ final class AyuLyricsLineLabel: UIView {
+                 // Settle every lifted word and letter back when the line hands over.
+                 self.settleWords()
+             }
++            self.applyProgresses()
+         }
+     }
+ 
+@@ -120,7 +137,7 @@ final class AyuLyricsLineLabel: UIView {
+         let bleed: CGFloat = 12.0
+         self.blurLayer.frame = CGRect(origin: .zero, size: size).insetBy(dx: -bleed, dy: -bleed)
+         self.blurLayer.contents = nil
+-        if let image, let filter = CIFilter(name: "CIGaussianBlur") {
++        if self.effectiveStyle == .cascade, let image, let filter = CIFilter(name: "CIGaussianBlur") {
+             let input = CIImage(cgImage: image)
+             filter.setValue(input, forKey: kCIInputImageKey)
+             filter.setValue(5.0 * UIScreen.main.scale, forKey: kCIInputRadiusKey)
+@@ -149,7 +166,8 @@ final class AyuLyricsLineLabel: UIView {
+                     offset = NSMaxRange(characters)
+                 }
+                 let sustained = word.endTime - word.time >= 1.0 && visible.count <= 12 && !self.isRightToLeft(visible)
+-                let wordLayer = AyuLyricsWordLayer(letters: letters, image: image, size: size, perLetter: sustained, rightToLeft: self.isRightToLeft(visible))
++                let perLetter = !self.isRightToLeft(visible) && ((self.effectiveStyle == .wave && visible.count <= 24) || (self.effectiveStyle == .cascade && sustained))
++                let wordLayer = AyuLyricsWordLayer(letters: letters, image: image, size: size, perLetter: perLetter, rightToLeft: self.isRightToLeft(visible), style: self.effectiveStyle)
+                 self.layer.addSublayer(wordLayer)
+                 self.wordLayers.append(wordLayer)
+             }
+@@ -185,13 +203,13 @@ final class AyuLyricsLineLabel: UIView {
+     // MARK: State
+ 
+     private func applyBlur(animated: Bool) {
+-        let amount = Float(max(0.0, min(1.0, self.blurAmount)))
++        let amount = self.effectiveStyle == .cascade ? Float(max(0.0, min(1.0, self.blurAmount))) : 0.0
+         let apply = {
+             // Blurred lines hide the sharp copy; the active line shows only the sharp one.
+             self.blurLayer.opacity = amount * Float(self.textColor.cgColor.alpha) * 1.6
+             self.dimLayer.opacity = Float(self.textColor.cgColor.alpha) * (1.0 - amount)
+         }
+-        if animated && !UIAccessibility.isReduceMotionEnabled {
++        if animated && self.effectiveStyle == .cascade {
+             CATransaction.begin()
+             CATransaction.setAnimationDuration(0.45)
+             CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+@@ -220,7 +238,7 @@ final class AyuLyricsLineLabel: UIView {
+         CATransaction.begin()
+         CATransaction.setDisableActions(true)
+         for (index, layer) in self.wordLayers.enumerated() {
+-            let value = self.emptyLineActive ? 1.0 : (index < self.progresses.count ? self.progresses[index] : 0.0)
++            let value = self.effectiveStyle == .none ? (self.isLyricActive ? 1.0 : 0.0) : (self.emptyLineActive ? 1.0 : (index < self.progresses.count ? self.progresses[index] : 0.0))
+             layer.update(progress: CGFloat(value), active: self.isLyricActive)
+         }
+         CATransaction.commit()
+@@ -232,6 +250,7 @@ final class AyuLyricsLineLabel: UIView {
+ private final class AyuLyricsWordLayer: CALayer {
+     private final class Piece {
+         let layer = CALayer()
++        let content = CALayer()
+         let mask = CAGradientLayer()
+         let width: CGFloat
+         init(width: CGFloat) { self.width = width }
+@@ -240,11 +259,13 @@ private final class AyuLyricsWordLayer: CALayer {
+     private var pieces: [Piece] = []
+     private let perLetter: Bool
+     private let rightToLeft: Bool
++    private let style: AyuPlayerTextStyle
+     private var lifted = false
+ 
+-    init(letters: [CGRect], image: CGImage, size: CGSize, perLetter: Bool, rightToLeft: Bool) {
++    init(letters: [CGRect], image: CGImage, size: CGSize, perLetter: Bool, rightToLeft: Bool, style: AyuPlayerTextStyle) {
+         self.perLetter = perLetter
+         self.rightToLeft = rightToLeft
++        self.style = style
+         super.init()
+         self.frame = CGRect(origin: .zero, size: size)
+         // Whole words become one piece per visual line; sustained words one piece per letter.
+@@ -264,9 +285,10 @@ private final class AyuLyricsWordLayer: CALayer {
+         for rect in groups {
+             let piece = Piece(width: rect.width)
+             piece.layer.frame = rect
+-            piece.layer.contents = image
+-            piece.layer.contentsScale = scale
+-            piece.layer.contentsRect = CGRect(x: rect.minX / size.width, y: rect.minY / size.height, width: rect.width / size.width, height: rect.height / size.height)
++            piece.content.frame = CGRect(origin: .zero, size: rect.size)
++            piece.content.contents = image
++            piece.content.contentsScale = scale
++            piece.content.contentsRect = CGRect(x: rect.minX / size.width, y: rect.minY / size.height, width: rect.width / size.width, height: rect.height / size.height)
+             piece.layer.shadowColor = UIColor.white.cgColor
+             piece.layer.shadowOffset = .zero
+             piece.layer.shadowRadius = 8.0
+@@ -276,7 +298,9 @@ private final class AyuLyricsWordLayer: CALayer {
+             piece.mask.endPoint = CGPoint(x: rightToLeft ? 0.0 : 1.0, y: 0.5)
+             piece.mask.locations = [0.0, 0.0, 0.0]
+             piece.mask.frame = CGRect(origin: .zero, size: rect.size)
+-            piece.layer.mask = piece.mask
++            // Mask the text inside a shadow-casting container, so glow can extend past it.
++            piece.content.mask = piece.mask
++            piece.layer.addSublayer(piece.content)
+             self.addSublayer(piece.layer)
+             self.pieces.append(piece)
+         }
+@@ -285,6 +309,7 @@ private final class AyuLyricsWordLayer: CALayer {
+     override init(layer: Any) {
+         self.perLetter = false
+         self.rightToLeft = false
++        self.style = .none
+         super.init(layer: layer)
+     }
+ 
+@@ -300,16 +325,20 @@ private final class AyuLyricsWordLayer: CALayer {
+             let edge = min(1.0, 14.0 / max(1.0, piece.width))
+             let head = local * (1.0 + edge)
+             piece.mask.locations = [0.0, NSNumber(value: Double(max(0.0, head - edge))), NSNumber(value: Double(head))] as [NSNumber]
+-            if self.perLetter && active {
++            if self.perLetter && active && (self.style == .wave || self.style == .cascade) {
+                 // Held notes: each letter swells as the fill passes and glows while sustained.
+                 let swell = sin(Double(local) * Double.pi)
+                 let scale = 1.0 + 0.07 * swell
+-                let rise = -3.0 * swell - (local > 0.0 ? 2.0 : 0.0)
++                let rise = self.style == .wave ? -5.0 * swell : -3.0 * swell - (local > 0.0 ? 2.0 : 0.0)
+                 piece.layer.transform = CATransform3DConcat(CATransform3DMakeScale(CGFloat(scale), CGFloat(scale), 1.0), CATransform3DMakeTranslation(0.0, CGFloat(rise), 0.0))
+                 piece.layer.shadowOpacity = Float(0.55 * swell + (local >= 1.0 && progress < 1.0 ? 0.25 : 0.0))
++            } else {
++                piece.layer.transform = CATransform3DIdentity
++                piece.layer.shadowOpacity = self.style == .glow && active ? Float(0.7 * sin(Double(max(0.0, min(1.0, progress))) * .pi)) : 0.0
+             }
+         }
+-        if !self.perLetter, active, progress > 0.0, !self.lifted {
++        if self.lifted && (!active || progress <= 0.0) { self.settle() }
++        if self.style == .cascade, !self.perLetter, active, progress > 0.0, !self.lifted {
+             self.lifted = true
+             self.animateLift(to: -2.0)
+         }
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+index 0253ee5e..3a62cc80 100644
+--- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -84,6 +84,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+     private func showLyricsOptions() {
+         let russian = self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+         let menu = UIAlertController(title: russian ? "Синхронизация слов" : "Lyrics synchronization", message: russian ? "Сдвиг сохраняется отдельно для каждой песни." : "Timing adjustment is saved for each track.", preferredStyle: .actionSheet)
++        menu.addAction(UIAlertAction(title: (russian ? "Анимация текста: " : "Lyrics animation: ") + AyuPlayerTextStyle.current.title(russian), style: .default, handler: { [weak self] _ in self?.showTextAnimationOptions() }))
+         for (title, offset) in [(russian ? "Слова раньше на 0,5 с" : "Lyrics 0.5 s earlier", 0.5), (russian ? "Слова позже на 0,5 с" : "Lyrics 0.5 s later", -0.5)] {
+             menu.addAction(UIAlertAction(title: title, style: .default, handler: { [weak self] _ in self?.playerView?.adjustLyricsOffset(by: offset) }))
+         }
+@@ -133,6 +134,18 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+         self.context.sharedContext.applicationBindings.presentNativeController(menu)
+     }
+ 
++    private func showTextAnimationOptions() {
++        let ru = self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let menu = UIAlertController(title: ru ? "Анимация текста" : "Lyrics animation", message: ru ? "Стиль меняется сразу. При уменьшении движения остаётся только подсветка строки." : "The style changes immediately. Reduce Motion keeps only the current-line highlight.", preferredStyle: .actionSheet)
++        for style in AyuPlayerTextStyle.allCases {
++            menu.addAction(UIAlertAction(title: style.title(ru) + (style == AyuPlayerTextStyle.current ? " ✓" : ""), style: .default, handler: { _ in AyuPlayerTextStyle.current = style }))
++        }
++        menu.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        menu.popoverPresentationController?.sourceView = self.view
++        menu.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.maxY - 80, width: 1, height: 1)
++        self.context.sharedContext.applicationBindings.presentNativeController(menu)
++    }
++
+     private func showHapticsStrengthOptions() {
+         let russian = self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+         let menu = UIAlertController(title: russian ? "Сила вибрации" : "Vibration strength", message: russian ? "Вибрация в такт музыке (кнопка с волной в плеере)." : "Vibration to the beat (the wave button in the player).", preferredStyle: .actionSheet)
+@@ -311,6 +324,7 @@ final class AyuMusicPlayerView: UIView {
+     private var stateDisposable: Disposable?
+     private var lyricsDisposable: Disposable?
+     private var displayLink: CADisplayLink?
++    private var appearanceObservers: [NSObjectProtocol] = []
+ 
+     private var status: MediaPlayerStatus?
+     private var isPaused = true
+@@ -352,6 +366,10 @@ final class AyuMusicPlayerView: UIView {
+         self.addSubview(self.backdropBlur)
+         self.backdropDim.backgroundColor = UIColor(white: 0.0, alpha: 0.28)
+         self.addSubview(self.backdropDim)
++        for name in [AyuPlayerTextStyle.didChangeNotification, UIAccessibility.reduceMotionStatusDidChangeNotification] {
++            self.appearanceObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { [weak self] _ in self?.applyPlayerAppearance() }))
++        }
++        self.applyPlayerAppearance()
+ 
+         self.grabber.backgroundColor = UIColor(white: 1.0, alpha: 0.35)
+         self.grabber.layer.cornerRadius = 2.5
+@@ -487,6 +505,7 @@ final class AyuMusicPlayerView: UIView {
+ 
+     deinit {
+         self.pendingDismiss?.cancel()
++        for observer in self.appearanceObservers { NotificationCenter.default.removeObserver(observer) }
+         self.tagsDisposable?.dispose()
+         self.alignDisposable?.dispose()
+         self.hapticsResource?.dispose()
+@@ -495,6 +514,15 @@ final class AyuMusicPlayerView: UIView {
+         self.displayLink?.invalidate()
+     }
+ 
++    private func applyPlayerAppearance() {
++        self.lyricsView.refreshTextStyle()
++        switch UserDefaults.standard.string(forKey: "ayu.player.backdrop") {
++        case "midnight": self.backdropDim.backgroundColor = UIColor(red: 0.03, green: 0.03, blue: 0.06, alpha: 0.97)
++        case "aurora": self.backdropDim.backgroundColor = UIColor(red: 0.13, green: 0.07, blue: 0.24, alpha: 0.72)
++        default: self.backdropDim.backgroundColor = UIColor(white: 0.0, alpha: 0.28)
++        }
++    }
++
+     // MARK: State
+ 
+     private func update(state value: (Account, SharedMediaPlayerItemPlaybackStateOrLoading, MediaManagerPlayerType)?) {
+@@ -1255,6 +1283,17 @@ private final class AyuMusicScrubber: UIView {
+ /// lines are dimmed, and tapping a synced line seeks to it.
+ private final class AyuLyricsView: UIView {
+     var seek: ((Double) -> Void)?
++    private var animationStyle: AyuPlayerTextStyle { return AyuPlayerTextStyle.current.effective(reduceMotion: UIAccessibility.isReduceMotionEnabled) }
++
++    func refreshTextStyle() {
++        self.scrollView.layer.removeAllAnimations()
++        self.lastBlurAnchor = nil
++        for label in self.lineLabels {
++            label.animationStyle = self.animationStyle
++            label.blurAmount = 0.0
++        }
++        for pause in self.pauseViews.values { pause.layer.removeAnimation(forKey: "ayu.cascade") }
++    }
+ 
+     private let scrollView = UIScrollView()
+     private let statusLabel = UILabel()
+@@ -1350,6 +1389,7 @@ private final class AyuLyricsView: UIView {
+         let synced = !self.lines.isEmpty
+         for (index, text) in texts.enumerated() {
+             let label = AyuLyricsLineLabel(frame: .zero)
++            label.animationStyle = self.animationStyle
+             label.text = text
+             label.font = UIFont.systemFont(ofSize: synced ? 32.0 : 26.0, weight: .bold)
+             label.textColor = UIColor(white: 1.0, alpha: synced ? 0.32 : 0.85)
+@@ -1444,13 +1484,13 @@ private final class AyuLyricsView: UIView {
+                 self.cascadeScroll(to: pause.frame.minY, anchorIndex: pauseIndex)
+             }
+         }
+-        self.updateBlur(current: pauseIndex ?? index)
+         let active = pauseIndex == nil ? Set(AyuLyricsPlayback.visibleLines(self.lines, at: timestamp)) : Set<Int>()
+         for previous in self.activeIndices.subtracting(active) {
+             self.lineLabels[previous].isLyricActive = false
+             self.lineLabels[previous].setProgresses([])
+         }
+         self.activeIndices = active
++        self.updateBlur(current: pauseIndex ?? index)
+         for activeIndex in active {
+             self.lineLabels[activeIndex].isLyricActive = true
+             let words = self.lines[activeIndex].words
+@@ -1473,7 +1513,7 @@ private final class AyuLyricsView: UIView {
+         self.lastBlurAnchor = current
+         self.lastBlurBrowsing = browsing
+         for (index, label) in self.lineLabels.enumerated() {
+-            guard !browsing, let current, !self.activeIndices.contains(index) else {
++            guard self.animationStyle == .cascade, !browsing, let current, !self.activeIndices.contains(index) else {
+                 label.blurAmount = 0.0
+                 continue
+             }
+@@ -1488,9 +1528,9 @@ private final class AyuLyricsView: UIView {
+         let target = max(0.0, min(lineY - self.bounds.height * 0.25, self.scrollView.contentSize.height - self.bounds.height))
+         let delta = self.scrollView.contentOffset.y - target
+         guard abs(delta) > 0.5 else { return }
+-        if UIAccessibility.isReduceMotionEnabled || abs(delta) > self.bounds.height * 1.5 {
++        if self.animationStyle != .cascade || abs(delta) > self.bounds.height * 1.5 {
+             // Seeks and big jumps: a plain short slide reads better than a long cascade.
+-            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0.0 : 0.35, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
++            UIView.animate(withDuration: self.animationStyle == .none ? 0.0 : 0.35, delay: 0.0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+                 self.scrollView.contentOffset.y = target
+             })
+             return
+diff --git a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
+index be09c205..7bc35e9d 100644
+--- a/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
++++ b/submodules/TelegramUI/Sources/Chat/UpdateChatPresentationInterfaceState.swift
+@@ -47,7 +47,7 @@ extension ChatControllerImpl {
+         }
+ 
+         var rightBarButtons = [self.rightNavigationButton, self.secondaryRightNavigationButton].compactMap { $0?.buttonItem }
+-        if case .standard(.default) = self.mode, presentationInterfaceState.interfaceState.selectionState == nil, self.context.account.network.ayuGhostMode.current.appearance.showGhostButton {
++        if case .standard(.default) = self.mode, presentationInterfaceState.interfaceState.selectionState == nil, let ghostPeerId = self.chatLocation.peerId, ghostPeerId.namespace != Namespaces.Peer.SecretChat, self.context.account.network.ayuGhostMode.current.appearance.showGhostButton {
+             let settings = self.context.account.network.ayuGhostMode.current
+             let enabled = self.chatLocation.peerId.map { settings.isActive(inPeer: $0.toInt64()) } ?? settings.isActive
+             if self.ayuGhostButtonEnabled != enabled {
+@@ -60,8 +60,9 @@ extension ChatControllerImpl {
+             self.ayuGhostBarButton.image = enabled ? ayuGhostNavigationImage : ayuGhostNavigationOffImage
+             self.ayuGhostBarButton.target = self
+             self.ayuGhostBarButton.action = #selector(self.ayuGhostButtonPressed)
+-            self.ayuGhostBarButton.accessibilityLabel = enabled ? "Disable AyuGram Ghost Mode" : "Enable AyuGram Ghost Mode"
+-            self.ayuGhostBarButton.accessibilityValue = enabled ? "On" : "Off"
++            let ru = presentationInterfaceState.strings.baseLanguageCode.hasPrefix("ru")
++            self.ayuGhostBarButton.accessibilityLabel = enabled ? (ru ? "Выключить призрак в этом чате" : "Disable Ghost Mode in this chat") : (ru ? "Включить призрак в этом чате" : "Enable Ghost Mode in this chat")
++            self.ayuGhostBarButton.accessibilityValue = enabled ? (ru ? "Включён" : "On") : (ru ? "Выключен" : "Off")
+             self.ayuGhostBarButton.tintColor = enabled ? presentationInterfaceState.theme.rootController.navigationBar.primaryTextColor : presentationInterfaceState.theme.rootController.navigationBar.secondaryTextColor
+             rightBarButtons.insert(self.ayuGhostBarButton, at: 0)
+         }
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index 96295712..2185ad43 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -8699,24 +8699,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+     @objc func ayuGhostButtonPressed() {
+         do {
+             let store = self.context.account.network.ayuGhostMode
+-            let current = store.current
+-            if let peerId = self.chatLocation.peerId?.toInt64(), current.isActive {
+-                // Ghost Mode is on: the header button only excepts (or re-includes) this chat,
+-                // so turning it off here no longer turns it off everywhere.
+-                let excepted = !current.isExcepted(peerId: peerId)
+-                try store.update { $0.setException(excepted, peerId: peerId) }
+-                let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+-                let text = excepted
+-                    ? (ru ? "Режим призрака выключен в этом чате" : "Ghost Mode is off in this chat")
+-                    : (ru ? "Режим призрака снова работает в этом чате" : "Ghost Mode applies to this chat again")
+-                self.present(UndoOverlayController(presentationData: self.presentationData, content: .info(title: nil, text: text, timeout: 2.5, customUndoText: nil), action: { _ in return false }), in: .window(.root))
+-            } else {
+-                let peerId = self.chatLocation.peerId?.toInt64()
+-                try store.update { settings in
+-                    settings.setAllEnabled(true)
+-                    if let peerId { settings.setException(false, peerId: peerId) }
+-                }
++            guard let peer = self.chatLocation.peerId, peer.namespace != Namespaces.Peer.SecretChat else { return }
++            let peerId = peer.toInt64()
++            var enabled = false
++            try store.update { settings in
++                enabled = !settings.isActive(inPeer: peerId)
++                settings.setChatEnabled(enabled, peerId: peerId)
+             }
++            let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++            let text = enabled
++                ? (ru ? "Чтение, набор и загрузки скрыты в этом чате. Онлайн настраивается отдельно." : "Read receipts, typing and uploads are hidden in this chat. Online status is set separately.")
++                : (ru ? "Чтение, набор и загрузки больше не скрыты в этом чате." : "Read receipts, typing and uploads are no longer hidden in this chat.")
++            self.present(UndoOverlayController(presentationData: self.presentationData, content: .info(title: nil, text: text, timeout: 3.5, customUndoText: nil), action: { _ in return false }), in: .window(.root))
+             self.updateRightNavigationButtons(presentationInterfaceState: self.presentationInterfaceState, transition: .immediate)
+         } catch {
+             let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+diff --git a/tools/ayu-tests/daily-ux/main.swift b/tools/ayu-tests/daily-ux/main.swift
+new file mode 100644
+index 00000000..a6620e88
+--- /dev/null
++++ b/tools/ayu-tests/daily-ux/main.swift
+@@ -0,0 +1,64 @@
++import Foundation
++
++var checks = 0
++func check(_ condition: @autoclosure () -> Bool, _ message: String) {
++    guard condition() else { fatalError(message) }
++    checks += 1
++}
++
++let comparisons = [
++    ("Встреча в 10:00", "Встреча в 11:00"),
++    ("one two one", "one three one"),
++    ("строка\nещё строка", "строка\nновая строка"),
++    ("👨‍👩‍👧‍👦 привет 👩🏽‍🚀", "👨‍👩‍👧‍👦 пока 👩🏽‍🚀"),
++    ("مرحبا بالعالم", "مرحبا يا عالم"),
++    ("", "добавлено"), ("удалено", ""), ("same", "same"),
++    (String(repeating: "слово ", count: 700) + "старое", String(repeating: "слово ", count: 700) + "новое")
++]
++for (before, after) in comparisons {
++    let diff = AyuHistoryTextDiff.compare(before: before, after: after)
++    check(diff.before.map { $0.text }.joined() == before, "Diff must preserve the entire old Unicode text")
++    check(diff.after.map { $0.text }.joined() == after, "Diff must preserve the entire new Unicode text")
++    check(diff.before.filter { !$0.changed }.map { $0.text }.joined() == diff.after.filter { !$0.changed }.map { $0.text }.joined(), "Unchanged text must be identical on both sides")
++}
++let edit = AyuHistoryTextDiff.compare(before: "Встреча завтра", after: "Встреча сегодня")
++check(edit.before.filter { $0.changed }.map { $0.text }.joined() == "завтра", "Only the removed word is marked")
++check(edit.after.filter { $0.changed }.map { $0.text }.joined() == "сегодня", "Only the inserted word is marked")
++check(AyuLocalSearch.matches("ПРИЗРАК набор", fields: ["Призрак", "Скрывать набор текста"]), "Search combines query words across title and category")
++check(AyuLocalSearch.matches("еще", fields: ["Ещё настройки"]), "Russian е/ё search is forgiving")
++check(AyuLocalSearch.matches("  ", fields: []), "An empty query shows the whole list")
++check(!AyuLocalSearch.matches("призрак музыка", fields: ["Призрак"]), "Every query word is required")
++
++let suite = "AyuDailyUXTests." + UUID().uuidString
++let defaults = UserDefaults(suiteName: suite)!
++defer { defaults.removePersistentDomain(forName: suite) }
++defaults.set("#123456", forKey: "ayu.custom.accent")
++defaults.set("user-selected-font", forKey: "ayu.wg.customFontName")
++defaults.set("private-value", forKey: "ayu.script.storage.example")
++defaults.set("test-only-key", forKey: "ayu.tools.aiKey")
++defaults.set(true, forKey: "ayu.appearance.hideCallsTab")
++check(!AyuAppearancePresetStore.canUndo(defaults: defaults), "No undo exists before the first preset")
++try AyuAppearancePresetStore.apply(.aurora, defaults: defaults)
++check(AyuAppearancePresetStore.isApplied(.aurora, defaults: defaults), "The complete preset is applied")
++check(defaults.string(forKey: "ayu.script.storage.example") == "private-value", "Presets leave plugins alone")
++check(defaults.string(forKey: "ayu.tools.aiKey") == "test-only-key", "Presets leave credentials alone")
++check(defaults.bool(forKey: "ayu.appearance.hideCallsTab"), "Presets preserve unrelated navigation choices")
++try AyuAppearancePresetStore.apply(.aurora, defaults: defaults)
++let restored = try AyuAppearancePresetStore.undo(defaults: defaults)
++check(restored, "Repeated taps preserve the original undo snapshot")
++check(defaults.string(forKey: "ayu.custom.accent") == "#123456", "Undo restores a custom color exactly")
++check(defaults.string(forKey: "ayu.wg.customFontName") == "user-selected-font", "Undo restores the previous font")
++check(defaults.object(forKey: "ayu.glass.bubble") == nil, "Undo restores missing preferences as missing")
++check(!AyuAppearancePresetStore.canUndo(defaults: defaults), "Undo is consumed once")
++for preset in AyuAppearancePreset.allCases {
++    try AyuAppearancePresetStore.apply(preset, defaults: defaults)
++    check(AyuAppearancePresetStore.isApplied(preset, defaults: defaults), "Every preset has a complete valid settings set")
++    check(AyuPlayerTextStyle(rawValue: preset.strings["ayu.player.lyricsStyle"] ?? "") != nil, "Every preset uses a supported lyrics animation")
++    check(preset.strings.filter { $0.key.hasPrefix("ayu.custom.") && $0.key != "ayu.custom.presetBase" }.values.allSatisfy { $0.count == 7 && $0.hasPrefix("#") && UInt32($0.dropFirst(), radix: 16) != nil }, "Preset colors are valid RGB values")
++    check(["night", "day"].contains(preset.strings["ayu.custom.presetBase"] ?? ""), "Every preset chooses a base with matching text contrast")
++}
++for style in AyuPlayerTextStyle.allCases {
++    check(style.effective(reduceMotion: true) == .none, "Reduce Motion disables positional lyrics animation")
++    check(style.effective(reduceMotion: false) == style, "Every selected style is retained with motion allowed")
++}
++print("PASS: \(checks) daily UX checks against actual diff, search, preset and lyrics-style implementations")
+diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
+index 193351cb..ea5e6e6b 100644
+--- a/tools/ayu-tests/main.swift
++++ b/tools/ayu-tests/main.swift
+@@ -1109,3 +1109,52 @@ let restoredNavigationSettings = try JSONDecoder().decode(AyuInterfaceSettings.s
+ check(restoredNavigationSettings == customNavigationSettings, "Navigation controls survive settings export and reload without losing existing preferences")
+ 
+ print("PASS: \(iosplugPackageChecks) actual signed .iosplug import/activation/export/tamper scenarios; \(checks) total model checks")
++
++
++// Chat-local Ghost Mode never changes account defaults or other chats.
++var chatGhost = AyuGhostModeSettings()
++chatGhost.setChatEnabled(true, peerId: 123)
++check(!chatGhost.isActive && !chatGhost.hideOnline, "A chat button must not enable account-wide hiding")
++check(chatGhost.isActive(inPeer: 123) && !chatGhost.isActive(inPeer: 456), "Chat activation is isolated")
++check(chatGhost.effective(forPeer: 123).hideReadReceipts && chatGhost.effective(forPeer: 123).hideTyping && chatGhost.effective(forPeer: 123).hideUploadProgress, "All supported chat-local signals are hidden")
++chatGhost.silentSendMode = .inGhostMode
++check(chatGhost.shouldSendSilently(inPeer: 123) && !chatGhost.shouldSendSilently(inPeer: 456), "Silent sends follow chat-local policy")
++let chatGhostRoundTrip = try JSONDecoder().decode(AyuGhostModeSettings.self, from: JSONEncoder().encode(chatGhost))
++check(chatGhostRoundTrip == chatGhost, "Chat overrides survive restart")
++chatGhost.setAllEnabled(true)
++chatGhost.setChatEnabled(false, peerId: 123)
++check(!chatGhost.isActive(inPeer: 123) && chatGhost.isActive(inPeer: 456), "Disabling one chat preserves account defaults")
++check(chatGhost.hideOnline && chatGhost.effective(forPeer: 123).hideOnline, "Online status remains account-wide")
++chatGhost.resetChatOverride(peerId: 123)
++check(chatGhost.isActive(inPeer: 123), "Removing an override restores the account defaults")
++let legacyGhost = try JSONDecoder().decode(AyuGhostModeSettings.self, from: Data("{\"hideReadReceipts\":true,\"exceptionPeerIds\":[123]}".utf8))
++check(legacyGhost.enabledPeerIds.isEmpty && !legacyGhost.isActive(inPeer: 123) && legacyGhost.isActive(inPeer: 456), "Old exception-only settings migrate without changing behavior")
++var boundedGhost = AyuGhostModeSettings()
++for id in 1...2001 { boundedGhost.setChatEnabled(true, peerId: Int64(id)) }
++check(boundedGhost.enabledPeerIds.count == 2000 && boundedGhost.enabledPeerIds.contains(2001), "New chat overrides remain effective at the capacity bound")
++
++var comparisonHistory = AyuMessageHistoryState()
++comparisonHistory.saveEdits = true
++comparisonHistory.saveDeleted = true
++comparisonHistory.append(peerId: 123, messageId: 1, messageTimestamp: 100, kind: .edited, text: "Было", now: 1000, afterText: "Стало")
++comparisonHistory.append(peerId: 123, messageId: 1, messageTimestamp: 100, kind: .deleted, text: "Стало", now: 1001, afterText: "Must not survive a deletion")
++check(comparisonHistory.records[0].afterText == "Стало" && comparisonHistory.records[1].afterText == nil, "Only edits retain the replacement text")
++let decodedComparisonHistory = try JSONDecoder().decode(AyuMessageHistoryState.self, from: JSONEncoder().encode(comparisonHistory))
++check(decodedComparisonHistory == comparisonHistory, "Comparison snapshots survive serialization")
++#if AYU_POSTBOX_TESTS
++check(postboxRoundTrip(comparisonHistory) == comparisonHistory, "Actual Postbox codec preserves before/after text")
++#endif
++comparisonHistory.removeMedia(ids: [])
++check(comparisonHistory.records[0].afterText == "Стало", "Media cleanup preserves text comparisons")
++comparisonHistory.append(peerId: 456, messageId: 2, messageTimestamp: 100, kind: .edited, text: "old", now: 1002, afterText: String(repeating: "x", count: 8193))
++check(comparisonHistory.records.last?.afterText == nil, "Oversized replacement text is omitted, never truncated")
++print("PASS: \(checks) total model checks including chat-local Ghost Mode and persistent before/after history")
++
++comparisonHistory.append(peerId: 456, messageId: 3, messageTimestamp: 100, kind: .edited, text: "", now: 1003, afterText: "Добавлена подпись")
++comparisonHistory.removeMedia(ids: [])
++check(comparisonHistory.records.last?.text == "" && comparisonHistory.records.last?.afterText == "Добавлена подпись", "An added caption keeps its empty before-state, including after media cleanup")
++chatGhost.setChatEnabled(true, peerId: 999)
++chatGhost.setChatEnabled(true, peerId: 42)
++let orderedGhost = try JSONDecoder().decode(AyuGhostModeSettings.self, from: JSONEncoder().encode(chatGhost))
++check(orderedGhost == chatGhost, "Multiple chat overrides keep a stable order across restart")
++print("PASS: \(checks) total model checks including empty-caption edits and multiple chat overrides")

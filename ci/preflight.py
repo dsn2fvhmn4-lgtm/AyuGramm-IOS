@@ -112,6 +112,7 @@ def main():
             companions = [path.with_name('AyuMusicHapticsTimeline.swift')] if path.name == 'AyuMusicHaptics.swift' else []
             if path.name == 'AyuLyricsLineLabel.swift':
                 companions = [path.with_name(name) for name in ('AyuLyricsTiming.swift', 'AyuLyricsYaml.swift')]
+                companions.append(source / 'submodules/Display/Source/AyuPlayerTextStyle.swift')
             result = subprocess.run(['xcrun', 'swiftc', '-typecheck', '-swift-version', '5', '-warnings-as-errors',
                                      '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator', str(path),
                                      *map(str, companions)], capture_output=True, text=True)

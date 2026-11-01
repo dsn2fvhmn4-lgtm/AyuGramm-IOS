@@ -1429,7 +1429,7 @@ index c4ee8ccf..64928c5c 100644
          if let current = sharedData.entries[ApplicationSpecificSharedDataKeys.presentationThemeSettings]?.get(PresentationThemeSettings.self) {
              themeSettings = current
 diff --git a/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
-index be269536..9d2e7cd8 100644
+index be269536..eab8cabe 100644
 --- a/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
 +++ b/submodules/TelegramUI/Sources/AyuLyricsLineLabel.swift
 @@ -1,5 +1,8 @@
@@ -1525,14 +1525,14 @@ index be269536..9d2e7cd8 100644
      private var pieces: [Piece] = []
      private let perLetter: Bool
      private let rightToLeft: Bool
-+    private let style: AyuPlayerTextStyle
++    private let textStyle: AyuPlayerTextStyle
      private var lifted = false
  
 -    init(letters: [CGRect], image: CGImage, size: CGSize, perLetter: Bool, rightToLeft: Bool) {
 +    init(letters: [CGRect], image: CGImage, size: CGSize, perLetter: Bool, rightToLeft: Bool, style: AyuPlayerTextStyle) {
          self.perLetter = perLetter
          self.rightToLeft = rightToLeft
-+        self.style = style
++        self.textStyle = style
          super.init()
          self.frame = CGRect(origin: .zero, size: size)
          // Whole words become one piece per visual line; sustained words one piece per letter.
@@ -1565,7 +1565,7 @@ index be269536..9d2e7cd8 100644
      override init(layer: Any) {
          self.perLetter = false
          self.rightToLeft = false
-+        self.style = .none
++        self.textStyle = AyuPlayerTextStyle.none
          super.init(layer: layer)
      }
  
@@ -1574,22 +1574,22 @@ index be269536..9d2e7cd8 100644
              let head = local * (1.0 + edge)
              piece.mask.locations = [0.0, NSNumber(value: Double(max(0.0, head - edge))), NSNumber(value: Double(head))] as [NSNumber]
 -            if self.perLetter && active {
-+            if self.perLetter && active && (self.style == .wave || self.style == .cascade) {
++            if self.perLetter && active && (self.textStyle == .wave || self.textStyle == .cascade) {
                  // Held notes: each letter swells as the fill passes and glows while sustained.
                  let swell = sin(Double(local) * Double.pi)
                  let scale = 1.0 + 0.07 * swell
 -                let rise = -3.0 * swell - (local > 0.0 ? 2.0 : 0.0)
-+                let rise = self.style == .wave ? -5.0 * swell : -3.0 * swell - (local > 0.0 ? 2.0 : 0.0)
++                let rise = self.textStyle == .wave ? -5.0 * swell : -3.0 * swell - (local > 0.0 ? 2.0 : 0.0)
                  piece.layer.transform = CATransform3DConcat(CATransform3DMakeScale(CGFloat(scale), CGFloat(scale), 1.0), CATransform3DMakeTranslation(0.0, CGFloat(rise), 0.0))
                  piece.layer.shadowOpacity = Float(0.55 * swell + (local >= 1.0 && progress < 1.0 ? 0.25 : 0.0))
 +            } else {
 +                piece.layer.transform = CATransform3DIdentity
-+                piece.layer.shadowOpacity = self.style == .glow && active ? Float(0.7 * sin(Double(max(0.0, min(1.0, progress))) * .pi)) : 0.0
++                piece.layer.shadowOpacity = self.textStyle == .glow && active ? Float(0.7 * sin(Double(max(0.0, min(1.0, progress))) * .pi)) : 0.0
              }
          }
 -        if !self.perLetter, active, progress > 0.0, !self.lifted {
 +        if self.lifted && (!active || progress <= 0.0) { self.settle() }
-+        if self.style == .cascade, !self.perLetter, active, progress > 0.0, !self.lifted {
++        if self.textStyle == .cascade, !self.perLetter, active, progress > 0.0, !self.lifted {
              self.lifted = true
              self.animateLift(to: -2.0)
          }

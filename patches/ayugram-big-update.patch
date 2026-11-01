@@ -1992,10 +1992,10 @@ index 00000000..f01650ce
 +}
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 new file mode 100644
-index 00000000..766db4bf
+index 00000000..fcb4ffb8
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-@@ -0,0 +1,1139 @@
+@@ -0,0 +1,1148 @@
 +import Foundation
 +import JavaScriptCore
 +import CryptoKit
@@ -2875,6 +2875,15 @@ index 00000000..766db4bf
 +        'use strict';
 +        const host = root.__ayuHost;
 +        delete root.__ayuHost;
++        // Only plain JSON reaches the app: BigInt becomes a string, functions and symbols are
++        // dropped, and anything that cannot be serialised (cycles) is sent as {}.
++        const nativeCall = host.call;
++        host.call = function (op, args) {
++            let clean;
++            try { clean = JSON.parse(JSON.stringify(args === undefined ? {} : args, (key, value) => typeof value === 'bigint' ? String(value) : value)); } catch (e) { clean = {}; }
++            if (clean === null || typeof clean !== 'object' || Array.isArray(clean)) clean = {};
++            return nativeCall.call(host, String(op), clean);
++        };
 +        const text = (value) => String(value === undefined || value === null ? '' : value);
 +        const fmt = (args) => Array.prototype.map.call(args, (v) => typeof v === 'string' ? v : (() => { try { return JSON.stringify(v); } catch (e) { return String(v); } })()).join(' ');
 +        const pending = {};
@@ -56241,16 +56250,17 @@ index 00000000..8e070628
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
 new file mode 100644
-index 00000000..6d2b0e1a
+index 00000000..cb26c472
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,271 @@
 +import Foundation
 +import UIKit
 +import SwiftSignalKit
 +import Display
 +import TelegramCore
 +import AccountContext
++import SettingsUI
 +import ChatInterfaceState
 +import ChatPresentationInterfaceState
 +import ChatControllerInteraction

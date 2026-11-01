@@ -133,7 +133,7 @@ index 00000000..6195b04c
 +    }
 +}
 diff --git a/Telegram/BUILD b/Telegram/BUILD
-index 509767b2..8e98ad84 100644
+index 509767b2..d0de06d1 100644
 --- a/Telegram/BUILD
 +++ b/Telegram/BUILD
 @@ -341,7 +341,7 @@ alternate_icon_folders = [
@@ -145,7 +145,7 @@ index 509767b2..8e98ad84 100644
  
  [
      filegroup(
-@@ -376,6 +376,16 @@ objc_library(
+@@ -376,6 +376,21 @@ objc_library(
      ],
  )
  
@@ -157,12 +157,28 @@ index 509767b2..8e98ad84 100644
 +    srcs = glob([
 +        "AyuIntents/**/*.swift",
 +    ]),
++    # rules_apple's app_intents aspect requires the AppIntents SDK framework on the library;
++    # weak, so the app still launches on iOS 15.
++    linkopts = [
++        "-Wl,-weak_framework,AppIntents",
++    ],
 +)
 +
  swift_library(
      name = "Lib",
      module_name = "Lib",
-@@ -1350,6 +1360,9 @@ ios_extension(
+@@ -1279,6 +1294,10 @@ filegroup(
+ swift_library(
+     name = "WidgetExtensionLib",
+     module_name = "WidgetExtensionLib",
++    linkopts = [
++        "-Wl,-weak_framework,AppIntents",
++        "-Wl,-weak_framework,ActivityKit",
++    ],
+     srcs = glob([
+         "WidgetKitWidget/**/*.swift",
+     ]),
+@@ -1350,6 +1369,9 @@ ios_extension(
      deps = [
          ":WidgetExtensionLib",
      ],
@@ -172,7 +188,7 @@ index 509767b2..8e98ad84 100644
      frameworks = [
          ":SwiftSignalKitFramework",
          ":PostboxFramework",
-@@ -1784,6 +1797,8 @@ plist_fragment(
+@@ -1784,6 +1806,8 @@ plist_fragment(
      <string>You can use Siri to send messages.</string>
      <key>NSSpeechRecognitionUsageDescription</key>
      <string>We need this to transcribe audio messages on your request.</string>
@@ -181,7 +197,7 @@ index 509767b2..8e98ad84 100644
      <key>NSUserActivityTypes</key>
      <array>
          <string>INSendMessageIntent</string>
-@@ -1996,6 +2011,10 @@ ios_application(
+@@ -1996,6 +2020,10 @@ ios_application(
      deps = [
          ":Main",
          ":Lib",

@@ -1,0 +1,691 @@
+diff --git a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift b/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
+index cbf543a1..558ac290 100644
+--- a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
++++ b/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
+@@ -43,11 +43,34 @@ public final class AyuVerifiedRegistry {
+         }
+     }
+ 
+-    /// The team's label for a Telegram user, channel or group id.
++    /// The team's label for a Telegram user, channel or group id. Labels the repository owner
++    /// gives out (assets/ayugram_ios_badges.json) fill in where the signed list has none.
+     public func entry(peerId: Int64) -> Entry? {
+         self.lock.lock()
+-        defer { self.lock.unlock() }
+-        return self.entries[peerId]
++        let signed = self.entries[peerId]
++        self.lock.unlock()
++        if let signed {
++            return signed
++        }
++        if let label = AyuSupportersManager.shared.label(peerId: peerId) {
++            return Entry(id: String(peerId), kind: label.kind, text: label.text)
++        }
++        return nil
++    }
++
++    private static let dismissedPanelsKey = "ayu.teamLabel.dismissedPanels"
++
++    /// Whether the label panel under this chat's title was closed with its cross.
++    public static func isPanelDismissed(peerId: Int64) -> Bool {
++        return (UserDefaults.standard.array(forKey: AyuVerifiedRegistry.dismissedPanelsKey) as? [String])?.contains(String(peerId)) ?? false
++    }
++
++    public static func dismissPanel(peerId: Int64) {
++        var ids = (UserDefaults.standard.array(forKey: AyuVerifiedRegistry.dismissedPanelsKey) as? [String]) ?? []
++        if !ids.contains(String(peerId)) {
++            ids.append(String(peerId))
++            UserDefaults.standard.set(ids, forKey: AyuVerifiedRegistry.dismissedPanelsKey)
++        }
+     }
+ 
+     public func isVerified(peerId: Int64) -> Bool {
+diff --git a/submodules/Display/Source/DeviceMetrics.swift b/submodules/Display/Source/DeviceMetrics.swift
+index c2604c58..51a60f09 100644
+--- a/submodules/Display/Source/DeviceMetrics.swift
++++ b/submodules/Display/Source/DeviceMetrics.swift
+@@ -555,13 +555,9 @@ public enum DeviceMetrics: CaseIterable, Equatable {
+         }
+     }
+     
++    /// The AyuGram watermark sits under the Dynamic Island, or under the notch on older iPhones
++    /// (minis and the iPhone X included). Phones without either have the clock there instead.
+     public var showAppBadge: Bool {
+-        // The minis are left out as they were while they matched the iPhone X by screen size.
+-        switch self {
+-        case .iPhoneX, .iPhone12Mini, .iPhone13Mini:
+-            return false
+-        default:
+-            return self.hasTopNotch || self.hasDynamicIsland
+-        }
++        return self.hasTopNotch || self.hasDynamicIsland
+     }
+ }
+diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+index 1a06ea6d..eb93ad83 100644
+--- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+@@ -43,6 +43,7 @@ private enum AyuGramRow: Int32 {
+     case tools = 65
+     case channel = 71
+     case sourceCode = 72
++    case officialGroup = 73
+     case developer = 81
+     case creditOwnerGitHub = 91
+     case creditOwnerTelegram = 92
+@@ -162,6 +163,8 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             ayuOpenChannel(context: context, navigation: navigation?())
+         case .sourceCode:
+             context.sharedContext.applicationBindings.openUrl("https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS")
++        case .officialGroup:
++            context.sharedContext.openExternalUrl(context: context, urlContext: .generic, url: "https://t.me/jailbreak_iPhone_iPad_android", forceExternal: false, presentationData: context.sharedContext.currentPresentationData.with { $0 }, navigationController: navigation?(), dismissInput: {})
+         case .creditMurkGitHub, .creditMurkTelegram, .creditNeistvGitHub, .creditNeistvTelegram, .creditOwnerGitHub, .creditOwnerTelegram:
+             if let url = row.creditURL {
+                 context.sharedContext.openExternalUrl(context: context, urlContext: .generic, url: url, forceExternal: false, presentationData: context.sharedContext.currentPresentationData.with { $0 }, navigationController: navigation?(), dismissInput: {})
+@@ -197,12 +200,13 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+         .tools: AyuSettingsIcons.symbol("wrench.and.screwdriver.fill", color: UIColor(rgb: 0x8E8E93)),
+         .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
+         .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6)),
++        .officialGroup: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
+         .creditMurkGitHub: AyuSettingsIcons.symbol("person.crop.circle.fill", color: UIColor(rgb: 0x8E5CF7)),
+-        .creditMurkTelegram: AyuSettingsIcons.symbol("paperplane.fill", color: UIColor(rgb: 0x2AABEE)),
++        .creditMurkTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
+         .creditNeistvGitHub: AyuSettingsIcons.symbol("person.crop.circle.fill", color: UIColor(rgb: 0xFF9500)),
+-        .creditNeistvTelegram: AyuSettingsIcons.symbol("paperplane.fill", color: UIColor(rgb: 0x2AABEE)),
++        .creditNeistvTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
+         .creditOwnerGitHub: AyuSettingsIcons.symbol("folder.fill", color: UIColor(rgb: 0x34C759)),
+-        .creditOwnerTelegram: AyuSettingsIcons.symbol("paperplane.fill", color: UIColor(rgb: 0x2AABEE))
++        .creditOwnerTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE))
+     ]
+     func link(_ section: Int32, _ row: AyuGramRow, _ title: String, _ label: String = "") -> AyuSectionedEntry {
+         return .link(section, row.rawValue, icons[row] ?? nil, title, label)
+@@ -246,6 +250,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+             .header(6, 70, AyuStrings.links.text(ru)),
+             link(6, .channel, AyuStrings.channel.text(ru), "@neosay1337"),
+             link(6, .sourceCode, AyuStrings.sourceCode.text(ru), "GitHub"),
++            link(6, .officialGroup, ru ? "Официальная группа" : "Official group", "@jailbreak_iPhone_iPad_android"),
+         ]
+         // Hidden until unlocked by five taps on the version (and a relaunch).
+         if AyuDeveloperSettings.unlockedAtLaunch {
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+index ead916b5..62247fec 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -154,6 +154,7 @@ public final class AyuSupportersManager {
+         1226061708: (5266966399934291023, "[📼] Пушистик **не поддержал(а)** разработку exteraGram, поэтому мы ему **ничерта** не выдали")
+     ]
+     private var ayuIosBadges: [Int64: (documentId: Int64?, text: String?)] = [:]
++    private var ayuIosLabels: [Int64: (kind: String, text: String)] = [:]
+     private var isRefreshing = false
+     private var lastRegistryRefresh: CFAbsoluteTime = 0.0
+     private static let session = URLSession(configuration: .ephemeral)
+@@ -168,6 +169,28 @@ public final class AyuSupportersManager {
+         self.refresh()
+     }
+ 
++    /// Whether this account may hand out AyuGram for iOS badges and labels from a profile.
++    public func canManageBadges(accountPeerId: Int64) -> Bool {
++        return AyuSupportersManager.layout?.peer == accountPeerId
++    }
++
++    /// The label line ("sponsor", "developer", "plugins" or "custom") the registry gives a peer.
++    public func label(peerId: Int64) -> (kind: String, text: String)? {
++        self.refreshAyuRegistryIfStale()
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.ayuIosLabels[peerId]
++    }
++
++    /// Applies a registry just written to GitHub, before the raw file's CDN catches up.
++    public func applyAyuRegistry(data: Data) {
++        self.parseAyuRegistry(data: data)
++        if let cacheUrl = self.ayuRegistryCacheUrl {
++            try? FileManager.default.createDirectory(at: cacheUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
++            try? data.write(to: cacheUrl, options: .atomic)
++        }
++    }
++
+     public func isSupporter(peerId: Int64) -> Bool {
+         return self.badge(peerId: peerId) != nil
+     }
+@@ -252,18 +275,30 @@ public final class AyuSupportersManager {
+     private func parseAyuRegistry(data: Data) {
+         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let badges = json["badges"] as? [[String: Any]] else { return }
+         var parsed: [Int64: (documentId: Int64?, text: String?)] = [:]
++        var labels: [Int64: (kind: String, text: String)] = [:]
+         for badge in badges {
+-            guard let id = (badge["id"] as? NSNumber)?.int64Value, let layout = AyuSupportersManager.layout, id != layout.peer else {
++            guard let id = (badge["id"] as? NSNumber)?.int64Value, let layout = AyuSupportersManager.layout else {
++                continue
++            }
++            if let label = badge["label"] as? [String: Any], let text = label["text"] as? String, !text.isEmpty {
++                labels[id] = ((label["kind"] as? String) ?? "custom", String(text.prefix(160)))
++            }
++            if id == layout.peer {
++                continue
++            }
++            let documentId = (badge["documentId"] as? NSNumber)?.int64Value
++            let title = (badge["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
++            if documentId == nil && title == nil {
+                 continue
+             }
+-            let title = badge["title"] as? String
+             if let title, !layout.mark.isEmpty, title.lowercased().contains(layout.mark) {
+                 continue
+             }
+-            parsed[id] = ((badge["documentId"] as? NSNumber)?.int64Value, title)
++            parsed[id] = (documentId, title)
+         }
+         self.lock.lock()
+         self.ayuIosBadges = parsed
++        self.ayuIosLabels = labels
+         self.lock.unlock()
+     }
+ 
+diff --git a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
+index 59a4322a..b2871de6 100644
+--- a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
++++ b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
+@@ -13,6 +13,28 @@ public enum AyuSettingsIcons {
+     /// exteraGram's logo (white plane on red), for the exteraGram preferences row.
+     public static let exteraLogo: UIImage? = AyuSettingsIcons.bundleLogo("AyuGram/OriginalExtera2", fallbackColor: UIColor(rgb: 0xE83030))
+ 
++    /// Telegram's paper plane, drawn from its SVG outline as one solid shape, white on a
++    /// colored rounded square.
++    public static func telegram(color: UIColor) -> UIImage? {
++        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++            let bounds = CGRect(origin: CGPoint(), size: size)
++            context.clear(bounds)
++            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++            context.setFillColor(color.cgColor)
++            context.fillPath()
++            // 24 pt artwork; the plane's box is (5.4, 7.0)–(18.4, 17.7).
++            guard let plane = try? convertSvgPath("M5.43,11.86 L17.35,7.26 C17.90,7.05 18.42,7.40 18.27,8.10 L16.40,16.90 C16.26,17.53 15.88,17.68 15.36,17.39 L12.30,15.15 L10.90,16.50 C10.74,16.66 10.61,16.79 10.31,16.79 L10.52,13.69 L15.80,8.92 C16.03,8.72 15.75,8.60 15.45,8.80 L8.92,12.91 L6.10,12.03 C5.49,11.84 5.30,11.92 5.43,11.86 Z") else {
++                return
++            }
++            let scale: CGFloat = 1.35
++            context.translateBy(x: size.width / 2.0 - 11.9 * scale - 0.5, y: size.height / 2.0 - 12.35 * scale)
++            context.scaleBy(x: scale, y: scale)
++            context.addPath(plane)
++            context.setFillColor(UIColor.white.cgColor)
++            context.fillPath()
++        })
++    }
++
+     /// A white glyph from the app bundle on a colored rounded square. Telegram's own settings
+     /// glyphs ("Item List/Icons/…") are drawn at their full 30 pt canvas; the AyuGram ones, 24 pt
+     /// Solar-style artwork, are drawn into a centered square of `side` points.
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
+new file mode 100644
+index 00000000..50b20ede
+--- /dev/null
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
+@@ -0,0 +1,338 @@
++import Foundation
++import UIKit
++import Security
++import TelegramCore
++import AccountContext
++
++/// The repository owner's badge desk, opened from any profile: hands out an AyuGram for iOS
++/// badge (custom emoji and text) and the label line under the name, by committing the change to
++/// assets/ayugram_ios_badges.json with the owner's GitHub token. Everyone sees it after their
++/// next registry refresh; the owner sees it at once.
++enum AyuBadgeEditor {
++    private static let repository = "dsn2fvhmn4-lgtm/AyuGramm-IOS"
++    private static let registryPath = "assets/ayugram_ios_badges.json"
++    private static let keychainService = "one.ayugram.badge-editor"
++
++    private struct EmojiTemplate {
++        let title: String
++        let documentId: Int64?
++    }
++
++    private struct LabelTemplate {
++        let kind: String
++        let title: (Bool) -> String
++        let text: (Bool) -> String
++    }
++
++    private static let emojiTemplates: [EmojiTemplate] = [
++        EmojiTemplate(title: "Значок команды", documentId: 5208467231670812677),
++        EmojiTemplate(title: "Звезда", documentId: 5341356487631448969),
++        EmojiTemplate(title: "🤩", documentId: 5384437509281324514),
++        EmojiTemplate(title: "Без эмодзи", documentId: nil)
++    ]
++
++    private static let labelTemplates: [LabelTemplate] = [
++        LabelTemplate(kind: "plugins", title: { ru in ru ? "Создатель плагинов" : "Plugin creator" }, text: { _ in "Этот человек официально подтверждён как создатель плагинов для AyuGram" }),
++        LabelTemplate(kind: "sponsor", title: { ru in ru ? "Спонсор" : "Sponsor" }, text: { _ in "Этот человек — спонсор AyuGram для iOS" }),
++        LabelTemplate(kind: "developer", title: { ru in ru ? "Разработчик" : "Developer" }, text: { _ in "Этот человек — разработчик AyuGram для iOS" })
++    ]
++
++    static func canOpen(context: AccountContext) -> Bool {
++        return AyuSupportersManager.shared.canManageBadges(accountPeerId: context.account.peerId.id._internalGetInt64Value())
++    }
++
++    static func present(context: AccountContext, peerId: Int64, name: String) {
++        guard AyuBadgeEditor.canOpen(context: context) else {
++            return
++        }
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let present: (UIViewController) -> Void = { controller in
++            context.sharedContext.applicationBindings.presentNativeController(controller)
++        }
++
++        let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись AyuGram для iOS" : "AyuGram for iOS badge and label")
++        sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
++            AyuBadgeEditor.chooseEmoji(peerId: peerId, ru: ru, present: present)
++        }))
++        for template in AyuBadgeEditor.labelTemplates {
++            sheet.addAction(UIAlertAction(title: (ru ? "Надпись: " : "Label: ") + template.title(ru), style: .default, handler: { _ in
++                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
++                    entry["label"] = ["kind": template.kind, "text": template.text(ru)]
++                })
++            }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Своя надпись…" : "Custom label…", style: .default, handler: { _ in
++            AyuBadgeEditor.askText(title: ru ? "Своя надпись" : "Custom label", message: ru ? "Покажется под именем и в шапке чата." : "Shown under the name and atop the chat.", initial: AyuSupportersManager.shared.label(peerId: peerId)?.text ?? "", ru: ru, present: present, done: { text in
++                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
++                    entry["label"] = ["kind": "custom", "text": text]
++                })
++            })
++        }))
++        if AyuSupportersManager.shared.badge(peerId: peerId) != nil {
++            sheet.addAction(UIAlertAction(title: ru ? "Убрать бейдж" : "Remove badge", style: .destructive, handler: { _ in
++                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
++                    entry["documentId"] = nil
++                    entry["title"] = nil
++                })
++            }))
++        }
++        if AyuSupportersManager.shared.label(peerId: peerId) != nil {
++            sheet.addAction(UIAlertAction(title: ru ? "Убрать надпись" : "Remove label", style: .destructive, handler: { _ in
++                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
++                    entry["label"] = nil
++                })
++            }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Токен GitHub…" : "GitHub token…", style: .default, handler: { _ in
++            AyuBadgeEditor.askToken(ru: ru, present: present, done: {})
++        }))
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++        present(sheet)
++    }
++
++    // MARK: Steps
++
++    private static func chooseEmoji(peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void) {
++        let currentDocumentId: Int64?
++        let currentText: String
++        switch AyuSupportersManager.shared.badge(peerId: peerId) {
++        case let .ayuDeveloper(documentId, text)?:
++            currentDocumentId = documentId
++            currentText = text ?? ""
++        case let .developer(text)?:
++            currentDocumentId = nil
++            currentText = text ?? ""
++        default:
++            currentDocumentId = nil
++            currentText = ""
++        }
++        let next: (Int64?) -> Void = { documentId in
++            AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Показывается при нажатии на бейдж. (name) заменится именем." : "Shown when the badge is tapped. (name) becomes the name.", initial: currentText, ru: ru, present: present, done: { text in
++                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
++                    entry["documentId"] = documentId.map { NSNumber(value: $0) }
++                    entry["title"] = text
++                })
++            })
++        }
++        let sheet = AyuBadgeEditor.menu(title: ru ? "Эмодзи бейджа" : "Badge emoji", message: nil)
++        if let currentDocumentId {
++            sheet.addAction(UIAlertAction(title: ru ? "Оставить текущий" : "Keep current", style: .default, handler: { _ in
++                next(currentDocumentId)
++            }))
++        }
++        for template in AyuBadgeEditor.emojiTemplates {
++            sheet.addAction(UIAlertAction(title: template.title, style: .default, handler: { _ in
++                next(template.documentId)
++            }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Свой ID эмодзи…" : "Custom emoji ID…", style: .default, handler: { _ in
++            let alert = UIAlertController(title: ru ? "ID эмодзи" : "Emoji ID", message: ru ? "custom_emoji_id премиум-эмодзи (например, из бота @JsonDumpBot)." : "The premium emoji's custom_emoji_id (for example, from @JsonDumpBot).", preferredStyle: .alert)
++            alert.addTextField(configurationHandler: { field in
++                field.keyboardType = .numberPad
++                field.text = currentDocumentId.map { String($0) }
++            })
++            alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++            alert.addAction(UIAlertAction(title: ru ? "Далее" : "Next", style: .default, handler: { [weak alert] _ in
++                let raw = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++                guard let documentId = Int64(raw), documentId > 0 else {
++                    AyuBadgeEditor.notify(ru ? "Нужен числовой ID эмодзи." : "The emoji ID must be a number.", ru: ru, present: present)
++                    return
++                }
++                next(documentId)
++            }))
++            present(alert)
++        }))
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++        present(sheet)
++    }
++
++    private static func askText(title: String, message: String, initial: String, ru: Bool, present: @escaping (UIViewController) -> Void, done: @escaping (String) -> Void) {
++        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
++        alert.addTextField(configurationHandler: { field in
++            field.text = initial
++            field.autocapitalizationType = .sentences
++        })
++        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++            let text = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++            guard !text.isEmpty else {
++                AyuBadgeEditor.notify(ru ? "Текст не может быть пустым." : "The text can't be empty.", ru: ru, present: present)
++                return
++            }
++            done(String(text.prefix(160)))
++        }))
++        present(alert)
++    }
++
++    private static func askToken(ru: Bool, present: @escaping (UIViewController) -> Void, done: @escaping () -> Void) {
++        let alert = UIAlertController(title: ru ? "Токен GitHub" : "GitHub token", message: ru ? "Fine-grained токен с правом Contents: Read and write на \(AyuBadgeEditor.repository). Хранится только в связке ключей этого телефона." : "A fine-grained token with Contents: Read and write on \(AyuBadgeEditor.repository). Kept only in this phone's keychain.", preferredStyle: .alert)
++        alert.addTextField(configurationHandler: { field in
++            field.isSecureTextEntry = true
++            field.autocorrectionType = .no
++            field.autocapitalizationType = .none
++            field.placeholder = "github_pat_…"
++        })
++        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++            let token = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++            guard !token.isEmpty else {
++                return
++            }
++            AyuBadgeEditor.saveToken(token)
++            done()
++        }))
++        present(alert)
++    }
++
++    /// Reads the registry from GitHub, applies `change` to this peer's entry (creating it, or
++    /// dropping it once nothing is left), and commits it straight to main.
++    private static func commit(peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void, change: @escaping (inout [String: Any]) -> Void) {
++        guard let token = AyuBadgeEditor.readToken() else {
++            AyuBadgeEditor.askToken(ru: ru, present: present, done: {
++                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: change)
++            })
++            return
++        }
++        AyuBadgeEditor.upload(peerId: peerId, token: token, change: change, attempt: 0, completion: { result in
++            DispatchQueue.main.async {
++                switch result {
++                case let .success(data):
++                    AyuSupportersManager.shared.applyAyuRegistry(data: data)
++                    NotificationCenter.default.post(name: AyuVerifiedRegistry.didChangeNotification, object: nil)
++                    AyuBadgeEditor.notify(ru ? "Готово. У остальных появится в течение ~15 минут." : "Done. Others will see it within ~15 minutes.", ru: ru, present: present)
++                case let .failure(message):
++                    AyuBadgeEditor.notify((ru ? "Не удалось сохранить: " : "Couldn't save: ") + message, ru: ru, present: present)
++                }
++            }
++        })
++    }
++
++    private enum UploadResult {
++        case success(Data)
++        case failure(String)
++    }
++
++    private static func upload(peerId: Int64, token: String, change: @escaping (inout [String: Any]) -> Void, attempt: Int, completion: @escaping (UploadResult) -> Void) {
++        guard let url = URL(string: "https://api.github.com/repos/\(AyuBadgeEditor.repository)/contents/\(AyuBadgeEditor.registryPath)") else {
++            return completion(.failure("URL"))
++        }
++        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
++        components?.queryItems = [URLQueryItem(name: "ref", value: "main")]
++        guard let readURL = components?.url else {
++            return completion(.failure("URL"))
++        }
++        let session = URLSession(configuration: .ephemeral)
++        session.dataTask(with: AyuBadgeEditor.request(url: readURL, token: token, method: "GET", body: nil), completionHandler: { data, response, error in
++            guard let data, let http = response as? HTTPURLResponse else {
++                session.finishTasksAndInvalidate()
++                return completion(.failure(error?.localizedDescription ?? "network"))
++            }
++            guard http.statusCode == 200,
++                  let file = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
++                  let sha = file["sha"] as? String,
++                  let encoded = file["content"] as? String,
++                  let current = Data(base64Encoded: encoded.replacingOccurrences(of: "\n", with: "")),
++                  var registry = (try? JSONSerialization.jsonObject(with: current)) as? [String: Any] else {
++                session.finishTasksAndInvalidate()
++                return completion(.failure("GitHub \(http.statusCode)"))
++            }
++            var badges = registry["badges"] as? [[String: Any]] ?? []
++            let index = badges.firstIndex(where: { ($0["id"] as? NSNumber)?.int64Value == peerId })
++            var entry = index.map { badges[$0] } ?? ["id": NSNumber(value: peerId)]
++            change(&entry)
++            let keepsSomething = entry["documentId"] != nil || entry["title"] != nil || entry["label"] != nil
++            if let index {
++                if keepsSomething {
++                    badges[index] = entry
++                } else {
++                    badges.remove(at: index)
++                }
++            } else if keepsSomething {
++                badges.append(entry)
++            }
++            registry["badges"] = badges
++            guard var updated = try? JSONSerialization.data(withJSONObject: registry, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else {
++                session.finishTasksAndInvalidate()
++                return completion(.failure("JSON"))
++            }
++            updated.append(0x0a)
++            let body: [String: Any] = [
++                "message": "Update badge for \(peerId) [skip ci]",
++                "content": updated.base64EncodedString(),
++                "sha": sha,
++                "branch": "main"
++            ]
++            let bodyData = try? JSONSerialization.data(withJSONObject: body)
++            session.dataTask(with: AyuBadgeEditor.request(url: url, token: token, method: "PUT", body: bodyData), completionHandler: { _, response, error in
++                session.finishTasksAndInvalidate()
++                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
++                if status == 200 || status == 201 {
++                    completion(.success(updated))
++                } else if status == 409 && attempt == 0 {
++                    // Someone committed in between; start again from the new file.
++                    AyuBadgeEditor.upload(peerId: peerId, token: token, change: change, attempt: 1, completion: completion)
++                } else if status == 401 || status == 403 {
++                    completion(.failure("GitHub \(status): токен не подходит / token rejected"))
++                } else {
++                    completion(.failure(error?.localizedDescription ?? "GitHub \(status)"))
++                }
++            }).resume()
++        }).resume()
++    }
++
++    private static func request(url: URL, token: String, method: String, body: Data?) -> URLRequest {
++        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20.0)
++        request.httpMethod = method
++        request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
++        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
++        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
++        if let body {
++            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
++            request.httpBody = body
++        }
++        return request
++    }
++
++    // MARK: UI helpers
++
++    private static func menu(title: String?, message: String?) -> UIAlertController {
++        // Action sheets need an anchor on iPad; an alert works everywhere.
++        let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad ? .alert : .actionSheet
++        return UIAlertController(title: title, message: message, preferredStyle: style)
++    }
++
++    private static func notify(_ text: String, ru: Bool, present: @escaping (UIViewController) -> Void) {
++        let alert = UIAlertController(title: nil, message: text, preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
++        present(alert)
++    }
++
++    // MARK: Keychain
++
++    private static var tokenQuery: [String: Any] {
++        return [
++            kSecClass as String: kSecClassGenericPassword,
++            kSecAttrService as String: AyuBadgeEditor.keychainService,
++            kSecAttrAccount as String: "github"
++        ]
++    }
++
++    private static func readToken() -> String? {
++        var query = AyuBadgeEditor.tokenQuery
++        query[kSecReturnData as String] = true
++        query[kSecMatchLimit as String] = kSecMatchLimitOne
++        var result: AnyObject?
++        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data, let token = String(data: data, encoding: .utf8), !token.isEmpty else {
++            return nil
++        }
++        return token
++    }
++
++    private static func saveToken(_ token: String) {
++        SecItemDelete(AyuBadgeEditor.tokenQuery as CFDictionary)
++        var item = AyuBadgeEditor.tokenQuery
++        item[kSecValueData as String] = Data(token.utf8)
++        item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
++        SecItemAdd(item as CFDictionary, nil)
++    }
++}
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+index b587d3c1..bd2c32e3 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+@@ -785,6 +785,14 @@ func infoItems(
+                     let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+                     items[currentPeerInfoSection]!.append(PeerInfoScreenCommentItem(id: 9050, text: "🛡 " + AyuVerifiedRegistry.caption(teamEntry, russian: ru)))
+                 }
++                // The repository owner hands out AyuGram for iOS badges and labels from here.
++                if AyuBadgeEditor.canOpen(context: context) {
++                    let ayuPeerId = user.id.id._internalGetInt64Value()
++                    let ayuName = EnginePeer.user(user).compactDisplayTitle
++                    items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж AyuGram-IOS…" : "AyuGram-IOS badge…", color: .accent, action: {
++                        AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName)
++                    }))
++                }
+                 if let verification = (data.cachedData as? CachedUserData)?.verification {
+                     let attributedPrefix = NSMutableAttributedString(string: "  ")
+                     attributedPrefix.addAttribute(ChatTextInputAttributes.customEmoji, value: ChatTextInputTextCustomEmojiAttribute(interactivelySelectedFromPackId: nil, fileId: verification.iconFileId, file: nil), range: NSMakeRange(0, 1))
+@@ -1081,6 +1089,13 @@ func infoItems(
+                 }
+             }
+         }
++        if AyuBadgeEditor.canOpen(context: context) {
++            let ayuPeerId = channel.id.id._internalGetInt64Value()
++            let ayuName = channel.title
++            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж AyuGram-IOS…" : "AyuGram-IOS badge…", color: .accent, action: {
++                AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName)
++            }))
++        }
+     } else if case let .legacyGroup(group) = data.peer {
+         if let cachedData = data.cachedData as? CachedGroupData {
+             let aboutText: String?
+diff --git a/submodules/TelegramUI/Sources/AyuTeamVerifiedTitlePanelNode.swift b/submodules/TelegramUI/Sources/AyuTeamVerifiedTitlePanelNode.swift
+index 90ef32d7..fbd8daa9 100644
+--- a/submodules/TelegramUI/Sources/AyuTeamVerifiedTitlePanelNode.swift
++++ b/submodules/TelegramUI/Sources/AyuTeamVerifiedTitlePanelNode.swift
+@@ -15,7 +15,9 @@ final class AyuTeamVerifiedTitlePanelNode: ChatTitleAccessoryPanelNode {
+     private let separatorNode: ASDisplayNode
+     private let iconNode: ASImageNode
+     private let textNode: ImmediateTextNode
++    private let closeButton: HighlightableButtonNode
+     private var theme: PresentationTheme?
++    private var peerId: Int64?
+ 
+     override init() {
+         self.separatorNode = ASDisplayNode()
+@@ -25,10 +27,32 @@ final class AyuTeamVerifiedTitlePanelNode: ChatTitleAccessoryPanelNode {
+         self.textNode = ImmediateTextNode()
+         self.textNode.maximumNumberOfLines = 3
+         self.textNode.textAlignment = .center
++        self.closeButton = HighlightableButtonNode()
++        self.closeButton.hitTestSlop = UIEdgeInsets(top: -8.0, left: -8.0, bottom: -8.0, right: -8.0)
++        self.closeButton.displaysAsynchronously = false
++        self.closeButton.accessibilityLabel = "Close"
+         super.init()
+         self.addSubnode(self.separatorNode)
+         self.addSubnode(self.iconNode)
+         self.addSubnode(self.textNode)
++        self.closeButton.addTarget(self, action: #selector(self.closePressed), forControlEvents: [.touchUpInside])
++        self.addSubnode(self.closeButton)
++    }
++
++    /// The cross hides the label in this chat for good; the profile still shows it.
++    @objc private func closePressed() {
++        guard let peerId = self.peerId else {
++            return
++        }
++        AyuVerifiedRegistry.dismissPanel(peerId: peerId)
++        self.interfaceInteraction?.requestLayout(.animated(duration: 0.3, curve: .spring))
++    }
++
++    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
++        if let result = self.closeButton.hitTest(CGPoint(x: point.x - self.closeButton.frame.minX, y: point.y - self.closeButton.frame.minY), with: event) {
++            return result
++        }
++        return super.hitTest(point, with: event)
+     }
+ 
+     override func updateLayout(width: CGFloat, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition, interfaceState: ChatPresentationInterfaceState) -> LayoutResult {
+@@ -36,18 +60,35 @@ final class AyuTeamVerifiedTitlePanelNode: ChatTitleAccessoryPanelNode {
+             self.theme = interfaceState.theme
+             self.separatorNode.backgroundColor = interfaceState.theme.rootController.navigationBar.separatorColor
+             self.iconNode.image = UIImage(systemName: "checkmark.shield.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12.0, weight: .semibold))?.withTintColor(UIColor(rgb: 0x8E5CF7), renderingMode: .alwaysOriginal)
++            let closeColor = interfaceState.theme.chat.inputPanel.panelControlColor
++            self.closeButton.setImage(generateImage(CGSize(width: 12.0, height: 12.0), contextGenerator: { size, context in
++                context.clear(CGRect(origin: CGPoint(), size: size))
++                context.setStrokeColor(closeColor.cgColor)
++                context.setLineWidth(1.33)
++                context.setLineCap(.round)
++                context.move(to: CGPoint(x: 1.0, y: 1.0))
++                context.addLine(to: CGPoint(x: size.width - 1.0, y: size.height - 1.0))
++                context.strokePath()
++                context.move(to: CGPoint(x: size.width - 1.0, y: 1.0))
++                context.addLine(to: CGPoint(x: 1.0, y: size.height - 1.0))
++                context.strokePath()
++            }), for: [])
+         }
++        self.peerId = interfaceState.renderedPeer?.peer?.id.id._internalGetInt64Value()
+         var panelHeight: CGFloat = 12.0
+         if let peerId = interfaceState.renderedPeer?.peer?.id, let entry = AyuVerifiedRegistry.shared.entry(peer: peerId) {
+             let russian = interfaceState.strings.baseLanguageCode.hasPrefix("ru")
+             self.textNode.attributedText = NSAttributedString(string: AyuVerifiedRegistry.caption(entry, russian: russian), font: Font.regular(12.0), textColor: interfaceState.theme.rootController.navigationBar.secondaryTextColor)
+             let iconSize = CGSize(width: 14.0, height: 14.0)
+-            let textSize = self.textNode.updateLayout(CGSize(width: width - leftInset - rightInset - 32.0 - iconSize.width - 4.0, height: .greatestFiniteMagnitude))
++            // Room for the cross on both sides keeps the text centered.
++            let textSize = self.textNode.updateLayout(CGSize(width: width - leftInset - rightInset - 76.0 - iconSize.width - 4.0, height: .greatestFiniteMagnitude))
+             let total = iconSize.width + 4.0 + textSize.width
+             let originX = floor((width - total) / 2.0)
+             transition.updateFrame(node: self.iconNode, frame: CGRect(origin: CGPoint(x: originX, y: panelHeight + 1.0), size: iconSize))
+             transition.updateFrame(node: self.textNode, frame: CGRect(origin: CGPoint(x: originX + iconSize.width + 4.0, y: panelHeight), size: textSize))
+             panelHeight += textSize.height + 12.0
++            let closeSize = self.closeButton.measure(CGSize(width: 100.0, height: 100.0))
++            transition.updateFrame(node: self.closeButton, frame: CGRect(origin: CGPoint(x: width - rightInset - 14.0 - closeSize.width, y: floorToScreenPixels((panelHeight - closeSize.height) / 2.0)), size: closeSize))
+         }
+         transition.updateFrame(node: self.separatorNode, frame: CGRect(origin: CGPoint(), size: CGSize(width: width, height: UIScreenPixel)))
+         return LayoutResult(backgroundHeight: panelHeight, insetHeight: panelHeight, hitTestSlop: .zero)
+diff --git a/submodules/TelegramUI/Sources/ChatInterfaceTitlePanelNodes.swift b/submodules/TelegramUI/Sources/ChatInterfaceTitlePanelNodes.swift
+index 457985c5..a559a56d 100644
+--- a/submodules/TelegramUI/Sources/ChatInterfaceTitlePanelNodes.swift
++++ b/submodules/TelegramUI/Sources/ChatInterfaceTitlePanelNodes.swift
+@@ -113,7 +113,7 @@ func titlePanelForChatPresentationInterfaceState(_ chatPresentationInterfaceStat
+     }
+     
+     // AyuGram team label: only when Telegram shows no verification and no other panel is due.
+-    if chatPresentationInterfaceState.peerVerification == nil, selectedContext == nil, let peerId = chatPresentationInterfaceState.renderedPeer?.peer?.id, AyuVerifiedRegistry.shared.entry(peer: peerId) != nil {
++    if chatPresentationInterfaceState.peerVerification == nil, selectedContext == nil, let peerId = chatPresentationInterfaceState.renderedPeer?.peer?.id, AyuVerifiedRegistry.shared.entry(peer: peerId) != nil, !AyuVerifiedRegistry.isPanelDismissed(peerId: peerId.id._internalGetInt64Value()) {
+         if let currentPanel = currentPanel as? AyuTeamVerifiedTitlePanelNode {
+             return currentPanel
+         }

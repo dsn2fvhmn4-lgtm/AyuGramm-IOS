@@ -926,10 +926,10 @@ index 00000000..95175d36
 +}
 diff --git a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
 new file mode 100644
-index 00000000..f26ad868
+index 00000000..a8abaa6e
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
-@@ -0,0 +1,558 @@
+@@ -0,0 +1,590 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -1354,6 +1354,10 @@ index 00000000..f26ad868
 +            return ["ok": true]
 +        case "i18n.language":
 +            return ["language": AyuPluginUI.shared.currentLanguage?() ?? (Locale.preferredLanguages.first.map { String($0.prefix(2)) } ?? "en")]
++        case "ui.overlay.showFPS":
++            guard allowed(.overlay) else { return nil }
++            AyuOverlayEffects.shared.setFPS(id: "plugin:\(pluginId):text:" + string("id", 64), anchor: string("anchor", 20), color: color("color"), size: CGFloat((args["size"] as? NSNumber)?.doubleValue ?? 12.0))
++            return ["ok": true]
 +        case "ui.overlay.addClock":
 +            guard allowed(.overlay) else { return nil }
 +            AyuOverlayEffects.shared.setClock(id: "plugin:\(pluginId):text:" + string("id", 64), format: string("format", 32), anchor: string("anchor", 20), color: color("color"), size: CGFloat((args["size"] as? NSNumber)?.doubleValue ?? 14.0))
@@ -1417,6 +1421,28 @@ index 00000000..f26ad868
 +            guard allowed(.overlay) else { return nil }
 +            AyuOverlayEffects.shared.setText(id: "plugin:\(pluginId):text:" + string("id", 64), text: string("text"), anchor: string("anchor", 20), color: color("color"), size: CGFloat((args["size"] as? NSNumber)?.doubleValue ?? 14.0))
 +            return ["ok": true]
++        case "ui.floatingButton.add":
++            guard allowed(.overlay) else { return nil }
++            let id = string("id", 64)
++            guard !id.isEmpty else { return nil }
++            AyuOverlayEffects.shared.setFloatingButton(id: "plugin:\(pluginId):button:" + id, symbol: string("icon", 64), title: string("title", 20), anchor: string("anchor", 20), color: color("color"), tap: {
++                AyuPluginUI.send("floatingButton", to: pluginId, ["id": id])
++            })
++            return ["ok": true]
++        case "ui.floatingButton.remove":
++            AyuOverlayEffects.shared.removeFloatingButton(id: "plugin:\(pluginId):button:" + string("id", 64))
++            return ["ok": true]
++        case "ui.progress.show", "ui.progress.hide":
++            guard allowed(.overlay) else { return nil }
++            let value = op == "ui.progress.hide" ? nil : ((args["value"] as? NSNumber)?.doubleValue ?? 0.0)
++            AyuOverlayEffects.shared.setProgress(id: "plugin:\(pluginId):text:progress:" + string("id", 64), title: string("title", 60), value: value, anchor: string("anchor", 20))
++            return ["ok": true]
++        case "ui.animation.play":
++            guard allowed(.overlay) else { return nil }
++            let effect = AyuOverlayEffects.Effect(rawValue: string("name", 20)) ?? .confetti
++            guard effect != .none else { return nil }
++            AyuOverlayEffects.shared.play(id: "plugin:\(pluginId):anim:" + UUID().uuidString, effect: effect, seconds: (args["seconds"] as? NSNumber)?.doubleValue ?? 3.0)
++            return ["ok": true]
 +        case "ui.overlay.remove":
 +            let id = string("id", 64)
 +            AyuOverlayEffects.shared.removeParticles(id: "plugin:\(pluginId):" + id)
@@ -1425,10 +1451,16 @@ index 00000000..f26ad868
 +        // Font sizes of messages and lists (apply when the app's appearance is next rebuilt).
 +        case "ui.font.set":
 +            guard allowed(.fonts) else { return nil }
-+            AyuPluginFonts.set(element: string("element", 20), size: (args["size"] as? NSNumber)?.doubleValue, owner: pluginId)
++            if let size = (args["size"] as? NSNumber)?.doubleValue {
++                AyuPluginFonts.set(element: string("element", 20), size: size, owner: pluginId)
++            }
++            if let weight = args["weight"] as? String {
++                AyuPluginFonts.setWeight(weight, owner: pluginId)
++            }
 +            return ["ok": true]
 +        case "ui.font.reset":
 +            AyuPluginFonts.set(element: string("element", 20), size: nil, owner: pluginId)
++            AyuPluginFonts.setWeight(nil, owner: pluginId)
 +            return ["ok": true]
 +        case "ui.badge.add":
 +            guard allowed(.badges), let peer = peerId() else { return nil }
@@ -1992,10 +2024,10 @@ index 00000000..f01650ce
 +}
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 new file mode 100644
-index 00000000..fcb4ffb8
+index 00000000..79ab7c17
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-@@ -0,0 +1,1148 @@
+@@ -0,0 +1,1165 @@
 +import Foundation
 +import JavaScriptCore
 +import CryptoKit
@@ -2973,11 +3005,28 @@ index 00000000..fcb4ffb8
 +                    addButton: (options) => host.call('ui.profile.addButton', options || {}),
 +                    removeButton: (id) => host.call('ui.profile.removeButton', { id: text(id) })
 +                }),
++                floatingButton: Object.freeze({
++                    add: (options, fn) => {
++                        const answer = host.call('ui.floatingButton.add', options || {});
++                        if (answer && typeof fn === 'function') {
++                            const id = text((options || {}).id);
++                            host.on('floatingButton', function (payload) { if (payload && payload.id === id) fn(); });
++                        }
++                        return !!answer;
++                    },
++                    remove: (id) => host.call('ui.floatingButton.remove', { id: text(id) })
++                }),
++                progress: Object.freeze({
++                    show: (options) => host.call('ui.progress.show', options || {}),
++                    hide: (id) => host.call('ui.progress.hide', { id: text(id) })
++                }),
++                animation: Object.freeze({ play: (name, seconds) => host.call('ui.animation.play', { name: text(name || 'confetti'), seconds: Number(seconds || 3) }) }),
 +                overlay: Object.freeze({
 +                    create: (options) => host.call('ui.overlay.create', options || {}),
 +                    update: (id, options) => host.call('ui.overlay.update', Object.assign({}, options || {}, { id: text(id) })),
 +                    addText: (options) => host.call('ui.overlay.addText', options || {}),
 +                    addClock: (options) => host.call('ui.overlay.addClock', options || {}),
++                    showFPS: (options) => host.call('ui.overlay.showFPS', options || {}),
 +                    remove: (id) => host.call('ui.overlay.remove', { id: text(id) })
 +                }),
 +                font: Object.freeze({
@@ -3537,10 +3586,10 @@ index 00000000..b321163e
 +#endif
 diff --git a/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
 new file mode 100644
-index 00000000..11b74cab
+index 00000000..4e547590
 --- /dev/null
 +++ b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
-@@ -0,0 +1,720 @@
+@@ -0,0 +1,723 @@
 +#include <AyuPluginEngines/AyuPluginEngines.h>
 +
 +#include <stdlib.h>
@@ -3657,9 +3706,12 @@ index 00000000..11b74cab
 +    "    gifts = _AyuGifts()\n"
 +    "    menu = _AyuSection('ui.menu', ['add', 'remove'])\n"
 +    "    profile = _AyuSection('ui.profile', ['addBlock', 'removeBlock', 'addButton', 'removeButton'])\n"
-+    "    overlay = _AyuSection('ui.overlay', ['create', 'update', 'addText', 'remove'])\n"
++    "    overlay = _AyuSection('ui.overlay', ['create', 'update', 'addText', 'addClock', 'showFPS', 'remove'])\n"
 +    "    font = _AyuSection('ui.font', ['set', 'reset'])\n"
 +    "    badge = _AyuSection('ui.badge', ['add', 'remove'])\n"
++    "    floatingButton = _AyuSection('ui.floatingButton', ['add', 'remove'])\n"
++    "    progress = _AyuSection('ui.progress', ['show', 'hide'])\n"
++    "    animation = _AyuSection('ui.animation', ['play'])\n"
 +    "    def alert(self, options, fn=None):\n"
 +    "        return _ayu_request('ui.alert', options, fn)\n"
 +    "    def sheet(self, options, fn=None):\n"
@@ -41435,10 +41487,10 @@ index 00000000..6272d723
 +}
 diff --git a/submodules/Display/Source/AyuOverlayEffects.swift b/submodules/Display/Source/AyuOverlayEffects.swift
 new file mode 100644
-index 00000000..3b69767e
+index 00000000..c26d9b92
 --- /dev/null
 +++ b/submodules/Display/Source/AyuOverlayEffects.swift
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,526 @@
 +import Foundation
 +import UIKit
 +
@@ -41491,10 +41543,13 @@ index 00000000..3b69767e
 +    private var particles: [String: Particles] = [:]
 +    private var labels: [String: UILabel] = [:]
 +    private var clocks: [String: Timer] = [:]
++    private var fpsCounters: [String: AyuFPSCounter] = [:]
++    private var buttons: [String: AyuFloatingButton] = [:]
 +    private var observers: [NSObjectProtocol] = []
 +
 +    private init() {
-+        self.rootView.isUserInteractionEnabled = false
++        // Touches reach only floating buttons (see AyuPassthroughView.hitTest).
++        self.rootView.isUserInteractionEnabled = true
 +        self.rootView.backgroundColor = .clear
 +        self.rootView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 +        for name in [UIAccessibility.reduceMotionStatusDidChangeNotification, UIApplication.didBecomeActiveNotification] {
@@ -41596,6 +41651,7 @@ index 00000000..3b69767e
 +        DispatchQueue.main.async {
 +            self.labels.removeValue(forKey: id)?.removeFromSuperview()
 +            self.clocks.removeValue(forKey: id)?.invalidate()
++            self.fpsCounters.removeValue(forKey: id)?.stop()
 +        }
 +    }
 +
@@ -41617,12 +41673,79 @@ index 00000000..3b69767e
 +        }
 +    }
 +
++    /// A live frames-per-second counter pinned like a text overlay (`ayu.ui.overlay.showFPS`).
++    public func setFPS(id: String, anchor: String, color: UIColor?, size: CGFloat) {
++        self.setText(id: id, text: "— FPS", anchor: anchor.isEmpty ? "topLeft" : anchor, color: color, size: size)
++        DispatchQueue.main.async { [weak self] in
++            guard let self else { return }
++            self.fpsCounters[id]?.stop()
++            let counter = AyuFPSCounter(update: { [weak self] fps in
++                self?.labels[id]?.text = "\(fps) FPS"
++            })
++            self.fpsCounters[id] = counter
++        }
++    }
++
++    // MARK: Floating buttons, progress and one-shot animations
++
++    /// A round button over the app, bottom-right by default (`ayu.ui.floatingButton.add`).
++    public func setFloatingButton(id: String, symbol: String, title: String, anchor: String, color: UIColor?, tap: @escaping () -> Void) {
++        DispatchQueue.main.async {
++            self.buttons[id]?.removeFromSuperview()
++            let button = AyuFloatingButton(type: .system)
++            var configuration = UIButton.Configuration.filled()
++            configuration.cornerStyle = .capsule
++            configuration.image = UIImage(systemName: symbol.isEmpty ? "puzzlepiece.extension.fill" : symbol)
++            configuration.title = title.isEmpty ? nil : String(title.prefix(20))
++            configuration.imagePadding = 6.0
++            configuration.baseBackgroundColor = color ?? .systemBlue
++            button.configuration = configuration
++            button.accessibilityIdentifier = anchor.isEmpty ? "bottomRight" : anchor
++            button.addAction(UIAction(handler: { _ in tap() }), for: .touchUpInside)
++            button.layer.shadowColor = UIColor.black.cgColor
++            button.layer.shadowOpacity = 0.25
++            button.layer.shadowRadius = 6.0
++            button.layer.shadowOffset = CGSize(width: 0.0, height: 2.0)
++            self.rootView.addSubview(button)
++            self.buttons[id] = button
++            self.relayout()
++        }
++    }
++
++    public func removeFloatingButton(id: String) {
++        DispatchQueue.main.async {
++            self.buttons.removeValue(forKey: id)?.removeFromSuperview()
++        }
++    }
++
++    /// A progress line ("Title ▓▓▓▓░░░░ 50%") pinned like a text overlay; nil value hides it.
++    public func setProgress(id: String, title: String, value: Double?, anchor: String) {
++        guard let value else {
++            self.removeText(id: id)
++            return
++        }
++        let fraction = max(0.0, min(1.0, value))
++        let filled = Int((fraction * 12.0).rounded())
++        let bar = String(repeating: "▓", count: filled) + String(repeating: "░", count: 12 - filled)
++        self.setText(id: id, text: (title.isEmpty ? "" : title + "\n") + bar + " \(Int((fraction * 100.0).rounded()))%", anchor: anchor.isEmpty ? "center" : anchor, color: nil, size: 14.0)
++    }
++
++    /// Runs particles for a few seconds and stops (`ayu.ui.animation.play`).
++    public func play(id: String, effect: Effect, seconds: Double) {
++        self.setParticles(id: id, Particles(effect: effect, amount: 2.0, speed: 1.2))
++        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, min(10.0, seconds))) { [weak self] in
++            self?.removeParticles(id: id)
++        }
++    }
++
 +    /// Everything a plugin created (ids are prefixed with the plugin id).
 +    public func removeAll(prefix: String) {
 +        DispatchQueue.main.async {
 +            for id in self.emitters.keys where id.hasPrefix(prefix) { self.emitters.removeValue(forKey: id)?.removeFromSuperlayer(); self.particles[id] = nil }
 +            for id in self.labels.keys where id.hasPrefix(prefix) { self.labels.removeValue(forKey: id)?.removeFromSuperview() }
 +            for id in self.clocks.keys where id.hasPrefix(prefix) { self.clocks.removeValue(forKey: id)?.invalidate() }
++            for id in self.fpsCounters.keys where id.hasPrefix(prefix) { self.fpsCounters.removeValue(forKey: id)?.stop() }
++            for id in self.buttons.keys where id.hasPrefix(prefix) { self.buttons.removeValue(forKey: id)?.removeFromSuperview() }
 +        }
 +    }
 +
@@ -41649,6 +41772,21 @@ index 00000000..3b69767e
 +            default: break
 +            }
 +            label.frame = CGRect(origin: origin, size: size)
++        }
++        for button in self.buttons.values {
++            let size = button.sizeThatFits(CGSize(width: 220.0, height: 56.0))
++            let width = max(52.0, size.width)
++            let height = max(52.0, size.height)
++            let anchor = button.accessibilityIdentifier ?? "bottomRight"
++            let bottom = bounds.height - safe.bottom - height - 90.0
++            var origin = CGPoint(x: bounds.width - width - 16.0, y: bottom)
++            switch anchor {
++            case "bottomLeft": origin = CGPoint(x: 16.0, y: bottom)
++            case "topRight": origin = CGPoint(x: bounds.width - width - 16.0, y: safe.top + 60.0)
++            case "topLeft": origin = CGPoint(x: 16.0, y: safe.top + 60.0)
++            default: break
++            }
++            button.frame = CGRect(origin: origin, size: CGSize(width: width, height: height))
 +        }
 +    }
 +
@@ -41757,6 +41895,11 @@ index 00000000..3b69767e
 +/// Never takes touches, whatever is on it.
 +private final class AyuPassthroughView: UIView {
 +    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
++        for view in self.subviews.reversed() where view is AyuFloatingButton && !view.isHidden {
++            if view.frame.contains(point) {
++                return view
++            }
++        }
 +        return nil
 +    }
 +
@@ -41838,6 +41981,42 @@ index 00000000..3b69767e
 +        CATransaction.commit()
 +    }
 +}
++
++/// Counts display frames and reports once a second.
++private final class AyuFPSCounter: NSObject {
++    private var link: CADisplayLink?
++    private var frames = 0
++    private var start: CFTimeInterval = 0.0
++    private let update: (Int) -> Void
++
++    init(update: @escaping (Int) -> Void) {
++        self.update = update
++        super.init()
++        let link = CADisplayLink(target: self, selector: #selector(self.tick(_:)))
++        link.add(to: .main, forMode: .common)
++        self.link = link
++    }
++
++    @objc private func tick(_ link: CADisplayLink) {
++        if self.start == 0.0 {
++            self.start = link.timestamp
++        }
++        self.frames += 1
++        let elapsed = link.timestamp - self.start
++        if elapsed >= 1.0 {
++            self.update(Int((Double(self.frames) / elapsed).rounded()))
++            self.frames = 0
++            self.start = link.timestamp
++        }
++    }
++
++    func stop() {
++        self.link?.invalidate()
++        self.link = nil
++    }
++}
++
++private final class AyuFloatingButton: UIButton {}
 diff --git a/submodules/Display/Source/AyuPeerNotes.swift b/submodules/Display/Source/AyuPeerNotes.swift
 new file mode 100644
 index 00000000..e0582091
@@ -41879,11 +42058,12 @@ index 00000000..e0582091
 +}
 diff --git a/submodules/Display/Source/AyuPluginBadges.swift b/submodules/Display/Source/AyuPluginBadges.swift
 new file mode 100644
-index 00000000..f1018168
+index 00000000..54b3d88f
 --- /dev/null
 +++ b/submodules/Display/Source/AyuPluginBadges.swift
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,84 @@
 +import Foundation
++import UIKit
 +
 +/// Badges plugins put beside chat names in the chat list (`ayu.ui.badge.add`). The user's own
 +/// badges (Customization) come first; plugin badges disappear with the plugin.
@@ -41937,7 +42117,29 @@ index 00000000..f1018168
 +        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +
++    /// Weight of regular app text set by a plugin (`ayu.ui.font.set({ weight })`). Read on every
++    /// `Font.regular`, so it is a plain value written only on the main thread.
++    public private(set) static var regularWeight: UIFont.Weight?
++    private static var weightOwner: String?
++
++    public static func setWeight(_ name: String?, owner: String) {
++        let weights: [String: UIFont.Weight] = ["light": .light, "regular": .regular, "medium": .medium, "semibold": .semibold, "bold": .bold]
++        DispatchQueue.main.async {
++            if let name, let weight = weights[name] {
++                regularWeight = weight == .regular ? nil : weight
++                weightOwner = owner
++            } else if weightOwner == owner {
++                regularWeight = nil
++                weightOwner = nil
++            }
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
 +    public static func removeAll(owner: String) {
++        if weightOwner == owner {
++            setWeight(nil, owner: owner)
++        }
 +        lock.lock()
 +        sizes = sizes.filter { $0.value.owner != owner }
 +        lock.unlock()
@@ -42471,7 +42673,7 @@ index 00000000..053b8e77
 +    }
 +}
 diff --git a/submodules/Display/Source/Font.swift b/submodules/Display/Source/Font.swift
-index e53d8ae6..955824c1 100644
+index e53d8ae6..09e9d82f 100644
 --- a/submodules/Display/Source/Font.swift
 +++ b/submodules/Display/Source/Font.swift
 @@ -159,7 +159,16 @@ public struct Font {
@@ -42491,11 +42693,12 @@ index e53d8ae6..955824c1 100644
          let key = "\(size)_\(design.key)_\(weight.key)_\(width.key)_\(traits.rawValue)"
          
          if let cachedFont = self.cache.get(key) {
-@@ -289,18 +298,22 @@ public struct Font {
+@@ -289,18 +298,23 @@ public struct Font {
      }
      
      public static func regular(_ size: CGFloat) -> UIFont {
 +        if let custom = Font.ayuCustomFont(size) { return custom }
++        if let weight = AyuPluginFonts.regularWeight { return UIFont.systemFont(ofSize: size, weight: weight) }
          return UIFont.systemFont(ofSize: size)
      }
      
@@ -42887,6 +43090,18 @@ index 9145478f..d351812a 100644
              
              print("\(CFAbsoluteTimeGetCurrent()) MediaPlayerAudioRenderer initialize audio unit: \((CFAbsoluteTimeGetCurrent() - startTime) * 1000.0) ms")
              
+diff --git a/submodules/SettingsUI/BUILD b/submodules/SettingsUI/BUILD
+index 2b819a9c..3ee314c0 100644
+--- a/submodules/SettingsUI/BUILD
++++ b/submodules/SettingsUI/BUILD
+@@ -71,6 +71,7 @@ swift_library(
+         "//submodules/MediaPlayer:UniversalMediaPlayer",
+         "//submodules/UrlEscaping:UrlEscaping",
+         "//submodules/UrlHandling:UrlHandling",
++        "//submodules/sqlcipher:sqlcipher",
+         "//submodules/HexColor:HexColor",
+         "//submodules/QrCode:QrCode",
+         "//submodules/WallpaperResources:WallpaperResources",
 diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
 new file mode 100644
 index 00000000..1624df26
@@ -43727,6 +43942,137 @@ index 00000000..0b0e769f
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
 +    }
 +    return ItemListController(context: context, state: signal)
++}
+diff --git a/submodules/SettingsUI/Sources/AyuDesktopImport.swift b/submodules/SettingsUI/Sources/AyuDesktopImport.swift
+new file mode 100644
+index 00000000..7976ce86
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuDesktopImport.swift
+@@ -0,0 +1,125 @@
++import Foundation
++import UIKit
++import UniformTypeIdentifiers
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import sqlcipher
++
++/// Imports deleted and edited messages from AyuGram Desktop's database (`ayugram.db` in the
++/// Desktop data folder). Column names differ between Desktop versions, so they are matched by
++/// name; rows without a chat, message id or text are skipped.
++enum AyuDesktopImport {
++    private static func columnIndex(_ names: [String], _ candidates: [String]) -> Int? {
++        let lowered = names.map { $0.lowercased() }
++        for candidate in candidates {
++            if let index = lowered.firstIndex(of: candidate.lowercased()) {
++                return index
++            }
++        }
++        return nil
++    }
++
++    static func read(url: URL) -> [AyuDesktopHistoryRow]? {
++        var db: OpaquePointer?
++        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else { return nil }
++        defer { sqlite3_close(db) }
++
++        var tables: [String] = []
++        var statement: OpaquePointer?
++        if sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type='table'", -1, &statement, nil) == SQLITE_OK {
++            while sqlite3_step(statement) == SQLITE_ROW {
++                if let name = sqlite3_column_text(statement, 0) {
++                    tables.append(String(cString: name))
++                }
++            }
++        }
++        sqlite3_finalize(statement)
++
++        var rows: [AyuDesktopHistoryRow] = []
++        for table in tables {
++            let lowered = table.lowercased()
++            let kind: AyuMessageHistoryRecord.Kind
++            if lowered.contains("deleted") {
++                kind = .deleted
++            } else if lowered.contains("edited") {
++                kind = .edited
++            } else {
++                continue
++            }
++            let safe = table.replacingOccurrences(of: "\"", with: "")
++            var query: OpaquePointer?
++            guard sqlite3_prepare_v2(db, "SELECT * FROM \"\(safe)\" LIMIT 200000", -1, &query, nil) == SQLITE_OK else {
++                sqlite3_finalize(query)
++                continue
++            }
++            let count = Int(sqlite3_column_count(query))
++            let names = (0 ..< count).map { String(cString: sqlite3_column_name(query, Int32($0))) }
++            guard let dialog = columnIndex(names, ["dialogId", "dialog_id", "peerId", "peer_id", "chatId"]),
++                  let message = columnIndex(names, ["messageId", "message_id", "msgId", "id"]),
++                  let text = columnIndex(names, ["text", "message", "messageText"]) else {
++                sqlite3_finalize(query)
++                continue
++            }
++            let date = columnIndex(names, ["date", "messageDate", "editDate"])
++            while sqlite3_step(query) == SQLITE_ROW {
++                let dialogId = sqlite3_column_int64(query, Int32(dialog))
++                let messageId = Int32(truncatingIfNeeded: sqlite3_column_int64(query, Int32(message)))
++                guard let raw = sqlite3_column_text(query, Int32(text)) else { continue }
++                let value = String(cString: raw)
++                let timestamp = date.map { Int32(truncatingIfNeeded: sqlite3_column_int64(query, Int32($0))) } ?? 0
++                rows.append(AyuDesktopHistoryRow(dialogId: dialogId, messageId: messageId, date: timestamp, kind: kind, text: value))
++            }
++            sqlite3_finalize(query)
++        }
++        return rows
++    }
++
++    static func present(context: AccountContext, russian ru: Bool) {
++        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
++        let delegate = AyuDesktopImportPicker(picked: { url in
++            DispatchQueue.global(qos: .userInitiated).async {
++                let rows = read(url: url)
++                DispatchQueue.main.async {
++                    guard let rows, !rows.isEmpty else {
++                        alert(context, ru ? "Это не база AyuGram Desktop или в ней нет удалённых и изменённых сообщений." : "This is not an AyuGram Desktop database, or it has no deleted or edited messages.")
++                        return
++                    }
++                    let _ = (context.engine.messages.ayuImportDesktopHistory(rows)
++                    |> deliverOnMainQueue).startStandalone(next: { added in
++                        alert(context, ru ? "Найдено \(rows.count), добавлено \(added). Сообщения появятся в истории AyuGram для этих чатов. Сохранение удалённых/изменённых должно быть включено." : "Found \(rows.count), added \(added). They appear in AyuGram history for those chats. Saving deleted/edited messages must be on.")
++                    })
++                }
++            }
++        })
++        AyuDesktopImportPicker.current = delegate
++        picker.delegate = delegate
++        context.sharedContext.applicationBindings.presentNativeController(picker)
++    }
++
++    private static func alert(_ context: AccountContext, _ message: String) {
++        let alert = UIAlertController(title: "AyuGram Desktop", message: message, preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: "OK", style: .default))
++        context.sharedContext.applicationBindings.presentNativeController(alert)
++    }
++}
++
++private final class AyuDesktopImportPicker: NSObject, UIDocumentPickerDelegate {
++    static var current: AyuDesktopImportPicker?
++    private let picked: (URL) -> Void
++
++    init(picked: @escaping (URL) -> Void) {
++        self.picked = picked
++    }
++
++    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
++        if let url = urls.first {
++            self.picked(url)
++        }
++        AyuDesktopImportPicker.current = nil
++    }
++
++    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
++        AyuDesktopImportPicker.current = nil
++    }
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
 new file mode 100644
@@ -46005,10 +46351,10 @@ index db2748e1..2711f021 100644
  
 diff --git a/submodules/SettingsUI/Sources/AyuPluginConsoleController.swift b/submodules/SettingsUI/Sources/AyuPluginConsoleController.swift
 new file mode 100644
-index 00000000..4fae9d0d
+index 00000000..8e040769
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuPluginConsoleController.swift
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,130 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -46076,7 +46422,9 @@ index 00000000..4fae9d0d
 +    |> deliverOnMainQueue
 +    |> map { presentationData, lines -> (ItemListControllerState, (ItemListNodeState, Any)) in
 +        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
-+        var entries: [AyuPluginConsoleEntry] = [.clear(ru ? "Очистить" : "Clear")]
++        // The memory the app uses now (plugin VMs live inside it), as the system counts it.
++        let memory = ayuMemoryFootprint().map { String(format: ru ? " · память %.0f МБ" : " · memory %.0f MB", $0) } ?? ""
++        var entries: [AyuPluginConsoleEntry] = [.clear((ru ? "Очистить" : "Clear") + memory)]
 +        if lines.isEmpty {
 +            entries.append(.empty(ru ? "Вывода пока нет. Включённые плагины пишут сюда print(), ошибки и срабатывания хуков." : "No output yet. Enabled plugins write print(), errors and hook activity here."))
 +        }
@@ -46123,6 +46471,19 @@ index 00000000..4fae9d0d
 +    let controller = ItemListController(context: context, state: signal)
 +    presentController = { [weak controller] in controller?.present($0, in: .window(.root)) }
 +    return controller
++}
++
++/// Physical footprint of the process in MB (what iOS uses to decide on memory kills).
++func ayuMemoryFootprint() -> Double? {
++    var info = task_vm_info_data_t()
++    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
++    let result = withUnsafeMutablePointer(to: &info) { pointer in
++        pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { raw in
++            task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), raw, &count)
++        }
++    }
++    guard result == KERN_SUCCESS else { return nil }
++    return Double(info.phys_footprint) / 1_048_576.0
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 index 515572a7..b57cf074 100644
@@ -47655,12 +48016,72 @@ index 00000000..c92e7cf9
 +        context.sharedContext.applicationBindings.presentNativeController(sheet)
 +    }
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuSmartFolders.swift b/submodules/SettingsUI/Sources/AyuSmartFolders.swift
+new file mode 100644
+index 00000000..98c92655
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuSmartFolders.swift
+@@ -0,0 +1,54 @@
++import Foundation
++import UIKit
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++
++/// Ready-made "smart" chat folders built from Telegram's own folder rules, so they sync to all
++/// devices and update themselves: unread only, people, unread groups, channels, bots.
++enum AyuSmartFolders {
++    struct Preset {
++        let titleRu: String
++        let titleEn: String
++        let emoji: String
++        let categories: ChatListFilterPeerCategories
++        let excludeMuted: Bool
++        let excludeRead: Bool
++    }
++
++    static let presets: [Preset] = [
++        Preset(titleRu: "Непрочитанные", titleEn: "Unread", emoji: "✅", categories: .all, excludeMuted: false, excludeRead: true),
++        Preset(titleRu: "Важное", titleEn: "Important", emoji: "⭐", categories: .all, excludeMuted: true, excludeRead: true),
++        Preset(titleRu: "Люди", titleEn: "People", emoji: "👤", categories: [.contacts, .nonContacts], excludeMuted: false, excludeRead: false),
++        Preset(titleRu: "Группы", titleEn: "Groups", emoji: "👥", categories: [.groups], excludeMuted: false, excludeRead: false),
++        Preset(titleRu: "Каналы", titleEn: "Channels", emoji: "📢", categories: [.channels], excludeMuted: false, excludeRead: false),
++        Preset(titleRu: "Боты", titleEn: "Bots", emoji: "🤖", categories: [.bots], excludeMuted: false, excludeRead: false)
++    ]
++
++    static func present(context: AccountContext, russian ru: Bool) {
++        let sheet = UIAlertController(title: ru ? "Умные папки" : "Smart folders", message: ru ? "Папка создаётся в Telegram и обновляется сама: например, «Важное» — непрочитанные чаты без звука не попадают." : "The folder is created in Telegram and updates itself: for example, Important shows unread chats that are not muted.", preferredStyle: .alert)
++        for preset in presets {
++            sheet.addAction(UIAlertAction(title: preset.emoji + " " + (ru ? preset.titleRu : preset.titleEn), style: .default, handler: { _ in
++                create(context: context, preset: preset, russian: ru)
++            }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(sheet)
++    }
++
++    private static func create(context: AccountContext, preset: Preset, russian ru: Bool) {
++        let title = ru ? preset.titleRu : preset.titleEn
++        let _ = (context.engine.peers.updateChatListFiltersInteractively { filters in
++            var filters = filters
++            let id = context.engine.peers.generateNewChatListFilterId(filters: filters)
++            let data = ChatListFilterData(isShared: false, hasSharedLinks: false, categories: preset.categories, excludeMuted: preset.excludeMuted, excludeRead: preset.excludeRead, excludeArchived: true, includePeers: ChatListFilterIncludePeers(), excludePeers: [], color: nil)
++            filters.append(.filter(id: id, title: ChatFolderTitle(text: title, entities: [], enableAnimations: true), emoticon: preset.emoji, data: data))
++            return filters
++        }
++        |> deliverOnMainQueue).startStandalone(next: { _ in
++            let alert = UIAlertController(title: title, message: ru ? "Папка создана — она появилась вверху списка чатов." : "The folder was created; it is at the top of the chat list.", preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: "OK", style: .default))
++            context.sharedContext.applicationBindings.presentNativeController(alert)
++        })
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuToolsController.swift b/submodules/SettingsUI/Sources/AyuToolsController.swift
 new file mode 100644
-index 00000000..3cff9f78
+index 00000000..3cbc9058
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuToolsController.swift
-@@ -0,0 +1,429 @@
+@@ -0,0 +1,437 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -47728,13 +48149,15 @@ index 00000000..3cff9f78
 +    case nowPlaying = 64
 +    case shadowBan = 65
 +    case swipes = 66
++    case smartFolders = 67
 +    case linksHeader = 70
 +    case linkRules = 71
 +    case linkInfo = 72
 +    case backupHeader = 80
 +    case backupMake = 81
 +    case backupRestore = 82
-+    case backupInfo = 83
++    case desktopImport = 84
++    case backupInfo = 89
 +    case proxyHeader = 90
 +    case proxyFastest = 91
 +    case proxyImport = 92
@@ -47879,6 +48302,8 @@ index 00000000..3cff9f78
 +                }))
 +                context.sharedContext.applicationBindings.presentNativeController(alert)
 +            }
++        case .desktopImport?:
++            AyuDesktopImport.present(context: context, russian: ru)
 +        case .proxyFastest?:
 +            AyuProxyManager.pickFastest(context: context, russian: ru)
 +        case .proxyImport?:
@@ -47932,6 +48357,8 @@ index 00000000..3cff9f78
 +            context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: shortcuts))
 +        case .pluginProfiles?:
 +            AyuPluginProfiles.present(context: context)
++        case .smartFolders?:
++            AyuSmartFolders.present(context: context, russian: ru)
 +        case .swipes?:
 +            func showSwipes() {
 +                let sheet = UIAlertController(title: ru ? "Свайпы в списке чатов" : "Chat list swipes", message: ru ? "Скрытые действия не показываются при свайпе. Изменения видны после обновления списка." : "Hidden actions are not shown on swipe. Changes appear once the list refreshes.", preferredStyle: .alert)
@@ -48062,6 +48489,7 @@ index 00000000..3cff9f78
 +        entries.append(.toggle(7, AyuToolsRow.nowPlaying.rawValue, symbol("music.note", 0xFF2D55), ru ? "Сейчас играет в био" : "Now playing in bio", ru ? "Трек из плеера в «О себе»; при выключении био вернётся" : "The playing track in your bio; turning it off restores the bio", AyuTools.nowPlayingBio))
 +        entries.append(.link(7, AyuToolsRow.shadowBan.rawValue, symbol("person.fill.xmark", 0x8E8E93), ru ? "Теневой бан" : "Shadow ban", "\(AyuShadowBan.users.count)"))
 +        entries.append(.link(7, AyuToolsRow.swipes.rawValue, symbol("hand.draw.fill", 0x5856D6), ru ? "Свайпы в списке чатов" : "Chat list swipes", AyuChatListSwipes.isCustomized ? (ru ? "свои" : "custom") : (ru ? "обычные" : "default")))
++        entries.append(.link(7, AyuToolsRow.smartFolders.rawValue, symbol("folder.fill.badge.gearshape", 0x007AFF), ru ? "Умные папки" : "Smart folders", ""))
 +        entries.append(.header(8, AyuToolsRow.linksHeader.rawValue, ru ? "ССЫЛКИ" : "LINKS"))
 +        let activeRules = AyuLinkRewrite.Rule.allCases.filter { AyuLinkRewrite.isOn($0) }.count
 +        entries.append(.link(8, AyuToolsRow.linkRules.rawValue, symbol("arrow.triangle.swap", 0x007AFF), ru ? "Переписывание ссылок" : "Link rewriting", activeRules == 0 ? (ru ? "выкл." : "off") : "\(activeRules)"))
@@ -48069,7 +48497,8 @@ index 00000000..3cff9f78
 +        entries.append(.header(9, AyuToolsRow.backupHeader.rawValue, ru ? "РЕЗЕРВНАЯ КОПИЯ" : "BACKUP"))
 +        entries.append(.link(9, AyuToolsRow.backupMake.rawValue, symbol("lock.doc.fill", 0x34C759), ru ? "Создать зашифрованный бэкап" : "Create an encrypted backup", ""))
 +        entries.append(.link(9, AyuToolsRow.backupRestore.rawValue, symbol("arrow.counterclockwise.circle.fill", 0x007AFF), ru ? "Восстановить из бэкапа" : "Restore from a backup", ""))
-+        entries.append(.info(9, AyuToolsRow.backupInfo.rawValue, ru ? "Настройки AyuGram, плагины и сохранённые удалённые/изменённые сообщения в одном файле (AES-GCM). Сохраните его в Файлы или iCloud Drive." : "AyuGram settings, plugins and saved deleted/edited messages in one file (AES-GCM). Save it to Files or iCloud Drive."))
++        entries.append(.link(9, AyuToolsRow.desktopImport.rawValue, symbol("desktopcomputer", 0x5856D6), ru ? "Импорт из AyuGram Desktop" : "Import from AyuGram Desktop", ""))
++        entries.append(.info(9, AyuToolsRow.backupInfo.rawValue, ru ? "Настройки AyuGram, плагины и сохранённые удалённые/изменённые сообщения в одном файле (AES-GCM). Сохраните его в Файлы или iCloud Drive. Импорт с компьютера: файл ayugram.db из папки данных AyuGram Desktop." : "AyuGram settings, plugins and saved deleted/edited messages in one file (AES-GCM). Save it to Files or iCloud Drive. Import from a computer: ayugram.db from the AyuGram Desktop data folder."))
 +        entries.append(.header(10, AyuToolsRow.proxyHeader.rawValue, ru ? "ПРОКСИ" : "PROXY"))
 +        entries.append(.link(10, AyuToolsRow.proxyFastest.rawValue, symbol("speedometer", 0x34C759), ru ? "Выбрать самый быстрый" : "Pick the fastest", ""))
 +        entries.append(.link(10, AyuToolsRow.proxyImport.rawValue, symbol("doc.on.clipboard.fill", 0x007AFF), ru ? "Импорт из буфера обмена" : "Import from the clipboard", ""))
@@ -49524,7 +49953,7 @@ index 00000000..2dccce2c
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-index b31c4441..a2c752a7 100644
+index b31c4441..b12ec054 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
 @@ -159,7 +159,15 @@ func ayuArchiveMessage(transaction: Transaction, mediaBox: MediaBox, message: Me
@@ -49572,6 +50001,59 @@ index b31c4441..a2c752a7 100644
      func ayuSetMediaArchiveLimits(fileMB: Int32, quotaMB: Int32) -> Signal<Bool, NoError> {
          return self.account.postbox.transaction { transaction -> Bool in
              let previous = ayuPruneHistory(transaction: transaction)
+@@ -288,3 +317,52 @@ public extension TelegramEngine.Messages {
+         }
+     }
+ }
++
++/// One deleted or edited message read from an AyuGram Desktop database.
++public struct AyuDesktopHistoryRow {
++    /// Bot-API style id as Desktop stores it: users > 0, basic groups < 0, channels -100….
++    public let dialogId: Int64
++    public let messageId: Int32
++    public let date: Int32
++    public let kind: AyuMessageHistoryRecord.Kind
++    public let text: String
++
++    public init(dialogId: Int64, messageId: Int32, date: Int32, kind: AyuMessageHistoryRecord.Kind, text: String) {
++        self.dialogId = dialogId
++        self.messageId = messageId
++        self.date = date
++        self.kind = kind
++        self.text = text
++    }
++
++    var peerId: PeerId? {
++        if self.dialogId > 0 {
++            return PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(self.dialogId))
++        } else if self.dialogId <= -1_000_000_000_000 {
++            return PeerId(namespace: Namespaces.Peer.CloudChannel, id: PeerId.Id._internalFromInt64Value(-self.dialogId - 1_000_000_000_000))
++        } else if self.dialogId < 0 {
++            return PeerId(namespace: Namespaces.Peer.CloudGroup, id: PeerId.Id._internalFromInt64Value(-self.dialogId))
++        }
++        return nil
++    }
++}
++
++public extension TelegramEngine.Messages {
++    /// Adds Desktop history to this device's AyuGram history. Returns how many records were added.
++    func ayuImportDesktopHistory(_ rows: [AyuDesktopHistoryRow]) -> Signal<Int, NoError> {
++        return self.account.postbox.transaction { transaction -> Int in
++            var state = ayuDecodeHistoryState(entry: transaction.getPreferencesEntry(key: ayuHistoryKey))
++            let before = state.records.count
++            let now = Int64(Date().timeIntervalSince1970)
++            for row in rows {
++                guard let peerId = row.peerId, !row.text.isEmpty else { continue }
++                state.append(peerId: peerId.toInt64(), messageId: row.messageId, messageTimestamp: row.date, kind: row.kind, text: row.text, now: now)
++            }
++            let added = max(0, state.records.count - before)
++            if added > 0 {
++                transaction.updatePreferencesEntry(key: ayuHistoryKey, { _ in ayuEncodeHistoryState(state) })
++            }
++            return added
++        }
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
 index 5a5a6b96..ce96177f 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
@@ -51566,6 +52048,46 @@ index 00000000..c42cc6a4
 +        }
 +    }
 +}
+diff --git a/submodules/TelegramUI/Sources/AyuAppleTranslation.swift b/submodules/TelegramUI/Sources/AyuAppleTranslation.swift
+new file mode 100644
+index 00000000..5f3797b1
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuAppleTranslation.swift
+@@ -0,0 +1,34 @@
++import Foundation
++import NaturalLanguage
++#if canImport(Translation)
++@_weakLinked import Translation
++#endif
++
++/// Apple's on-device translation (iOS 26+, languages downloaded in Settings → Translate).
++/// Nothing leaves the device; callers fall back to Telegram's translator when it fails.
++enum AyuAppleTranslation {
++    static func translate(_ text: String, to language: String, completion: @escaping (String?) -> Void) {
++        #if canImport(Translation)
++        if #available(iOS 26.0, *) {
++            let recognizer = NLLanguageRecognizer()
++            recognizer.processString(text)
++            guard let source = recognizer.dominantLanguage?.rawValue, source != language else {
++                completion(nil)
++                return
++            }
++            Task {
++                do {
++                    let session = TranslationSession(installedSource: Locale.Language(identifier: source), target: Locale.Language(identifier: language))
++                    let response = try await session.translate(text)
++                    let result = response.targetText
++                    DispatchQueue.main.async { completion(result) }
++                } catch {
++                    DispatchQueue.main.async { completion(nil) }
++                }
++            }
++            return
++        }
++        #endif
++        completion(nil)
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/AyuAudioToVoice.swift b/submodules/TelegramUI/Sources/AyuAudioToVoice.swift
 new file mode 100644
 index 00000000..5efaf49d
@@ -51987,10 +52509,10 @@ index 00000000..b248528f
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuComposerBar.swift b/submodules/TelegramUI/Sources/AyuComposerBar.swift
 new file mode 100644
-index 00000000..5fffde11
+index 00000000..fe5eb83e
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuComposerBar.swift
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,169 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -52122,6 +52644,18 @@ index 00000000..5fffde11
 +        guard let controller = self.controller else { return }
 +        let text = controller.presentationInterfaceState.interfaceState.effectiveInputState.inputText.string
 +        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
++        // On-device Apple translation first (iOS 26+, downloaded languages), then Telegram's.
++        AyuAppleTranslation.translate(text, to: language, completion: { [weak self, weak controller] result in
++            if let result, !result.isEmpty {
++                controller?.ayuSetInputText(result)
++            } else {
++                self?.translateWithTelegram(text, to: language)
++            }
++        })
++    }
++
++    private func translateWithTelegram(_ text: String, to language: String) {
++        guard let controller = self.controller else { return }
 +        self.translateDisposable.set((controller.context.engine.messages.translate(text: text, toLang: language)
 +        |> deliverOnMainQueue).startStrict(next: { [weak controller] result in
 +            if let (translated, _) = result {

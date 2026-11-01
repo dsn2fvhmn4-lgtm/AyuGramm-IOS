@@ -59,10 +59,17 @@ declare namespace Ayu {
       addText(options: { id: string; text: string; anchor?: "topLeft" | "topRight" | "bottomLeft" | "bottomRight" | "center"; color?: string; size?: number }): void;
       /** A live clock over the app (format like "HH:mm:ss"). */
       addClock(options: { id: string; format?: string; anchor?: string; color?: string; size?: number }): void;
+      /** A live FPS counter; remove it with overlay.remove(id). */
+      showFPS(options: { id: string; anchor?: string; color?: string; size?: number }): void;
       remove(id: string): void;
     };
+    /** A button over the whole app; the callback runs on tap (permission `overlay`). */
+    floatingButton: { add(options: { id: string; icon?: string; title?: string; anchor?: "bottomRight" | "bottomLeft" | "topRight" | "topLeft"; color?: string }, onTap?: () => void): boolean; remove(id: string): void };
+    progress: { show(options: { id: string; title?: string; value: number; anchor?: string }): void; hide(id: string): void };
+    animation: { play(name?: "confetti" | "snow" | "stars" | "leaves" | "rain", seconds?: number): void };
     font: {
-      set(options: { element: "messages" | "lists"; size?: number; weight?: "regular" | "medium" | "semibold" | "bold"; style?: "normal" | "italic" | "rounded" | "monospaced" }): void;
+      /** `weight` applies to regular text in the whole app. */
+      set(options: { element?: "messages" | "lists"; size?: number; weight?: "light" | "regular" | "medium" | "semibold" | "bold" }): void;
       reset(element: "messages" | "lists"): void;
     };
     badge: { add(options: { peerId: string; badge: { text: string } }): void; remove(options: { peerId: string }): void };

@@ -27,6 +27,8 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 concurrency:
   group: ayu-ios-${{ github.ref }}
@@ -117,3 +119,16 @@ jobs:
             ${{ runner.temp }}/ayu-tests.log
           if-no-files-found: ignore
           retention-days: 7
+      - name: Attest the IPA (proves which commit it was built from)
+        if: success() && hashFiles('telegram/artifacts/port/*.ipa') != ''
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: telegram/artifacts/port/*.ipa
+      - name: Free disk space before the cache is saved
+        if: always()
+        continue-on-error: true
+        run: |
+          cd telegram
+          for bazel in build-input/bazel-*-darwin-arm64; do "$bazel" clean --expunge || true; done
+          df -h . | tail -1

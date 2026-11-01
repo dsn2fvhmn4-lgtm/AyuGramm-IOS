@@ -155,6 +155,28 @@ declare namespace Ayu {
       onRequest(fn: (method: string, error: number | null) => void): boolean;
       onUpdate(fn: (constructor: string) => void): boolean;
     };
+    /** The music player. Spectrum, visualizer and canvas need the `overlay` permission. */
+    player: {
+      state(): { title?: string; artist?: string; duration?: number; position?: number; playing?: boolean };
+      control(action: "play" | "pause" | "next" | "previous" | string): boolean;
+      play(): boolean; pause(): boolean; next(): boolean; previous(): boolean;
+      /** The real spectrum of what is playing: bands from 40 Hz to 16 kHz (log scale), each 0…1. */
+      spectrum: {
+        get(bands?: number): { bands: number[]; level: number; active: boolean };
+        subscribe(fn: (bands: number[], level: number) => void, options?: { bands?: number; fps?: number }): boolean;
+        unsubscribe(): void;
+      };
+      /** A native visualizer drawn by the app at the display rate (reacts to bass without JS per frame). */
+      visualizer: {
+        set(options: { style: "bars" | "mirror" | "wave" | "circle" | "dots"; color?: string; bands?: number; opacity?: number; gain?: number }): void;
+        clear(): void;
+      };
+      /** Shapes drawn inside the player window; x/y/w/h are 0…1 of the content area. */
+      canvas: {
+        draw(shapes: ({ type: "rect"; x: number; y: number; w: number; h: number; radius?: number; color?: string; alpha?: number } | { type: "circle"; x: number; y: number; w: number; h: number; color?: string; alpha?: number } | { type: "line"; x: number; y: number; x2: number; y2: number; width?: number; color?: string; alpha?: number } | { type: "text"; x: number; y: number; text: string; size?: number; color?: string; alpha?: number })[]): void;
+        clear(): void;
+      };
+    };
     /** Device gestures: "shake" and "screenshot". */
     gestures: { on(type: "shake" | "screenshot", fn: (payload: { type: string }) => void): void };
     /** The open chat (permission `ui`). */

@@ -87327,16 +87327,17 @@ index b6a6358d..64876b40 100644
                              if replyMessage.id.namespace == Namespaces.Message.Cloud, let threadId = replyMessage.threadId {
                                  threadMessageId = MessageId(peerId: replyMessage.id.peerId, namespace: Namespaces.Message.Cloud, id: Int32(clamping: threadId))
 diff --git a/submodules/TelegramCore/Sources/State/AccountStateManager.swift b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
-index 6ae1b60c..bfb7b76b 100644
+index 6ae1b60c..3439bd7b 100644
 --- a/submodules/TelegramCore/Sources/State/AccountStateManager.swift
 +++ b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
-@@ -495,6 +495,10 @@ public final class AccountStateManager {
+@@ -495,6 +495,11 @@ public final class AccountStateManager {
          }
          
          func addUpdateGroups(_ groups: [UpdateGroup]) {
 +            // AyuGram TL hooks: constructor names of incoming updates for signed plugins.
 +            if AyuTLHooks.observesTraffic {
-+                AyuTLHooks.updatesReceived(groups.flatMap { $0.updates })
++                let updates: [Api.Update] = groups.flatMap { $0.updates }
++                AyuTLHooks.updatesReceived(updates)
 +            }
              self.queue.async {
                  if let last = self.operations.last {

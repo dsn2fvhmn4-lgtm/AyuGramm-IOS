@@ -6609,14 +6609,15 @@ index 00000000..a9c651fd
 +}
 diff --git a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
 new file mode 100644
-index 00000000..8613f305
+index 00000000..a4dffd26
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
-@@ -0,0 +1,777 @@
+@@ -0,0 +1,891 @@
 +import Foundation
 +import UIKit
 +import Display
 +import TelegramCore
++import UniversalMediaPlayer
 +
 +/// What plugins put into the app's own interface. The app draws everything (plugins only
 +/// describe it), and all of a plugin's items go away when it stops.
@@ -6696,6 +6697,36 @@ index 00000000..8613f305
 +    }
 +
 +    private var tabList: [Tab] = []
++    private var visualizer: (owner: String, config: [String: Any])?
++    private var canvas: [String: [[String: Any]]] = [:]
++
++    /// The player visualizer a plugin chose (`ayu.player.visualizer.set`), nil for the user's own.
++    public var playerVisualizer: [String: Any]? {
++        self.lock.lock(); defer { self.lock.unlock() }
++        return self.visualizer?.config
++    }
++
++    /// Shapes every plugin draws in the player, in plugin order.
++    public var playerCanvas: [[String: Any]] {
++        self.lock.lock(); defer { self.lock.unlock() }
++        return self.canvas.keys.sorted().flatMap { self.canvas[$0] ?? [] }
++    }
++
++    fileprivate func setPlayerVisualizer(_ config: [String: Any]?, owner: String) {
++        self.update { ui in
++            if let config {
++                ui.visualizer = (owner, config)
++            } else if ui.visualizer?.owner == owner {
++                ui.visualizer = nil
++            }
++        }
++    }
++
++    fileprivate func setPlayerCanvas(_ shapes: [[String: Any]]?, owner: String) {
++        self.update { ui in
++            ui.canvas[owner] = shapes
++        }
++    }
 +    private var toolbar: [ComposerButton] = []
 +
 +    /// Chat toolbar buttons (`ayu.chat.toolbar.add`); a tap sends `chatToolbar` { id, peerId }.
@@ -6814,7 +6845,10 @@ index 00000000..8613f305
 +            ui.commandList.removeAll(where: { $0.owner == owner })
 +            ui.tabList.removeAll(where: { $0.owner == owner })
 +            ui.toolbar.removeAll(where: { $0.owner == owner })
++            if ui.visualizer?.owner == owner { ui.visualizer = nil }
++            ui.canvas[owner] = nil
 +        }
++        AyuPluginSpectrumFeed.stop(owner: owner)
 +        AyuPluginChatFilter.removeAll(owner: owner)
 +        AyuPluginBadges.removeAll(owner: owner)
 +        AyuPluginFonts.removeAll(owner: owner)
@@ -7096,6 +7130,43 @@ index 00000000..8613f305
 +                    AyuNicknames.setNickname(peerId, value)
 +                }
 +            }
++            return ["ok": true]
++        // The player: live spectrum, a native visualizer and a canvas to draw in.
++        case "player.spectrum.get":
++            guard allowed(.overlay) else { return nil }
++            let count = (args["bands"] as? NSNumber)?.intValue ?? 32
++            let spectrum = AyuAudioSpectrum.shared
++            // A one-off read listens for a moment so the ring has fresh samples next time.
++            if !spectrum.isActive {
++                AyuPluginSpectrumFeed.touch()
++            }
++            let bands = spectrum.bands(count: count).map { Double($0) }
++            return ["bands": bands, "level": bands.max() ?? 0.0, "active": spectrum.isActive]
++        case "player.spectrum.subscribe":
++            guard allowed(.overlay) else { return nil }
++            AyuPluginSpectrumFeed.start(owner: pluginId, bands: (args["bands"] as? NSNumber)?.intValue ?? 32, fps: (args["fps"] as? NSNumber)?.doubleValue ?? 20.0)
++            return ["ok": true]
++        case "player.spectrum.unsubscribe":
++            AyuPluginSpectrumFeed.stop(owner: pluginId)
++            return ["ok": true]
++        case "player.visualizer.set":
++            guard allowed(.overlay) else { return nil }
++            var config: [String: Any] = [:]
++            for key in ["style", "color", "bands", "opacity", "gain"] {
++                if let value = args[key] { config[key] = value }
++            }
++            AyuPluginUI.shared.setPlayerVisualizer(config, owner: pluginId)
++            return ["ok": true]
++        case "player.visualizer.clear":
++            AyuPluginUI.shared.setPlayerVisualizer(nil, owner: pluginId)
++            return ["ok": true]
++        case "player.canvas.draw":
++            guard allowed(.overlay) else { return nil }
++            let shapes = Array((args["shapes"] as? [[String: Any]] ?? []).prefix(500))
++            AyuPluginUI.shared.setPlayerCanvas(shapes, owner: pluginId)
++            return ["ok": true]
++        case "player.canvas.clear":
++            AyuPluginUI.shared.setPlayerCanvas(nil, owner: pluginId)
 +            return ["ok": true]
 +        case "chat.toolbar.add":
 +            guard allowed(.ui) else { return nil }
@@ -7388,6 +7459,49 @@ index 00000000..8613f305
 +        lock.lock()
 +        defer { lock.unlock() }
 +        return owners
++    }
++}
++
++/// `ayu.player.spectrum.subscribe`: sends "playerSpectrum" { bands, level } to a plugin at up to
++/// 30 updates a second while it listens.
++enum AyuPluginSpectrumFeed {
++    private static let lock = NSLock()
++    private static var timers: [String: DispatchSourceTimer] = [:]
++    private static let queue = DispatchQueue(label: "AyuGram.Plugins.Spectrum", qos: .userInitiated)
++
++    static func start(owner: String, bands: Int, fps: Double) {
++        stop(owner: owner)
++        let interval = 1.0 / max(1.0, min(30.0, fps))
++        let count = max(4, min(64, bands))
++        let timer = DispatchSource.makeTimerSource(queue: queue)
++        timer.schedule(deadline: .now(), repeating: interval)
++        timer.setEventHandler {
++            let values = AyuAudioSpectrum.shared.bands(count: count).map { (Double($0) * 1000.0).rounded() / 1000.0 }
++            AyuPluginUI.send("playerSpectrum", to: owner, ["bands": values, "level": values.max() ?? 0.0])
++        }
++        AyuAudioSpectrum.shared.addListener()
++        lock.lock()
++        timers[owner] = timer
++        lock.unlock()
++        timer.resume()
++    }
++
++    static func stop(owner: String) {
++        lock.lock()
++        let timer = timers.removeValue(forKey: owner)
++        lock.unlock()
++        if let timer {
++            timer.cancel()
++            AyuAudioSpectrum.shared.removeListener()
++        }
++    }
++
++    /// Listens for two seconds so a plugin polling with `get` sees real values.
++    static func touch() {
++        AyuAudioSpectrum.shared.addListener()
++        queue.asyncAfter(deadline: .now() + 2.0) {
++            AyuAudioSpectrum.shared.removeListener()
++        }
 +    }
 +}
 diff --git a/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift b/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift
@@ -7896,10 +8010,10 @@ index 00000000..7a606e8d
 +}
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 new file mode 100644
-index 00000000..9e7a2c08
+index 00000000..2f34f1aa
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-@@ -0,0 +1,1247 @@
+@@ -0,0 +1,1264 @@
 +import Foundation
 +import JavaScriptCore
 +import CryptoKit
@@ -9108,7 +9222,24 @@ index 00000000..9e7a2c08
 +                play: () => host.playerControl('play'),
 +                pause: () => host.playerControl('pause'),
 +                next: () => host.playerControl('next'),
-+                previous: () => host.playerControl('previous')
++                previous: () => host.playerControl('previous'),
++                spectrum: Object.freeze({
++                    get: (bands) => host.call('player.spectrum.get', { bands: Number(bands || 32) }) || { bands: [], level: 0 },
++                    subscribe: (fn, options) => {
++                        if (typeof fn !== 'function') return false;
++                        host.on('playerSpectrum', function (payload) { fn(payload.bands || [], payload.level || 0); });
++                        return !!host.call('player.spectrum.subscribe', options || {});
++                    },
++                    unsubscribe: () => host.call('player.spectrum.unsubscribe', {})
++                }),
++                visualizer: Object.freeze({
++                    set: (options) => host.call('player.visualizer.set', options || {}),
++                    clear: () => host.call('player.visualizer.clear', {})
++                }),
++                canvas: Object.freeze({
++                    draw: (shapes) => host.call('player.canvas.draw', { shapes: Array.isArray(shapes) ? shapes : [] }),
++                    clear: () => host.call('player.canvas.clear', {})
++                })
 +            }),
 +            features: Object.freeze({
 +                disable: (name) => host.feature(text(name), true),
@@ -10015,10 +10146,10 @@ index 00000000..ceb1994d
 +}
 diff --git a/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
 new file mode 100644
-index 00000000..fd6b5ab0
+index 00000000..98e5904c
 --- /dev/null
 +++ b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
-@@ -0,0 +1,765 @@
+@@ -0,0 +1,784 @@
 +#include <AyuPluginEngines/AyuPluginEngines.h>
 +
 +#include <stdlib.h>
@@ -10212,6 +10343,24 @@ index 00000000..fd6b5ab0
 +    "                fn(name)\n"
 +    "        ayu.on('tlUpdate', handler)\n"
 +    "        return True\n"
++    "class _AyuSpectrum:\n"
++    "    def get(self, bands=32):\n"
++    "        return _ayu_call('player.spectrum.get', {'bands': bands})\n"
++    "    def subscribe(self, fn, bands=32, fps=20):\n"
++    "        ayu.on('playerSpectrum', lambda p: fn(p.get('bands') or [], p.get('level') or 0))\n"
++    "        return _ayu_call('player.spectrum.subscribe', {'bands': bands, 'fps': fps})\n"
++    "    def unsubscribe(self):\n"
++    "        return _ayu_call('player.spectrum.unsubscribe', {})\n"
++    "class _AyuPlayerVisual:\n"
++    "    spectrum = _AyuSpectrum()\n"
++    "    visualizer = _AyuSection('player.visualizer', ['set', 'clear'])\n"
++    "    def draw(self, shapes):\n"
++    "        return _ayu_call('player.canvas.draw', {'shapes': shapes})\n"
++    "    def clear(self):\n"
++    "        return _ayu_call('player.canvas.clear', {})\n"
++    "_AyuPlayer.spectrum = _AyuSpectrum()\n"
++    "_AyuPlayer.visualizer = _AyuSection('player.visualizer', ['set', 'clear'])\n"
++    "_AyuPlayer.canvas = _AyuSection('player.canvas', ['draw', 'clear'])\n"
 +    "class _AyuGestures:\n"
 +    "    def on(self, kind, fn):\n"
 +    "        def handler(payload):\n"
@@ -10421,6 +10570,7 @@ index 00000000..fd6b5ab0
 +    "    profile = _AyuProfile()\n"
 +    "    chat = _AyuChat()\n"
 +    "    gestures = _AyuGestures()\n"
++    "    visuals = _AyuPlayerVisual()\n"
 +    "    tl = _AyuTL()\n"
 +    "    media = _AyuMedia()\n"
 +    "    bus = _AyuBus()\n"
@@ -77182,6 +77332,140 @@ index c0725e00..89546652 100644
                      cameraView.isEnabled = true
                      camera.startCapture()
                  } else {
+diff --git a/submodules/MediaPlayer/Sources/AyuAudioSpectrum.swift b/submodules/MediaPlayer/Sources/AyuAudioSpectrum.swift
+new file mode 100644
+index 00000000..c8720e39
+--- /dev/null
++++ b/submodules/MediaPlayer/Sources/AyuAudioSpectrum.swift
+@@ -0,0 +1,128 @@
++import Foundation
++import Accelerate
++
++/// The live audio spectrum of what the media player is playing, for the AyuGram player visualizer
++/// and the plugin API (`ayu.player.spectrum`). The audio thread only copies samples into a
++/// preallocated ring (no locks, no allocation) while someone listens; the FFT runs on the
++/// caller's thread when bands are asked for.
++public final class AyuAudioSpectrum {
++    public static let shared = AyuAudioSpectrum()
++
++    private static let ringSize = 4096
++    private static let fftSize = 2048
++    private static let sampleRate: Float = 44100.0
++
++    /// Changed under `listenerLock`; the audio thread only reads `active` (a stale read costs at
++    /// most one buffer of copying or of silence).
++    private var listeners = 0
++    private let listenerLock = NSLock()
++    private var active = false
++    private let ring: UnsafeMutablePointer<Float>
++    private var writeIndex = 0
++    private let lock = NSLock()
++    private let fftSetup: FFTSetup?
++    private let window: [Float]
++    private var smoothed: [Float] = []
++
++    private init() {
++        self.ring = UnsafeMutablePointer<Float>.allocate(capacity: AyuAudioSpectrum.ringSize)
++        self.ring.initialize(repeating: 0.0, count: AyuAudioSpectrum.ringSize)
++        self.fftSetup = vDSP_create_fftsetup(vDSP_Length(log2(Float(AyuAudioSpectrum.fftSize))), FFTRadix(kFFTRadix2))
++        var window = [Float](repeating: 0.0, count: AyuAudioSpectrum.fftSize)
++        vDSP_hann_window(&window, vDSP_Length(AyuAudioSpectrum.fftSize), Int32(vDSP_HANN_NORM))
++        self.window = window
++    }
++
++    public var isActive: Bool {
++        return self.active
++    }
++
++    /// Call once per listener; the matching `removeListener` stops the sample copy.
++    public func addListener() {
++        self.listenerLock.lock()
++        self.listeners += 1
++        self.active = true
++        self.listenerLock.unlock()
++    }
++
++    public func removeListener() {
++        self.listenerLock.lock()
++        self.listeners = max(0, self.listeners - 1)
++        self.active = self.listeners > 0
++        self.listenerLock.unlock()
++    }
++
++    /// Audio thread: interleaved stereo Int16 frames; only the left channel is kept.
++    func write(_ samples: UnsafePointer<Int16>, frames: Int) {
++        guard self.isActive, frames > 0 else { return }
++        var index = self.writeIndex
++        let size = AyuAudioSpectrum.ringSize
++        for frame in 0 ..< frames {
++            self.ring[index] = Float(samples[frame * 2]) / 32768.0
++            index += 1
++            if index == size {
++                index = 0
++            }
++        }
++        self.writeIndex = index
++    }
++
++    /// `count` bands between 40 Hz and 16 kHz on a log scale, each 0…1, lightly smoothed.
++    public func bands(count: Int) -> [Float] {
++        let count = max(4, min(128, count))
++        guard self.isActive, let fftSetup = self.fftSetup else {
++            return [Float](repeating: 0.0, count: count)
++        }
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        let n = AyuAudioSpectrum.fftSize
++        let size = AyuAudioSpectrum.ringSize
++        var input = [Float](repeating: 0.0, count: n)
++        let end = self.writeIndex
++        for i in 0 ..< n {
++            input[i] = self.ring[(end - n + i + size) % size] * self.window[i]
++        }
++        var real = [Float](repeating: 0.0, count: n / 2)
++        var imaginary = [Float](repeating: 0.0, count: n / 2)
++        var magnitudes = [Float](repeating: 0.0, count: n / 2)
++        real.withUnsafeMutableBufferPointer { realBuffer in
++            imaginary.withUnsafeMutableBufferPointer { imaginaryBuffer in
++                var complex = DSPSplitComplex(realp: realBuffer.baseAddress!, imagp: imaginaryBuffer.baseAddress!)
++                input.withUnsafeBufferPointer { inputBuffer in
++                    inputBuffer.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: n / 2) { pairs in
++                        vDSP_ctoz(pairs, 2, &complex, 1, vDSP_Length(n / 2))
++                    }
++                }
++                vDSP_fft_zrip(fftSetup, &complex, 1, vDSP_Length(log2(Float(n))), FFTDirection(FFT_FORWARD))
++                vDSP_zvabs(&complex, 1, &magnitudes, 1, vDSP_Length(n / 2))
++            }
++        }
++        let binWidth = AyuAudioSpectrum.sampleRate / Float(n)
++        let low: Float = 40.0
++        let high: Float = 16000.0
++        var result = [Float](repeating: 0.0, count: count)
++        for band in 0 ..< count {
++            let from = low * pow(high / low, Float(band) / Float(count))
++            let to = low * pow(high / low, Float(band + 1) / Float(count))
++            let first = max(1, Int(from / binWidth))
++            let last = max(first + 1, min(n / 2, Int(to / binWidth)))
++            var peak: Float = 0.0
++            for bin in first ..< last {
++                peak = max(peak, magnitudes[bin])
++            }
++            // Magnitude to a 0…1 level on a 60 dB scale.
++            let decibels = 20.0 * log10(max(peak / Float(n), 1e-9))
++            result[band] = max(0.0, min(1.0, (decibels + 60.0) / 60.0))
++        }
++        if self.smoothed.count != count {
++            self.smoothed = result
++        } else {
++            for band in 0 ..< count {
++                // Fast attack, slower release, like a hardware meter.
++                let previous = self.smoothed[band]
++                self.smoothed[band] = result[band] > previous ? result[band] : previous * 0.82 + result[band] * 0.18
++            }
++        }
++        return self.smoothed
++    }
++}
 diff --git a/submodules/MediaPlayer/Sources/AyuEqualizer.swift b/submodules/MediaPlayer/Sources/AyuEqualizer.swift
 new file mode 100644
 index 00000000..0679ace4
@@ -77327,10 +77611,19 @@ index 5d556df7..4d0c9bbb 100644
      public func attachPlayerNode(_ node: MediaPlayerNode) {
          let nodeRef: Unmanaged<MediaPlayerNode> = Unmanaged.passRetained(node)
 diff --git a/submodules/MediaPlayer/Sources/MediaPlayerAudioRenderer.swift b/submodules/MediaPlayer/Sources/MediaPlayerAudioRenderer.swift
-index 9145478f..d351812a 100644
+index 9145478f..09aa07e0 100644
 --- a/submodules/MediaPlayer/Sources/MediaPlayerAudioRenderer.swift
 +++ b/submodules/MediaPlayer/Sources/MediaPlayerAudioRenderer.swift
-@@ -237,6 +237,7 @@ private final class AudioPlayerRendererContext {
+@@ -129,6 +129,8 @@ private func rendererInputProc(refCon: UnsafeMutableRawPointer, ioActionFlags: U
+                                 let consumeCount = bufferDataSize - dataOffset
+                                 
+                                 let actualConsumedCount = rendererBuffer.dequeue(bufferData.advanced(by: dataOffset), count: consumeCount)
++                                // AyuGram spectrum (no work unless a visualizer or plugin listens).
++                                AyuAudioSpectrum.shared.write(bufferData.advanced(by: dataOffset).assumingMemoryBound(to: Int16.self), frames: actualConsumedCount / 4)
+                                 
+                                 var samplePtr = bufferData.advanced(by: dataOffset).assumingMemoryBound(to: Int16.self)
+                                 for _ in 0 ..< actualConsumedCount / 4 {
+@@ -237,6 +239,7 @@ private final class AudioPlayerRendererContext {
      var mixerAudioUnit: AudioComponentInstance?
      var equalizerAudioUnit: AudioComponentInstance?
      var outputAudioUnit: AudioComponentInstance?
@@ -77338,7 +77631,7 @@ index 9145478f..d351812a 100644
      
      var bufferContextId: Int32!
      let bufferContext: Atomic<AudioPlayerRendererBufferContext>
-@@ -305,12 +306,32 @@ private final class AudioPlayerRendererContext {
+@@ -305,12 +308,32 @@ private final class AudioPlayerRendererContext {
                  }
              }
          }
@@ -77371,7 +77664,7 @@ index 9145478f..d351812a 100644
          
          unregisterPlayerRendererBufferContext(self.bufferContextId)
          
-@@ -638,10 +659,15 @@ private final class AudioPlayerRendererContext {
+@@ -638,10 +661,15 @@ private final class AudioPlayerRendererContext {
              AudioUnitSetProperty(outputAudioUnit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maximumFramesPerSlice, 4)
              
              AudioUnitSetParameter(mixerAudioUnit, kMultiChannelMixerParam_Volume, kAudioUnitScope_Input, 0, Float32(self.volume) * (self.soundMuted ? 0.0 : 1.0), 0)
@@ -78288,10 +78581,10 @@ index 00000000..7a46e69e
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
 new file mode 100644
-index 00000000..9381235f
+index 00000000..f4c4c0e3
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
-@@ -0,0 +1,432 @@
+@@ -0,0 +1,443 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -78421,6 +78714,10 @@ index 00000000..9381235f
 +        entries.append(.header(3, 30, ru ? "ПЛЕЕР" : "PLAYER"))
 +        entries.append(.link(3, 31, symbol("waveform.path", 0xFF2D55), ru ? "Плавные переходы между треками" : "Smooth track transitions", fade == 0 ? (ru ? "выкл." : "off") : "\(fade) " + (ru ? "с" : "s")))
 +        entries.append(.info(3, 32, ru ? "Музыка плавно затихает в конце трека и нарастает в начале следующего." : "Music fades out at the end of a track and fades in at the start of the next."))
++        let visualizer = UserDefaults.standard.string(forKey: "ayu.player.visualizer") ?? "none"
++        let visualizerTitles: [String: (String, String)] = ["none": ("Выключен", "Off"), "bars": ("Столбики", "Bars"), "mirror": ("Зеркальные столбики", "Mirrored bars"), "wave": ("Волна", "Wave"), "circle": ("Круг вокруг обложки", "Circle around the cover"), "dots": ("Точки", "Dots")]
++        entries.append(.link(3, 33, symbol("chart.bar.fill", 0x34C759), ru ? "Визуализатор в плеере" : "Player visualizer", ru ? (visualizerTitles[visualizer]?.0 ?? "") : (visualizerTitles[visualizer]?.1 ?? "")))
++        entries.append(.info(3, 34, ru ? "Настоящий спектр звучащего трека: столбики прыгают от баса и вокала." : "The real spectrum of the playing track: bars jump with the bass and vocals."))
 +        return entries
 +    }, open: { id, _, present in
 +        let ru = ayuIsRussian(context)
@@ -78435,6 +78732,13 @@ index 00000000..9381235f
 +            ayuChoose(present, title: ru ? bands[index].0 : bands[index].1, ru: ru, options: [-12.0, -9.0, -6.0, -3.0, 0.0, 3.0, 6.0, 9.0, 12.0], current: eq[index], label: { $0 == 0 ? "0 dB" : String(format: "%+.0f dB", $0) }, equal: { $0 == $1 }, pick: { value in
 +                eq[index] = value
 +                AyuMediaSettings.voiceEqualizer = eq
++            })
++        case 33:
++            let styles = ["none", "bars", "mirror", "wave", "circle", "dots"]
++            let titles: [String: (String, String)] = ["none": ("Выключен", "Off"), "bars": ("Столбики", "Bars"), "mirror": ("Зеркальные столбики", "Mirrored bars"), "wave": ("Волна", "Wave"), "circle": ("Круг вокруг обложки", "Circle around the cover"), "dots": ("Точки", "Dots")]
++            ayuChoose(present, title: ru ? "Визуализатор" : "Visualizer", ru: ru, options: styles, current: UserDefaults.standard.string(forKey: "ayu.player.visualizer") ?? "none", label: { ru ? (titles[$0]?.0 ?? $0) : (titles[$0]?.1 ?? $0) }, equal: { $0 == $1 }, pick: {
++                UserDefaults.standard.set($0, forKey: "ayu.player.visualizer")
++                NotificationCenter.default.post(name: Notification.Name("AyuGram.PlayerVisualizerChanged"), object: nil)
 +            })
 +        case 31:
 +            ayuChoose(present, title: ru ? "Плавные переходы" : "Smooth transitions", ru: ru, options: [0, 2, 4, 6, 8], current: UserDefaults.standard.integer(forKey: "ayu.extra.musicFadeSeconds"), label: { $0 == 0 ? (ru ? "Выключено" : "Off") : "\($0) " + (ru ? "с" : "s") }, equal: { $0 == $1 }, pick: { UserDefaults.standard.set($0, forKey: "ayu.extra.musicFadeSeconds") })
@@ -94206,7 +94510,7 @@ index c5b61bf2..0512a738 100644
 +    }
  }
 diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
-index 1a77683e..946e98ef 100644
+index 1a77683e..5090d53b 100644
 --- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
 +++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
 @@ -12,6 +12,7 @@ import TelegramUIPreferences
@@ -94423,7 +94727,16 @@ index 1a77683e..946e98ef 100644
      private let queueView: AyuMusicQueueView
      private let queueViewport = UIView()
      private let queueFadeMask = CAGradientLayer()
-@@ -219,7 +357,7 @@ final class AyuMusicPlayerView: UIView {
+@@ -195,6 +333,8 @@ final class AyuMusicPlayerView: UIView {
+ 
+     private let artworkShadow = UIView()
+     private let artworkNode = TransformImageNode()
++    private let ayuVisualizer = AyuPlayerVisualizerView()
++    private let ayuCanvas = AyuPlayerCanvasView()
+ 
+     private let titleLabel = UILabel()
+     private let artistLabel = UILabel()
+@@ -219,7 +359,7 @@ final class AyuMusicPlayerView: UIView {
      private var musicHapticsEnabled = UserDefaults.standard.object(forKey: "ayu.musicHaptics.enabled") as? Bool ?? true
      private var musicHapticsActive = false
      private var hapticsResource: Disposable?
@@ -94432,7 +94745,7 @@ index 1a77683e..946e98ef 100644
      private var hapticsPrepared = false
      private var hapticsAnalysisFinished = false
  
-@@ -239,6 +377,21 @@ final class AyuMusicPlayerView: UIView {
+@@ -239,6 +379,21 @@ final class AyuMusicPlayerView: UIView {
      private var showsLyrics = false
      private var isScrubbing = false
      private var dragOffset: CGFloat = 0.0
@@ -94454,9 +94767,12 @@ index 1a77683e..946e98ef 100644
  
      init(context: AccountContext, type: MediaManagerPlayerType) {
          self.queueView = AyuMusicQueueView(context: context)
-@@ -265,6 +418,10 @@ final class AyuMusicPlayerView: UIView {
+@@ -264,7 +419,13 @@ final class AyuMusicPlayerView: UIView {
+         self.artworkShadow.layer.shadowRadius = 24.0
          self.artworkShadow.layer.shadowOffset = CGSize(width: 0.0, height: 12.0)
          self.artworkShadow.addSubview(self.artworkNode.view)
++        // AyuGram: live spectrum visualizer (under the cover) and the plugin canvas.
++        self.addSubview(self.ayuVisualizer)
          self.addSubview(self.artworkShadow)
 +        // Keep the previous cover on screen and cross-fade into the next one instead of
 +        // blanking both nodes on every track switch.
@@ -94465,7 +94781,7 @@ index 1a77683e..946e98ef 100644
  
          self.titleLabel.font = ayuMusicFont(ofSize: 21.0)
          self.titleLabel.textColor = .white
-@@ -355,6 +512,8 @@ final class AyuMusicPlayerView: UIView {
+@@ -355,6 +516,8 @@ final class AyuMusicPlayerView: UIView {
  
          let pan = UIPanGestureRecognizer(target: self, action: #selector(self.dismissPan(_:)))
          self.addGestureRecognizer(pan)
@@ -94474,7 +94790,7 @@ index 1a77683e..946e98ef 100644
  
          self.stateDisposable = (context.sharedContext.mediaManager.musicMediaPlayerState
          |> deliverOnMainQueue).startStrict(next: { [weak self] value in
-@@ -362,7 +521,11 @@ final class AyuMusicPlayerView: UIView {
+@@ -362,7 +525,11 @@ final class AyuMusicPlayerView: UIView {
          })
  
          let displayLink = CADisplayLink(target: AyuWeakTarget(self), selector: #selector(AyuWeakTarget.tick))
@@ -94487,7 +94803,7 @@ index 1a77683e..946e98ef 100644
          displayLink.add(to: .main, forMode: .common)
          self.displayLink = displayLink
      }
-@@ -372,6 +535,9 @@ final class AyuMusicPlayerView: UIView {
+@@ -372,6 +539,9 @@ final class AyuMusicPlayerView: UIView {
      }
  
      deinit {
@@ -94497,7 +94813,7 @@ index 1a77683e..946e98ef 100644
          self.hapticsResource?.dispose()
          self.stateDisposable?.dispose()
          self.lyricsDisposable?.dispose()
-@@ -381,14 +547,29 @@ final class AyuMusicPlayerView: UIView {
+@@ -381,14 +551,29 @@ final class AyuMusicPlayerView: UIView {
      // MARK: State
  
      private func update(state value: (Account, SharedMediaPlayerItemPlaybackStateOrLoading, MediaManagerPlayerType)?) {
@@ -94530,7 +94846,7 @@ index 1a77683e..946e98ef 100644
              return
          }
          self.hadState = true
-@@ -428,21 +609,54 @@ final class AyuMusicPlayerView: UIView {
+@@ -428,21 +613,54 @@ final class AyuMusicPlayerView: UIView {
              }
          }
  
@@ -94586,7 +94902,7 @@ index 1a77683e..946e98ef 100644
              let emptyColor = UIColor(white: 0.22, alpha: 1.0)
              self.artworkNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: false, emptyColor: emptyColor))
              self.backdropNode.setSignal(playerAlbumArt(engine: self.context.engine, fileReference: fileReference, albumArt: albumArt, thumbnail: true, emptyColor: emptyColor, drawPlaceholderWhenEmpty: false))
-@@ -476,14 +690,25 @@ final class AyuMusicPlayerView: UIView {
+@@ -476,14 +694,25 @@ final class AyuMusicPlayerView: UIView {
          let hapticsPlaying: Bool
          if case .playing = status.status { hapticsPlaying = true } else { hapticsPlaying = false }
          self.musicHaptics.tick(time: timestamp, playing: hapticsPlaying && self.musicHapticsEnabled && self.musicHapticsActive && !self.isScrubbing && self.window != nil && UIApplication.shared.applicationState == .active)
@@ -94614,7 +94930,7 @@ index 1a77683e..946e98ef 100644
      }
  
      func setHapticsActive(_ active: Bool) {
-@@ -535,6 +760,7 @@ final class AyuMusicPlayerView: UIView {
+@@ -535,6 +764,7 @@ final class AyuMusicPlayerView: UIView {
          }
          let timestamp = Double(fraction) * status.duration
          self.isScrubbing = !finished
@@ -94622,7 +94938,7 @@ index 1a77683e..946e98ef 100644
          self.elapsedLabel.text = ayuFormatTime(timestamp)
          self.remainingLabel.text = "-" + ayuFormatTime(max(0.0, status.duration - timestamp))
          if finished {
-@@ -542,6 +768,120 @@ final class AyuMusicPlayerView: UIView {
+@@ -542,6 +772,120 @@ final class AyuMusicPlayerView: UIView {
          }
      }
  
@@ -94743,7 +95059,7 @@ index 1a77683e..946e98ef 100644
      // MARK: Actions
  
      @objc private func previousPressed() {
-@@ -568,7 +908,13 @@ final class AyuMusicPlayerView: UIView {
+@@ -568,7 +912,13 @@ final class AyuMusicPlayerView: UIView {
          } else { self.queueView.isHidden = true }
          self.queueButton.backgroundColor = self.showsQueue ? UIColor.white.withAlphaComponent(0.2) : .clear
          self.queueButton.layer.cornerRadius = 22.0
@@ -94758,7 +95074,7 @@ index 1a77683e..946e98ef 100644
      }
  
      @objc private func lyricsHeld(_ gesture: UILongPressGestureRecognizer) {
-@@ -627,12 +973,22 @@ final class AyuMusicPlayerView: UIView {
+@@ -627,12 +977,22 @@ final class AyuMusicPlayerView: UIView {
          self.lyricsView.set(lyrics: nil, loading: true, russian: self.russian)
          let duration = self.status?.duration ?? 0.0
          self.lyricsDisposable?.dispose()
@@ -94781,7 +95097,7 @@ index 1a77683e..946e98ef 100644
              self.tick()
          })
      }
-@@ -652,7 +1008,7 @@ final class AyuMusicPlayerView: UIView {
+@@ -652,7 +1012,7 @@ final class AyuMusicPlayerView: UIView {
              self.artworkShadow.layer.shadowOpacity = self.isPaused ? 0.15 : 0.35
          }
          if animated {
@@ -94790,17 +95106,25 @@ index 1a77683e..946e98ef 100644
          } else {
              apply()
          }
-@@ -743,6 +1099,9 @@ final class AyuMusicPlayerView: UIView {
+@@ -743,6 +1103,17 @@ final class AyuMusicPlayerView: UIView {
              self.lyricsView.frame = CGRect(x: insets.left, y: artworkTop, width: size.width - insets.left - insets.right, height: max(0.0, scrubberY - 8.0 - artworkTop))
          }
          self.updateArtworkScale(animated: false)
++        self.ayuVisualizer.frame = self.bounds
++        self.ayuVisualizer.artworkFrame = self.showsQueue || self.showsLyrics ? .zero : self.artworkShadow.frame
++        self.ayuVisualizer.isHidden = self.showsQueue || self.showsLyrics
++        if self.ayuCanvas.superview == nil {
++            self.addSubview(self.ayuCanvas)
++        }
++        self.ayuCanvas.frame = CGRect(x: insets.left, y: artworkTop, width: size.width - insets.left - insets.right, height: max(0.0, scrubberY - 8.0 - artworkTop))
++        self.ayuCanvas.setNeedsDisplay()
 +        let debugSize = self.debugOverlay.sizeThatFits(size)
 +        self.debugOverlay.frame = CGRect(x: size.width - insets.right - debugSize.width - 8.0, y: size.height - insets.bottom - debugSize.height - 64.0, width: debugSize.width, height: debugSize.height)
 +        self.bringSubviewToFront(self.debugOverlay)
      }
  
      private func setArtworkFrame(_ frame: CGRect, cornerRadius: CGFloat) {
-@@ -759,12 +1118,26 @@ final class AyuMusicPlayerView: UIView {
+@@ -759,12 +1130,26 @@ final class AyuMusicPlayerView: UIView {
      // MARK: Presentation
  
      func animateIn() {
@@ -94831,7 +95155,7 @@ index 1a77683e..946e98ef 100644
              completion()
          })
      }
-@@ -786,18 +1159,22 @@ final class AyuMusicPlayerView: UIView {
+@@ -786,18 +1171,22 @@ final class AyuMusicPlayerView: UIView {
      }
  
      @objc private func dismissPan(_ recognizer: UIPanGestureRecognizer) {
@@ -94857,7 +95181,7 @@ index 1a77683e..946e98ef 100644
                      self.transform = .identity
                  })
              }
-@@ -928,6 +1305,10 @@ private final class AyuLyricsView: UIView {
+@@ -928,6 +1317,10 @@ private final class AyuLyricsView: UIView {
      private let statusLabel = UILabel()
      private var lineLabels: [AyuLyricsLineLabel] = []
      private var lines: [AyuLyricsLine] = []
@@ -94868,7 +95192,7 @@ index 1a77683e..946e98ef 100644
      private var currentIndex: Int?
      private var activeIndices: Set<Int> = []
      private let timingLabel = UILabel()
-@@ -937,6 +1318,15 @@ private final class AyuLyricsView: UIView {
+@@ -937,6 +1330,15 @@ private final class AyuLyricsView: UIView {
      private var pauseEnds: [Int: Double] = [:]
      private var russian = false
      private var userScrollUntil: Double = 0.0
@@ -94884,7 +95208,7 @@ index 1a77683e..946e98ef 100644
  
      override init(frame: CGRect) {
          super.init(frame: frame)
-@@ -981,6 +1371,8 @@ private final class AyuLyricsView: UIView {
+@@ -981,6 +1383,8 @@ private final class AyuLyricsView: UIView {
          self.currentPauseIndex = nil
          self.lines = []
          self.currentIndex = nil
@@ -94893,7 +95217,7 @@ index 1a77683e..946e98ef 100644
          self.activeIndices = []
          self.russian = russian
          self.scrollView.contentOffset = CGPoint()
-@@ -1008,7 +1400,7 @@ private final class AyuLyricsView: UIView {
+@@ -1008,7 +1412,7 @@ private final class AyuLyricsView: UIView {
          for (index, text) in texts.enumerated() {
              let label = AyuLyricsLineLabel(frame: .zero)
              label.text = text
@@ -94902,7 +95226,7 @@ index 1a77683e..946e98ef 100644
              label.textColor = UIColor(white: 1.0, alpha: synced ? 0.32 : 0.85)
              label.tag = index
              if synced {
-@@ -1036,16 +1428,17 @@ private final class AyuLyricsView: UIView {
+@@ -1036,16 +1440,17 @@ private final class AyuLyricsView: UIView {
                  self.scrollView.addSubview(pause)
              }
          }
@@ -94924,7 +95248,7 @@ index 1a77683e..946e98ef 100644
      }
  
      @objc private func lineTapped(_ recognizer: UITapGestureRecognizer) {
-@@ -1097,10 +1490,10 @@ private final class AyuLyricsView: UIView {
+@@ -1097,10 +1502,10 @@ private final class AyuLyricsView: UIView {
          if pauseIndex != self.currentPauseIndex {
              self.currentPauseIndex = pauseIndex
              if let pauseIndex, let pause = self.pauseViews[pauseIndex], CACurrentMediaTime() > self.userScrollUntil {
@@ -94937,7 +95261,7 @@ index 1a77683e..946e98ef 100644
          let active = pauseIndex == nil ? Set(AyuLyricsPlayback.visibleLines(self.lines, at: timestamp)) : Set<Int>()
          for previous in self.activeIndices.subtracting(active) {
              self.lineLabels[previous].isLyricActive = false
-@@ -1113,24 +1506,67 @@ private final class AyuLyricsView: UIView {
+@@ -1113,24 +1518,67 @@ private final class AyuLyricsView: UIView {
              self.lineLabels[activeIndex].setProgresses(words.map { AyuLyricsPlayback.progress($0, at: timestamp) }, emptyLineActive: words.isEmpty)
          }
          if index != self.currentIndex {
@@ -95615,6 +95939,252 @@ index 00000000..8e070628
 +    override func layoutSubviews() {
 +        super.layoutSubviews()
 +        self.label.frame = self.bounds.insetBy(dx: 6.0, dy: 5.0)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
+new file mode 100644
+index 00000000..5696876c
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
+@@ -0,0 +1,240 @@
++import Foundation
++import UIKit
++import Display
++import AccountContext
++import UniversalMediaPlayer
++
++/// The look of the player visualizer: the user's choice, or a plugin's (`ayu.player.visualizer.set`).
++struct AyuPlayerVisualizerStyle: Equatable {
++    enum Kind: String, CaseIterable {
++        case none, bars, mirror, wave, circle, dots
++
++        func title(_ ru: Bool) -> String {
++            switch self {
++            case .none: return ru ? "Выключен" : "Off"
++            case .bars: return ru ? "Столбики" : "Bars"
++            case .mirror: return ru ? "Зеркальные столбики" : "Mirrored bars"
++            case .wave: return ru ? "Волна" : "Wave"
++            case .circle: return ru ? "Круг вокруг обложки" : "Circle around the cover"
++            case .dots: return ru ? "Точки" : "Dots"
++            }
++        }
++    }
++
++    var kind: Kind
++    var color: UIColor
++    var bands: Int
++    var opacity: CGFloat
++    /// Gain applied to the 0…1 levels (sensitivity), 0.5…3.
++    var gain: CGFloat
++
++    static let userKey = "ayu.player.visualizer"
++
++    /// A plugin's style wins over the user's own while the plugin runs.
++    static var current: AyuPlayerVisualizerStyle {
++        if let config = AyuPluginUI.shared.playerVisualizer, let kind = Kind(rawValue: config["style"] as? String ?? "") {
++            let color = (config["color"] as? String).flatMap(AyuCustomization.parse).map { UIColor(rgb: $0) } ?? .white
++            return AyuPlayerVisualizerStyle(kind: kind, color: color, bands: max(8, min(96, (config["bands"] as? NSNumber)?.intValue ?? 32)), opacity: CGFloat(max(0.1, min(1.0, (config["opacity"] as? NSNumber)?.doubleValue ?? 0.85))), gain: CGFloat(max(0.5, min(3.0, (config["gain"] as? NSNumber)?.doubleValue ?? 1.0))))
++        }
++        let kind = AyuDecoyMode.isActive ? .none : (Kind(rawValue: UserDefaults.standard.string(forKey: userKey) ?? "") ?? .none)
++        return AyuPlayerVisualizerStyle(kind: kind, color: .white, bands: 32, opacity: 0.8, gain: 1.0)
++    }
++}
++
++/// Draws the live spectrum (AyuAudioSpectrum) in the player at the display rate. It listens to
++/// the spectrum only while it is on screen and a style is chosen.
++final class AyuPlayerVisualizerView: UIView {
++    private let shape = CAShapeLayer()
++    private var link: CADisplayLink?
++    private var listening = false
++    private var style = AyuPlayerVisualizerStyle.current
++    private var observers: [NSObjectProtocol] = []
++    /// The cover's frame in this view's coordinates; bars sit under it, the circle around it.
++    var artworkFrame: CGRect = .zero {
++        didSet { self.setNeedsLayout() }
++    }
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        self.isUserInteractionEnabled = false
++        self.layer.addSublayer(self.shape)
++        for name in [AyuPluginUI.didChangeNotification, Notification.Name("AyuGram.PlayerVisualizerChanged")] {
++            self.observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { [weak self] _ in
++                self?.restyle()
++            }))
++        }
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        for observer in self.observers {
++            NotificationCenter.default.removeObserver(observer)
++        }
++        self.link?.invalidate()
++        if self.listening {
++            AyuAudioSpectrum.shared.removeListener()
++        }
++    }
++
++    override func didMoveToWindow() {
++        super.didMoveToWindow()
++        self.restyle()
++    }
++
++    private func restyle() {
++        self.style = AyuPlayerVisualizerStyle.current
++        let wanted = self.window != nil && self.style.kind != .none
++        if wanted && !self.listening {
++            AyuAudioSpectrum.shared.addListener()
++            self.listening = true
++            let link = CADisplayLink(target: AyuDisplayLinkTarget(self), selector: #selector(AyuDisplayLinkTarget.tick))
++            if #available(iOS 15.0, *) {
++                link.preferredFrameRateRange = CAFrameRateRange(minimum: 30.0, maximum: 60.0, preferred: 60.0)
++            }
++            link.add(to: .main, forMode: .common)
++            self.link = link
++        } else if !wanted && self.listening {
++            AyuAudioSpectrum.shared.removeListener()
++            self.listening = false
++            self.link?.invalidate()
++            self.link = nil
++            self.shape.path = nil
++        }
++        self.shape.fillColor = self.style.kind == .wave || self.style.kind == .circle ? UIColor.clear.cgColor : self.style.color.cgColor
++        self.shape.strokeColor = self.style.kind == .wave || self.style.kind == .circle ? self.style.color.cgColor : nil
++        self.shape.lineWidth = 3.0
++        self.shape.lineCap = .round
++        self.shape.lineJoin = .round
++        self.shape.opacity = Float(self.style.opacity)
++    }
++
++    fileprivate func tick() {
++        let levels = AyuAudioSpectrum.shared.bands(count: self.style.bands).map { min(1.0, CGFloat($0) * self.style.gain) }
++        let path = UIBezierPath()
++        let area = self.artworkFrame.isEmpty ? self.bounds.insetBy(dx: 24.0, dy: self.bounds.height * 0.3) : self.artworkFrame
++        switch self.style.kind {
++        case .none:
++            break
++        case .bars, .mirror:
++            let count = CGFloat(levels.count)
++            let gap: CGFloat = 3.0
++            let width = max(1.5, (area.width - gap * (count - 1.0)) / count)
++            let baseline = self.style.kind == .mirror ? area.midY : area.maxY + 64.0
++            let maxHeight = self.style.kind == .mirror ? area.height * 0.45 : 56.0
++            for (index, level) in levels.enumerated() {
++                let height = max(2.0, level * maxHeight)
++                let x = area.minX + CGFloat(index) * (width + gap)
++                let rect = self.style.kind == .mirror ? CGRect(x: x, y: baseline - height, width: width, height: height * 2.0) : CGRect(x: x, y: baseline - height, width: width, height: height)
++                path.append(UIBezierPath(roundedRect: rect, cornerRadius: width / 2.0))
++            }
++        case .wave:
++            let baseline = area.maxY + 40.0
++            for (index, level) in levels.enumerated() {
++                let x = area.minX + area.width * CGFloat(index) / CGFloat(max(1, levels.count - 1))
++                let y = baseline - level * 36.0 * (index % 2 == 0 ? 1.0 : -1.0)
++                if index == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
++            }
++        case .circle:
++            let center = CGPoint(x: area.midX, y: area.midY)
++            let radius = max(area.width, area.height) / 2.0 + 10.0
++            for (index, level) in levels.enumerated() {
++                let angle = CGFloat(index) / CGFloat(levels.count) * 2.0 * .pi - .pi / 2.0
++                let inner = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
++                let outer = CGPoint(x: center.x + cos(angle) * (radius + 6.0 + level * 34.0), y: center.y + sin(angle) * (radius + 6.0 + level * 34.0))
++                path.move(to: inner)
++                path.addLine(to: outer)
++            }
++        case .dots:
++            let baseline = area.maxY + 64.0
++            for (index, level) in levels.enumerated() {
++                let x = area.minX + area.width * (CGFloat(index) + 0.5) / CGFloat(levels.count)
++                let size = 3.0 + level * 9.0
++                path.append(UIBezierPath(ovalIn: CGRect(x: x - size / 2.0, y: baseline - level * 48.0 - size / 2.0, width: size, height: size)))
++            }
++        }
++        CATransaction.begin()
++        CATransaction.setDisableActions(true)
++        self.shape.frame = self.bounds
++        self.shape.path = path.cgPath
++        CATransaction.commit()
++    }
++}
++
++/// CADisplayLink keeps its target strongly; this breaks the cycle.
++private final class AyuDisplayLinkTarget: NSObject {
++    weak var view: AyuPlayerVisualizerView?
++    init(_ view: AyuPlayerVisualizerView) { self.view = view }
++    @objc func tick() { self.view?.tick() }
++}
++
++/// Shapes plugins draw in the player (`ayu.player.canvas.draw`). Coordinates are 0…1 of the
++/// canvas (the player's content area); colours are hex. Supported: rect, circle, line, text.
++final class AyuPlayerCanvasView: UIView {
++    private var observer: NSObjectProtocol?
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        self.isUserInteractionEnabled = false
++        self.isOpaque = false
++        self.backgroundColor = .clear
++        self.contentMode = .redraw
++        self.observer = NotificationCenter.default.addObserver(forName: AyuPluginUI.didChangeNotification, object: nil, queue: .main, using: { [weak self] _ in
++            self?.setNeedsDisplay()
++        })
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        if let observer = self.observer {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++
++    private static func color(_ value: Any?, _ fallback: UIColor) -> UIColor {
++        guard let text = value as? String, let rgb = AyuCustomization.parse(text) else { return fallback }
++        return UIColor(rgb: rgb)
++    }
++
++    override func draw(_ rect: CGRect) {
++        guard !AyuDecoyMode.isActive, let context = UIGraphicsGetCurrentContext() else { return }
++        let size = self.bounds.size
++        func number(_ item: [String: Any], _ key: String, _ fallback: CGFloat = 0.0) -> CGFloat {
++            return CGFloat((item[key] as? NSNumber)?.doubleValue ?? Double(fallback))
++        }
++        for item in AyuPluginUI.shared.playerCanvas.prefix(500) {
++            let color = AyuPlayerCanvasView.color(item["color"], .white)
++            let alpha = number(item, "alpha", 1.0)
++            let frame = CGRect(x: number(item, "x") * size.width, y: number(item, "y") * size.height, width: number(item, "w") * size.width, height: number(item, "h") * size.height)
++            context.saveGState()
++            context.setAlpha(max(0.0, min(1.0, alpha)))
++            switch item["type"] as? String {
++            case "rect":
++                color.setFill()
++                UIBezierPath(roundedRect: frame, cornerRadius: number(item, "radius")).fill()
++            case "circle":
++                color.setFill()
++                UIBezierPath(ovalIn: frame).fill()
++            case "line":
++                color.setStroke()
++                let path = UIBezierPath()
++                path.move(to: CGPoint(x: number(item, "x") * size.width, y: number(item, "y") * size.height))
++                path.addLine(to: CGPoint(x: number(item, "x2") * size.width, y: number(item, "y2") * size.height))
++                path.lineWidth = max(0.5, min(20.0, number(item, "width", 2.0)))
++                path.lineCapStyle = .round
++                path.stroke()
++            case "text":
++                let text = String((item["text"] as? String ?? "").prefix(200)) as NSString
++                text.draw(at: frame.origin, withAttributes: [.font: UIFont.systemFont(ofSize: max(6.0, min(64.0, number(item, "size", 15.0))), weight: .semibold), .foregroundColor: color])
++            default:
++                break
++            }
++            context.restoreGState()
++        }
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift

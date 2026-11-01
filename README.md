@@ -10,6 +10,10 @@ Release 3 source changes add message-menu controls, author search, filter manage
 
 ## Current implementation
 
+Development source adds Telegram-style pull-down settings search, chat-local Ghost Mode,
+searchable message history with before/after comparisons, parallel lyrics lookup
+and five player lyrics styles. See [feature access and validation status (RU)](docs/DAILY_UX_RU.md).
+
 Development source adds **tap .plugin -> review -> Import and enable**, automatic local conversion of complete literal outgoing-text hook templates, atomic activation and restored hook behavior after restart. Direct Java/Xposed/UI hooks still need dedicated mappings. See [conversion patterns and exact scope](docs/PLUGIN_CONVERSION.md).
 
 The next development block reorganizes **AyuGram Preferences** into categories without a large header, adds the **@neosay1337** channel link, full plugin-details pages and a native app-icon picker with the owner's three variants plus all twelve original AyuGram Desktop presets. See [preferences and icon changes](docs/PREFERENCES_AND_ICONS.md) for scope and regression coverage. Release 3's existing IPA is unchanged.

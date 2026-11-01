@@ -476,10 +476,10 @@ index 00000000..223c7092
 +}
 diff --git a/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift b/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift
 new file mode 100644
-index 00000000..e8ad9ef9
+index 00000000..95175d36
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,319 @@
 +import Foundation
 +import TelegramCore
 +import AyuPluginEngines
@@ -563,6 +563,24 @@ index 00000000..e8ad9ef9
 +
 +    // MARK: Lifecycle
 +
++    /// exteraGram-style Python plugins: their SDK modules are provided by the prelude, so the
++    /// imports are commented out, and the BasePlugin subclass is started after the module runs.
++    /// Java/Android imports are commented out too; plugins that need them still fail when used.
++    static func exteraCompatible(_ source: String) -> String {
++        let prefixes = ["from base_plugin", "import base_plugin", "from ui.", "import ui.", "from android_utils", "import android_utils", "from client_utils", "import client_utils", "from markdown_utils", "import markdown_utils", "from hook_utils", "import hook_utils", "from java", "import java", "from android", "from org.telegram", "from com.exteragram", "from de.robv"]
++        var lines: [String] = []
++        for line in source.components(separatedBy: "\n") {
++            let trimmed = line.trimmingCharacters(in: .whitespaces)
++            if prefixes.contains(where: { trimmed.hasPrefix($0) }) {
++                let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
++                lines.append(indent + "pass  # AyuGram: " + trimmed)
++            } else {
++                lines.append(line)
++            }
++        }
++        return lines.joined(separator: "\n") + "\n_ayu_extera_boot(globals())\n"
++    }
++
 +    func load() {
 +        self.queue.async { [weak self] in
 +            guard let self, !self.stopped else { return }
@@ -570,7 +588,10 @@ index 00000000..e8ad9ef9
 +            var error: UnsafeMutablePointer<CChar>?
 +            switch self.engine {
 +            case .python:
-+                let source = String(decoding: self.data, as: UTF8.self)
++                var source = String(decoding: self.data, as: UTF8.self)
++                if source.contains("BasePlugin") {
++                    source = AyuPluginEngineInstance.exteraCompatible(source)
++                }
 +                self.pythonHandle = ayu_python_create(source, self.id + ".py", self.timeoutMilliseconds * 4, ayuPluginEngineHost, context, &error)
 +                if self.pythonHandle < 0 {
 +                    self.log(.error, error.map { String(cString: $0) } ?? "Could not start the Python plugin.")
@@ -1300,6 +1321,105 @@ index 00000000..c8d68816
 +        }
 +    }
 +}
+diff --git a/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift b/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift
+new file mode 100644
+index 00000000..0e6ef85b
+--- /dev/null
++++ b/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift
+@@ -0,0 +1,93 @@
++import Foundation
++import CryptoKit
++
++/// Remote kill switch for harmful plugins: registry/revoked.json in the plugin repository,
++/// signed with the AyuGram team key (the same key as the verification registry). Listed plugins
++/// are turned off and cannot be installed. An entry may name a single build by its SHA-256.
++public final class AyuPluginKillSwitch {
++    public struct Entry: Codable, Equatable {
++        public let id: String
++        public let sha256: String?
++        public let reason: String?
++    }
++
++    private struct List: Codable {
++        let format: String
++        let plugins: [Entry]
++    }
++
++    public static let shared = AyuPluginKillSwitch()
++    private static let publicKey = Data(base64Encoded: "GDJWDwzdxjryMJhA2dS+zM2p3AHK8O35B/cc5VjKcEU=")!
++    private static let baseURL = "https://raw.githubusercontent.com/murk-sus/AyuGramm-Plugins/main/registry/"
++
++    private let lock = NSLock()
++    private var entries: [Entry] = []
++    private var lastFetch: Date?
++
++    private var cacheURL: URL? {
++        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
++            .appendingPathComponent("AyuGram", isDirectory: true)
++            .appendingPathComponent("revoked.json")
++    }
++
++    private init() {
++        if let url = self.cacheURL, let data = try? Data(contentsOf: url), let signature = try? Data(contentsOf: url.appendingPathExtension("sig")) {
++            self.accept(data: data, signature: signature, save: false)
++        }
++    }
++
++    /// Why the plugin is revoked, or nil.
++    public func revocation(id: String, sha256: String?) -> Entry? {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.entries.first(where: { entry in
++            entry.id == id && (entry.sha256 == nil || entry.sha256?.lowercased() == sha256?.lowercased())
++        })
++    }
++
++    public func refresh() {
++        self.lock.lock()
++        if let lastFetch = self.lastFetch, Date().timeIntervalSince(lastFetch) < 60 * 60 {
++            self.lock.unlock()
++            return
++        }
++        self.lastFetch = Date()
++        self.lock.unlock()
++        let session = URLSession(configuration: .ephemeral)
++        func load(_ name: String, _ completion: @escaping (Data?) -> Void) {
++            guard let url = URL(string: AyuPluginKillSwitch.baseURL + name) else { return completion(nil) }
++            session.dataTask(with: url, completionHandler: { data, response, _ in
++                completion((response as? HTTPURLResponse)?.statusCode == 200 ? data : nil)
++            }).resume()
++        }
++        load("revoked.json", { [weak self] data in
++            load("revoked.json.sig", { signature in
++                if let self, let data, let signature {
++                    self.accept(data: data, signature: signature, save: true)
++                }
++                session.finishTasksAndInvalidate()
++            })
++        })
++    }
++
++    private func accept(data: Data, signature: Data, save: Bool) {
++        let text = String(decoding: signature, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
++        guard let signatureData = Data(base64Encoded: text),
++              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: AyuPluginKillSwitch.publicKey),
++              key.isValidSignature(signatureData, for: data),
++              let list = try? JSONDecoder().decode(List.self, from: data), list.format == "ayugram-revoked" else {
++            return
++        }
++        self.lock.lock()
++        self.entries = list.plugins
++        self.lock.unlock()
++        if save, let url = self.cacheURL {
++            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
++            try? data.write(to: url, options: .atomic)
++            try? signature.write(to: url.appendingPathExtension("sig"), options: .atomic)
++        }
++        DispatchQueue.main.async {
++            AyuScriptRuntime.shared.applyRevocations()
++        }
++    }
++}
 diff --git a/submodules/AccountContext/Sources/AyuPluginServices.swift b/submodules/AccountContext/Sources/AyuPluginServices.swift
 new file mode 100644
 index 00000000..2e495f4e
@@ -1624,12 +1744,13 @@ index 00000000..19ba2967
 +}
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 new file mode 100644
-index 00000000..44e0d24d
+index 00000000..512637ae
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-@@ -0,0 +1,969 @@
+@@ -0,0 +1,1051 @@
 +import Foundation
 +import JavaScriptCore
++import CryptoKit
 +import TelegramCore
 +
 +/// Code plugins: JavaScript files that run in their own JavaScriptCore virtual machine on a
@@ -1662,6 +1783,8 @@ index 00000000..44e0d24d
 +        public var permissions: [String]?
 +        /// Declared `@connect` hosts for `ayu.net.fetch` (api.example.com or *.example.com).
 +        public var connect: [String]? = nil
++        /// Declared `@requires other >=1.2, another`: plugins that must be installed first.
++        public var requires: [String]? = nil
 +
 +        public var engine: Language {
 +            return Language(rawValue: self.language ?? "js") ?? .javascript
@@ -1694,10 +1817,14 @@ index 00000000..44e0d24d
 +        case invalidIdentifier
 +        case injectRefused
 +        case injectNeedsConsent
++        case missingDependency(String)
++        case revoked(String)
 +
 +        public var errorDescription: String? {
 +            let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true
 +            switch self {
++            case let .missingDependency(requirement): return ru ? "Сначала установите плагин \(requirement)." : "Install \(requirement) first."
++            case let .revoked(reason): return (ru ? "Команда AyuGram отозвала этот плагин." : "The AyuGram team revoked this plugin.") + (reason.isEmpty ? "" : " " + reason)
 +            case .invalidFile: return ru ? "Файл не является плагином на JavaScript, Python или WebAssembly." : "The file is not a JavaScript, Python or WebAssembly plugin."
 +            case .tooLarge: return ru ? "Плагин слишком большой (код — до 512 КБ, WebAssembly — до 2 МБ)." : "The plugin is too large (512 KB for code, 2 MB for WebAssembly)."
 +            case .invalidIdentifier: return ru ? "Укажите @id из латинских букв, цифр, «-» и «_»." : "Use an @id of latin letters, digits, - and _."
@@ -1799,20 +1926,39 @@ index 00000000..44e0d24d
 +        let fallbackId = ((filename as NSString).deletingPathExtension).lowercased().map { ch -> Character in
 +            return (ch.isLetter && ch.isASCII) || ch.isNumber || ch == "-" || ch == "_" ? ch : "-"
 +        }
++        // exteraGram-style Python metadata: __id__ = "…", __name__ = "…", …
++        if language == .python {
++            for line in source.components(separatedBy: .newlines).prefix(150) {
++                let trimmed = line.trimmingCharacters(in: .whitespaces)
++                guard trimmed.hasPrefix("__"), let equals = trimmed.firstIndex(of: "=") else { continue }
++                let name = trimmed[..<equals].trimmingCharacters(in: .whitespaces)
++                guard name.hasSuffix("__"), name.count > 4 else { continue }
++                let key = String(name.dropFirst(2).dropLast(2)).lowercased()
++                let value = trimmed[trimmed.index(after: equals)...].trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
++                if ["id", "name", "description", "author", "version"].contains(key), fields[key] == nil {
++                    fields[key] = value
++                }
++            }
++        }
 +        let id = (fields["id"] ?? String(fallbackId)).lowercased()
++        // `@name:ru` / `@description:ru` win for that interface language.
++        let language2 = String((Locale.preferredLanguages.first ?? "en").prefix(2)).lowercased()
++        let localizedName = fields["name:" + language2] ?? fields["name"]
++        let localizedDescription = fields["description:" + language2] ?? fields["description"]
 +        return Plugin(
 +            id: id,
-+            name: String((fields["name"] ?? (filename as NSString).deletingPathExtension).prefix(64)),
++            name: String((localizedName ?? (filename as NSString).deletingPathExtension).prefix(64)),
 +            author: String((fields["author"] ?? "").prefix(128)),
 +            version: String((fields["version"] ?? "1.0").prefix(32)),
-+            description: String((fields["description"] ?? "").prefix(1024)),
++            description: String((localizedDescription ?? "").prefix(1024)),
 +            enabled: false,
 +            disabledReason: nil,
 +            language: language.rawValue,
 +            injects: ["true", "yes", "1"].contains((fields["inject"] ?? "").lowercased()),
 +            official: nil,
 +            permissions: AyuPluginPermission.parse(fields["permissions"] ?? ""),
-+            connect: AyuPluginGrants.parseHosts(fields["connect"] ?? "")
++            connect: AyuPluginGrants.parseHosts(fields["connect"] ?? ""),
++            requires: AyuScriptRuntime.parseRequires(fields["requires"] ?? "")
 +        )
 +    }
 +
@@ -1833,7 +1979,8 @@ index 00000000..44e0d24d
 +            injects: fields["inject"] as? Bool ?? false,
 +            official: nil,
 +            permissions: AyuPluginPermission.parse((fields["permissions"] as? [String] ?? []).joined(separator: ",")),
-+            connect: AyuPluginGrants.parseHosts((fields["connect"] as? [String] ?? []).joined(separator: ","))
++            connect: AyuPluginGrants.parseHosts((fields["connect"] as? [String] ?? []).joined(separator: ",")),
++            requires: AyuScriptRuntime.parseRequires((fields["requires"] as? [String] ?? []).joined(separator: ","))
 +        )
 +    }
 +
@@ -1890,6 +2037,12 @@ index 00000000..44e0d24d
 +              plugin.id.unicodeScalars.allSatisfy({ (97...122).contains($0.value) || (48...57).contains($0.value) || $0 == "-" || $0 == "_" }) else {
 +            throw InstallError.invalidIdentifier
 +        }
++        if let revoked = AyuPluginKillSwitch.shared.revocation(id: plugin.id, sha256: AyuScriptRuntime.sha256(data)) {
++            throw InstallError.revoked(revoked.reason ?? "")
++        }
++        for requirement in plugin.requires ?? [] where !self.satisfies(requirement) {
++            throw InstallError.missingDependency(requirement)
++        }
 +        guard let directory = self.directory, let url = self.sourceURL(plugin) else { throw InstallError.invalidFile }
 +        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 +        self.stop(id: plugin.id)
@@ -1907,6 +2060,55 @@ index 00000000..44e0d24d
 +        self.start(plugin)
 +        self.notify()
 +        return plugin
++    }
++
++    static func sha256(_ data: Data) -> String {
++        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
++    }
++
++    /// "other >=1.2, another" → ["other >=1.2", "another"].
++    static func parseRequires(_ text: String) -> [String] {
++        return text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }.prefix(8).map { $0 }
++    }
++
++    private static func versionParts(_ version: String) -> [Int] {
++        return version.split(separator: ".").map { Int($0.filter(\.isNumber)) ?? 0 }
++    }
++
++    /// An installed plugin `id` at or above the minimum version, if one is given.
++    func satisfies(_ requirement: String) -> Bool {
++        let parts = requirement.split(separator: " ", omittingEmptySubsequences: true)
++        guard let id = parts.first.map(String.init), let plugin = self.plugin(id: id) else { return false }
++        guard parts.count > 1, parts[1].hasPrefix(">=") else { return true }
++        let minimum = AyuScriptRuntime.versionParts(String(parts[1].dropFirst(2)))
++        let installed = AyuScriptRuntime.versionParts(plugin.version)
++        for index in 0 ..< max(minimum.count, installed.count) {
++            let a = index < installed.count ? installed[index] : 0
++            let b = index < minimum.count ? minimum[index] : 0
++            if a != b { return a > b }
++        }
++        return true
++    }
++
++    /// Turns off installed plugins on the team's revocation list.
++    public func applyRevocations() {
++        for plugin in self.plugins where plugin.enabled {
++            var hash: String?
++            if let url = self.sourceURL(plugin), let data = try? Data(contentsOf: url) {
++                hash = AyuScriptRuntime.sha256(data)
++            }
++            if AyuPluginKillSwitch.shared.revocation(id: plugin.id, sha256: hash) != nil {
++                self.stop(id: plugin.id)
++                self.lock.lock()
++                if let position = self.index.firstIndex(where: { $0.id == plugin.id }) {
++                    self.index[position].enabled = false
++                    self.index[position].disabledReason = "revoked"
++                }
++                self.saveIndex()
++                self.lock.unlock()
++                self.notify()
++            }
++        }
 +    }
 +
 +    public func setEnabled(_ id: String, _ enabled: Bool) {
@@ -2990,10 +3192,10 @@ index 00000000..b321163e
 +#endif
 diff --git a/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
 new file mode 100644
-index 00000000..5880eb42
+index 00000000..121a463e
 --- /dev/null
 +++ b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
-@@ -0,0 +1,583 @@
+@@ -0,0 +1,693 @@
 +#include <AyuPluginEngines/AyuPluginEngines.h>
 +
 +#include <stdlib.h>
@@ -3211,6 +3413,116 @@ index 00000000..5880eb42
 +    "            _ayu_command_hook[0] = True\n"
 +    "            ayu.hooks.before('message.outgoing.text', _ayu_command_handler)\n"
 +    "        return True\n"
++    "class HookStrategy:\n"
++    "    DEFAULT = 0\n"
++    "    CANCEL = 1\n"
++    "    MODIFY = 2\n"
++    "    MODIFY_FINAL = 3\n"
++    "class HookResult:\n"
++    "    def __init__(self, strategy=0, params=None, request=None, update=None, updates=None):\n"
++    "        self.strategy = strategy\n"
++    "        self.params = params\n"
++    "class MenuItemType:\n"
++    "    MESSAGE_CONTEXT_MENU = 'message'\n"
++    "    DRAWER_MENU = 'drawer'\n"
++    "    CHAT_ACTION_MENU = 'chat'\n"
++    "    PROFILE_ACTION_MENU = 'profile'\n"
++    "class MenuItemData:\n"
++    "    def __init__(self, menu_type=None, text='', on_click=None, icon=None, item_id=None, priority=0, condition=None, subtext=None):\n"
++    "        self.menu_type = menu_type\n"
++    "        self.text = text\n"
++    "        self.on_click = on_click\n"
++    "        self.item_id = item_id\n"
++    "class _AyuSettingItem:\n"
++    "    def __init__(self, kind, key, text, default, subtext, items):\n"
++    "        self.kind = kind\n"
++    "        self.key = key\n"
++    "        self.text = text\n"
++    "        self.default = default\n"
++    "        self.subtext = subtext\n"
++    "        self.items = items\n"
++    "def Header(text='', **kwargs):\n"
++    "    return _AyuSettingItem('header', None, text, None, None, None)\n"
++    "def Switch(key='', text='', default=False, subtext=None, **kwargs):\n"
++    "    return _AyuSettingItem('toggle', key, text, default, subtext, None)\n"
++    "def Input(key='', text='', default='', subtext=None, **kwargs):\n"
++    "    return _AyuSettingItem('text', key, text, default, subtext, None)\n"
++    "def Selector(key='', text='', default=0, items=None, **kwargs):\n"
++    "    return _AyuSettingItem('select', key, text, default, None, items)\n"
++    "def Text(text='', **kwargs):\n"
++    "    return _AyuSettingItem('preview', None, text, None, None, None)\n"
++    "def Divider(text=None, **kwargs):\n"
++    "    return _AyuSettingItem('divider', None, text or '', None, None, None)\n"
++    "class _AyuSendParams:\n"
++    "    def __init__(self, message):\n"
++    "        self.message = message\n"
++    "        self.peer = None\n"
++    "class BasePlugin:\n"
++    "    def __init__(self):\n"
++    "        self._menu = {}\n"
++    "    def on_plugin_load(self):\n"
++    "        pass\n"
++    "    def on_plugin_unload(self):\n"
++    "        pass\n"
++    "    def create_settings(self):\n"
++    "        return []\n"
++    "    def get_setting(self, key, default=None):\n"
++    "        v = ayu.settings.get(key)\n"
++    "        return default if v is None else v\n"
++    "    def log(self, text):\n"
++    "        ayu.log(str(text))\n"
++    "    def on_send_message_hook(self, account, params):\n"
++    "        return HookResult()\n"
++    "    def add_on_send_message_hook(self, priority=0):\n"
++    "        plugin = self\n"
++    "        def hook(text, ctx):\n"
++    "            r = plugin.on_send_message_hook(None, _AyuSendParams(text))\n"
++    "            if r is None:\n"
++    "                return None\n"
++    "            if r.strategy == 1:\n"
++    "                return '\\x00'\n"
++    "            if (r.strategy == 2 or r.strategy == 3) and r.params is not None:\n"
++    "                return str(r.params.message)\n"
++    "            return None\n"
++    "        ayu.hooks.before('message.outgoing.text', hook)\n"
++    "    def add_menu_item(self, data):\n"
++    "        item_id = data.item_id or ('item' + str(len(self._menu) + 1))\n"
++    "        self._menu[item_id] = data\n"
++    "        ayu.ui.menu.add({'id': item_id, 'title': str(data.text)})\n"
++    "        return item_id\n"
++    "    def remove_menu_item(self, item_id):\n"
++    "        self._menu.pop(item_id, None)\n"
++    "        ayu.ui.menu.remove(item_id)\n"
++    "def _ayu_extera_start(p):\n"
++    "    declared = []\n"
++    "    for s in p.create_settings() or []:\n"
++    "        if s.kind == 'toggle' or s.kind == 'text' or s.kind == 'select' or s.kind == 'preview':\n"
++    "            item = {'key': s.key or ('text' + str(len(declared))), 'type': s.kind, 'title': str(s.text)}\n"
++    "            if s.default is not None:\n"
++    "                item['default'] = s.default\n"
++    "            if s.subtext:\n"
++    "                item['subtitle'] = str(s.subtext)\n"
++    "            if s.items:\n"
++    "                item['options'] = [str(x) for x in s.items]\n"
++    "            declared.append(item)\n"
++    "    if len(declared) > 0:\n"
++    "        ayu.settings.declare(declared)\n"
++    "    def on_menu(payload):\n"
++    "        d = p._menu.get(payload.get('itemId'))\n"
++    "        if d is not None and d.on_click is not None:\n"
++    "            d.on_click(payload)\n"
++    "    def on_unload(payload):\n"
++    "        p.on_plugin_unload()\n"
++    "    ayu.on('menuAction', on_menu)\n"
++    "    ayu.on('unload', on_unload)\n"
++    "    p.on_plugin_load()\n"
++    "    return p\n"
++    "def _ayu_extera_boot(g):\n"
++    "    for pair in g.items():\n"
++    "        v = pair[1]\n"
++    "        if isinstance(v, type) and v is not BasePlugin and issubclass(v, BasePlugin):\n"
++    "            return _ayu_extera_start(v())\n"
++    "    return None\n"
 +    "class _Ayu:\n"
 +    "    hooks = _AyuHooks()\n"
 +    "    net = _AyuNet()\n"
@@ -39433,6 +39745,32 @@ index fce45a17..d8d31e1f 100644
              }
              self.tabBarItem.title = self.presentationData.strings.Calls_TabTitle
              self.tabBarItem.image = icon
+diff --git a/submodules/ChatListUI/Sources/ChatContextMenus.swift b/submodules/ChatListUI/Sources/ChatContextMenus.swift
+index 9367fba0..816d575f 100644
+--- a/submodules/ChatListUI/Sources/ChatContextMenus.swift
++++ b/submodules/ChatListUI/Sources/ChatContextMenus.swift
+@@ -559,6 +559,21 @@ func chatContextMenuItems(context: AccountContext, peerId: EnginePeer.Id, promoI
+                             }
+                         }
+                         
++                        // AyuGram: lock this chat with Face ID, or hide it from the chat list.
++                        if !AyuDecoyMode.isActive {
++                            let ayuRu = strings.baseLanguageCode.hasPrefix("ru")
++                            let ayuPeerValue = peerId.toInt64()
++                            let ayuLocked = AyuChatPrivacy.isLocked(ayuPeerValue)
++                            items.append(.action(ContextMenuActionItem(text: ayuLocked ? (ayuRu ? "Снять блокировку Face ID" : "Remove Face ID lock") : (ayuRu ? "Заблокировать Face ID" : "Lock with Face ID"), icon: { theme in UIImage(systemName: ayuLocked ? "lock.open.fill" : "faceid")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal) }, action: { _, f in
++                                AyuChatPrivacy.setLocked(ayuPeerValue, !ayuLocked)
++                                f(.default)
++                            })))
++                            items.append(.action(ContextMenuActionItem(text: ayuRu ? "Скрыть чат" : "Hide chat", icon: { theme in UIImage(systemName: "eye.slash.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal) }, action: { _, f in
++                                AyuChatPrivacy.setHidden(ayuPeerValue, true)
++                                f(.default)
++                            })))
++                        }
++
+                         let appendDeleteOrUngroupItem = {
+                             if case .community = peer {
+                                 items.append(.action(ContextMenuActionItem(text: strings.ChatList_Context_Ungroup, textColor: .destructive, icon: { theme in generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Ungroup"), color: theme.contextMenu.destructiveColor) }, action: { _, f in
 diff --git a/submodules/ChatListUI/Sources/ChatListController.swift b/submodules/ChatListUI/Sources/ChatListController.swift
 index c7df9084..c810f86d 100644
 --- a/submodules/ChatListUI/Sources/ChatListController.swift
@@ -39571,6 +39909,37 @@ index de8b2b31..b422dfca 100644
                      }
                      if !strongSelf.customAnimationInProgress {
                          strongSelf.setRevealOptionsOpened(item.hasActiveRevealControls, animated: true)
+diff --git a/submodules/ChatListUI/Sources/Node/ChatListNodeEntries.swift b/submodules/ChatListUI/Sources/Node/ChatListNodeEntries.swift
+index a7f3834a..6f7d620f 100644
+--- a/submodules/ChatListUI/Sources/Node/ChatListNodeEntries.swift
++++ b/submodules/ChatListUI/Sources/Node/ChatListNodeEntries.swift
+@@ -4,6 +4,7 @@ import TelegramCore
+ import TelegramPresentationData
+ import MergeLists
+ import AccountContext
++import Display
+ 
+ enum ChatListNodeEntryId: Hashable {
+     case Header
+@@ -666,6 +667,7 @@ func chatListNodeEntriesForView(view: EngineChatList, state: ChatListNodeState,
+     var hiddenGeneralThread: ChatListNodeEntry?
+     
+     var hasPinned = false
++    let ayuHiddenChats = AyuChatPrivacy.hidden
+     
+     loop: for entry in view.items {
+         var peerId: EnginePeer.Id?
+@@ -686,6 +688,10 @@ func chatListNodeEntriesForView(view: EngineChatList, state: ChatListNodeState,
+         if let peerId = peerId, state.pendingRemovalItemIds.contains(ChatListNodeState.ItemId(peerId: peerId, threadId: threadId)) {
+             continue loop
+         }
++        // AyuGram hidden chats: listed only in AyuGram → Privacy & extras → Hidden chats.
++        if threadId == nil, let peerId = peerId, !ayuHiddenChats.isEmpty, ayuHiddenChats.contains(peerId.toInt64()) {
++            continue loop
++        }
+         var updatedMessages = entry.messages
+         var updatedCombinedReadState = entry.readCounters
+         if let peerId = peerId, state.pendingClearHistoryPeerIds.contains(ChatListNodeState.ItemId(peerId: peerId, threadId: threadId)) {
 diff --git a/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift b/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
 index 3c29bc97..ea858a4a 100644
 --- a/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
@@ -39811,6 +40180,148 @@ index 00000000..037ede6e
 +        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +}
+diff --git a/submodules/Display/Source/AyuBookmarks.swift b/submodules/Display/Source/AyuBookmarks.swift
+new file mode 100644
+index 00000000..b060bea9
+--- /dev/null
++++ b/submodules/Display/Source/AyuBookmarks.swift
+@@ -0,0 +1,50 @@
++import Foundation
++
++/// Local bookmarks of messages with tags ("read later", "recipes"…). This device only.
++public enum AyuBookmarks {
++    public struct Bookmark: Codable, Equatable {
++        public let peerId: Int64
++        public let messageId: Int32
++        public let text: String
++        public let chatTitle: String
++        public let savedAt: Int64
++        public var tag: String
++
++        public init(peerId: Int64, messageId: Int32, text: String, chatTitle: String, savedAt: Int64, tag: String) {
++            self.peerId = peerId
++            self.messageId = messageId
++            self.text = text
++            self.chatTitle = chatTitle
++            self.savedAt = savedAt
++            self.tag = tag
++        }
++    }
++
++    public static let didChangeNotification = Notification.Name("AyuGram.BookmarksChanged")
++    private static let key = "ayu.bookmarks"
++
++    public static var all: [Bookmark] {
++        get {
++            guard let data = UserDefaults.standard.data(forKey: key), let value = try? JSONDecoder().decode([Bookmark].self, from: data) else { return [] }
++            return value
++        }
++        set {
++            UserDefaults.standard.set(try? JSONEncoder().encode(Array(newValue.prefix(1000))), forKey: key)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
++    public static func add(_ bookmark: Bookmark) {
++        var items = all.filter { !($0.peerId == bookmark.peerId && $0.messageId == bookmark.messageId) }
++        items.insert(bookmark, at: 0)
++        all = items
++    }
++
++    public static var tags: [String] {
++        var seen: [String] = []
++        for item in all where !item.tag.isEmpty && !seen.contains(item.tag) {
++            seen.append(item.tag)
++        }
++        return seen
++    }
++}
+diff --git a/submodules/Display/Source/AyuChatPrivacy.swift b/submodules/Display/Source/AyuChatPrivacy.swift
+new file mode 100644
+index 00000000..1bfd302b
+--- /dev/null
++++ b/submodules/Display/Source/AyuChatPrivacy.swift
+@@ -0,0 +1,80 @@
++import Foundation
++
++/// Chats locked with Face ID and chats hidden from the chat list (chat list → long press).
++/// The sets are cached in memory: the chat list asks for every row on each update.
++public enum AyuChatPrivacy {
++    public static let didChangeNotification = Notification.Name("AyuGram.ChatPrivacyChanged")
++    private static let lockedKey = "ayu.privacy.lockedChats"
++    private static let hiddenKey = "ayu.privacy.hiddenChats"
++    private static let lock = NSLock()
++    private static var lockedCache: Set<Int64>?
++    private static var hiddenCache: Set<Int64>?
++    /// Chats unlocked since the app last went to the background.
++    private static var unlocked: Set<Int64> = []
++
++    private static func load(_ key: String) -> Set<Int64> {
++        return Set((UserDefaults.standard.array(forKey: key) as? [NSNumber] ?? []).map { $0.int64Value })
++    }
++
++    private static func save(_ key: String, _ value: Set<Int64>) {
++        UserDefaults.standard.set(value.sorted().map { NSNumber(value: $0) }, forKey: key)
++    }
++
++    public static var locked: Set<Int64> {
++        lock.lock(); defer { lock.unlock() }
++        if lockedCache == nil { lockedCache = load(lockedKey) }
++        return AyuDecoyMode.isActive ? [] : lockedCache!
++    }
++
++    public static var hidden: Set<Int64> {
++        lock.lock(); defer { lock.unlock() }
++        if hiddenCache == nil { hiddenCache = load(hiddenKey) }
++        return AyuDecoyMode.isActive ? [] : hiddenCache!
++    }
++
++    public static func isLocked(_ peerId: Int64) -> Bool {
++        return locked.contains(peerId)
++    }
++
++    public static func isHidden(_ peerId: Int64) -> Bool {
++        return hidden.contains(peerId)
++    }
++
++    public static func setLocked(_ peerId: Int64, _ value: Bool) {
++        lock.lock()
++        var set = lockedCache ?? load(lockedKey)
++        if value { set.insert(peerId) } else { set.remove(peerId) }
++        lockedCache = set
++        save(lockedKey, set)
++        lock.unlock()
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++
++    public static func setHidden(_ peerId: Int64, _ value: Bool) {
++        lock.lock()
++        var set = hiddenCache ?? load(hiddenKey)
++        if value { set.insert(peerId) } else { set.remove(peerId) }
++        hiddenCache = set
++        save(hiddenKey, set)
++        lock.unlock()
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++
++    public static func isUnlocked(_ peerId: Int64) -> Bool {
++        lock.lock(); defer { lock.unlock() }
++        return unlocked.contains(peerId)
++    }
++
++    public static func markUnlocked(_ peerId: Int64) {
++        lock.lock()
++        unlocked.insert(peerId)
++        lock.unlock()
++    }
++
++    /// Called when the app goes to the background: locked chats ask again.
++    public static func relock() {
++        lock.lock()
++        unlocked.removeAll()
++        lock.unlock()
++    }
++}
 diff --git a/submodules/Display/Source/AyuCustomization.swift b/submodules/Display/Source/AyuCustomization.swift
 new file mode 100644
 index 00000000..ddbe9093
@@ -39998,10 +40509,10 @@ index 00000000..e938d56d
 +}
 diff --git a/submodules/Display/Source/AyuExtras.swift b/submodules/Display/Source/AyuExtras.swift
 new file mode 100644
-index 00000000..499f5343
+index 00000000..25684fd9
 --- /dev/null
 +++ b/submodules/Display/Source/AyuExtras.swift
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,143 @@
 +import Foundation
 +import UIKit
 +import ImageIO
@@ -40043,6 +40554,10 @@ index 00000000..499f5343
 +        case saveViewOnce
 +        /// Chat scrolling glides longer and settles softly.
 +        case springScroll
++        /// A notification when someone deletes a message (the history must be saving deletions).
++        case notifyDeleted
++        /// No warnings for punycode or mixed-alphabet links.
++        case antiScamOff
 +        /// A voice or video message stops at its end instead of playing the next one.
 +        case noAutoplayNextVoice
 +    }
@@ -40448,10 +40963,10 @@ index 00000000..6272d723
 +}
 diff --git a/submodules/Display/Source/AyuOverlayEffects.swift b/submodules/Display/Source/AyuOverlayEffects.swift
 new file mode 100644
-index 00000000..992be8f4
+index 00000000..eefcddc7
 --- /dev/null
 +++ b/submodules/Display/Source/AyuOverlayEffects.swift
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,322 @@
 +import Foundation
 +import UIKit
 +
@@ -40616,7 +41131,8 @@ index 00000000..992be8f4
 +        let formatter = DateFormatter()
 +        formatter.dateFormat = format.isEmpty ? "HH:mm:ss" : format
 +        self.setText(id: id, text: formatter.string(from: Date()), anchor: anchor.isEmpty ? "topRight" : anchor, color: color, size: size)
-+        DispatchQueue.main.async {
++        DispatchQueue.main.async { [weak self] in
++            guard let self else { return }
 +            self.clocks[id]?.invalidate()
 +            let timer = Timer(timeInterval: 1.0, repeats: true, block: { [weak self] _ in
 +                guard let self, let label = self.labels[id] else { return }
@@ -40771,6 +41287,45 @@ index 00000000..992be8f4
 +extension AyuOverlayEffects {
 +    fileprivate func layoutChanged() {
 +        self.relayout()
++    }
++}
+diff --git a/submodules/Display/Source/AyuPeerNotes.swift b/submodules/Display/Source/AyuPeerNotes.swift
+new file mode 100644
+index 00000000..e0582091
+--- /dev/null
++++ b/submodules/Display/Source/AyuPeerNotes.swift
+@@ -0,0 +1,33 @@
++import Foundation
++
++/// Local notes about people and chats, shown in their profile. Kept on this device only.
++public enum AyuPeerNotes {
++    public static let didChangeNotification = Notification.Name("AyuGram.PeerNotesChanged")
++    private static let key = "ayu.notes.peers"
++
++    public static func note(_ peerId: Int64) -> String? {
++        guard !AyuDecoyMode.isActive else { return nil }
++        let notes = UserDefaults.standard.dictionary(forKey: key) as? [String: String]
++        let value = notes?[String(peerId)]
++        return value?.isEmpty == false ? value : nil
++    }
++
++    public static func setNote(_ peerId: Int64, _ text: String?) {
++        var notes = (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:]
++        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++        notes[String(peerId)] = trimmed.isEmpty ? nil : String(trimmed.prefix(2000))
++        UserDefaults.standard.set(notes, forKey: key)
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++
++    public static var all: [Int64: String] {
++        let notes = (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:]
++        var result: [Int64: String] = [:]
++        for (key, value) in notes {
++            if let id = Int64(key) {
++                result[id] = value
++            }
++        }
++        return result
 +    }
 +}
 diff --git a/submodules/Display/Source/AyuPluginBadges.swift b/submodules/Display/Source/AyuPluginBadges.swift
@@ -40972,6 +41527,84 @@ index 00000000..9809f9ba
 +        return self.rows.contains(where: { row in
 +            row.section == section && hidden.contains(row.key) && (itemId == AnyHashable(Int(row.itemId)) || itemId == AnyHashable(row.itemId))
 +        })
++    }
++}
+diff --git a/submodules/Display/Source/AyuTextShortcuts.swift b/submodules/Display/Source/AyuTextShortcuts.swift
+new file mode 100644
+index 00000000..bf295657
+--- /dev/null
++++ b/submodules/Display/Source/AyuTextShortcuts.swift
+@@ -0,0 +1,72 @@
++import Foundation
++import UIKit
++
++/// Text shortcuts and templates (Settings → AyuGram → Tools → Shortcuts): a message that is
++/// exactly `;adr` becomes the saved text; {date}, {time}, {clipboard} and {weekday} are filled in
++/// any message that contains them.
++public enum AyuTextShortcuts {
++    public struct Shortcut: Codable, Equatable {
++        public var trigger: String
++        public var text: String
++
++        public init(trigger: String, text: String) {
++            self.trigger = trigger
++            self.text = text
++        }
++    }
++
++    public static let didChangeNotification = Notification.Name("AyuGram.ShortcutsChanged")
++    private static let key = "ayu.shortcuts.items"
++    private static let enabledKey = "ayu.shortcuts.variables"
++
++    public static var shortcuts: [Shortcut] {
++        get {
++            guard let data = UserDefaults.standard.data(forKey: key), let value = try? JSONDecoder().decode([Shortcut].self, from: data) else { return [] }
++            return value
++        }
++        set {
++            UserDefaults.standard.set(try? JSONEncoder().encode(Array(newValue.prefix(100))), forKey: key)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
++    /// Fill {date}, {time}, {weekday}, {clipboard} in outgoing messages.
++    public static var variablesEnabled: Bool {
++        get { return UserDefaults.standard.bool(forKey: enabledKey) }
++        set {
++            UserDefaults.standard.set(newValue, forKey: enabledKey)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
++    public static var isActive: Bool {
++        return !AyuDecoyMode.isActive && (variablesEnabled || !shortcuts.isEmpty)
++    }
++
++    /// The text to send instead, or nil to keep it.
++    public static func apply(_ text: String) -> String? {
++        guard isActive else { return nil }
++        var result = text
++        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
++        if let shortcut = shortcuts.first(where: { $0.trigger == trimmed }) {
++            result = shortcut.text
++        }
++        if variablesEnabled || result != text, result.contains("{") {
++            let now = Date()
++            let formatter = DateFormatter()
++            formatter.locale = Locale.current
++            formatter.dateStyle = .medium
++            formatter.timeStyle = .none
++            result = result.replacingOccurrences(of: "{date}", with: formatter.string(from: now))
++            formatter.dateStyle = .none
++            formatter.timeStyle = .short
++            result = result.replacingOccurrences(of: "{time}", with: formatter.string(from: now))
++            formatter.dateFormat = "EEEE"
++            result = result.replacingOccurrences(of: "{weekday}", with: formatter.string(from: now))
++            if result.contains("{clipboard}") {
++                result = result.replacingOccurrences(of: "{clipboard}", with: UIPasteboard.general.string ?? "")
++            }
++        }
++        return result == text ? nil : result
 +    }
 +}
 diff --git a/submodules/Display/Source/AyuTools.swift b/submodules/Display/Source/AyuTools.swift
@@ -41779,6 +42412,245 @@ index 00000000..b01baa2a
 +    presentController = { [weak controller] in controller?.present($0, in: .window(.root)) }
 +    push = { [weak controller] in controller?.push($0) }
 +    return controller
++}
+diff --git a/submodules/SettingsUI/Sources/AyuBookmarksController.swift b/submodules/SettingsUI/Sources/AyuBookmarksController.swift
+new file mode 100644
+index 00000000..5e88dc18
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuBookmarksController.swift
+@@ -0,0 +1,99 @@
++import Foundation
++import UIKit
++import Display
++import TelegramCore
++import AccountContext
++
++/// Saved messages with tags: search, filter by #tag, open the chat, delete.
++final class AyuBookmarksController: UITableViewController, UISearchResultsUpdating {
++    private let russian: Bool
++    private let open: (Int64) -> Void
++    private let search = UISearchController(searchResultsController: nil)
++    private var shown: [AyuBookmarks.Bookmark] = []
++
++    init(russian: Bool, open: @escaping (Int64) -> Void) {
++        self.russian = russian
++        self.open = open
++        super.init(style: .insetGrouped)
++        self.title = russian ? "Закладки" : "Bookmarks"
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.search.searchResultsUpdater = self
++        self.search.obscuresBackgroundDuringPresentation = false
++        self.search.searchBar.placeholder = self.russian ? "Текст или #тег" : "Text or #tag"
++        self.navigationItem.searchController = self.search
++        self.navigationItem.hidesSearchBarWhenScrolling = false
++        self.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(UIViewController.ayuDismissSelf))
++        self.refilter()
++    }
++
++    private func refilter() {
++        let query = (self.search.searchBar.text ?? "").trimmingCharacters(in: .whitespaces).lowercased()
++        let items = AyuBookmarks.all
++        if query.hasPrefix("#") {
++            let tag = String(query.dropFirst())
++            self.shown = items.filter { $0.tag.lowercased().hasPrefix(tag) }
++        } else if query.isEmpty {
++            self.shown = items
++        } else {
++            self.shown = items.filter { $0.text.lowercased().contains(query) || $0.chatTitle.lowercased().contains(query) || $0.tag.lowercased().contains(query) }
++        }
++        self.tableView.reloadData()
++    }
++
++    func updateSearchResults(for searchController: UISearchController) {
++        self.refilter()
++    }
++
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
++        return max(1, self.shown.count)
++    }
++
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        let tags = AyuBookmarks.tags
++        return (self.russian ? "Добавить: долгое нажатие на сообщение → «В закладки»." : "To add: long-press a message → Bookmark.") + (tags.isEmpty ? "" : "\n" + tags.map { "#" + $0 }.joined(separator: " "))
++    }
++
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        guard !self.shown.isEmpty else {
++            cell.textLabel?.text = self.russian ? "Закладок пока нет" : "No bookmarks yet"
++            cell.textLabel?.textColor = .secondaryLabel
++            cell.selectionStyle = .none
++            return cell
++        }
++        let item = self.shown[indexPath.row]
++        cell.textLabel?.text = item.text.isEmpty ? (self.russian ? "(медиа)" : "(media)") : item.text
++        cell.textLabel?.numberOfLines = 3
++        let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(item.savedAt)), dateStyle: .short, timeStyle: .none)
++        cell.detailTextLabel?.text = (item.tag.isEmpty ? "" : "#" + item.tag + " · ") + item.chatTitle + " · " + date
++        cell.detailTextLabel?.textColor = .secondaryLabel
++        cell.accessoryType = .disclosureIndicator
++        return cell
++    }
++
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard indexPath.row < self.shown.count else { return }
++        let item = self.shown[indexPath.row]
++        let sheet = UIAlertController(title: item.chatTitle, message: String(item.text.prefix(300)), preferredStyle: .actionSheet)
++        sheet.addAction(UIAlertAction(title: self.russian ? "Открыть чат" : "Open chat", style: .default, handler: { [weak self] _ in
++            self?.dismiss(animated: true, completion: { self?.open(item.peerId) })
++        }))
++        sheet.addAction(UIAlertAction(title: self.russian ? "Скопировать текст" : "Copy text", style: .default, handler: { _ in
++            UIPasteboard.general.string = item.text
++        }))
++        sheet.addAction(UIAlertAction(title: self.russian ? "Удалить" : "Delete", style: .destructive, handler: { [weak self] _ in
++            AyuBookmarks.all = AyuBookmarks.all.filter { !($0.peerId == item.peerId && $0.messageId == item.messageId) }
++            self?.refilter()
++        }))
++        sheet.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        self.present(sheet, animated: true)
++    }
++}
+diff --git a/submodules/SettingsUI/Sources/AyuCodePluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuCodePluginDetailsController.swift
+new file mode 100644
+index 00000000..cd667259
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuCodePluginDetailsController.swift
+@@ -0,0 +1,128 @@
++import Foundation
++import UIKit
++import TelegramCore
++import AccountContext
++
++/// A code plugin's details: permissions the user can take back, what it actually called
++/// (privacy report) and how long its hooks take (profiler).
++final class AyuCodePluginDetailsController: UITableViewController {
++    private let pluginId: String
++    private let russian: Bool
++    private var permissions: [String] = []
++    private var calls: [(String, Int)] = []
++    private var hosts: [(String, Int)] = []
++
++    init(pluginId: String, russian: Bool) {
++        self.pluginId = pluginId
++        self.russian = russian
++        super.init(style: .insetGrouped)
++        self.title = AyuScriptRuntime.shared.plugin(id: pluginId)?.name ?? pluginId
++        self.reload()
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    private func reload() {
++        if let plugin = AyuScriptRuntime.shared.plugin(id: self.pluginId) {
++            self.permissions = Array(Set(plugin.permissions ?? []).union(AyuPluginGrants.granted(self.pluginId))).sorted()
++        }
++        let report = AyuPluginPrivacy.shared.report(self.pluginId)
++        self.calls = report.calls.sorted(by: { $0.value > $1.value }).map { ($0.key, $0.value) }
++        self.hosts = report.hosts.sorted(by: { $0.value > $1.value }).map { ($0.key, $0.value) }
++    }
++
++    override func numberOfSections(in tableView: UITableView) -> Int {
++        return 4
++    }
++
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        switch section {
++        case 0: return self.russian ? "Разрешения" : "Permissions"
++        case 1: return self.russian ? "Вызовы API с запуска" : "API calls since launch"
++        case 2: return self.russian ? "Сетевые адреса" : "Network hosts"
++        default: return self.russian ? "Производительность" : "Performance"
++        }
++    }
++
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        switch section {
++        case 0: return self.russian ? "Выключите разрешение, чтобы забрать его у плагина. Плагин перезапустится." : "Turn a permission off to take it back. The plugin restarts."
++        case 3: return self.russian ? "Если хук работает дольше 100 мс, AyuGram предупредит, что плагин тормозит." : "AyuGram warns when a hook takes longer than 100 ms."
++        default: return nil
++        }
++    }
++
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
++        switch section {
++        case 0: return max(1, self.permissions.count)
++        case 1: return max(1, self.calls.count)
++        case 2: return max(1, self.hosts.count)
++        default: return 3
++        }
++    }
++
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .value1, reuseIdentifier: nil)
++        cell.selectionStyle = .none
++        let empty = self.russian ? "Нет" : "None"
++        switch indexPath.section {
++        case 0:
++            guard !self.permissions.isEmpty else {
++                cell.textLabel?.text = empty
++                cell.textLabel?.textColor = .secondaryLabel
++                return cell
++            }
++            let name = self.permissions[indexPath.row]
++            cell.textLabel?.text = AyuPluginPermission(rawValue: name)?.title(self.russian) ?? name
++            cell.textLabel?.numberOfLines = 0
++            let toggle = UISwitch()
++            toggle.isOn = !AyuPluginGrants.revoked(self.pluginId).contains(name)
++            toggle.tag = indexPath.row
++            toggle.addTarget(self, action: #selector(self.permissionChanged(_:)), for: .valueChanged)
++            cell.accessoryView = toggle
++        case 1:
++            if self.calls.isEmpty {
++                cell.textLabel?.text = empty
++                cell.textLabel?.textColor = .secondaryLabel
++            } else {
++                cell.textLabel?.text = self.calls[indexPath.row].0
++                cell.detailTextLabel?.text = "\(self.calls[indexPath.row].1)"
++            }
++        case 2:
++            if self.hosts.isEmpty {
++                cell.textLabel?.text = empty
++                cell.textLabel?.textColor = .secondaryLabel
++            } else {
++                cell.textLabel?.text = self.hosts[indexPath.row].0
++                cell.detailTextLabel?.text = "\(self.hosts[indexPath.row].1)"
++            }
++        default:
++            let timing = AyuHooks.shared.timing(owner: self.pluginId)
++            let calls = timing?.calls ?? 0
++            switch indexPath.row {
++            case 0:
++                cell.textLabel?.text = self.russian ? "Вызовов хуков" : "Hook calls"
++                cell.detailTextLabel?.text = "\(calls)"
++            case 1:
++                cell.textLabel?.text = self.russian ? "В среднем" : "Average"
++                cell.detailTextLabel?.text = calls == 0 ? "—" : String(format: "%.1f ms", (timing?.total ?? 0.0) / Double(calls) * 1000.0)
++            default:
++                cell.textLabel?.text = self.russian ? "Самый долгий" : "Slowest"
++                cell.detailTextLabel?.text = calls == 0 ? "—" : String(format: "%.1f ms", (timing?.slowest ?? 0.0) * 1000.0)
++            }
++        }
++        return cell
++    }
++
++    @objc private func permissionChanged(_ sender: UISwitch) {
++        guard sender.tag < self.permissions.count else { return }
++        AyuPluginGrants.setRevoked(self.pluginId, self.permissions[sender.tag], !sender.isOn)
++        // Restart so the instance gets the new permission set.
++        if AyuScriptRuntime.shared.plugin(id: self.pluginId)?.enabled == true {
++            AyuScriptRuntime.shared.setEnabled(self.pluginId, false)
++            AyuScriptRuntime.shared.setEnabled(self.pluginId, true)
++        }
++    }
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuCustomizationController.swift b/submodules/SettingsUI/Sources/AyuCustomizationController.swift
 new file mode 100644
@@ -42661,10 +43533,10 @@ index 00000000..eb8ebd67
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuExtrasController.swift b/submodules/SettingsUI/Sources/AyuExtrasController.swift
 new file mode 100644
-index 00000000..249be595
+index 00000000..f9051d52
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuExtrasController.swift
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,167 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -42708,8 +43580,10 @@ index 00000000..249be595
 +    AyuExtraRow(section: 1, id: 4, key: .blurInAppSwitcher, symbol: "eye.slash.fill", color: 0x8E8E93, titleRu: "Размытие в переключателе", titleEn: "Blur in app switcher", infoRu: "Чаты не видны в списке открытых приложений", infoEn: "Chats are hidden in the app switcher"),
 +    AyuExtraRow(section: 1, id: 5, key: .confirmCalls, symbol: "phone.badge.checkmark", color: 0x34C759, titleRu: "Подтверждать звонки", titleEn: "Confirm calls", infoRu: "Без случайных звонков по нажатию", infoEn: "No accidental calls on a tap"),
 +    AyuExtraRow(section: 1, id: 6, key: .saveViewOnce, symbol: "photo.badge.arrow.down.fill", color: 0x30B0C7, titleRu: "Одноразовые медиа в галерею", titleEn: "Save view-once media", infoRu: "Одноразовые фото, видео и кружки сохраняются в «Фото» при открытии. Отправитель об этом не узнает — используйте честно", infoEn: "View-once photos, videos and video messages are saved to Photos when opened. The sender is not told — use it fairly"),
++    AyuExtraRow(section: 1, id: 9, key: .antiScamOff, symbol: "exclamationmark.shield.fill", color: 0xFF9500, titleRu: "Без анти-скам предупреждений", titleEn: "No anti-scam warnings", infoRu: "Не спрашивать перед ссылками в punycode и с буквами-двойниками", infoEn: "Do not ask before punycode or look-alike links"),
 +    AyuExtraRow(section: 2, id: 11, key: .disableHaptics, symbol: "iphone.slash", color: 0xFF9500, titleRu: "Без вибрации", titleEn: "No vibration", infoRu: "Отключает тактильный отклик во всём приложении", infoEn: "Turns off haptic feedback in the whole app"),
 +    AyuExtraRow(section: 2, id: 13, key: .springScroll, symbol: "arrow.up.and.down.text.horizontal", color: 0x32ADE6, titleRu: "Анимация прокрутки чата", titleEn: "Chat scrolling animation", infoRu: "Чат дольше скользит и мягко останавливается вместо резкой остановки", infoEn: "The chat glides longer and settles softly instead of stopping short"),
++    AyuExtraRow(section: 2, id: 14, key: .notifyDeleted, symbol: "bell.badge.fill", color: 0xFF3B30, titleRu: "Уведомлять об удалённых", titleEn: "Notify about deletions", infoRu: "«X удалил сообщение в Y» — нужно сохранение удалённых в истории", infoEn: "\"X deleted a message in Y\" — needs saving deleted messages in History"),
 +    AyuExtraRow(section: 3, id: 21, key: .keepScreenOnInPlayer, symbol: "sun.max.fill", color: 0xFFCC00, titleRu: "Экран не гаснет в плеере", titleEn: "Keep screen on in player", infoRu: "Пока открыт музыкальный плеер", infoEn: "While the music player is open"),
 +    AyuExtraRow(section: 3, id: 22, key: .autoOpenLyrics, symbol: "quote.bubble.fill", color: 0xFF2D55, titleRu: "Сразу показывать текст", titleEn: "Open lyrics automatically", infoRu: "Плеер открывается с текстом песни", infoEn: "The player opens with the lyrics"),
 +    AyuExtraRow(section: 3, id: 23, key: .rememberPlaybackSpeed, symbol: "gauge.with.dots.needle.67percent", color: 0x32ADE6, titleRu: "Запоминать скорость", titleEn: "Remember speed", infoRu: "Последняя скорость музыки при открытии плеера", infoEn: "The last music speed when the player opens"),
@@ -42728,9 +43602,17 @@ index 00000000..249be595
 +        UserDefaults.standard.removeObject(forKey: "ayu.extra.skipOwnMessagesHistory")
 +    }
 +    var push: ((ViewController) -> Void)?
++    var navigation: (() -> NavigationController?)?
 +    let arguments = AyuSectionedArguments(open: { id in
 +        if id == 7 {
 +            push?(ayuDecoySettingsController(context: context))
++            return
++        }
++        if id == 8 {
++            AyuHiddenChatsController.present(context: context, open: { peer in
++                guard let navigationController = navigation?() else { return }
++                context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(peer)))
++            })
 +            return
 +        }
 +        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
@@ -42798,6 +43680,8 @@ index 00000000..249be595
 +            entries.append(.toggle(row.section, row.id, AyuSettingsIcons.symbol(row.symbol, color: UIColor(rgb: row.color)), ru ? row.titleRu : row.titleEn, ru ? row.infoRu : row.infoEn, AyuExtras.isOn(row.key)))
 +        }
 +        entries.insert(.link(1, 7, AyuSettingsIcons.symbol("theatermasks.fill", color: UIColor(rgb: 0x8E8E93)), ru ? "Фейк-режим" : "Decoy mode", AyuDecoyState.isConfigured ? (ru ? "вкл." : "on") : ""), at: entries.firstIndex(where: { $0.stableId > 7 }) ?? entries.count)
++        let hiddenCount = AyuChatPrivacy.hidden.count
++        entries.insert(.link(1, 8, AyuSettingsIcons.symbol("eye.slash.circle.fill", color: UIColor(rgb: 0x5856D6)), ru ? "Скрытые чаты" : "Hidden chats", hiddenCount > 0 ? "\(hiddenCount)" : ""), at: entries.firstIndex(where: { $0.stableId > 8 }) ?? entries.count)
 +        let threads = UserDefaults.standard.integer(forKey: "ayu.extra.downloadThreads")
 +        entries.insert(.link(2, 12, AyuSettingsIcons.symbol("arrow.down.circle.fill", color: UIColor(rgb: 0x007AFF)), ru ? "Скорость загрузки (потоки)" : "Download speed (threads)", threads == 0 ? (ru ? "стандарт" : "default") : "\(threads)"), at: entries.firstIndex(where: { $0.stableId > 12 }) ?? entries.count)
 +        entries.insert(.info(3, 29, ru ? "В меню плеера (⋯ у текста) также есть таймер сна и эквалайзер." : "The player menu (⋯ next to the lyrics) also has a sleep timer and the equalizer."), at: entries.firstIndex(where: { $0.stableId > 29 }) ?? entries.count)
@@ -42814,6 +43698,9 @@ index 00000000..249be595
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] c in
 +        (controller?.navigationController as? NavigationController)?.pushViewController(c)
++    }
++    navigation = { [weak controller] in
++        return controller?.navigationController as? NavigationController
 +    }
 +    return controller
 +}
@@ -43355,6 +44242,115 @@ index e2236c5f..c4f64303 100644
      return controller
  }
  
+diff --git a/submodules/SettingsUI/Sources/AyuHiddenChatsController.swift b/submodules/SettingsUI/Sources/AyuHiddenChatsController.swift
+new file mode 100644
+index 00000000..d1e32634
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuHiddenChatsController.swift
+@@ -0,0 +1,103 @@
++import Foundation
++import UIKit
++import LocalAuthentication
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++
++/// Chats hidden from the chat list. Opens only after Face ID / Touch ID or the device passcode.
++final class AyuHiddenChatsController: UITableViewController {
++    private let context: AccountContext
++    private let open: (EnginePeer) -> Void
++    private let russian: Bool
++    private var peers: [EnginePeer] = []
++
++    init(context: AccountContext, open: @escaping (EnginePeer) -> Void) {
++        self.context = context
++        self.open = open
++        self.russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        super.init(style: .insetGrouped)
++        self.title = self.russian ? "Скрытые чаты" : "Hidden chats"
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    /// Asks for authentication, then shows the list.
++    static func present(context: AccountContext, open: @escaping (EnginePeer) -> Void) {
++        let russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let show = {
++            let controller = AyuHiddenChatsController(context: context, open: open)
++            context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: controller))
++        }
++        let authentication = LAContext()
++        var error: NSError?
++        guard authentication.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
++            return show()
++        }
++        authentication.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: russian ? "Покажите скрытые чаты" : "Show hidden chats", reply: { success, _ in
++            if success {
++                DispatchQueue.main.async(execute: show)
++            }
++        })
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.close))
++        self.reload()
++    }
++
++    @objc private func close() {
++        self.dismiss(animated: true)
++    }
++
++    private func reload() {
++        let ids = AyuChatPrivacy.hidden.map { EnginePeer.Id($0) }
++        let _ = (self.context.engine.data.get(EngineDataMap(ids.map(TelegramEngine.EngineData.Item.Peer.Peer.init(id:))))
++        |> deliverOnMainQueue).startStandalone(next: { [weak self] peers in
++            guard let self else { return }
++            self.peers = peers.values.compactMap { $0 }.sorted(by: { $0.debugDisplayTitle < $1.debugDisplayTitle })
++            self.tableView.reloadData()
++        })
++    }
++
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
++        return max(1, self.peers.count)
++    }
++
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        return self.russian ? "Скрыть чат: долгое нажатие на чат в списке → «Скрыть чат». Скрытые чаты не показываются в списке, но сообщения в них приходят как обычно." : "To hide a chat, long-press it in the chat list → Hide chat. Hidden chats stay out of the list; their messages arrive as usual."
++    }
++
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
++        if self.peers.isEmpty {
++            cell.textLabel?.text = self.russian ? "Скрытых чатов нет" : "No hidden chats"
++            cell.textLabel?.textColor = .secondaryLabel
++            cell.selectionStyle = .none
++        } else {
++            cell.textLabel?.text = self.peers[indexPath.row].debugDisplayTitle
++            cell.accessoryType = .disclosureIndicator
++        }
++        return cell
++    }
++
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard indexPath.row < self.peers.count else { return }
++        let peer = self.peers[indexPath.row]
++        let sheet = UIAlertController(title: peer.debugDisplayTitle, message: nil, preferredStyle: .actionSheet)
++        sheet.addAction(UIAlertAction(title: self.russian ? "Открыть чат" : "Open chat", style: .default, handler: { [weak self] _ in
++            self?.dismiss(animated: true, completion: { self?.open(peer) })
++        }))
++        sheet.addAction(UIAlertAction(title: self.russian ? "Вернуть в список чатов" : "Show in the chat list", style: .default, handler: { [weak self] _ in
++            AyuChatPrivacy.setHidden(peer.id.toInt64(), false)
++            self?.reload()
++        }))
++        sheet.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        self.present(sheet, animated: true)
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift b/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift
 new file mode 100644
 index 00000000..4c4435cc
@@ -44360,10 +45356,10 @@ index 00000000..62b1c72a
 +    return controller
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-index 515572a7..66246be0 100644
+index 515572a7..b57cf074 100644
 --- a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
 +++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
-@@ -41,6 +41,64 @@ private final class AyuPluginListCell: UITableViewCell {
+@@ -41,6 +41,66 @@ private final class AyuPluginListCell: UITableViewCell {
      required init?(coder: NSCoder) { return nil }
  }
  
@@ -44410,6 +45406,8 @@ index 515572a7..66246be0 100644
 +    func installAcceptingRisk(_ data: Data, filename: String) throws
 +    /// The settings a plugin declared, or nil when it has none.
 +    func makeSettingsController(id: String, russian: Bool, palette: AyuPreferencesPalette?) -> UIViewController?
++    /// Permissions, privacy report and performance of a code plugin.
++    func makeDetailsController(id: String, russian: Bool) -> UIViewController?
 +    /// The online plugin store, or nil when the host has none. Native cards it downloads go
 +    /// back through `importFile`, so the list's own confirmation and install path apply.
 +    func makeCatalogController(russian: Bool, palette: AyuPreferencesPalette?, presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?, importFile: @escaping (URL, String) -> Void, nativeState: @escaping (String) -> AyuCatalogNativeState) -> UIViewController?
@@ -44428,7 +45426,7 @@ index 515572a7..66246be0 100644
  struct AyuPluginAlertAction {
      enum Style {
          case `default`
-@@ -115,7 +173,9 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -115,7 +175,9 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          badge.accessibilityTraits = .staticText
          badge.translatesAutoresizingMaskIntoConstraints = false
          NSLayoutConstraint.activate([badge.widthAnchor.constraint(equalToConstant: 48.0), badge.heightAnchor.constraint(equalToConstant: 22.0)])
@@ -44439,7 +45437,7 @@ index 515572a7..66246be0 100644
          heading.axis = .horizontal
          heading.alignment = .center
          heading.spacing = 6.0
-@@ -127,7 +187,9 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -127,7 +189,9 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          let refresh = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(self.updateCatalogTapped))
          refresh.accessibilityLabel = self.russian ? "Обновить список поддержки плагинов" : "Refresh plugin support list"
          self.catalogRefresh = refresh
@@ -44450,7 +45448,7 @@ index 515572a7..66246be0 100644
          // A real table header reserves space for search on every supported iOS version.
          // The navigation-integrated search bar could overlay and clip the first plugin row.
          let search = UISearchBar(frame: CGRect(x: 0.0, y: 0.0, width: self.tableView.bounds.width, height: 56.0))
-@@ -147,11 +209,20 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -147,11 +211,20 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
              guard let self, self.viewIfLoaded?.window != nil else { return }
              self.reload()
          })
@@ -44471,7 +45469,7 @@ index 515572a7..66246be0 100644
      }
      override func viewWillAppear(_ animated: Bool) {
          super.viewWillAppear(animated)
-@@ -208,9 +279,15 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -208,9 +281,15 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
              [plugin.title(self.russian), plugin.author, plugin.summary(self.russian)].contains { $0.localizedCaseInsensitiveContains(self.query) }
          }
      }
@@ -44488,7 +45486,7 @@ index 515572a7..66246be0 100644
              self.tableView.backgroundView = nil
              return
          }
-@@ -220,7 +297,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -220,7 +299,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          label.textColor = self.palette?.secondary ?? .secondaryLabel
          label.font = .preferredFont(forTextStyle: .subheadline)
          if self.query.isEmpty {
@@ -44497,7 +45495,7 @@ index 515572a7..66246be0 100644
          } else {
              label.text = self.russian ? "Ничего не найдено." : "Nothing found."
          }
-@@ -234,6 +311,22 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -234,6 +313,22 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          ])
          self.tableView.backgroundView = container
      }
@@ -44520,7 +45518,7 @@ index 515572a7..66246be0 100644
      @objc private func installTapped() {
          guard !self.reading, !self.applying else { return }
          let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
-@@ -260,15 +353,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -260,15 +355,21 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          if let close = self.close { close() } else { self.dismiss(animated: true) }
      }
      /// Section 0 lists the built-in plugins, section 1 the `.plugin` files.
@@ -44544,7 +45542,7 @@ index 515572a7..66246be0 100644
          let isLast = section == 1 ? !self.items.isEmpty : (self.items.isEmpty && !self.nativeItems.isEmpty)
          guard isLast else { return nil }
          return self.russian ? "Нажми на плагин, чтобы открыть его настройки." : "Tap a plugin to open its settings."
-@@ -299,10 +398,60 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -299,10 +400,60 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          }
          AyuNativePlugins.setEnabled(plugin, toggle.isOn)
      }
@@ -44605,7 +45603,7 @@ index 515572a7..66246be0 100644
          let cell = AyuPluginListCell()
          cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
          cell.iconView.image = self.pluginIcon(32.0)
-@@ -388,6 +537,29 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -388,6 +539,33 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
      override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
          tableView.deselectRow(at: indexPath, animated: true)
          guard !self.reading, !self.applying else { return }
@@ -44625,6 +45623,10 @@ index 515572a7..66246be0 100644
 +            message += plugin.description.isEmpty ? "" : "\n\n" + plugin.description
 +            self.showAlert(title: plugin.name, message: message, actions: [
 +                AyuPluginAlertAction(title: self.russian ? "Закрыть" : "Close", style: .cancel, handler: nil),
++                AyuPluginAlertAction(title: self.russian ? "Разрешения и приватность" : "Permissions and privacy", style: .default, handler: { [weak self] in
++                    guard let self, let controller = self.codePlugins?.makeDetailsController(id: plugin.id, russian: self.russian) else { return }
++                    self.navigationController?.pushViewController(controller, animated: true)
++                }),
 +                AyuPluginAlertAction(title: self.russian ? "Перезапустить" : "Restart", style: .default, handler: { [weak self] in
 +                    self?.codePlugins?.setEnabled(plugin.id, false)
 +                    self?.codePlugins?.setEnabled(plugin.id, true)
@@ -44635,7 +45637,7 @@ index 515572a7..66246be0 100644
          if indexPath.section == 0 {
              let nativeItems = self.nativeItems
              guard indexPath.row < nativeItems.count, let controller = self.nativePluginSettings?(nativeItems[indexPath.row]) else { return }
-@@ -404,12 +576,65 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+@@ -404,12 +582,65 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
          controller.pluginIcon = self.pluginIcon
          return controller
      }
@@ -45081,10 +46083,10 @@ index 00000000..587df861
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift b/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift
 new file mode 100644
-index 00000000..1f6b6b91
+index 00000000..4168db6c
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuScriptCodePluginSource.swift
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,241 @@
 +import Foundation
 +import UIKit
 +import AccountContext
@@ -45133,6 +46135,10 @@ index 00000000..1f6b6b91
 +
 +    func installAcceptingRisk(_ data: Data, filename: String) throws {
 +        try self.runtime.install(data, filename: filename, official: false, acceptedRisk: true)
++    }
++
++    func makeDetailsController(id: String, russian: Bool) -> UIViewController? {
++        return AyuCodePluginDetailsController(pluginId: id, russian: russian)
 +    }
 +
 +    func makeSettingsController(id: String, russian: Bool, palette: AyuPreferencesPalette?) -> UIViewController? {
@@ -45390,10 +46396,10 @@ index e1ba816d..c81d46f8 100644
              let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.title, font: Font.semibold(22.0), textColor: item.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), alignment: .center, cutout: nil, insets: UIEdgeInsets()))
              let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.text, font: Font.regular(14.0), textColor: item.theme.list.freeTextColor), backgroundColor: nil, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), alignment: .center, lineSpacing: 0.1, cutout: nil, insets: UIEdgeInsets()))
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
-index 0695a0dd..5dbf0ec7 100644
+index 0695a0dd..7a6fcce2 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
-@@ -116,8 +116,10 @@ enum AyuSettingsEntry: ItemListNodeEntry {
+@@ -116,8 +116,15 @@ enum AyuSettingsEntry: ItemListNodeEntry {
      }
  }
  
@@ -45402,10 +46408,15 @@ index 0695a0dd..5dbf0ec7 100644
  func ayuAppVersion() -> String {
 -    return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
 +    return "27.5.0"
++}
++
++/// The AyuGram version for other modules ("What's new", the AltStore source).
++public func ayuPublicAppVersion() -> String {
++    return ayuAppVersion()
  }
  
  struct AyuSectionedArguments {
-@@ -172,7 +174,8 @@ enum AyuSectionedEntry: ItemListNodeEntry {
+@@ -172,7 +179,8 @@ enum AyuSectionedEntry: ItemListNodeEntry {
          let arguments = arguments as! AyuSectionedArguments
          switch self {
          case let .logo(_, _, logo, title, text):
@@ -45475,12 +46486,167 @@ index 00000000..8729d0f7
 +    }
 +    return ItemListController(context: context, state: signal)
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuShortcutsController.swift b/submodules/SettingsUI/Sources/AyuShortcutsController.swift
+new file mode 100644
+index 00000000..c92e7cf9
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuShortcutsController.swift
+@@ -0,0 +1,149 @@
++import Foundation
++import UIKit
++import Display
++import AccountContext
++
++extension UIViewController {
++    /// Close button target for pages AyuGram presents in their own navigation controller.
++    @objc func ayuDismissSelf() {
++        self.dismiss(animated: true)
++    }
++}
++
++/// Text shortcuts (;adr → address) and template variables.
++final class AyuShortcutsController: UITableViewController {
++    private let russian: Bool
++
++    init(russian: Bool) {
++        self.russian = russian
++        super.init(style: .insetGrouped)
++        self.title = russian ? "Шаблоны и сокращения" : "Shortcuts and templates"
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(self.add))
++    }
++
++    @objc private func add() {
++        let alert = UIAlertController(title: self.russian ? "Новое сокращение" : "New shortcut", message: self.russian ? "Сообщение, равное сокращению, заменяется текстом. Можно использовать {date}, {time}, {weekday}, {clipboard}." : "A message equal to the shortcut is replaced with the text. {date}, {time}, {weekday} and {clipboard} work.", preferredStyle: .alert)
++        alert.addTextField { $0.placeholder = self.russian ? ";адр" : ";adr"; $0.autocapitalizationType = .none }
++        alert.addTextField { $0.placeholder = self.russian ? "Текст" : "Text" }
++        alert.addAction(UIAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel))
++        alert.addAction(UIAlertAction(title: self.russian ? "Добавить" : "Add", style: .default, handler: { [weak self, weak alert] _ in
++            let trigger = (alert?.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++            let text = alert?.textFields?.last?.text ?? ""
++            guard !trigger.isEmpty, !text.isEmpty else { return }
++            var items = AyuTextShortcuts.shortcuts.filter { $0.trigger != trigger }
++            items.append(AyuTextShortcuts.Shortcut(trigger: trigger, text: text))
++            AyuTextShortcuts.shortcuts = items
++            self?.tableView.reloadData()
++        }))
++        self.present(alert, animated: true)
++    }
++
++    override func numberOfSections(in tableView: UITableView) -> Int {
++        return 2
++    }
++
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
++        return section == 0 ? 1 : max(1, AyuTextShortcuts.shortcuts.count)
++    }
++
++    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        if section == 0 {
++            return self.russian ? "Подставлять {date}, {time}, {weekday} и {clipboard} в любые сообщения." : "Fill {date}, {time}, {weekday} and {clipboard} in any message."
++        }
++        return self.russian ? "Работает для обычных текстовых сообщений без форматирования." : "Works for plain text messages without formatting."
++    }
++
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        if indexPath.section == 0 {
++            cell.textLabel?.text = self.russian ? "Переменные в сообщениях" : "Variables in messages"
++            let toggle = UISwitch()
++            toggle.isOn = AyuTextShortcuts.variablesEnabled
++            toggle.addTarget(self, action: #selector(self.variablesChanged(_:)), for: .valueChanged)
++            cell.accessoryView = toggle
++            cell.selectionStyle = .none
++            return cell
++        }
++        let items = AyuTextShortcuts.shortcuts
++        if items.isEmpty {
++            cell.textLabel?.text = self.russian ? "Нажмите +, чтобы добавить" : "Tap + to add one"
++            cell.textLabel?.textColor = .secondaryLabel
++        } else {
++            cell.textLabel?.text = items[indexPath.row].trigger
++            cell.detailTextLabel?.text = items[indexPath.row].text
++            cell.detailTextLabel?.numberOfLines = 2
++        }
++        cell.selectionStyle = .none
++        return cell
++    }
++
++    @objc private func variablesChanged(_ sender: UISwitch) {
++        AyuTextShortcuts.variablesEnabled = sender.isOn
++    }
++
++    override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
++        return indexPath.section == 1 && !AyuTextShortcuts.shortcuts.isEmpty
++    }
++
++    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
++        guard editingStyle == .delete else { return }
++        var items = AyuTextShortcuts.shortcuts
++        guard indexPath.row < items.count else { return }
++        items.remove(at: indexPath.row)
++        AyuTextShortcuts.shortcuts = items
++        tableView.reloadData()
++    }
++}
++
++/// Plugin profiles: named sets of enabled plugins switched on together ("Work", "Stream").
++enum AyuPluginProfiles {
++    private static let key = "ayu.plugins.profiles"
++
++    static var all: [String: [String]] {
++        get { return (UserDefaults.standard.dictionary(forKey: key) as? [String: [String]]) ?? [:] }
++        set { UserDefaults.standard.set(newValue, forKey: key) }
++    }
++
++    static func present(context: AccountContext) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let sheet = UIAlertController(title: ru ? "Профили плагинов" : "Plugin profiles", message: ru ? "Профиль включает свой набор плагинов и выключает остальные." : "A profile turns its plugins on and the rest off.", preferredStyle: .actionSheet)
++        for name in all.keys.sorted() {
++            sheet.addAction(UIAlertAction(title: (ru ? "Включить «" : "Apply \"") + name + (ru ? "»" : "\""), style: .default, handler: { _ in
++                let enabled = Set(all[name] ?? [])
++                for plugin in AyuScriptRuntime.shared.plugins {
++                    if plugin.enabled != enabled.contains(plugin.id) {
++                        AyuScriptRuntime.shared.setEnabled(plugin.id, enabled.contains(plugin.id))
++                    }
++                }
++            }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Сохранить текущие как профиль…" : "Save current as a profile…", style: .default, handler: { _ in
++            let alert = UIAlertController(title: ru ? "Название профиля" : "Profile name", message: nil, preferredStyle: .alert)
++            alert.addTextField { $0.placeholder = ru ? "Работа" : "Work" }
++            alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++            alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++                let name = (alert?.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++                guard !name.isEmpty else { return }
++                var profiles = all
++                profiles[String(name.prefix(40))] = AyuScriptRuntime.shared.plugins.filter { $0.enabled }.map { $0.id }
++                all = profiles
++            }))
++            context.sharedContext.applicationBindings.presentNativeController(alert)
++        }))
++        if !all.isEmpty {
++            sheet.addAction(UIAlertAction(title: ru ? "Удалить все профили" : "Delete all profiles", style: .destructive, handler: { _ in
++                all = [:]
++            }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++        context.sharedContext.applicationBindings.presentNativeController(sheet)
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuToolsController.swift b/submodules/SettingsUI/Sources/AyuToolsController.swift
 new file mode 100644
-index 00000000..8caf189c
+index 00000000..956ea5d0
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuToolsController.swift
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,287 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -45534,7 +46700,15 @@ index 00000000..8caf189c
 +    case hotReloadAddress = 53
 +    case hotReload = 54
 +    case webInspector = 55
-+    case devInfo = 56
++    case crashLogs = 57
++    case devInfo = 59
++    case textHeader = 60
++    case shortcuts = 61
++    case pluginProfiles = 62
++    case bookmarks = 63
++    case linksHeader = 70
++    case linkRules = 71
++    case linkInfo = 72
 +}
 +
 +/// Picks a plugin source for a cloud build.
@@ -45560,6 +46734,7 @@ index 00000000..8caf189c
 +
 +func ayuToolsController(context: AccountContext) -> ViewController {
 +    var push: ((ViewController) -> Void)?
++    var navigation: (() -> NavigationController?)?
 +
 +    func ask(_ title: String, _ message: String, _ current: String, secure: Bool, _ save: @escaping (String) -> Void) {
 +        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
@@ -45643,6 +46818,45 @@ index 00000000..8caf189c
 +            AyuSourcePicker.current = delegate
 +            picker.delegate = delegate
 +            context.sharedContext.applicationBindings.presentNativeController(picker)
++        case .shortcuts?:
++            let shortcuts = AyuShortcutsController(russian: ru)
++            shortcuts.navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: shortcuts, action: #selector(UIViewController.ayuDismissSelf))
++            context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: shortcuts))
++        case .pluginProfiles?:
++            AyuPluginProfiles.present(context: context)
++        case .bookmarks?:
++            let bookmarks = AyuBookmarksController(russian: ru, open: { peerValue in
++                let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: EnginePeer.Id(peerValue)))
++                |> deliverOnMainQueue).startStandalone(next: { peer in
++                    guard let peer, let navigationController = navigation?() else { return }
++                    context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(peer)))
++                })
++            })
++            context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: bookmarks))
++        case .linkRules?:
++            let sheet = UIAlertController(title: ru ? "Переписывание ссылок" : "Link rewriting", message: ru ? "Ссылки открываются через удобные или приватные зеркала." : "Links open through friendlier or private front ends.", preferredStyle: .actionSheet)
++            for rule in AyuLinkRewrite.Rule.allCases {
++                let on = AyuLinkRewrite.isOn(rule)
++                sheet.addAction(UIAlertAction(title: (on ? "✓ " : "") + rule.title(ru), style: .default, handler: { _ in
++                    AyuLinkRewrite.set(rule, !on)
++                    NotificationCenter.default.post(name: AyuTools.didChangeNotification, object: nil)
++                }))
++            }
++            sheet.addAction(UIAlertAction(title: ru ? "Сервер Invidious…" : "Invidious server…", style: .default, handler: { _ in
++                ask("Invidious", ru ? "Адрес зеркала YouTube, например yewtu.be" : "A YouTube front end, e.g. yewtu.be", AyuLinkRewrite.invidiousHost, secure: false, { AyuLinkRewrite.invidiousHost = $0 })
++            }))
++            sheet.addAction(UIAlertAction(title: ru ? "Готово" : "Done", style: .cancel))
++            context.sharedContext.applicationBindings.presentNativeController(sheet)
++        case .crashLogs?:
++            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("AyuGram/Diagnostics", isDirectory: true)
++            let files = (directory.flatMap { try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) } ?? []).sorted(by: { $0.lastPathComponent > $1.lastPathComponent })
++            if files.isEmpty {
++                let alert = UIAlertController(title: ru ? "Крэш-логи" : "Crash logs", message: ru ? "Отчётов пока нет. iOS присылает их раз в сутки после сбоя или зависания." : "No reports yet. iOS delivers them once a day after a crash or hang.", preferredStyle: .alert)
++                alert.addAction(UIAlertAction(title: "OK", style: .default))
++                context.sharedContext.applicationBindings.presentNativeController(alert)
++            } else {
++                context.sharedContext.applicationBindings.presentNativeController(UIActivityViewController(activityItems: Array(files.prefix(10)), applicationActivities: nil))
++            }
 +        case .hotReloadAddress?:
 +            ask(ru ? "Адрес компьютера" : "Computer address", ru ? "IP компьютера с запущенным `ayu dev`, например 192.168.1.20:8765." : "The IP of the computer running `ayu dev`, e.g. 192.168.1.20:8765.", AyuHotReload.address, secure: false, { AyuHotReload.address = $0 })
 +        default:
@@ -45697,7 +46911,16 @@ index 00000000..8caf189c
 +        entries.append(.link(6, AyuToolsRow.hotReloadAddress.rawValue, symbol("desktopcomputer", 0x5856D6), ru ? "Компьютер для hot reload" : "Hot reload computer", AyuHotReload.address))
 +        entries.append(.toggle(6, AyuToolsRow.hotReload.rawValue, symbol("bolt.horizontal.fill", 0xFF9500), ru ? "Hot reload" : "Hot reload", AyuHotReload.shared.status.isEmpty ? (ru ? "Перезагрузка плагина при сохранении на компьютере" : "Reload the plugin when it is saved on the computer") : AyuHotReload.shared.status, AyuHotReload.shared.isConnected))
 +        entries.append(.toggle(6, AyuToolsRow.webInspector.rawValue, symbol("safari.fill", 0x007AFF), "Safari Web Inspector", ru ? "Брейкпоинты и профайлер JS-плагинов (Mac → Safari → Разработка)" : "Breakpoints and profiler for JS plugins (Mac → Safari → Develop)", UserDefaults.standard.bool(forKey: "ayu.dev.webInspector")))
++        entries.append(.link(6, AyuToolsRow.crashLogs.rawValue, symbol("ladybug.fill", 0xFF3B30), ru ? "Крэш-логи (MetricKit)" : "Crash logs (MetricKit)", ru ? "поделиться" : "share"))
 +        entries.append(.info(6, AyuToolsRow.devInfo.rawValue, ru ? "Облачная сборка доступна Telegram ID из developers/ID репозитория плагинов: исходник уходит в ветку beta от вашего имени, GitHub собирает его, и плагин ставится только на это устройство. Остальным — сборка на компьютере (SDK и `ayu` CLI в репозитории AyuGramm-IOS)." : "Cloud builds are open to the Telegram IDs in the plugin repository's developers/ID: the source goes to the beta branch in your name, GitHub builds it, and the plugin is installed on this device only. Everyone else builds on a computer (SDKs and the `ayu` CLI in the AyuGramm-IOS repository)."))
++        entries.append(.header(7, AyuToolsRow.textHeader.rawValue, ru ? "ТЕКСТ И ПЛАГИНЫ" : "TEXT AND PLUGINS"))
++        entries.append(.link(7, AyuToolsRow.shortcuts.rawValue, symbol("text.insert", 0x34C759), ru ? "Шаблоны и сокращения" : "Shortcuts and templates", "\(AyuTextShortcuts.shortcuts.count)"))
++        entries.append(.link(7, AyuToolsRow.bookmarks.rawValue, symbol("bookmark.fill", 0xFF9500), ru ? "Закладки" : "Bookmarks", "\(AyuBookmarks.all.count)"))
++        entries.append(.link(7, AyuToolsRow.pluginProfiles.rawValue, symbol("square.stack.3d.up.fill", 0xAF52DE), ru ? "Профили плагинов" : "Plugin profiles", "\(AyuPluginProfiles.all.count)"))
++        entries.append(.header(8, AyuToolsRow.linksHeader.rawValue, ru ? "ССЫЛКИ" : "LINKS"))
++        let activeRules = AyuLinkRewrite.Rule.allCases.filter { AyuLinkRewrite.isOn($0) }.count
++        entries.append(.link(8, AyuToolsRow.linkRules.rawValue, symbol("arrow.triangle.swap", 0x007AFF), ru ? "Переписывание ссылок" : "Link rewriting", activeRules == 0 ? (ru ? "выкл." : "off") : "\(activeRules)"))
++        entries.append(.info(8, AyuToolsRow.linkInfo.rawValue, ru ? "X → fxtwitter, YouTube → Invidious, Instagram → ddinstagram, Reddit → old.reddit, TikTok → vxtiktok. Плагины могут добавлять свои правила (хук link.open)." : "X → fxtwitter, YouTube → Invidious, Instagram → ddinstagram, Reddit → old.reddit, TikTok → vxtiktok. Plugins can add rules (the link.open hook)."))
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Инструменты" : "Tools"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
@@ -45705,6 +46928,9 @@ index 00000000..8caf189c
 +    let controller = ItemListController(context: context, state: signal)
 +    push = { [weak controller] c in
 +        (controller?.navigationController as? NavigationController)?.pushViewController(c)
++    }
++    navigation = { [weak controller] in
++        return controller?.navigationController as? NavigationController
 +    }
 +    return controller
 +}
@@ -46720,10 +47946,10 @@ index 0099243c..cb86874d 100644
      public func update(_ transform: (inout AyuGhostModeSettings) throws -> Void) throws {
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuHooks.swift b/submodules/TelegramCore/Sources/AyuGram/AyuHooks.swift
 new file mode 100644
-index 00000000..c67aff13
+index 00000000..ac7b85d8
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuHooks.swift
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,239 @@
 +import Foundation
 +
 +/// Hook points code plugins can intercept. TelegramCore only knows the registry; the
@@ -46869,17 +48095,60 @@ index 00000000..c67aff13
 +        }
 +        var result = text
 +        for registration in registrations where registration.mode == .before {
-+            if let value = registration.handler(result, context) { result = value }
++            if let value = self.timed(registration, result, context) { result = value }
 +        }
 +        if let replacement = registrations.first(where: { $0.mode == .replace }) {
-+            if let value = replacement.handler(result, context) { result = value }
++            if let value = self.timed(replacement, result, context) { result = value }
 +        } else {
 +            result = native(result)
 +        }
 +        for registration in registrations where registration.mode == .after {
-+            if let value = registration.handler(result, context) { result = value }
++            if let value = self.timed(registration, result, context) { result = value }
 +        }
 +        return result
++    }
++
++    // MARK: Profiler
++
++    public struct Timing {
++        public var calls: Int = 0
++        public var total: Double = 0.0
++        public var slowest: Double = 0.0
++    }
++
++    /// Posted once per plugin and launch when one of its hooks takes longer than 100 ms;
++    /// userInfo["owner"] is the plugin id.
++    public static let slowPluginNotification = Notification.Name("AyuGram.SlowPlugin")
++
++    private var timings: [String: Timing] = [:]
++    private var reportedSlow: Set<String> = []
++
++    private func timed(_ registration: Registration, _ text: String, _ context: TextContext) -> String? {
++        let start = CFAbsoluteTimeGetCurrent()
++        let value = registration.handler(text, context)
++        let elapsed = CFAbsoluteTimeGetCurrent() - start
++        self.lock.lock()
++        var timing = self.timings[registration.owner] ?? Timing()
++        timing.calls += 1
++        timing.total += elapsed
++        timing.slowest = max(timing.slowest, elapsed)
++        self.timings[registration.owner] = timing
++        let report = elapsed > 0.1 && self.reportedSlow.insert(registration.owner).inserted
++        self.lock.unlock()
++        if report {
++            let owner = registration.owner
++            DispatchQueue.main.async {
++                NotificationCenter.default.post(name: AyuHooks.slowPluginNotification, object: nil, userInfo: ["owner": owner, "seconds": elapsed])
++            }
++        }
++        return value
++    }
++
++    /// Hook calls, total and slowest time of one plugin since launch.
++    public func timing(owner: String) -> Timing? {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.timings[owner]
 +    }
 +
 +    public var activeDisabledFeatures: Set<Feature> {
@@ -48317,10 +49586,10 @@ index 4c27c646..b24d60ff 100644
              titleAttributes = MultiScaleTextState.Attributes(font: Font.medium(28.0), color: .white)
              smallTitleAttributes = MultiScaleTextState.Attributes(font: Font.medium(28.0), color: .white, shadowColor: titleShadowColor)
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-index a16188b5..b587d3c1 100644
+index a16188b5..cc34c9ec 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-@@ -770,6 +770,21 @@ func infoItems(
+@@ -770,6 +770,45 @@ func infoItems(
                      }))
                  }
  
@@ -48332,6 +49601,30 @@ index a16188b5..b587d3c1 100644
 +                for (index, button) in AyuPluginUI.shared.profileButtons(peerId: pluginPeerId).enumerated() {
 +                    items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9200 + index, text: button.title, color: .accent, action: {
 +                        AyuPluginUI.send("profileButton", to: button.owner, ["buttonId": button.id, "peerId": String(pluginPeerId)])
++                    }))
++                }
++                // AyuGram local note about this person (this device only).
++                if !AyuDecoyMode.isActive {
++                    let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++                    let noteValue = user.id.toInt64()
++                    let note = AyuPeerNotes.note(noteValue)
++                    if let note {
++                        items[currentPeerInfoSection]!.append(PeerInfoScreenCommentItem(id: 9060, text: "📝 " + note))
++                    }
++                    items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9061, text: note == nil ? (ru ? "Добавить заметку" : "Add a note") : (ru ? "Изменить заметку" : "Edit note"), color: .accent, action: {
++                        let alert = UIAlertController(title: ru ? "Заметка" : "Note", message: ru ? "Видна только вам, на этом устройстве." : "Only you see it, on this device.", preferredStyle: .alert)
++                        alert.addTextField { field in
++                            field.text = AyuPeerNotes.note(noteValue)
++                            field.placeholder = ru ? "Например: коллега из отдела дизайна" : "For example: a colleague from design"
++                        }
++                        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++                        if note != nil {
++                            alert.addAction(UIAlertAction(title: ru ? "Удалить" : "Delete", style: .destructive, handler: { _ in AyuPeerNotes.setNote(noteValue, nil) }))
++                        }
++                        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++                            AyuPeerNotes.setNote(noteValue, alert?.textFields?.first?.text)
++                        }))
++                        context.sharedContext.applicationBindings.presentNativeController(alert)
 +                    }))
 +                }
 +                // AyuGram team label (signed list from @ayugram_dev_settings_bot).
@@ -48452,7 +49745,7 @@ index ad077f5c..b9aa9653 100644
              return
          }
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
-index ed6a26a2..2c998179 100644
+index ed6a26a2..4e8ffbef 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
 +++ b/submodules/TelegramUI/Sources/AppDelegate.swift
 @@ -453,6 +453,10 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
@@ -48502,7 +49795,7 @@ index ed6a26a2..2c998179 100644
              sharedApplicationContext.sharedContext.mediaManager.overlayMediaManager.attachOverlayMediaController(sharedApplicationContext.overlayMediaController)
              
              return accountManager.transaction { transaction -> (SharedApplicationContext, LoggingSettings) in
-@@ -1471,6 +1497,15 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+@@ -1471,6 +1497,16 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                      self.mainWindow.debugAction = nil
                      self.mainWindow.viewController = context.rootController
                      self.ayuPresentStartupNotice()
@@ -48514,11 +49807,12 @@ index ed6a26a2..2c998179 100644
 +                    }
 +                    ayuInstallPluginAppBridge(sharedContext: context.context.sharedContext)
 +                    AyuVerifiedRegistry.shared.refresh()
++                    AyuPluginKillSwitch.shared.refresh()
 +                    AyuScriptRuntime.shared.bootstrap()
                      
                      if firstTime {
                          let layer = context.rootController.view.layer
-@@ -2117,7 +2152,29 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+@@ -2117,7 +2153,30 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
          }))
      }
  
@@ -48545,19 +49839,189 @@ index ed6a26a2..2c998179 100644
      func handleWillResignActive() {
 +        self.ayuUpdateSwitcherBlur(active: true)
 +        AyuScriptRuntime.shared.emit("appBackground", [:])
++        AyuChatPrivacy.relock()
          self.isActiveValue = false
          self.isActivePromise.set(false)
          self.clearNotificationsManager?.commitNow()
-@@ -2224,6 +2281,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+@@ -2224,6 +2283,10 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
      }
  
      func handleDidBecomeActive() {
 +        self.ayuUpdateSwitcherBlur(active: false)
 +        AyuVerifiedRegistry.shared.refresh()
++        AyuPluginKillSwitch.shared.refresh()
 +        AyuScriptRuntime.shared.emit("appForeground", [:])
          self.isInForegroundValue = true
          self.isInForegroundPromise.set(true)
          self.isActiveValue = true
+diff --git a/submodules/TelegramUI/Sources/AyuAppExtras.swift b/submodules/TelegramUI/Sources/AyuAppExtras.swift
+new file mode 100644
+index 00000000..e034f0ae
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuAppExtras.swift
+@@ -0,0 +1,162 @@
++import Foundation
++import UIKit
++import MetricKit
++import UserNotifications
++import SwiftSignalKit
++import Display
++import TelegramCore
++import AccountContext
++import SettingsUI
++
++/// Anti-scam check for links: punycode (xn--) hosts and hosts mixing Latin and Cyrillic letters,
++/// the usual look-alike tricks. Returns the warning to show, or nil.
++enum AyuAntiScam {
++    static let disabledKey = "ayu.extra.antiScamOff"
++
++    static func warning(for url: String, russian: Bool) -> String? {
++        guard !UserDefaults.standard.bool(forKey: disabledKey), !AyuDecoyMode.isActive,
++              let host = URLComponents(string: url)?.host?.lowercased(), !host.isEmpty else { return nil }
++        if host.split(separator: ".").contains(where: { $0.hasPrefix("xn--") }) {
++            return russian ? "Адрес \(host) записан в punycode: так часто маскируют поддельные сайты под настоящие. Открывайте, только если доверяете отправителю." : "\(host) is written in punycode, a common way to disguise fake sites as real ones. Open it only if you trust the sender."
++        }
++        var hasLatin = false
++        var hasCyrillic = false
++        for scalar in host.unicodeScalars {
++            if ("a" ... "z").contains(scalar) { hasLatin = true }
++            if (0x0400 ... 0x04FF).contains(scalar.value) { hasCyrillic = true }
++        }
++        if hasLatin && hasCyrillic {
++            return russian ? "В адресе \(host) смешаны латинские и русские буквы — признак сайта-двойника." : "\(host) mixes Latin and Cyrillic letters, a sign of a look-alike site."
++        }
++        return nil
++    }
++}
++
++/// Crash and hang reports from MetricKit, kept on the device and shared from Tools.
++final class AyuCrashReports: NSObject, MXMetricManagerSubscriber {
++    static let shared = AyuCrashReports()
++
++    static var directory: URL? {
++        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("AyuGram/Diagnostics", isDirectory: true)
++    }
++
++    func start() {
++        MXMetricManager.shared.add(self)
++    }
++
++    func didReceive(_ payloads: [MXDiagnosticPayload]) {
++        guard let directory = AyuCrashReports.directory else { return }
++        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        for payload in payloads {
++            let name = "diagnostic-\(Int(payload.timeStampEnd.timeIntervalSince1970)).json"
++            try? payload.jsonRepresentation().write(to: directory.appendingPathComponent(name), options: .atomic)
++        }
++        // Keep the newest 30.
++        if let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.creationDateKey]), files.count > 30 {
++            for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).prefix(files.count - 30) {
++                try? FileManager.default.removeItem(at: file)
++            }
++        }
++    }
++
++    static var files: [URL] {
++        guard let directory = AyuCrashReports.directory, let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return [] }
++        return files.sorted(by: { $0.lastPathComponent > $1.lastPathComponent })
++    }
++}
++
++enum AyuAppExtras {
++    static let notifyDeletedKey = "ayu.extra.notifyDeleted"
++    private static var installed = false
++
++    static func install(sharedContext: SharedAccountContext) {
++        guard !installed else { return }
++        installed = true
++        AyuCrashReports.shared.start()
++
++        // Text shortcuts and templates run as a built-in outgoing-text hook, only while in use.
++        let updateShortcutHook = {
++            AyuHooks.shared.removeAll(owner: "ayu.shortcuts")
++            if AyuTextShortcuts.isActive {
++                AyuHooks.shared.register(point: .outgoingText, mode: .before, owner: "ayu.shortcuts", handler: { text, _ in
++                    return AyuTextShortcuts.apply(text)
++                })
++            }
++        }
++        updateShortcutHook()
++        let _ = NotificationCenter.default.addObserver(forName: AyuTextShortcuts.didChangeNotification, object: nil, queue: .main, using: { _ in
++            updateShortcutHook()
++        })
++
++        // A plugin's hook took over 100 ms.
++        let _ = NotificationCenter.default.addObserver(forName: AyuHooks.slowPluginNotification, object: nil, queue: .main, using: { notification in
++            guard let owner = notification.userInfo?["owner"] as? String else { return }
++            let seconds = notification.userInfo?["seconds"] as? Double ?? 0.0
++            let name = AyuScriptRuntime.shared.plugin(id: owner)?.name ?? owner
++            let ru = sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++            AyuToast.shared.show((ru ? "Плагин «\(name)» тормозит: " : "Plugin \"\(name)\" is slow: ") + "\(Int(seconds * 1000)) ms")
++        })
++
++        // "X deleted a message in Y".
++        let _ = NotificationCenter.default.addObserver(forName: ayuMessageHistoryEventNotification, object: nil, queue: .main, using: { notification in
++            guard UserDefaults.standard.bool(forKey: notifyDeletedKey), !AyuDecoyMode.isActive,
++                  let info = notification.userInfo as? [String: Any], info["kind"] as? String == "deleted", info["outgoing"] as? Bool != true,
++                  let peerValue = (info["peerId"] as? String).flatMap(Int64.init) else { return }
++            let text = (info["text"] as? String) ?? ""
++            let authorValue = (info["authorId"] as? String).flatMap(Int64.init)
++            let ru = sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++            let _ = (sharedContext.activeAccountContexts
++            |> take(1)
++            |> mapToSignal { primary, _, _ -> Signal<(EnginePeer?, EnginePeer?), NoError> in
++                guard let primary else { return .single((nil, nil)) }
++                return primary.engine.data.get(
++                    TelegramEngine.EngineData.Item.Peer.Peer(id: EnginePeer.Id(peerValue)),
++                    TelegramEngine.EngineData.Item.Peer.Peer(id: EnginePeer.Id(authorValue ?? peerValue))
++                )
++            }
++            |> deliverOnMainQueue).startStandalone(next: { chat, author in
++                let who = author?.debugDisplayTitle ?? (ru ? "Кто-то" : "Someone")
++                let whereTitle = chat?.debugDisplayTitle ?? ""
++                let title = ru ? "\(who) удалил(а) сообщение" + (whereTitle.isEmpty || whereTitle == who ? "" : " в «\(whereTitle)»") : "\(who) deleted a message" + (whereTitle.isEmpty || whereTitle == who ? "" : " in \(whereTitle)")
++                let content = UNMutableNotificationContent()
++                content.title = title
++                content.body = text.isEmpty ? (ru ? "Медиа" : "Media") : String(text.prefix(300))
++                content.threadIdentifier = "ayu_deleted"
++                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "ayu_deleted_\(peerValue)_\(info["messageId"] as? String ?? "")", content: content, trigger: nil), withCompletionHandler: nil)
++                if UIApplication.shared.applicationState == .active {
++                    AyuToast.shared.show("🗑 " + title)
++                }
++            })
++        })
++    }
++
++    /// "What's new" once after an update.
++    static func presentWhatsNewIfNeeded(sharedContext: SharedAccountContext) {
++        let version = ayuPublicAppVersion()
++        let key = "ayu.whatsNew.version"
++        let previous = UserDefaults.standard.string(forKey: key)
++        UserDefaults.standard.set(version, forKey: key)
++        guard let previous, previous != version, !AyuDecoyMode.isActive else { return }
++        let ru = sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let lines = ru ? [
++            "🎭 Фейк-режим и заставка с иконкой AyuGram",
++            "🔒 Блокировка чатов по Face ID и скрытые чаты",
++            "↩️ Отмена отправки, лента удалённых с поиском и разницей правок",
++            "🎵 Музыка из плеера в профиль",
++            "🗣 Расшифровка голосовых на устройстве, «Что я пропустил» на ИИ",
++            "🧩 Плагины: сеть, сообщения, команды, экраны, облачная сборка и SDK на 7 языках"
++        ] : [
++            "🎭 Decoy mode and the AyuGram splash",
++            "🔒 Face ID chat lock and hidden chats",
++            "↩️ Undo send, a deleted-messages feed with search and edit diffs",
++            "🎵 Music from the player to your profile",
++            "🗣 On-device voice transcription, \"What did I miss\" with AI",
++            "🧩 Plugins: network, messages, commands, pages, cloud builds and SDKs in 7 languages"
++        ]
++        let alert = UIAlertController(title: (ru ? "Что нового в AyuGram " : "What's new in AyuGram ") + version, message: lines.joined(separator: "\n"), preferredStyle: .alert)
++        alert.addAction(UIAlertAction(title: ru ? "Отлично" : "Great", style: .default))
++        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
++            sharedContext.applicationBindings.presentNativeController(alert)
++        }
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift b/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
 index c1af8a74..fb9d4e84 100644
 --- a/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
@@ -48577,6 +50041,95 @@ index c1af8a74..fb9d4e84 100644
                      content.sound = .default
                      content.threadIdentifier = "\(accountId.int64)_\(peerId.toInt64())"
                      var userInfo: [AnyHashable: Any] = ["accountId": accountId.int64, "peerId": peerId.toInt64()]
+diff --git a/submodules/TelegramUI/Sources/AyuChatLock.swift b/submodules/TelegramUI/Sources/AyuChatLock.swift
+new file mode 100644
+index 00000000..b248528f
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuChatLock.swift
+@@ -0,0 +1,83 @@
++import Foundation
++import UIKit
++import LocalAuthentication
++import Display
++import TelegramCore
++
++/// A chat locked with Face ID: its content stays under a blur until the owner authenticates.
++final class AyuChatLockView: UIView {
++    var unlock: (() -> Void)?
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterial))
++        blur.frame = self.bounds
++        blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        self.addSubview(blur)
++        let icon = UIImageView(image: UIImage(systemName: "lock.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 40.0, weight: .medium)))
++        icon.tintColor = .label
++        let button = UIButton(type: .system)
++        let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true
++        button.setTitle(ru ? "Разблокировать" : "Unlock", for: .normal)
++        button.titleLabel?.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
++        button.addTarget(self, action: #selector(self.unlockPressed), for: .touchUpInside)
++        let stack = UIStackView(arrangedSubviews: [icon, button])
++        stack.axis = .vertical
++        stack.spacing = 16.0
++        stack.alignment = .center
++        stack.translatesAutoresizingMaskIntoConstraints = false
++        self.addSubview(stack)
++        NSLayoutConstraint.activate([
++            stack.centerXAnchor.constraint(equalTo: self.centerXAnchor),
++            stack.centerYAnchor.constraint(equalTo: self.centerYAnchor)
++        ])
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    @objc private func unlockPressed() {
++        self.unlock?()
++    }
++}
++
++extension ChatControllerImpl {
++    /// Covers a locked chat and asks for Face ID / Touch ID (or the device passcode).
++    func ayuApplyChatLock() {
++        guard let peerId = self.chatLocation.peerId else { return }
++        let value = peerId.toInt64()
++        guard AyuChatPrivacy.isLocked(value), !AyuChatPrivacy.isUnlocked(value) else { return }
++        if self.view.subviews.contains(where: { $0 is AyuChatLockView }) {
++            return
++        }
++        let lockView = AyuChatLockView(frame: self.view.bounds)
++        lockView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        self.view.addSubview(lockView)
++        let authenticate = { [weak self, weak lockView] in
++            let context = LAContext()
++            let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true
++            var error: NSError?
++            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
++                // No Face ID and no passcode on the device: nothing to check against.
++                AyuChatPrivacy.markUnlocked(value)
++                lockView?.removeFromSuperview()
++                return
++            }
++            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: ru ? "Откройте заблокированный чат" : "Open the locked chat", reply: { success, _ in
++                DispatchQueue.main.async {
++                    if success {
++                        AyuChatPrivacy.markUnlocked(value)
++                        UIView.animate(withDuration: 0.2, animations: { lockView?.alpha = 0.0 }, completion: { _ in lockView?.removeFromSuperview() })
++                    } else if let self {
++                        let _ = self.navigationController?.popViewController(animated: true)
++                    }
++                }
++            })
++        }
++        lockView.unlock = authenticate
++        DispatchQueue.main.async {
++            authenticate()
++        }
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/AyuDecoyUI.swift b/submodules/TelegramUI/Sources/AyuDecoyUI.swift
 new file mode 100644
 index 00000000..36c1f8b3
@@ -49416,6 +50969,80 @@ index 00000000..e59c500e
 +
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuLocalTranscription.swift b/submodules/TelegramUI/Sources/AyuLocalTranscription.swift
+new file mode 100644
+index 00000000..d43d2f38
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuLocalTranscription.swift
+@@ -0,0 +1,68 @@
++import Foundation
++import Speech
++import SwiftSignalKit
++import ConvertOpusToAAC
++
++/// Voice-message transcription without Premium: the Opus file becomes AAC and Apple's speech
++/// recognizer reads it, on the device whenever the language supports that.
++enum AyuLocalTranscription {
++    enum Failure: Error {
++        case notAuthorized
++        case unsupportedLanguage
++        case conversion
++        case recognition(String)
++
++        func text(_ russian: Bool) -> String {
++            switch self {
++            case .notAuthorized: return russian ? "Разрешите распознавание речи: Настройки → AyuGram." : "Allow speech recognition in Settings → AyuGram."
++            case .unsupportedLanguage: return russian ? "Распознавание этого языка недоступно на устройстве." : "Speech recognition is not available for this language."
++            case .conversion: return russian ? "Не удалось подготовить аудио." : "The audio could not be prepared."
++            case let .recognition(message): return (russian ? "Не удалось распознать: " : "Recognition failed: ") + message
++            }
++        }
++    }
++
++    private static var tasks: [UUID: SFSpeechRecognitionTask] = [:]
++
++    static func transcribe(path: String, languageCode: String, completion: @escaping (Result<String, Failure>) -> Void) {
++        SFSpeechRecognizer.requestAuthorization { status in
++            guard status == .authorized else {
++                return DispatchQueue.main.async { completion(.failure(.notAuthorized)) }
++            }
++            let localeId = languageCode.hasPrefix("ru") ? "ru-RU" : (languageCode.hasPrefix("uk") ? "uk-UA" : Locale.current.identifier)
++            guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId)) ?? SFSpeechRecognizer(), recognizer.isAvailable else {
++                return DispatchQueue.main.async { completion(.failure(.unsupportedLanguage)) }
++            }
++            let _ = (convertOpusToAAC(sourcePath: path, allocateTempFile: {
++                return NSTemporaryDirectory() + "ayu-transcribe-\(UUID().uuidString).m4a"
++            })
++            |> deliverOnMainQueue).startStandalone(next: { output in
++                guard let output else {
++                    return completion(.failure(.conversion))
++                }
++                let request = SFSpeechURLRecognitionRequest(url: URL(fileURLWithPath: output))
++                request.shouldReportPartialResults = false
++                if recognizer.supportsOnDeviceRecognition {
++                    request.requiresOnDeviceRecognition = true
++                }
++                let id = UUID()
++                tasks[id] = recognizer.recognitionTask(with: request, resultHandler: { result, error in
++                    if let result, result.isFinal {
++                        let text = result.bestTranscription.formattedString
++                        DispatchQueue.main.async {
++                            tasks[id] = nil
++                            try? FileManager.default.removeItem(atPath: output)
++                            completion(.success(text))
++                        }
++                    } else if let error {
++                        DispatchQueue.main.async {
++                            tasks[id] = nil
++                            try? FileManager.default.removeItem(atPath: output)
++                            completion(.failure(.recognition(error.localizedDescription)))
++                        }
++                    }
++                })
++            })
++        }
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
@@ -51972,18 +53599,63 @@ index 1a77683e..2842266a 100644
          }
      }
  }
+diff --git a/submodules/TelegramUI/Sources/AyuOnDeviceAI.swift b/submodules/TelegramUI/Sources/AyuOnDeviceAI.swift
+new file mode 100644
+index 00000000..d2171513
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuOnDeviceAI.swift
+@@ -0,0 +1,37 @@
++import Foundation
++#if canImport(FoundationModels)
++// Weakly linked: the framework exists only on iOS 26+, and the app still launches on iOS 15.
++@_weakLinked import FoundationModels
++#endif
++
++/// Apple's on-device language model (iOS 26, Apple Intelligence devices): shortening and
++/// "what did I miss" summaries without an API key. Nothing leaves the device.
++enum AyuOnDeviceAI {
++    static var isAvailable: Bool {
++        #if canImport(FoundationModels)
++        if #available(iOS 26.0, *) {
++            return SystemLanguageModel.default.isAvailable
++        }
++        #endif
++        return false
++    }
++
++    static func respond(instructions: String, prompt: String, completion: @escaping (String?) -> Void) {
++        #if canImport(FoundationModels)
++        if #available(iOS 26.0, *), SystemLanguageModel.default.isAvailable {
++            Task {
++                do {
++                    let session = LanguageModelSession(instructions: instructions)
++                    let response = try await session.respond(to: String(prompt.prefix(12000)))
++                    let text = response.content
++                    DispatchQueue.main.async { completion(text) }
++                } catch {
++                    DispatchQueue.main.async { completion(nil) }
++                }
++            }
++            return
++        }
++        #endif
++        completion(nil)
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/AyuOnlineTools.swift b/submodules/TelegramUI/Sources/AyuOnlineTools.swift
 new file mode 100644
-index 00000000..124f460f
+index 00000000..8c4b5520
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuOnlineTools.swift
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,202 @@
 +import Foundation
 +import UIKit
 +import CryptoKit
 +import Display
 +import TelegramCore
 +import AccountContext
++import SwiftSignalKit
++import LocalizedPeerData
 +
 +/// VirusTotal checks and AI shortening from the message menu. Each runs only when the user taps
 +/// it, with the user's own API key; files are checked by their SHA-256 and never uploaded.
@@ -52110,12 +53782,46 @@ index 00000000..124f460f
 +
 +    // MARK: AI
 +
++    /// The on-device model when there is no key, else the configured service.
++    static func ask(context: AccountContext, title: String, instructions: String, prompt: String) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        if AyuTools.aiKey.isEmpty && AyuOnDeviceAI.isAvailable {
++            AyuOnDeviceAI.respond(instructions: instructions, prompt: prompt, completion: { text in
++                present(context, title: title, message: text ?? (ru ? "Модель на устройстве не ответила." : "The on-device model did not answer."))
++            })
++            return
++        }
++        request(context: context, title: title, instructions: instructions, prompt: prompt)
++    }
++
++    /// The last messages of a chat, summarised.
++    static func whatDidIMiss(context: AccountContext, peerId: EnginePeer.Id) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let _ = (context.engine.messages.ayuRecentMessages(peerId: peerId, limit: 60)
++        |> deliverOnMainQueue).startStandalone(next: { messages in
++            let transcript = messages.reversed().compactMap { message -> String? in
++                guard !message.text.isEmpty else { return nil }
++                let name = message.author.map { $0.compactDisplayTitle } ?? "?"
++                return name + ": " + message.text
++            }.joined(separator: "\n")
++            guard !transcript.isEmpty else {
++                return present(context, title: ru ? "Что я пропустил" : "What did I miss", message: ru ? "В чате нет текстовых сообщений." : "No text messages in this chat.")
++            }
++            ask(context: context, title: ru ? "Что я пропустил" : "What did I miss", instructions: ru ? "Кратко перескажи переписку по-русски: главные темы, решения и вопросы ко мне. Не больше 6 пунктов." : "Summarise the conversation briefly: main topics, decisions and questions for me. At most 6 bullet points.", prompt: transcript)
++        })
++    }
++
 +    static func shorten(context: AccountContext, text: String) {
++        let russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        ask(context: context, title: russian ? "Кратко" : "Summary", instructions: "Shorten the user's message to one to three sentences. Keep its language, names and numbers. Reply with the shortened text only.", prompt: text)
++    }
++
++    private static func request(context: AccountContext, title: String, instructions: String, prompt text: String) {
 +        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
 +        let key = AyuTools.aiKey
-+        guard !key.isEmpty else { return missingKey(context, ru ? "Сокращение" : "Shorten") }
++        guard !key.isEmpty else { return missingKey(context, title) }
 +        guard let url = URL(string: AyuTools.aiEndpoint), url.scheme?.lowercased() == "https" else {
-+            return present(context, title: ru ? "Сокращение" : "Shorten", message: ru ? "Адрес ИИ должен начинаться с https://" : "The AI address must start with https://")
++            return present(context, title: title, message: ru ? "Адрес ИИ должен начинаться с https://" : "The AI address must start with https://")
 +        }
 +        var request = URLRequest(url: url)
 +        request.httpMethod = "POST"
@@ -52125,7 +53831,7 @@ index 00000000..124f460f
 +            "model": AyuTools.aiModel,
 +            "max_tokens": 300,
 +            "messages": [
-+                ["role": "system", "content": "Shorten the user's message to one to three sentences. Keep its language, names and numbers. Reply with the shortened text only."],
++                ["role": "system", "content": instructions],
 +                ["role": "user", "content": String(text.prefix(12000))]
 +            ]
 +        ]
@@ -52139,7 +53845,7 @@ index 00000000..124f460f
 +                result = content.trimmingCharacters(in: .whitespacesAndNewlines)
 +            }
 +            DispatchQueue.main.async {
-+                present(context, title: ru ? "Кратко" : "Summary", message: result ?? (status == 401 ? (ru ? "Неверный ключ API." : "Invalid API key.") : (ru ? "ИИ не ответил (код \(status))." : "The AI did not answer (code \(status)).")))
++                present(context, title: title, message: result ?? (status == 401 ? (ru ? "Неверный ключ API." : "Invalid API key.") : (ru ? "ИИ не ответил (код \(status))." : "The AI did not answer (code \(status)).")))
 +            }
 +        }).resume()
 +    }
@@ -52254,10 +53960,10 @@ index 00000000..8e070628
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
 new file mode 100644
-index 00000000..2ae2444e
+index 00000000..83afa539
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,246 @@
 +import Foundation
 +import UIKit
 +import SwiftSignalKit
@@ -52407,6 +54113,8 @@ index 00000000..2ae2444e
 +
 +/// Connects the extended plugin API to the app (installed with the player bridge).
 +func ayuInstallPluginAppServices(sharedContext: SharedAccountContext) {
++    AyuAppExtras.install(sharedContext: sharedContext)
++    AyuAppExtras.presentWhatsNewIfNeeded(sharedContext: sharedContext)
 +    func primaryContext(_ completion: @escaping (AccountContext?) -> Void) {
 +        let _ = (sharedContext.activeAccountContexts
 +        |> take(1)
@@ -53204,10 +54912,19 @@ index 34bbb294..be09c205 100644
                  self.ayuGhostBarButton = UIBarButtonItem(image: enabled ? ayuGhostNavigationImage : ayuGhostNavigationOffImage, style: .plain, target: self, action: #selector(self.ayuGhostButtonPressed))
                  self.ayuGhostButtonEnabled = enabled
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index ac8d62e4..98fcf449 100644
+index ac8d62e4..ed1b7087 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
-@@ -7911,7 +7911,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7739,6 +7739,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+     
+     override public func viewWillAppear(_ animated: Bool) {
+         super.viewWillAppear(animated)
++        // AyuGram: a chat locked with Face ID stays covered until the owner authenticates.
++        self.ayuApplyChatLock()
+ 
+         self.walletTransferAnimationsVisible = true
+         self.chatDisplayNode.historyNode.forEachVisibleMessageItemNode { itemNode in
+@@ -7911,7 +7913,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
  
      override public func viewDidAppear(_ animated: Bool) {
          super.viewDidAppear(animated)
@@ -53227,7 +54944,7 @@ index ac8d62e4..98fcf449 100644
          self.didAppear = true
          
          self.chatDisplayNode.historyNode.experimentalSnapScrollToItem = false
-@@ -8356,6 +8367,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8356,6 +8369,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
      
      override public func viewWillDisappear(_ animated: Bool) {
@@ -53238,7 +54955,7 @@ index ac8d62e4..98fcf449 100644
          super.viewWillDisappear(animated)
  
          self.walletTransferAnimationsVisible = false
-@@ -8685,8 +8700,24 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8685,8 +8702,24 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      @objc func ayuGhostButtonPressed() {
          do {
              let store = self.context.account.network.ayuGhostMode
@@ -53265,7 +54982,7 @@ index ac8d62e4..98fcf449 100644
              self.updateRightNavigationButtons(presentationInterfaceState: self.presentationInterfaceState, transition: .immediate)
          } catch {
              let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
-@@ -9249,6 +9280,40 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -9249,6 +9282,40 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              return
          }
  
@@ -53321,10 +55038,18 @@ index 002e1ee8..c91eeb49 100644
                          shouldDismiss = true
                      }
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index a84cdf21..a98e1291 100644
+index a84cdf21..97f18d25 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-@@ -2507,7 +2507,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -9,6 +9,7 @@ import MobileCoreServices
+ import TelegramVoip
+ import OverlayStatusController
+ import AccountContext
++import LocalizedPeerData
+ import ContextUI
+ import LegacyUI
+ import AppBundle
+@@ -2507,7 +2508,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
              // Plugins belong to exteraGram: this opens the enabled plugins' actions for this chat.
              if context.account.network.ayuGhostMode.current.plugins.installed.contains(where: { $0.enabled }), chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, message.id.peerId.namespace != Namespaces.Peer.SecretChat, EngineMessage(message).adAttribute == nil {
@@ -53333,7 +55058,7 @@ index a84cdf21..a98e1291 100644
                      return UIImage(systemName: "puzzlepiece.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
                  }, action: { controller, _ in
                      controller?.dismiss(completion: {
-@@ -2515,6 +2515,52 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2515,6 +2516,103 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
                      })
                  })))
              }
@@ -53355,6 +55080,57 @@ index a84cdf21..a98e1291 100644
 +                    }, action: { controller, _ in
 +                        controller?.dismiss(completion: {
 +                            AyuOnlineTools.checkFile(context: context, path: path, name: name)
++                        })
++                    })))
++                }
++                if let voice = message.media.first(where: { ($0 as? TelegramMediaFile)?.isVoice == true }) as? TelegramMediaFile, let path = context.engine.resources.completedResourcePath(id: EngineMediaResource.Id(voice.resource.id)) {
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Расшифровать на устройстве" : "Transcribe on device", icon: { theme in
++                        return UIImage(systemName: "text.bubble.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            let languageCode = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode
++                            AyuLocalTranscription.transcribe(path: path, languageCode: languageCode, completion: { result in
++                                switch result {
++                                case let .success(text):
++                                    AyuOnlineTools.present(context, title: ru ? "Расшифровка" : "Transcription", message: text.isEmpty ? (ru ? "Речь не найдена." : "No speech found.") : text)
++                                case let .failure(failure):
++                                    AyuOnlineTools.present(context, title: ru ? "Расшифровка" : "Transcription", message: failure.text(ru))
++                                }
++                            })
++                        })
++                    })))
++                }
++                if !AyuDecoyMode.isActive {
++                    let bookmarkPeerId = message.id.peerId.toInt64()
++                    let bookmarkMessageId = message.id.id
++                    let bookmarkText = message.text
++                    let bookmarkTitle = chatPresentationInterfaceState.renderedPeer?.peer.flatMap { EnginePeer($0).compactDisplayTitle } ?? ""
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "В закладки" : "Bookmark", icon: { theme in
++                        return UIImage(systemName: "bookmark.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            let alert = UIAlertController(title: ru ? "В закладки" : "Bookmark", message: ru ? "Тег необязателен: «прочитать позже», «рецепты»…" : "The tag is optional: \"read later\", \"recipes\"…", preferredStyle: .alert)
++                            alert.addTextField { field in
++                                field.placeholder = ru ? "тег" : "tag"
++                                field.text = AyuBookmarks.tags.first
++                                field.autocapitalizationType = .none
++                            }
++                            alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
++                            alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
++                                let tag = (alert?.textFields?.first?.text ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "# ")).lowercased()
++                                AyuBookmarks.add(AyuBookmarks.Bookmark(peerId: bookmarkPeerId, messageId: bookmarkMessageId, text: String(bookmarkText.prefix(2000)), chatTitle: bookmarkTitle, savedAt: Int64(Date().timeIntervalSince1970), tag: String(tag.prefix(32))))
++                            }))
++                            context.sharedContext.applicationBindings.presentNativeController(alert)
++                        })
++                    })))
++                }
++                if AyuOnDeviceAI.isAvailable || !AyuTools.aiKey.isEmpty {
++                    let chatPeerId = message.id.peerId
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Что я пропустил (ИИ)" : "What did I miss (AI)", icon: { theme in
++                        return UIImage(systemName: "sparkles")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            AyuOnlineTools.whatDidIMiss(context: context, peerId: chatPeerId)
 +                        })
 +                    })))
 +                }
@@ -53461,7 +55237,7 @@ index 32f76b24..bc64daf9 100644
                      |> filter { $0.isComplete }
                      |> take(1)
 diff --git a/submodules/TelegramUI/Sources/SharedAccountContext.swift b/submodules/TelegramUI/Sources/SharedAccountContext.swift
-index 0e23ec68..8f1fcd60 100644
+index 0e23ec68..50e8672f 100644
 --- a/submodules/TelegramUI/Sources/SharedAccountContext.swift
 +++ b/submodules/TelegramUI/Sources/SharedAccountContext.swift
 @@ -539,7 +539,11 @@ public final class SharedAccountContextImpl: SharedAccountContext {
@@ -53532,7 +55308,7 @@ index 0e23ec68..8f1fcd60 100644
              return AyuMusicPlayerController(context: context, chatLocation: chatLocation, type: type, initialMessageId: initialMessageId, initialOrder: initialOrder, playlistLocation: playlistLocation, parentNavigationController: parentNavigationController)
          }
          return OverlayAudioPlayerControllerImpl(context: context, chatLocation: chatLocation, type: type, initialMessageId: initialMessageId, initialOrder: initialOrder, playlistLocation: playlistLocation, parentNavigationController: parentNavigationController)
-@@ -2195,6 +2217,14 @@ public final class SharedAccountContextImpl: SharedAccountContext {
+@@ -2195,6 +2217,26 @@ public final class SharedAccountContextImpl: SharedAccountContext {
      }
      
      public func openExternalUrl(context: AccountContext, urlContext: OpenURLContext, url: String, forceExternal: Bool, presentationData: PresentationData, navigationController: NavigationController?, dismissInput: @escaping () -> Void) {
@@ -53543,6 +55319,18 @@ index 0e23ec68..8f1fcd60 100644
 +            if !rewritten.isEmpty {
 +                url = rewritten
 +            }
++        }
++        // Anti-scam: punycode and mixed-alphabet hosts ask before opening.
++        if let warning = AyuAntiScam.warning(for: url, russian: presentationData.strings.baseLanguageCode.hasPrefix("ru")) {
++            let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++            let alert = UIAlertController(title: ru ? "Подозрительная ссылка" : "Suspicious link", message: warning, preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: presentationData.strings.Common_Cancel, style: .cancel))
++            let target = url
++            alert.addAction(UIAlertAction(title: ru ? "Всё равно открыть" : "Open anyway", style: .destructive, handler: { _ in
++                openExternalUrlImpl(context: context, urlContext: urlContext, url: target, forceExternal: forceExternal, presentationData: presentationData, navigationController: navigationController, dismissInput: dismissInput)
++            }))
++            self.applicationBindings.presentNativeController(alert)
++            return
 +        }
          openExternalUrlImpl(context: context, urlContext: urlContext, url: url, forceExternal: forceExternal, presentationData: presentationData, navigationController: navigationController, dismissInput: dismissInput)
      }

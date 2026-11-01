@@ -8010,13 +8010,14 @@ index 00000000..7a606e8d
 +}
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 new file mode 100644
-index 00000000..2f34f1aa
+index 00000000..9c1049cb
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-@@ -0,0 +1,1264 @@
+@@ -0,0 +1,1265 @@
 +import Foundation
 +import JavaScriptCore
 +import CryptoKit
++import Display
 +import TelegramCore
 +
 +/// Code plugins: JavaScript files that run in their own JavaScriptCore virtual machine on a
@@ -91035,12 +91036,13 @@ index 00000000..5efaf49d
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift b/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
-index c1af8a74..2ce489c4 100644
+index c1af8a74..15aad9b7 100644
 --- a/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
 +++ b/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
-@@ -1,9 +1,11 @@
+@@ -1,9 +1,12 @@
  import Foundation
  import UIKit
++import Display
  import UserNotifications
 +import Intents
  import BackgroundTasks
@@ -91050,7 +91052,7 @@ index c1af8a74..2ce489c4 100644
  import AccountContext
  import AppLock
  import LocalizedPeerData
-@@ -15,27 +17,46 @@ import LocalizedPeerData
+@@ -15,27 +18,46 @@ import LocalizedPeerData
  /// whether a category notifies and whether text is previewed; muted chats stay silent.
  final class AyuBackgroundNotifications {
      private let disposable = MetaDisposable()
@@ -91103,7 +91105,7 @@ index c1af8a74..2ce489c4 100644
                      guard notify, let message = messages.first, message.author?.id != accountPeerId else {
                          continue
                      }
-@@ -45,9 +66,7 @@ final class AyuBackgroundNotifications {
+@@ -45,9 +67,7 @@ final class AyuBackgroundNotifications {
                          }
                          return false
                      })
@@ -91114,7 +91116,7 @@ index c1af8a74..2ce489c4 100644
                      let peerId = message.id.peerId
                      let category: EngineGlobalNotificationSettings.CategorySettings
                      if peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.SecretChat {
-@@ -57,18 +76,42 @@ final class AyuBackgroundNotifications {
+@@ -57,18 +77,42 @@ final class AyuBackgroundNotifications {
                      } else {
                          category = globalSettings.groupChats
                      }
@@ -91161,7 +91163,7 @@ index c1af8a74..2ce489c4 100644
                      if showsText {
                          var text = message.text.isEmpty ? (ru ? "Медиа" : "Media") : message.text
                          if text.count > 300 {
-@@ -81,15 +124,57 @@ final class AyuBackgroundNotifications {
+@@ -81,15 +125,57 @@ final class AyuBackgroundNotifications {
                      } else {
                          content.body = ru ? "Новое сообщение" : "New message"
                      }
@@ -98660,10 +98662,17 @@ index 0e23ec68..0f54c907 100644
      }
      
 diff --git a/submodules/TelegramUI/Sources/SharedMediaPlayer.swift b/submodules/TelegramUI/Sources/SharedMediaPlayer.swift
-index 740fdbcb..fe5f68a8 100644
+index 740fdbcb..114fbdd1 100644
 --- a/submodules/TelegramUI/Sources/SharedMediaPlayer.swift
 +++ b/submodules/TelegramUI/Sources/SharedMediaPlayer.swift
-@@ -148,6 +148,7 @@ final class SharedMediaPlayer {
+@@ -1,5 +1,6 @@
+ import Foundation
+ import UIKit
++import Display
+ import SwiftSignalKit
+ import TelegramCore
+ import TelegramUIPreferences
+@@ -148,6 +149,7 @@ final class SharedMediaPlayer {
          return self.audioLevelPipe.signal()
      }
      private let audioLevelDisposable = MetaDisposable()
@@ -98671,7 +98680,7 @@ index 740fdbcb..fe5f68a8 100644
      
      private var playbackItem: SharedMediaPlaybackItem? {
          didSet {
-@@ -158,8 +159,57 @@ final class SharedMediaPlayer {
+@@ -158,8 +160,57 @@ final class SharedMediaPlayer {
                      self.audioLevelDisposable.set((player.audioLevelEvents.startStrict(next: { [weak audioLevelPipe] value in
                          audioLevelPipe?.putNext(value)
                      })))
@@ -98729,7 +98738,7 @@ index 740fdbcb..fe5f68a8 100644
                  }
              }
          }
-@@ -250,6 +300,8 @@ final class SharedMediaPlayer {
+@@ -250,6 +301,8 @@ final class SharedMediaPlayer {
                      }
                      if let playbackItem = strongSelf.playbackItem {
                          playbackItem.setForceAudioToSpeaker(strongSelf.forceAudioToSpeaker)
@@ -98738,7 +98747,7 @@ index 740fdbcb..fe5f68a8 100644
                          playbackItem.setActionAtEnd({
                              Queue.mainQueue().async {
                                  if let strongSelf = self {
-@@ -258,6 +310,10 @@ final class SharedMediaPlayer {
+@@ -258,6 +311,10 @@ final class SharedMediaPlayer {
                                              strongSelf.playbackItem?.seek(0.0)
                                              strongSelf.playbackItem?.play()
                                          default:
@@ -98749,7 +98758,7 @@ index 740fdbcb..fe5f68a8 100644
                                              strongSelf.scheduledPlaybackAction = .play
                                              strongSelf.control(.next)
                                      }
-@@ -410,6 +466,7 @@ final class SharedMediaPlayer {
+@@ -410,6 +467,7 @@ final class SharedMediaPlayer {
          self.playbackStateValueDisposable?.dispose()
          self.prefetchDisposable.dispose()
          self.audioLevelDisposable.dispose()

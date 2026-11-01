@@ -217,10 +217,10 @@ index 59a4322a..b2871de6 100644
      /// Solar-style artwork, are drawn into a centered square of `side` points.
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 new file mode 100644
-index 00000000..163b3cfd
+index 00000000..dda6a4a0
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,407 @@
 +import Foundation
 +import UIKit
 +import Security
@@ -265,6 +265,9 @@ index 00000000..163b3cfd
 +        }
 +
 +        let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись AyuGram для iOS" : "AyuGram for iOS badge and label")
++        sheet.addAction(UIAlertAction(title: ru ? "Токен GitHub…" : "GitHub token…", style: .default, handler: { _ in
++            AyuBadgeEditor.askToken(ru: ru, present: present, done: {})
++        }))
 +        sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
 +            AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present)
 +        }))
@@ -305,9 +308,6 @@ index 00000000..163b3cfd
 +                })
 +            }))
 +        }
-+        sheet.addAction(UIAlertAction(title: ru ? "Токен GitHub…" : "GitHub token…", style: .default, handler: { _ in
-+            AyuBadgeEditor.askToken(ru: ru, present: present, done: {})
-+        }))
 +        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
 +        present(sheet)
 +    }
@@ -408,14 +408,29 @@ index 00000000..163b3cfd
 +        })
 +        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
 +        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
-+            let token = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++            let token = AyuBadgeEditor.cleanToken(alert?.textFields?.first?.text ?? "")
 +            guard !token.isEmpty else {
 +                return
 +            }
 +            AyuBadgeEditor.saveToken(token)
 +            done()
 +        }))
++        if AyuBadgeEditor.readToken() != nil {
++            alert.addAction(UIAlertAction(title: ru ? "Удалить сохранённый токен" : "Remove saved token", style: .destructive, handler: { _ in
++                AyuBadgeEditor.deleteToken()
++            }))
++        }
 +        present(alert)
++    }
++
++    /// Drops what tends to come along when a token is pasted: spaces, line breaks, quotes and a
++    /// "Bearer"/"token" prefix.
++    private static func cleanToken(_ raw: String) -> String {
++        var token = raw.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'`«»")))
++        for prefix in ["Bearer ", "bearer ", "token ", "Token "] where token.hasPrefix(prefix) {
++            token = String(token.dropFirst(prefix.count))
++        }
++        return token.filter { !$0.isWhitespace }
 +    }
 +
 +    /// Reads the registry from GitHub, applies `change` to this peer's entry (creating it, or
@@ -435,7 +450,17 @@ index 00000000..163b3cfd
 +                    NotificationCenter.default.post(name: AyuVerifiedRegistry.didChangeNotification, object: nil)
 +                    AyuBadgeEditor.notify(ru ? "Готово. У остальных появится в течение ~15 минут." : "Done. Others will see it within ~15 minutes.", ru: ru, present: present)
 +                case let .failure(message):
-+                    AyuBadgeEditor.notify((ru ? "Не удалось сохранить: " : "Couldn't save: ") + message, ru: ru, present: present)
++                    let alert = UIAlertController(title: ru ? "Не удалось сохранить" : "Couldn't save", message: message, preferredStyle: .alert)
++                    alert.addAction(UIAlertAction(title: ru ? "Изменить токен" : "Change token", style: .default, handler: { _ in
++                        AyuBadgeEditor.askToken(ru: ru, present: present, done: {
++                            AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: change)
++                        })
++                    }))
++                    alert.addAction(UIAlertAction(title: ru ? "Удалить токен" : "Remove token", style: .destructive, handler: { _ in
++                        AyuBadgeEditor.deleteToken()
++                    }))
++                    alert.addAction(UIAlertAction(title: "OK", style: .cancel, handler: nil))
++                    present(alert)
 +                }
 +            }
 +        })
@@ -461,14 +486,17 @@ index 00000000..163b3cfd
 +                session.finishTasksAndInvalidate()
 +                return completion(.failure(error?.localizedDescription ?? "network"))
 +            }
-+            guard http.statusCode == 200,
-+                  let file = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
++            guard http.statusCode == 200 else {
++                session.finishTasksAndInvalidate()
++                return completion(.failure(AyuBadgeEditor.explain(status: http.statusCode, data: data, writing: false)))
++            }
++            guard let file = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
 +                  let sha = file["sha"] as? String,
 +                  let encoded = file["content"] as? String,
 +                  let current = Data(base64Encoded: encoded.replacingOccurrences(of: "\n", with: "")),
 +                  var registry = (try? JSONSerialization.jsonObject(with: current)) as? [String: Any] else {
 +                session.finishTasksAndInvalidate()
-+                return completion(.failure("GitHub \(http.statusCode)"))
++                return completion(.failure("GitHub: unexpected file format"))
 +            }
 +            var badges = registry["badges"] as? [[String: Any]] ?? []
 +            let index = badges.firstIndex(where: { ($0["id"] as? NSNumber)?.int64Value == peerId })
@@ -497,21 +525,45 @@ index 00000000..163b3cfd
 +                "branch": "main"
 +            ]
 +            let bodyData = try? JSONSerialization.data(withJSONObject: body)
-+            session.dataTask(with: AyuBadgeEditor.request(url: url, token: token, method: "PUT", body: bodyData), completionHandler: { _, response, error in
++            session.dataTask(with: AyuBadgeEditor.request(url: url, token: token, method: "PUT", body: bodyData), completionHandler: { data, response, error in
 +                session.finishTasksAndInvalidate()
 +                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 +                if status == 200 || status == 201 {
 +                    completion(.success(updated))
-+                } else if status == 409 && attempt == 0 {
++                } else if status == 409 && attempt == 0 && !AyuBadgeEditor.githubMessage(data).lowercased().contains("protected") {
 +                    // Someone committed in between; start again from the new file.
 +                    AyuBadgeEditor.upload(peerId: peerId, token: token, change: change, attempt: 1, completion: completion)
-+                } else if status == 401 || status == 403 {
-+                    completion(.failure("GitHub \(status): токен не подходит / token rejected"))
++                } else if status == 0 {
++                    completion(.failure(error?.localizedDescription ?? "network"))
 +                } else {
-+                    completion(.failure(error?.localizedDescription ?? "GitHub \(status)"))
++                    completion(.failure(AyuBadgeEditor.explain(status: status, data: data, writing: true)))
 +                }
 +            }).resume()
 +        }).resume()
++    }
++
++    private static func githubMessage(_ data: Data?) -> String {
++        guard let data, let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let message = json["message"] as? String else {
++            return ""
++        }
++        return message
++    }
++
++    /// GitHub's own reason plus what to do about it.
++    private static func explain(status: Int, data: Data?, writing: Bool) -> String {
++        let message = AyuBadgeEditor.githubMessage(data)
++        let lowered = message.lowercased()
++        let hint: String
++        if status == 401 {
++            hint = "Токен неверный или истёк. Создай новый и вставь через «Изменить токен»."
++        } else if lowered.contains("protected") || lowered.contains("pull request") || lowered.contains("rule") {
++            hint = "Ветку main защищает правило: в неё нельзя писать напрямую. Разреши своему аккаунту обходить защиту в настройках репозитория (Settings → Branches)."
++        } else if status == 403 || (status == 404 && !writing) {
++            hint = "У токена нет доступа. Нужен fine-grained токен на репозиторий \(AyuBadgeEditor.repository) с правом Contents: Read and write."
++        } else {
++            hint = ""
++        }
++        return ["GitHub \(status)" + (message.isEmpty ? "" : ": " + message), hint].filter { !$0.isEmpty }.joined(separator: "\n\n")
 +    }
 +
 +    private static func request(url: URL, token: String, method: String, body: Data?) -> URLRequest {
@@ -556,10 +608,16 @@ index 00000000..163b3cfd
 +        query[kSecReturnData as String] = true
 +        query[kSecMatchLimit as String] = kSecMatchLimitOne
 +        var result: AnyObject?
-+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data, let token = String(data: data, encoding: .utf8), !token.isEmpty else {
++        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data, let stored = String(data: data, encoding: .utf8) else {
 +            return nil
 +        }
-+        return token
++        // Tokens saved before cleaning existed may still carry a line break or quotes.
++        let token = AyuBadgeEditor.cleanToken(stored)
++        return token.isEmpty ? nil : token
++    }
++
++    private static func deleteToken() {
++        SecItemDelete(AyuBadgeEditor.tokenQuery as CFDictionary)
 +    }
 +
 +    private static func saveToken(_ token: String) {

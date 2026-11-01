@@ -217,15 +217,18 @@ index 59a4322a..b2871de6 100644
      /// Solar-style artwork, are drawn into a centered square of `side` points.
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 new file mode 100644
-index 00000000..50b20ede
+index 00000000..163b3cfd
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,349 @@
 +import Foundation
 +import UIKit
 +import Security
++import Display
 +import TelegramCore
 +import AccountContext
++import EntityKeyboard
++import EmojiStatusSelectionComponent
 +
 +/// The repository owner's badge desk, opened from any profile: hands out an AyuGram for iOS
 +/// badge (custom emoji and text) and the label line under the name, by committing the change to
@@ -236,23 +239,11 @@ index 00000000..50b20ede
 +    private static let registryPath = "assets/ayugram_ios_badges.json"
 +    private static let keychainService = "one.ayugram.badge-editor"
 +
-+    private struct EmojiTemplate {
-+        let title: String
-+        let documentId: Int64?
-+    }
-+
 +    private struct LabelTemplate {
 +        let kind: String
 +        let title: (Bool) -> String
 +        let text: (Bool) -> String
 +    }
-+
-+    private static let emojiTemplates: [EmojiTemplate] = [
-+        EmojiTemplate(title: "Значок команды", documentId: 5208467231670812677),
-+        EmojiTemplate(title: "Звезда", documentId: 5341356487631448969),
-+        EmojiTemplate(title: "🤩", documentId: 5384437509281324514),
-+        EmojiTemplate(title: "Без эмодзи", documentId: nil)
-+    ]
 +
 +    private static let labelTemplates: [LabelTemplate] = [
 +        LabelTemplate(kind: "plugins", title: { ru in ru ? "Создатель плагинов" : "Plugin creator" }, text: { _ in "Этот человек официально подтверждён как создатель плагинов для AyuGram" }),
@@ -264,7 +255,7 @@ index 00000000..50b20ede
 +        return AyuSupportersManager.shared.canManageBadges(accountPeerId: context.account.peerId.id._internalGetInt64Value())
 +    }
 +
-+    static func present(context: AccountContext, peerId: Int64, name: String) {
++    static func present(context: AccountContext, peerId: Int64, name: String, controller: ViewController?) {
 +        guard AyuBadgeEditor.canOpen(context: context) else {
 +            return
 +        }
@@ -275,7 +266,15 @@ index 00000000..50b20ede
 +
 +        let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись AyuGram для iOS" : "AyuGram for iOS badge and label")
 +        sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
-+            AyuBadgeEditor.chooseEmoji(peerId: peerId, ru: ru, present: present)
++            AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present)
++        }))
++        sheet.addAction(UIAlertAction(title: ru ? "Бейдж без эмодзи…" : "Badge without emoji…", style: .default, handler: { _ in
++            AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Покажется стандартный значок разработчика." : "The standard developer mark is shown.", initial: "", ru: ru, present: present, done: { text in
++                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
++                    entry["documentId"] = nil
++                    entry["title"] = text
++                })
++            })
 +        }))
 +        for template in AyuBadgeEditor.labelTemplates {
 +            sheet.addAction(UIAlertAction(title: (ru ? "Надпись: " : "Label: ") + template.title(ru), style: .default, handler: { _ in
@@ -315,7 +314,9 @@ index 00000000..50b20ede
 +
 +    // MARK: Steps
 +
-+    private static func chooseEmoji(peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void) {
++    /// Picks the badge's emoji the way Telegram picks an emoji status: recent emoji and every
++    /// saved custom emoji pack, with search. The text comes next.
++    private static func chooseEmoji(context: AccountContext, controller: ViewController?, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void) {
 +        let currentDocumentId: Int64?
 +        let currentText: String
 +        switch AyuSupportersManager.shared.badge(peerId: peerId) {
@@ -337,36 +338,46 @@ index 00000000..50b20ede
 +                })
 +            })
 +        }
-+        let sheet = AyuBadgeEditor.menu(title: ru ? "Эмодзи бейджа" : "Badge emoji", message: nil)
-+        if let currentDocumentId {
-+            sheet.addAction(UIAlertAction(title: ru ? "Оставить текущий" : "Keep current", style: .default, handler: { _ in
-+                next(currentDocumentId)
-+            }))
++        guard let controller, controller.isViewLoaded else {
++            next(currentDocumentId)
++            return
 +        }
-+        for template in AyuBadgeEditor.emojiTemplates {
-+            sheet.addAction(UIAlertAction(title: template.title, style: .default, handler: { _ in
-+                next(template.documentId)
-+            }))
-+        }
-+        sheet.addAction(UIAlertAction(title: ru ? "Свой ID эмодзи…" : "Custom emoji ID…", style: .default, handler: { _ in
-+            let alert = UIAlertController(title: ru ? "ID эмодзи" : "Emoji ID", message: ru ? "custom_emoji_id премиум-эмодзи (например, из бота @JsonDumpBot)." : "The premium emoji's custom_emoji_id (for example, from @JsonDumpBot).", preferredStyle: .alert)
-+            alert.addTextField(configurationHandler: { field in
-+                field.keyboardType = .numberPad
-+                field.text = currentDocumentId.map { String($0) }
-+            })
-+            alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
-+            alert.addAction(UIAlertAction(title: ru ? "Далее" : "Next", style: .default, handler: { [weak alert] _ in
-+                let raw = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-+                guard let documentId = Int64(raw), documentId > 0 else {
-+                    AyuBadgeEditor.notify(ru ? "Нужен числовой ID эмодзи." : "The emoji ID must be a number.", ru: ru, present: present)
++        // The picker pops out of a point under the navigation bar and flies the pick back to it.
++        let anchor = UIView(frame: CGRect(x: controller.view.bounds.midX - 1.0, y: controller.view.safeAreaInsets.top + 56.0, width: 2.0, height: 2.0))
++        anchor.isUserInteractionEnabled = false
++        controller.view.addSubview(anchor)
++        let picker = EmojiStatusSelectionController(
++            context: context,
++            mode: .backgroundSelection(completion: { [weak anchor] file in
++                anchor?.removeFromSuperview()
++                guard let file, file.fileId.id != 0 else {
 +                    return
 +                }
-+                next(documentId)
-+            }))
-+            present(alert)
-+        }))
-+        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
-+        present(sheet)
++                next(file.fileId.id)
++            }),
++            sourceView: anchor,
++            emojiContent: EmojiPagerContentComponent.emojiInputData(
++                context: context,
++                animationCache: context.animationCache,
++                animationRenderer: context.animationRenderer,
++                isStandalone: false,
++                subject: .emoji,
++                hasTrending: false,
++                topReactionItems: [],
++                areUnicodeEmojiEnabled: false,
++                areCustomEmojiEnabled: true,
++                chatPeerId: context.account.peerId,
++                selectedItems: Set()
++            ),
++            currentSelection: currentDocumentId,
++            destinationItemView: { [weak anchor] in
++                return anchor
++            }
++        )
++        picker.pushController = { [weak controller] c in
++            controller?.push(c)
++        }
++        controller.present(picker, in: .window(.root))
 +    }
 +
 +    private static func askText(title: String, message: String, initial: String, ru: Bool, present: @escaping (UIViewController) -> Void, done: @escaping (String) -> Void) {
@@ -560,7 +571,7 @@ index 00000000..50b20ede
 +    }
 +}
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-index b587d3c1..bd2c32e3 100644
+index b587d3c1..f5953a54 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 @@ -785,6 +785,14 @@ func infoItems(
@@ -572,7 +583,7 @@ index b587d3c1..bd2c32e3 100644
 +                    let ayuPeerId = user.id.id._internalGetInt64Value()
 +                    let ayuName = EnginePeer.user(user).compactDisplayTitle
 +                    items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж AyuGram-IOS…" : "AyuGram-IOS badge…", color: .accent, action: {
-+                        AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName)
++                        AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName, controller: interaction.getController())
 +                    }))
 +                }
                  if let verification = (data.cachedData as? CachedUserData)?.verification {
@@ -586,7 +597,7 @@ index b587d3c1..bd2c32e3 100644
 +            let ayuPeerId = channel.id.id._internalGetInt64Value()
 +            let ayuName = channel.title
 +            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж AyuGram-IOS…" : "AyuGram-IOS badge…", color: .accent, action: {
-+                AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName)
++                AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName, controller: interaction.getController())
 +            }))
 +        }
      } else if case let .legacyGroup(group) = data.peer {

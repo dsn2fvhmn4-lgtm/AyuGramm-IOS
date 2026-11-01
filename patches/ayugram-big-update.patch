@@ -86468,10 +86468,10 @@ index 00000000..ebeccd93
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift
-index c509943f..fa19721a 100644
+index c509943f..4843de2c 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostMode.swift
-@@ -3,6 +3,105 @@ import SwiftSignalKit
+@@ -3,6 +3,80 @@ import SwiftSignalKit
  internal import TelegramApi
  import MtProtoKit
  
@@ -86517,10 +86517,14 @@ index c509943f..fa19721a 100644
 +
 +// Namespace-aware behavior belongs to the Telegram runtime, not the standalone Codable model.
 +extension AyuGhostModeSettings {
-+    public func isExcepted(peerId: Int64) -> Bool {
-+        if self.exceptionPeerIds.contains(peerId) {
-+            return true
++    /// Hands the model the exceptions that need the Telegram runtime (folders, chat types).
++    static func installRuntimeExceptions() {
++        AyuGhostModeSettings.runtimeException = { peerId in
++            return AyuGhostModeSettings.isRuntimeExcepted(peerId: peerId)
 +        }
++    }
++
++    private static func isRuntimeExcepted(peerId: Int64) -> Bool {
 +        // Chats of the folders picked in Privacy → Activity & traces (kept up to date by the app).
 +        let exceptions = AyuGhostExceptionCache.shared.snapshot()
 +        if exceptions.folderPeers.contains(peerId) {
@@ -86543,41 +86547,12 @@ index c509943f..fa19721a 100644
 +        }
 +    }
 +
-+    /// Ghost Mode as it applies inside one chat.
-+    public func isActive(inPeer peerId: Int64) -> Bool {
-+        let value = self.effective(forPeer: peerId)
-+        return value.hideReadReceipts || value.hideTyping || value.hideUploadProgress
-+    }
-+
-+    /// Account policy with this chat's override applied to local signals. A chat switched on or
-+    /// off by hand wins over the type and folder exceptions.
-+    public func effective(forPeer peerId: Int64) -> AyuGhostModeSettings {
-+        var copy = self
-+        if self.enabledPeerIds.contains(peerId) && !self.exceptionPeerIds.contains(peerId) {
-+            copy.hideReadReceipts = true
-+            copy.hideTyping = true
-+            copy.hideUploadProgress = true
-+        } else if self.isExcepted(peerId: peerId) {
-+            copy.hideReadReceipts = false
-+            copy.hideTyping = false
-+            copy.hideUploadProgress = false
-+        }
-+        return copy
-+    }
-+
-+    public func shouldSendSilently(inPeer peerId: Int64) -> Bool {
-+        switch self.silentSendMode {
-+        case .never: return false
-+        case .inGhostMode: return self.isActive(inPeer: peerId) || self.hideOnline
-+        case .always: return true
-+        }
-+    }
 +}
 +
  extension AyuGhostModeStore {
      public var signal: Signal<AyuGhostModeSettings, NoError> {
          return Signal { subscriber in
-@@ -37,9 +136,10 @@ extension Network {
+@@ -37,9 +111,10 @@ extension Network {
  
      /// Only used at cloud history/discussion receipt call sites, never secret-chat or
      /// readMessageContents paths. Completion retires local work without inventing server pts.
@@ -86590,7 +86565,7 @@ index c509943f..fa19721a 100644
                  return .complete()
              }
              return self.request(data)
-@@ -48,6 +148,10 @@ extension Network {
+@@ -48,6 +123,10 @@ extension Network {
  }
  
  func ayuSuppressInputActivity(_ activity: PeerInputActivity, settings: AyuGhostModeSettings) -> Bool {
@@ -86602,7 +86577,7 @@ index c509943f..fa19721a 100644
      case .uploadingFile, .uploadingPhoto, .uploadingVideo, .uploadingInstantVideo:
          return settings.hideUploadProgress
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-index 0099243c..d804a386 100644
+index 0099243c..5eb4c952 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
 @@ -18,6 +18,12 @@ public struct AyuGhostModeSettings: Codable, Equatable {
@@ -86635,7 +86610,7 @@ index 0099243c..d804a386 100644
          do {
              self.plugins = try values.decodeIfPresent(AyuPluginRegistry.self, forKey: .plugins) ?? AyuPluginRegistry()
              try self.plugins.validate()
-@@ -68,6 +77,35 @@ public struct AyuGhostModeSettings: Codable, Equatable {
+@@ -68,6 +77,75 @@ public struct AyuGhostModeSettings: Codable, Equatable {
          return self.hideReadReceipts || self.hideOnline || self.hideTyping || self.hideUploadProgress
      }
  
@@ -86645,6 +86620,46 @@ index 0099243c..d804a386 100644
 +        if excepted { set.insert(peerId) } else { set.remove(peerId) }
 +        // Bounded so a runaway caller cannot grow the settings file without limit.
 +        self.exceptionPeerIds = Array(set).sorted().suffix(2000).map { $0 }
++    }
++
++    /// Exceptions that need the Telegram runtime (folders, chat types); set by TelegramCore.
++    static var runtimeException: ((Int64) -> Bool)?
++
++    public func isExcepted(peerId: Int64) -> Bool {
++        if self.exceptionPeerIds.contains(peerId) {
++            return true
++        }
++        return AyuGhostModeSettings.runtimeException?(peerId) ?? false
++    }
++
++    /// Ghost Mode as it applies inside one chat.
++    public func isActive(inPeer peerId: Int64) -> Bool {
++        let value = self.effective(forPeer: peerId)
++        return value.hideReadReceipts || value.hideTyping || value.hideUploadProgress
++    }
++
++    /// Account policy with this chat's override applied to local signals. A chat switched on or
++    /// off by hand wins over the type and folder exceptions.
++    public func effective(forPeer peerId: Int64) -> AyuGhostModeSettings {
++        var copy = self
++        if self.enabledPeerIds.contains(peerId) && !self.exceptionPeerIds.contains(peerId) {
++            copy.hideReadReceipts = true
++            copy.hideTyping = true
++            copy.hideUploadProgress = true
++        } else if self.isExcepted(peerId: peerId) {
++            copy.hideReadReceipts = false
++            copy.hideTyping = false
++            copy.hideUploadProgress = false
++        }
++        return copy
++    }
++
++    public func shouldSendSilently(inPeer peerId: Int64) -> Bool {
++        switch self.silentSendMode {
++        case .never: return false
++        case .inGhostMode: return self.isActive(inPeer: peerId) || self.hideOnline
++        case .always: return true
++        }
 +    }
 +
 +    public mutating func setChatEnabled(_ enabled: Bool, peerId: Int64) {
@@ -86671,7 +86686,7 @@ index 0099243c..d804a386 100644
      public var shouldSendSilently: Bool {
          switch self.silentSendMode {
          case .never: return false
-@@ -110,10 +148,20 @@ public final class AyuGhostModeStore {
+@@ -110,10 +188,20 @@ public final class AyuGhostModeStore {
          }
      }
  
@@ -86694,7 +86709,7 @@ index 0099243c..d804a386 100644
      }
  
      public func update(_ transform: (inout AyuGhostModeSettings) throws -> Void) throws {
-@@ -159,3 +207,25 @@ public final class AyuGhostModeStore {
+@@ -159,3 +247,25 @@ public final class AyuGhostModeStore {
          self.observers.removeValue(forKey: id)
      }
  }
@@ -88327,10 +88342,18 @@ index 75d6f4f3..067b3229 100644
          } else {
              self.parallelParts = 1
 diff --git a/submodules/TelegramCore/Sources/Network/Network.swift b/submodules/TelegramCore/Sources/Network/Network.swift
-index 9a9c1f95..157bef1b 100644
+index 9a9c1f95..2f43d298 100644
 --- a/submodules/TelegramCore/Sources/Network/Network.swift
 +++ b/submodules/TelegramCore/Sources/Network/Network.swift
-@@ -1376,6 +1376,12 @@ public final class Network: NSObject {
+@@ -1015,6 +1015,7 @@ public final class Network: NSObject {
+         self._connectionStatus = _connectionStatus
+         self.appDataDisposable = appDataDisposable
+         self.basePath = basePath
++        AyuGhostModeSettings.installRuntimeExceptions()
+         self.ayuGhostMode = AyuGhostModeStore(accountPath: basePath)
+         self.useRequestTimeoutTimers = useRequestTimeoutTimers
+         self.baseTcpConnectionInterfaceFactory = baseTcpConnectionInterfaceFactory
+@@ -1376,6 +1377,12 @@ public final class Network: NSObject {
      func requestWithAdditionalInfo<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), info: NetworkRequestAdditionalInfo, tag: NetworkRequestDependencyTag? = nil, automaticFloodWait: Bool = true, onFloodWaitError: ((String) -> Void)? = nil) -> Signal<NetworkRequestResult<T>, MTRpcError> {
          let requestService = self.requestService
          return Signal { [requestService] subscriber in
@@ -88343,7 +88366,7 @@ index 9a9c1f95..157bef1b 100644
              let request = NetworkEngineRequest(
                  payload: data.1.makeData(),
                  metadata: WrappedRequestMetadata(metadata: WrappedFunctionDescription(data.0), tag: tag),
-@@ -1402,6 +1408,9 @@ public final class Network: NSObject {
+@@ -1402,6 +1409,9 @@ public final class Network: NSObject {
                  completed: { result in
                      switch result {
                      case let .success(response):
@@ -88353,7 +88376,7 @@ index 9a9c1f95..157bef1b 100644
                          if let result = (response.result as! BoxedMessage).body as? T {
                              subscriber.putNext(.result(result))
                              subscriber.putCompletion()
-@@ -1410,6 +1419,9 @@ public final class Network: NSObject {
+@@ -1410,6 +1420,9 @@ public final class Network: NSObject {
                              subscriber.putError(MTRpcError(errorCode: 500, errorDescription: "TL_VERIFICATION_ERROR"))
                          }
                      case let .failure(failure):
@@ -88363,7 +88386,7 @@ index 9a9c1f95..157bef1b 100644
                          subscriber.putError(failure.error)
                      }
                  }
-@@ -1422,6 +1434,12 @@ public final class Network: NSObject {
+@@ -1422,6 +1435,12 @@ public final class Network: NSObject {
      func request<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), tag: NetworkRequestDependencyTag? = nil, automaticFloodWait: Bool = true, onFloodWaitError: ((String) -> Void)? = nil) -> Signal<T, MTRpcError> {
          let requestService = self.requestService
          return Signal { [requestService] subscriber in
@@ -88376,7 +88399,7 @@ index 9a9c1f95..157bef1b 100644
              let request = NetworkEngineRequest(
                  payload: data.1.makeData(),
                  metadata: WrappedRequestMetadata(metadata: WrappedFunctionDescription(data.0), tag: tag),
-@@ -1440,6 +1458,9 @@ public final class Network: NSObject {
+@@ -1440,6 +1459,9 @@ public final class Network: NSObject {
                  completed: { result in
                      switch result {
                      case let .success(response):
@@ -88386,7 +88409,7 @@ index 9a9c1f95..157bef1b 100644
                          if let result = (response.result as! BoxedMessage).body as? T {
                              subscriber.putNext(result)
                              subscriber.putCompletion()
-@@ -1448,6 +1469,9 @@ public final class Network: NSObject {
+@@ -1448,6 +1470,9 @@ public final class Network: NSObject {
                              subscriber.putError(MTRpcError(errorCode: 500, errorDescription: "TL_VERIFICATION_ERROR"))
                          }
                      case let .failure(failure):

@@ -66,6 +66,20 @@ class _Profile:
     notes: _PeerValue
     nickname: _PeerValue
 
+class _Media:
+    def process(self, data: str, ops: List[Dict[str, Any]], fn: Callable[[Any], None], format: str = ..., quality: float = ...) -> Any: ...
+    def from_message(self, peer_id: Any, message_id: int, fn: Callable[[Any], None]) -> Any: ...
+    def send_image(self, peer_id: Any, data: str, caption: str = ..., fn: Optional[Callable[[Any], None]] = ...) -> Any: ...
+
+class _TL:
+    def block(self, method: str) -> Any: ...
+    def unblock(self, method: str) -> Any: ...
+    def on_request(self, fn: Callable[[str, Optional[int]], None]) -> bool: ...
+    def on_update(self, fn: Callable[[str], None]) -> bool: ...
+
+class _Gestures:
+    def on(self, kind: str, fn: Callable[[Dict[str, Any]], None]) -> Any: ...
+
 class _Chat:
     def scroll_to(self, message_id: int) -> Any: ...
 
@@ -113,6 +127,9 @@ class _Ayu:
     secrets: _Secrets
     profile: _Profile
     chat: _Chat
+    gestures: _Gestures
+    tl: _TL
+    media: _Media
     bus: _Bus
     i18n: _I18n
     ai: _AI

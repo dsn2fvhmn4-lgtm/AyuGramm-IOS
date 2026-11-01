@@ -63,13 +63,26 @@ declare namespace Ayu {
       showFPS(options: { id: string; anchor?: string; color?: string; size?: number }): void;
       remove(id: string): void;
     };
+    /** A bottom-bar tab showing a plugin screen (permission `screens`; two plugin tabs at most). */
+    tabs: { add(options: { id: string; title: string; icon?: string; screen: Json }): void; remove(id: string): void };
+    /** A panel sliding in from the left with a plugin screen (permission `screens`). */
+    sidebar: { show(screen: Json): void };
+    /** A search screen: queries go to onQuery, answer with setResults(id, rows). Taps send `searchResult` { id, rowId }. */
+    searchBar: {
+      show(options: { id?: string; title?: string; placeholder?: string }, onQuery?: (query: string) => void): void;
+      setResults(id: string, rows: { id: string; title: string; subtitle?: string }[]): void;
+    };
+    /** An emoji in the corner of a chat's avatar in the chat list (permission `badges`). */
+    avatar: { decorate(peerId: string, emoji: string): void; clear(peerId: string): void };
+    /** A colour or two-colour gradient over the chat wallpaper, under the messages (permission `overlay`). */
+    chatBackground: { set(options: { colors: string[]; alpha?: number }): void; reset(): void };
     /** A button over the whole app; the callback runs on tap (permission `overlay`). */
     floatingButton: { add(options: { id: string; icon?: string; title?: string; anchor?: "bottomRight" | "bottomLeft" | "topRight" | "topLeft"; color?: string }, onTap?: () => void): boolean; remove(id: string): void };
     progress: { show(options: { id: string; title?: string; value: number; anchor?: string }): void; hide(id: string): void };
     animation: { play(name?: "confetti" | "snow" | "stars" | "leaves" | "rain", seconds?: number): void };
     font: {
-      /** `weight` applies to regular text in the whole app. */
-      set(options: { element?: "messages" | "lists"; size?: number; weight?: "light" | "regular" | "medium" | "semibold" | "bold" }): void;
+      /** `weight` and `style` apply to regular text in the whole app. */
+      set(options: { element?: "messages" | "lists"; size?: number; weight?: "light" | "regular" | "medium" | "semibold" | "bold"; style?: "normal" | "rounded" | "monospaced" | "italic" }): void;
       reset(element: "messages" | "lists"): void;
     };
     badge: { add(options: { peerId: string; badge: { text: string } }): void; remove(options: { peerId: string }): void };
@@ -125,8 +138,33 @@ declare namespace Ayu {
       notes: { get(peerId: string): string | null; set(peerId: string, value: string | null): void };
       nickname: { get(peerId: string): string | null; set(peerId: string, value: string | null): void };
     };
+    /** On-device image processing; base64 in and out. fromMessage needs `messages.read`, sendImage `messages`. */
+    media: {
+      process(data: string, ops: ({ op: "filter"; name: "mono" | "noir" | "chrome" | "fade" | "instant" | "sepia" | "invert" | "blur" | "sharpen" | "vignette" | "pixellate"; amount?: number } | { op: "resize"; maxSide: number } | { op: "cropSquare" } | { op: "rotate"; degrees: number } | { op: "brightness" | "contrast" | "saturation"; amount: number })[], options?: { format?: "jpeg" | "png"; quality?: number }): Promise<string>;
+      fromMessage(peerId: string, messageId: number): Promise<{ data: string; width: number; height: number }>;
+      sendImage(peerId: string, data: string, caption?: string): Promise<boolean>;
+    };
+    /**
+     * TL hooks, official plugins only. `block` drops presence/read-mark calls before they are sent
+     * (pre_request); `onRequest` (post_request) and `onUpdate` (on_update) report method and update
+     * constructor names, never their contents.
+     */
+    tl: {
+      block(method: string): boolean;
+      unblock(method: string): boolean;
+      onRequest(fn: (method: string, error: number | null) => void): boolean;
+      onUpdate(fn: (constructor: string) => void): boolean;
+    };
+    /** Device gestures: "shake" and "screenshot". */
+    gestures: { on(type: "shake" | "screenshot", fn: (payload: { type: string }) => void): void };
     /** The open chat (permission `ui`). */
-    chat: { scrollTo(messageId: number): void };
+    chat: {
+      scrollTo(messageId: number): void;
+      /** Buttons in the chat bar above the keyboard; the callback gets the open chat's peerId. */
+      toolbar: { add(button: { id: string; title: string; icon?: string }, onTap?: (peerId: string) => void): boolean; remove(id: string): void; filter(options: { words?: string[]; authors?: string[] }): void };
+      /** Hide messages by words or authors in every chat (permission `messages.read`). */
+      filter: { set(options: { words?: string[]; authors?: string[] }): void };
+    };
     /** Dot commands typed in the composer: `.calc 2+2`. Return the text to send, or null to cancel. */
     commands: { register(name: string, description: string, fn: (args: string, ctx: HookContext) => string | null | undefined): void };
     /** Messages between plugins. */

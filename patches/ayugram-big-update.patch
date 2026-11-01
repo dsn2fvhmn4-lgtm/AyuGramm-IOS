@@ -88335,6 +88335,187 @@ index 80a7b214..db64b678 100644
              result.append((section, sectionItems))
          }
      }
+diff --git a/submodules/TelegramUI/Components/Stars/StarsPurchaseScreen/BUILD b/submodules/TelegramUI/Components/Stars/StarsPurchaseScreen/BUILD
+index b1e85960..522d2259 100644
+--- a/submodules/TelegramUI/Components/Stars/StarsPurchaseScreen/BUILD
++++ b/submodules/TelegramUI/Components/Stars/StarsPurchaseScreen/BUILD
+@@ -10,6 +10,7 @@ swift_library(
+         "-warnings-as-errors",
+     ],
+     deps = [
++        "//submodules/BotPaymentsUI:BotPaymentsUI",
+         "//submodules/AsyncDisplayKit",
+         "//submodules/Display",
+         "//submodules/TelegramCore",
+diff --git a/submodules/TelegramUI/Components/Stars/StarsPurchaseScreen/Sources/StarsPurchaseScreen.swift b/submodules/TelegramUI/Components/Stars/StarsPurchaseScreen/Sources/StarsPurchaseScreen.swift
+index e6cb356e..a1c30a81 100644
+--- a/submodules/TelegramUI/Components/Stars/StarsPurchaseScreen/Sources/StarsPurchaseScreen.swift
++++ b/submodules/TelegramUI/Components/Stars/StarsPurchaseScreen/Sources/StarsPurchaseScreen.swift
+@@ -25,6 +25,7 @@ import PremiumStarComponent
+ import BundleIconComponent
+ import ConfettiEffect
+ import ItemShimmeringLoadingComponent
++import BotPaymentsUI
+ 
+ private struct StarsProduct: Equatable {
+     enum Option: Equatable {
+@@ -33,7 +34,9 @@ private struct StarsProduct: Equatable {
+     }
+     
+     let option: Option
+-    let storeProduct: InAppPurchaseManager.Product
++    /// nil when the App Store has no product for this option (a re-signed AyuGram build): the
++    /// option is then paid through Telegram's own payment form, as on Desktop and Android.
++    let storeProduct: InAppPurchaseManager.Product?
+     
+     var count: Int64 {
+         switch self.option {
+@@ -54,11 +57,27 @@ private struct StarsProduct: Equatable {
+     }
+     
+     var id: String {
+-        return self.storeProduct.id
++        return self.storeProduct?.id ?? "ayu.stars.\(self.count)"
++    }
++
++    var currencyAndAmount: (String, Int64) {
++        if let storeProduct = self.storeProduct {
++            return storeProduct.priceCurrencyAndAmount
++        }
++        switch self.option {
++        case let .topUp(option):
++            return (option.currency, option.amount)
++        case let .gift(option):
++            return (option.currency, option.amount)
++        }
+     }
+ 
+     var price: String {
+-        return self.storeProduct.price
++        if let storeProduct = self.storeProduct {
++            return storeProduct.price
++        }
++        let (currency, amount) = self.currencyAndAmount
++        return formatCurrencyAmount(amount, currency: currency)
+     }
+ }
+ 
+@@ -350,7 +369,7 @@ private final class StarsPurchaseScreenContentComponent: CombinedComponent {
+                     ))
+                     
+                     let backgroundComponent: AnyComponent<Empty>?
+-                    if product.storeProduct.id == context.component.selectedProductId {
++                    if product.id == context.component.selectedProductId {
+                         backgroundComponent = AnyComponent(
+                             ItemShimmeringLoadingComponent(
+                                 color: environment.theme.list.itemAccentColor,
+@@ -627,6 +646,8 @@ private final class StarsPurchaseScreenComponent: CombinedComponent {
+                     for option in options {
+                         if let product = availableProducts.first(where: { $0.id == option.storeProductId }) {
+                             products.append(StarsProduct(option: .gift(option), storeProduct: product))
++                        } else {
++                            products.append(StarsProduct(option: .gift(option), storeProduct: nil))
+                         }
+                     }
+                     return products
+@@ -644,6 +665,8 @@ private final class StarsPurchaseScreenComponent: CombinedComponent {
+                     for option in options {
+                         if let product = availableProducts.first(where: { $0.id == option.storeProductId }) {
+                             products.append(StarsProduct(option: .topUp(option), storeProduct: product))
++                        } else {
++                            products.append(StarsProduct(option: .topUp(option), storeProduct: nil))
+                         }
+                     }
+                     return products
+@@ -680,8 +703,60 @@ private final class StarsPurchaseScreenComponent: CombinedComponent {
+             self.paymentDisposable.dispose()
+         }
+         
++        /// Pays through Telegram's payment form (bank card) when the App Store cannot sell the option.
++        private func buyWithPaymentForm(product: StarsProduct) {
++            let source: BotPaymentInvoiceSource
++            switch product.option {
++            case let .topUp(option):
++                source = .stars(option: option, peerId: self.purpose.commercialPeerId)
++            case let .gift(option):
++                guard case let .gift(peerId) = self.purpose else { return }
++                source = .starsGift(peerId: peerId, count: option.count, currency: option.currency, amount: option.amount)
++            }
++            self.progressProduct = product
++            self.updateInProgress(true)
++            self.updated(transition: .easeInOut(duration: 0.2))
++            let context = self.context
++            let finish: () -> Void = { [weak self] in
++                guard let self else { return }
++                self.progressProduct = nil
++                self.updateInProgress(false)
++                self.updated(transition: .easeInOut(duration: 0.2))
++            }
++            self.paymentDisposable.set((context.engine.payments.fetchBotPaymentInvoice(source: source)
++            |> deliverOnMainQueue).start(next: { [weak self] invoice in
++                guard let self else { return }
++                let inputData = Promise<BotCheckoutController.InputData?>()
++                inputData.set(BotCheckoutController.InputData.fetch(context: context, source: source)
++                |> map(Optional.init)
++                |> `catch` { _ -> Signal<BotCheckoutController.InputData?, NoError> in
++                    return .single(nil)
++                })
++                let completion = self.completion
++                let checkout = BotCheckoutController(context: context, invoice: invoice, source: source, inputData: inputData, completed: { _, _ in
++                    finish()
++                    completion(product.count)
++                }, cancelled: {
++                    finish()
++                }, failed: {
++                    finish()
++                })
++                checkout.navigationPresentation = .modal
++                self.present(checkout)
++            }, error: { [weak self] _ in
++                finish()
++                guard let self else { return }
++                let presentationData = context.sharedContext.currentPresentationData.with { $0 }
++                self.present(textAlertController(context: context, title: nil, text: presentationData.strings.Premium_Purchase_ErrorUnknown, actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]))
++            }))
++        }
++
+         func buy(product: StarsProduct) {
+-            guard let inAppPurchaseManager = self.context.inAppPurchaseManager, self.progressProduct == nil else {
++            guard self.progressProduct == nil else {
++                return
++            }
++            guard let storeProduct = product.storeProduct, let inAppPurchaseManager = self.context.inAppPurchaseManager else {
++                self.buyWithPaymentForm(product: product)
+                 return
+             }
+             
+@@ -689,7 +764,7 @@ private final class StarsPurchaseScreenComponent: CombinedComponent {
+             self.updateInProgress(true)
+             self.updated(transition: .easeInOut(duration: 0.2))
+             
+-            let (currency, amount) = product.storeProduct.priceCurrencyAndAmount
++            let (currency, amount) = storeProduct.priceCurrencyAndAmount
+             let purpose: AppStoreTransactionPurpose
+             switch self.purpose {
+             case let .gift(peerId):
+@@ -703,7 +778,7 @@ private final class StarsPurchaseScreenComponent: CombinedComponent {
+                 if let strongSelf = self {
+                     let presentationData = strongSelf.context.sharedContext.currentPresentationData.with { $0 }
+                     if available {
+-                        strongSelf.paymentDisposable.set((inAppPurchaseManager.buyProduct(product.storeProduct, purpose: purpose)
++                        strongSelf.paymentDisposable.set((inAppPurchaseManager.buyProduct(storeProduct, purpose: purpose)
+                         |> deliverOnMainQueue).start(next: { [weak self] status in
+                             if let self, case .purchased = status {
+                                 self.updateInProgress(false)
+@@ -890,7 +965,7 @@ private final class StarsPurchaseScreenComponent: CombinedComponent {
+                         balance: state.starsState?.balance,
+                         options: context.component.options,
+                         purpose: context.component.purpose,
+-                        selectedProductId: state.progressProduct?.storeProduct.id,
++                        selectedProductId: state.progressProduct?.id,
+                         forceDark: context.component.forceDark,
+                         products: state.products,
+                         expanded: state.isExpanded,
 diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
 index 4db2bc43..dcc5bc5b 100644
 --- a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift

@@ -42661,10 +42661,10 @@ index 00000000..eb8ebd67
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuExtrasController.swift b/submodules/SettingsUI/Sources/AyuExtrasController.swift
 new file mode 100644
-index 00000000..27293948
+index 00000000..249be595
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuExtrasController.swift
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,152 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -42745,6 +42745,17 @@ index 00000000..27293948
 +            context.sharedContext.applicationBindings.presentNativeController(alert)
 +            return
 +        }
++        if id == 39 {
++            context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: AyuHistoryFeedController(context: context)))
++            return
++        }
++        if id == 35 {
++            let steps = [0, 3, 5, 7, 10]
++            let current = UserDefaults.standard.integer(forKey: "ayu.extra.undoSendSeconds")
++            UserDefaults.standard.set(steps[((steps.firstIndex(of: current) ?? 0) + 1) % steps.count], forKey: "ayu.extra.undoSendSeconds")
++            NotificationCenter.default.post(name: AyuExtras.didChangeNotification, object: nil)
++            return
++        }
 +        if id == 38 {
 +            let _ = (context.engine.messages.ayuExportHistory() |> deliverOnMainQueue).startStandalone(next: { data in
 +                guard let data else { return }
@@ -42790,9 +42801,12 @@ index 00000000..27293948
 +        let threads = UserDefaults.standard.integer(forKey: "ayu.extra.downloadThreads")
 +        entries.insert(.link(2, 12, AyuSettingsIcons.symbol("arrow.down.circle.fill", color: UIColor(rgb: 0x007AFF)), ru ? "Скорость загрузки (потоки)" : "Download speed (threads)", threads == 0 ? (ru ? "стандарт" : "default") : "\(threads)"), at: entries.firstIndex(where: { $0.stableId > 12 }) ?? entries.count)
 +        entries.insert(.info(3, 29, ru ? "В меню плеера (⋯ у текста) также есть таймер сна и эквалайзер." : "The player menu (⋯ next to the lyrics) also has a sleep timer and the equalizer."), at: entries.firstIndex(where: { $0.stableId > 29 }) ?? entries.count)
++        let undoSeconds = UserDefaults.standard.integer(forKey: "ayu.extra.undoSendSeconds")
++        entries.append(.link(4, 35, AyuSettingsIcons.symbol("arrow.uturn.backward.circle.fill", color: UIColor(rgb: 0x34C759)), ru ? "Отмена отправки" : "Undo send", undoSeconds == 0 ? (ru ? "выкл." : "off") : (ru ? "\(undoSeconds) с" : "\(undoSeconds) s")))
 +        entries.append(.link(4, 36, AyuSettingsIcons.symbol("trash.fill", color: UIColor(rgb: 0xFF3B30)), ru ? "Очистить сохранённые удалённые" : "Clear saved deleted", ""))
 +        entries.append(.link(4, 37, AyuSettingsIcons.symbol("eraser.fill", color: UIColor(rgb: 0xFF9500)), ru ? "Очистить сохранённые изменённые" : "Clear saved edits", ""))
 +        entries.append(.link(4, 38, AyuSettingsIcons.symbol("square.and.arrow.up.fill", color: UIColor(rgb: 0x007AFF)), ru ? "Экспорт удалённых и изменённых" : "Export deleted and edited", "JSON"))
++        entries.append(.link(4, 39, AyuSettingsIcons.symbol("list.bullet.rectangle.portrait.fill", color: UIColor(rgb: 0xAF52DE)), ru ? "Лента удалённых и изменённых" : "Deleted and edited feed", ru ? "поиск" : "search"))
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Приватность и мелочи" : "Privacy & extras"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
@@ -43341,6 +43355,287 @@ index e2236c5f..c4f64303 100644
      return controller
  }
  
+diff --git a/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift b/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift
+new file mode 100644
+index 00000000..4c4435cc
+--- /dev/null
++++ b/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift
+@@ -0,0 +1,275 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++
++/// Word-level difference between two texts (LCS over words and the spaces between them).
++enum AyuTextDiff {
++    enum Part: Equatable {
++        case same(String)
++        case removed(String)
++        case added(String)
++    }
++
++    static func tokens(_ text: String) -> [String] {
++        var result: [String] = []
++        var current = ""
++        var currentIsSpace: Bool?
++        for character in text {
++            let isSpace = character.isWhitespace
++            if let state = currentIsSpace, state != isSpace {
++                result.append(current)
++                current = ""
++            }
++            current.append(character)
++            currentIsSpace = isSpace
++        }
++        if !current.isEmpty {
++            result.append(current)
++        }
++        return result
++    }
++
++    static func diff(_ old: String, _ new: String) -> [Part] {
++        let a = tokens(old)
++        let b = tokens(new)
++        // Very long texts fall back to "all removed / all added" to keep the table small.
++        guard a.count * b.count <= 400_000 else {
++            return [.removed(old), .added(new)]
++        }
++        var table = [[Int]](repeating: [Int](repeating: 0, count: b.count + 1), count: a.count + 1)
++        for i in stride(from: a.count - 1, through: 0, by: -1) {
++            for j in stride(from: b.count - 1, through: 0, by: -1) {
++                table[i][j] = a[i] == b[j] ? table[i + 1][j + 1] + 1 : max(table[i + 1][j], table[i][j + 1])
++            }
++        }
++        var parts: [Part] = []
++        func push(_ part: Part) {
++            switch (parts.last, part) {
++            case let (.same(x)?, .same(y)): parts[parts.count - 1] = .same(x + y)
++            case let (.removed(x)?, .removed(y)): parts[parts.count - 1] = .removed(x + y)
++            case let (.added(x)?, .added(y)): parts[parts.count - 1] = .added(x + y)
++            default: parts.append(part)
++            }
++        }
++        var i = 0
++        var j = 0
++        while i < a.count && j < b.count {
++            if a[i] == b[j] {
++                push(.same(a[i]))
++                i += 1
++                j += 1
++            } else if table[i + 1][j] >= table[i][j + 1] {
++                push(.removed(a[i]))
++                i += 1
++            } else {
++                push(.added(b[j]))
++                j += 1
++            }
++        }
++        while i < a.count {
++            push(.removed(a[i]))
++            i += 1
++        }
++        while j < b.count {
++            push(.added(b[j]))
++            j += 1
++        }
++        return parts
++    }
++
++    static func attributed(_ parts: [Part], font: UIFont) -> NSAttributedString {
++        let result = NSMutableAttributedString()
++        for part in parts {
++            switch part {
++            case let .same(text):
++                result.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: UIColor.label]))
++            case let .removed(text):
++                result.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: UIColor.systemRed, .strikethroughStyle: NSUnderlineStyle.single.rawValue, .backgroundColor: UIColor.systemRed.withAlphaComponent(0.12)]))
++            case let .added(text):
++                result.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: UIColor.systemGreen, .backgroundColor: UIColor.systemGreen.withAlphaComponent(0.14)]))
++            }
++        }
++        return result
++    }
++}
++
++/// Every saved deleted and edited message across chats, with search and filters.
++final class AyuHistoryFeedController: UITableViewController, UISearchResultsUpdating {
++    private let context: AccountContext
++    private let russian: Bool
++    private var records: [AyuMessageHistoryRecord] = []
++    private var shown: [AyuMessageHistoryRecord] = []
++    private var titles: [Int64: String] = [:]
++    private let filter = UISegmentedControl()
++    private let search = UISearchController(searchResultsController: nil)
++    private var disposable: Disposable?
++
++    init(context: AccountContext) {
++        self.context = context
++        self.russian = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        super.init(style: .insetGrouped)
++        self.title = self.russian ? "Удалённые и изменённые" : "Deleted and edited"
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        self.disposable?.dispose()
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        for (index, title) in (self.russian ? ["Все", "Удалённые", "Изменённые"] : ["All", "Deleted", "Edited"]).enumerated() {
++            self.filter.insertSegment(withTitle: title, at: index, animated: false)
++        }
++        self.filter.selectedSegmentIndex = 0
++        self.filter.addTarget(self, action: #selector(self.refilter), for: .valueChanged)
++        self.navigationItem.titleView = self.filter
++        self.search.searchResultsUpdater = self
++        self.search.obscuresBackgroundDuringPresentation = false
++        self.search.searchBar.placeholder = self.russian ? "Текст или чат" : "Text or chat"
++        self.navigationItem.searchController = self.search
++        self.navigationItem.hidesSearchBarWhenScrolling = false
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(self.close))
++        self.tableView.register(UITableViewCell.self, forCellReuseIdentifier: "record")
++
++        let context = self.context
++        self.disposable = (context.engine.messages.ayuMessageHistory()
++        |> mapToSignal { state -> Signal<(AyuMessageHistoryState, [Int64: String]), NoError> in
++            let peerIds = Array(Set(state.records.map { EnginePeer.Id($0.peerId) }))
++            return context.engine.data.get(EngineDataMap(peerIds.map(TelegramEngine.EngineData.Item.Peer.Peer.init(id:))))
++            |> map { peers -> (AyuMessageHistoryState, [Int64: String]) in
++                var titles: [Int64: String] = [:]
++                for (id, peer) in peers {
++                    if let peer {
++                        titles[id.toInt64()] = peer.debugDisplayTitle
++                    }
++                }
++                return (state, titles)
++            }
++        }
++        |> deliverOnMainQueue).startStrict(next: { [weak self] state, titles in
++            guard let self else { return }
++            self.records = state.records.sorted(by: { $0.capturedAt > $1.capturedAt })
++            self.titles = titles
++            self.refilter()
++        })
++    }
++
++    @objc private func close() {
++        self.dismiss(animated: true)
++    }
++
++    @objc private func refilter() {
++        let query = (self.search.searchBar.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
++        let kind: AyuMessageHistoryRecord.Kind? = self.filter.selectedSegmentIndex == 1 ? .deleted : (self.filter.selectedSegmentIndex == 2 ? .edited : nil)
++        self.shown = self.records.filter { record in
++            if let kind, record.kind != kind {
++                return false
++            }
++            if query.isEmpty {
++                return true
++            }
++            return record.text.lowercased().contains(query) || (self.titles[record.peerId]?.lowercased().contains(query) ?? false)
++        }
++        self.tableView.reloadData()
++    }
++
++    func updateSearchResults(for searchController: UISearchController) {
++        self.refilter()
++    }
++
++    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
++        return max(1, self.shown.count)
++    }
++
++    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        guard !self.shown.isEmpty else {
++            cell.textLabel?.text = self.russian ? "Пока пусто: включите сохранение удалённых и изменённых в AyuGram → История." : "Nothing yet: turn on saving deleted and edited messages in AyuGram → History."
++            cell.textLabel?.numberOfLines = 0
++            cell.textLabel?.textColor = .secondaryLabel
++            cell.selectionStyle = .none
++            return cell
++        }
++        let record = self.shown[indexPath.row]
++        let date = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(record.capturedAt)), dateStyle: .short, timeStyle: .short)
++        let marker = record.kind == .deleted ? "🗑" : "✏️"
++        cell.textLabel?.text = marker + " " + (record.text.isEmpty ? (self.russian ? "(медиа)" : "(media)") : record.text)
++        cell.textLabel?.numberOfLines = 3
++        cell.detailTextLabel?.text = (self.titles[record.peerId] ?? String(record.peerId)) + " · " + date
++        cell.detailTextLabel?.textColor = .secondaryLabel
++        cell.accessoryType = .disclosureIndicator
++        return cell
++    }
++
++    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
++        tableView.deselectRow(at: indexPath, animated: true)
++        guard indexPath.row < self.shown.count else { return }
++        let record = self.shown[indexPath.row]
++        let peerId = EnginePeer.Id(record.peerId)
++        let messageId = EngineMessage.Id(peerId: peerId, namespace: Namespaces.Message.Cloud, id: record.messageId)
++        let _ = (self.context.engine.data.get(TelegramEngine.EngineData.Item.Messages.Message(id: messageId))
++        |> deliverOnMainQueue).startStandalone(next: { [weak self] message in
++            guard let self else { return }
++            self.navigationController?.pushViewController(AyuHistoryRecordDiffController(record: record, currentText: record.kind == .edited ? message?.text : nil, chatTitle: self.titles[record.peerId], russian: self.russian), animated: true)
++        })
++    }
++}
++
++/// One record: the saved text, and for an edit the word-level difference to the current text.
++final class AyuHistoryRecordDiffController: UIViewController {
++    private let record: AyuMessageHistoryRecord
++    private let currentText: String?
++    private let chatTitle: String?
++    private let russian: Bool
++
++    init(record: AyuMessageHistoryRecord, currentText: String?, chatTitle: String?, russian: Bool) {
++        self.record = record
++        self.currentText = currentText
++        self.chatTitle = chatTitle
++        self.russian = russian
++        super.init(nibName: nil, bundle: nil)
++        self.title = chatTitle ?? (russian ? "Сообщение" : "Message")
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    override func viewDidLoad() {
++        super.viewDidLoad()
++        self.view.backgroundColor = .systemGroupedBackground
++        let textView = UITextView()
++        textView.isEditable = false
++        textView.backgroundColor = .secondarySystemGroupedBackground
++        textView.layer.cornerRadius = 12.0
++        textView.textContainerInset = UIEdgeInsets(top: 14.0, left: 12.0, bottom: 14.0, right: 12.0)
++        textView.translatesAutoresizingMaskIntoConstraints = false
++        let font = UIFont.preferredFont(forTextStyle: .body)
++        let header = NSMutableAttributedString(string: (self.record.kind == .deleted ? (self.russian ? "Удалённое сообщение\n\n" : "Deleted message\n\n") : (self.russian ? "Правка: красным — было, зелёным — стало\n\n" : "Edit: red is before, green is after\n\n")), attributes: [.font: UIFont.preferredFont(forTextStyle: .footnote), .foregroundColor: UIColor.secondaryLabel])
++        if self.record.kind == .edited, let currentText = self.currentText {
++            header.append(AyuTextDiff.attributed(AyuTextDiff.diff(self.record.text, currentText), font: font))
++        } else {
++            header.append(NSAttributedString(string: self.record.text, attributes: [.font: font, .foregroundColor: UIColor.label]))
++        }
++        textView.attributedText = header
++        self.view.addSubview(textView)
++        NSLayoutConstraint.activate([
++            textView.topAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.topAnchor, constant: 16.0),
++            textView.leadingAnchor.constraint(equalTo: self.view.leadingAnchor, constant: 16.0),
++            textView.trailingAnchor.constraint(equalTo: self.view.trailingAnchor, constant: -16.0),
++            textView.bottomAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.bottomAnchor, constant: -16.0)
++        ])
++        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "doc.on.doc"), style: .plain, target: self, action: #selector(self.copyText))
++    }
++
++    @objc private func copyText() {
++        UIPasteboard.general.string = self.record.text
++    }
++}
 diff --git a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift b/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
 index 9743501e..496d3a52 100644
 --- a/submodules/SettingsUI/Sources/AyuHostedNavigationScreen.swift
@@ -51959,10 +52254,10 @@ index 00000000..8e070628
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
 new file mode 100644
-index 00000000..cbf8dc26
+index 00000000..2ae2444e
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,244 @@
 +import Foundation
 +import UIKit
 +import SwiftSignalKit
@@ -51971,6 +52266,18 @@ index 00000000..cbf8dc26
 +import AccountContext
 +import ChatInterfaceState
 +import ChatPresentationInterfaceState
++
++/// AyuGram "Undo send": messages wait a few seconds with an Undo button before they are enqueued.
++enum AyuUndoSend {
++    static let key = "ayu.extra.undoSendSeconds"
++    static let steps = [0, 3, 5, 7, 10]
++    /// Set while the delayed messages are finally sent, so they are not delayed again.
++    static var bypass = false
++
++    static var seconds: Int {
++        return AyuDecoyMode.isActive ? 0 : UserDefaults.standard.integer(forKey: key)
++    }
++}
 +
 +/// The chat on screen, for `ayu.composer.setText`.
 +enum AyuPluginChatTracker {
@@ -52897,7 +53204,7 @@ index 34bbb294..be09c205 100644
                  self.ayuGhostBarButton = UIBarButtonItem(image: enabled ? ayuGhostNavigationImage : ayuGhostNavigationOffImage, style: .plain, target: self, action: #selector(self.ayuGhostButtonPressed))
                  self.ayuGhostButtonEnabled = enabled
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index ac8d62e4..5a566c25 100644
+index ac8d62e4..98fcf449 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
 @@ -7911,7 +7911,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
@@ -52958,6 +53265,47 @@ index ac8d62e4..5a566c25 100644
              self.updateRightNavigationButtons(presentationInterfaceState: self.presentationInterfaceState, transition: .immediate)
          } catch {
              let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+@@ -9249,6 +9280,40 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             return
+         }
+ 
++        // AyuGram "Undo send": hold the messages for a few seconds with an Undo button.
++        let ayuUndoSeconds = AyuUndoSend.seconds
++        if ayuUndoSeconds > 0 && !AyuUndoSend.bypass && !postpone && peerId.namespace != Namespaces.Peer.SecretChat {
++            let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
++            var undone = false
++            let controller = UndoOverlayController(presentationData: self.presentationData, content: .info(title: nil, text: ru ? "Отправка через \(ayuUndoSeconds) с" : "Sending in \(ayuUndoSeconds) s", timeout: Double(ayuUndoSeconds), customUndoText: ru ? "Отменить" : "Undo"), elevatedLayout: false, action: { [weak self] action in
++                guard let self else {
++                    return false
++                }
++                switch action {
++                case .undo:
++                    undone = true
++                    for message in messages {
++                        if case let .message(text, _, _, _, _, _, _, _, _, _) = message, !text.isEmpty {
++                            self.ayuSetInputText(text)
++                            break
++                        }
++                    }
++                case .commit:
++                    if !undone {
++                        undone = true
++                        AyuUndoSend.bypass = true
++                        self.sendMessages(messages, media: media, postpone: postpone, commit: commit)
++                        AyuUndoSend.bypass = false
++                    }
++                case .info:
++                    break
++                }
++                return true
++            })
++            self.present(controller, in: .current)
++            return
++        }
++
+         let _ = (self.shouldDivertMessagesToScheduled(messages: messages)
+         |> deliverOnMainQueue).startStandalone(next: { [weak self] shouldDivert in
+             guard let self else {
 diff --git a/submodules/TelegramUI/Sources/ChatControllerContentData.swift b/submodules/TelegramUI/Sources/ChatControllerContentData.swift
 index 002e1ee8..c91eeb49 100644
 --- a/submodules/TelegramUI/Sources/ChatControllerContentData.swift

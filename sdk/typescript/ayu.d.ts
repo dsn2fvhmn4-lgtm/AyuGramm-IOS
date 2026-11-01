@@ -106,7 +106,20 @@ declare namespace Ayu {
       edit(options: { peerId: string; messageId: string; text: string }): Promise<boolean>;
       react(options: { peerId: string; messageId: string; emoji: string }): Promise<boolean>;
       get(options: { peerId: string; limit?: number }): Promise<Message[]>;
+      /** Local bookmarks (this device): list needs `messages.read`, add/remove need `messages`. */
+      bookmarks: {
+        list(): { peerId: string; messageId: number; text: string; chat: string; tag: string; savedAt: number }[];
+        add(options: { peerId: string; messageId: number; text?: string; chat?: string; tag?: string }): void;
+        remove(peerId: string, messageId: number): void;
+      };
     };
+    /** Local note and nickname of a person (this device; get: `messages.read`, set: `messages`). */
+    profile: {
+      notes: { get(peerId: string): string | null; set(peerId: string, value: string | null): void };
+      nickname: { get(peerId: string): string | null; set(peerId: string, value: string | null): void };
+    };
+    /** The open chat (permission `ui`). */
+    chat: { scrollTo(messageId: number): void };
     /** Dot commands typed in the composer: `.calc 2+2`. Return the text to send, or null to cancel. */
     commands: { register(name: string, description: string, fn: (args: string, ctx: HookContext) => string | null | undefined): void };
     /** Messages between plugins. */
@@ -117,7 +130,8 @@ declare namespace Ayu {
     /** A full page drawn by AyuGram; taps arrive as the `screenAction` event { screenId, rowId, value }. */
     screens: { show(screen: { id: string; title: string; sections: ScreenSection[] }): void };
     /** Buttons above the keyboard; taps arrive as `composerButton` { id, text } (permission `composer`). */
-    composer: { addButton(button: { id: string; title: string; icon?: string }): void; removeButton(id: string): void; setText(text: string): void };
+    /** Buttons above the keyboard; a tap sends the `composerButton` event { id, text, selection, selectionStart, selectionEnd }. */
+    composer: { addButton(button: { id: string; title: string; icon?: string }): void; removeButton(id: string): void; setText(text: string): void; replaceSelection(text: string): void };
     /** Local scheduling: runs while the app is open. */
     scheduler: { daily(time: string, fn: () => void): number; at(date: Date | number, fn: () => void): number; cancel(id: number): void };
     files: { export(name: string, text: string): void };

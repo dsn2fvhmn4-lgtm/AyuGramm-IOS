@@ -1,0 +1,34 @@
+name: Plugin API tests
+
+on:
+  push:
+    paths:
+      - "patches/**"
+      - "tools/mock-runner/**"
+  pull_request:
+    paths:
+      - "patches/**"
+      - "tools/mock-runner/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ayu-plugin-api-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prelude:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Prelude tests and API fuzzing
+        working-directory: tools/mock-runner
+        env:
+          FUZZ_ITERATIONS: "20000"
+        run: node --test prelude.test.ts fuzz.test.ts

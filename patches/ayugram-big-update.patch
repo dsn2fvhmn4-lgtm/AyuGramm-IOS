@@ -40566,10 +40566,10 @@ index 00000000..e938d56d
 +}
 diff --git a/submodules/Display/Source/AyuExtras.swift b/submodules/Display/Source/AyuExtras.swift
 new file mode 100644
-index 00000000..25684fd9
+index 00000000..0ae25f31
 --- /dev/null
 +++ b/submodules/Display/Source/AyuExtras.swift
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,145 @@
 +import Foundation
 +import UIKit
 +import ImageIO
@@ -40615,6 +40615,8 @@ index 00000000..25684fd9
 +        case notifyDeleted
 +        /// No warnings for punycode or mixed-alphabet links.
 +        case antiScamOff
++        /// Reacting to a message marks the chat read (ghost mode's read-after-send for reactions).
++        case readAfterReaction
 +        /// A voice or video message stops at its end instead of playing the next one.
 +        case noAutoplayNextVoice
 +    }
@@ -41020,10 +41022,10 @@ index 00000000..6272d723
 +}
 diff --git a/submodules/Display/Source/AyuOverlayEffects.swift b/submodules/Display/Source/AyuOverlayEffects.swift
 new file mode 100644
-index 00000000..eefcddc7
+index 00000000..0f462b53
 --- /dev/null
 +++ b/submodules/Display/Source/AyuOverlayEffects.swift
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,399 @@
 +import Foundation
 +import UIKit
 +
@@ -41110,7 +41112,8 @@ index 00000000..eefcddc7
 +
 +    /// The user's own effect, kept apart from plugin overlays.
 +    public func applySettings() {
-+        if AyuOverlayEffects.effect == .none {
++        // Snow is drawn in the chat background, under the messages (AyuChatBackgroundSnowView).
++        if AyuOverlayEffects.effect == .none || AyuOverlayEffects.effect == .snow {
 +            self.removeParticles(id: "ayu.settings")
 +        } else {
 +            self.setParticles(id: "ayu.settings", Particles(effect: AyuOverlayEffects.effect, amount: AyuOverlayEffects.amount, speed: AyuOverlayEffects.speed))
@@ -41236,7 +41239,7 @@ index 00000000..eefcddc7
 +        }
 +    }
 +
-+    private func cell(_ value: Particles) -> CAEmitterCell {
++    fileprivate func cell(_ value: Particles) -> CAEmitterCell {
 +        let cell = CAEmitterCell()
 +        let amount = Float(max(0.1, min(3.0, value.amount)))
 +        let speed = CGFloat(max(0.2, min(3.0, value.speed)))
@@ -41246,16 +41249,17 @@ index 00000000..eefcddc7
 +        cell.emissionRange = .pi / 8.0
 +        switch value.effect {
 +        case .snow:
-+            cell.birthRate = 6.0 * amount
-+            cell.velocity = 45.0 * speed
-+            cell.velocityRange = 20.0 * speed
-+            cell.yAcceleration = 8.0 * speed
-+            cell.xAcceleration = 3.0
-+            cell.scale = 0.35
-+            cell.scaleRange = 0.25
++            // Plain soft white dots of different sizes, drifting slowly.
++            cell.birthRate = 10.0 * amount
++            cell.velocity = 35.0 * speed
++            cell.velocityRange = 18.0 * speed
++            cell.yAcceleration = 6.0 * speed
++            cell.xAcceleration = 2.0
++            cell.emissionRange = .pi / 6.0
++            cell.scale = 0.5
++            cell.scaleRange = 0.35
++            cell.alpha = 0.85
 +            cell.alphaRange = 0.4
-+            cell.spin = 0.3
-+            cell.spinRange = 0.6
 +        case .leaves:
 +            cell.birthRate = 2.0 * amount
 +            cell.velocity = 40.0 * speed
@@ -41308,7 +41312,15 @@ index 00000000..eefcddc7
 +        let symbol: String
 +        let tint: UIColor
 +        switch effect {
-+        case .snow: symbol = "snowflake"; tint = color ?? UIColor(white: 1.0, alpha: 0.9)
++        case .snow:
++            let size = CGSize(width: 10.0, height: 10.0)
++            let dotColor = color ?? .white
++            return UIGraphicsImageRenderer(size: size).image { context in
++                let colors = [dotColor.cgColor, dotColor.withAlphaComponent(0.0).cgColor] as CFArray
++                if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0.45, 1.0]) {
++                    context.cgContext.drawRadialGradient(gradient, startCenter: CGPoint(x: 5.0, y: 5.0), startRadius: 0.0, endCenter: CGPoint(x: 5.0, y: 5.0), endRadius: 5.0, options: [])
++                }
++            }
 +        case .leaves: symbol = "leaf.fill"; tint = color ?? UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 0.9)
 +        case .rain:
 +            let size = CGSize(width: 2.0, height: 18.0)
@@ -41344,6 +41356,73 @@ index 00000000..eefcddc7
 +extension AyuOverlayEffects {
 +    fileprivate func layoutChanged() {
 +        self.relayout()
++    }
++}
++
++/// The "Snow" effect as plain white dots in a chat's wallpaper, below the messages.
++/// Added into the chat background view; follows its size, never takes touches.
++public final class AyuChatBackgroundSnowView: UIView {
++    private let emitter = CAEmitterLayer()
++    private var observers: [NSObjectProtocol] = []
++
++    public override init(frame: CGRect) {
++        super.init(frame: frame)
++        self.isUserInteractionEnabled = false
++        self.backgroundColor = .clear
++        self.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        self.emitter.emitterShape = .line
++        self.emitter.renderMode = .unordered
++        self.layer.addSublayer(self.emitter)
++        for name in [AyuOverlayEffects.didChangeNotification, UIAccessibility.reduceMotionStatusDidChangeNotification] {
++            self.observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { [weak self] _ in
++                self?.update()
++            }))
++        }
++        self.update()
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        for observer in self.observers {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++
++    public override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
++        return nil
++    }
++
++    private var isOn = false
++
++    private func update() {
++        let on = AyuOverlayEffects.effect == .snow && !UIAccessibility.isReduceMotionEnabled
++        self.isHidden = !on
++        if on {
++            self.emitter.emitterCells = [AyuOverlayEffects.shared.cell(AyuOverlayEffects.Particles(effect: .snow, amount: AyuOverlayEffects.amount, speed: AyuOverlayEffects.speed))]
++            if !self.isOn {
++                // Start already filled instead of waiting for the first dots to fall in.
++                self.emitter.beginTime = CACurrentMediaTime() - 10.0
++            }
++            self.emitter.birthRate = 1.0
++        } else {
++            self.emitter.birthRate = 0.0
++            self.emitter.emitterCells = nil
++        }
++        self.isOn = on
++    }
++
++    public override func layoutSubviews() {
++        super.layoutSubviews()
++        let bounds = self.bounds
++        CATransaction.begin()
++        CATransaction.setDisableActions(true)
++        self.emitter.frame = bounds
++        self.emitter.emitterPosition = CGPoint(x: bounds.midX, y: -10.0)
++        self.emitter.emitterSize = CGSize(width: bounds.width * 1.3, height: 1.0)
++        CATransaction.commit()
 +    }
 +}
 diff --git a/submodules/Display/Source/AyuPeerNotes.swift b/submodules/Display/Source/AyuPeerNotes.swift
@@ -41584,6 +41663,52 @@ index 00000000..9809f9ba
 +        return self.rows.contains(where: { row in
 +            row.section == section && hidden.contains(row.key) && (itemId == AnyHashable(Int(row.itemId)) || itemId == AnyHashable(row.itemId))
 +        })
++    }
++}
+diff --git a/submodules/Display/Source/AyuShadowBan.swift b/submodules/Display/Source/AyuShadowBan.swift
+new file mode 100644
+index 00000000..f5191777
+--- /dev/null
++++ b/submodules/Display/Source/AyuShadowBan.swift
+@@ -0,0 +1,40 @@
++import Foundation
++
++/// Shadow ban (AyuGram Desktop): messages of chosen people disappear from groups and channels
++/// on this device. They are still delivered; nothing is reported to anyone.
++public enum AyuShadowBan {
++    public static let didChangeNotification = Notification.Name("AyuGram.ShadowBanChanged")
++    private static let key = "ayu.shadowBan.users"
++    private static let lock = NSLock()
++    private static var cache: Set<Int64>?
++
++    public static var users: Set<Int64> {
++        lock.lock(); defer { lock.unlock() }
++        if cache == nil {
++            cache = Set((UserDefaults.standard.array(forKey: key) as? [NSNumber] ?? []).map { $0.int64Value })
++        }
++        return AyuDecoyMode.isActive ? [] : cache!
++    }
++
++    public static func contains(_ userId: Int64) -> Bool {
++        return users.contains(userId)
++    }
++
++    public static func set(_ userId: Int64, _ banned: Bool) {
++        lock.lock()
++        var value = cache ?? Set((UserDefaults.standard.array(forKey: key) as? [NSNumber] ?? []).map { $0.int64Value })
++        if banned { value.insert(userId) } else { value.remove(userId) }
++        cache = value
++        UserDefaults.standard.set(value.sorted().map { NSNumber(value: $0) }, forKey: key)
++        lock.unlock()
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
++    }
++
++    public static func clear() {
++        lock.lock()
++        cache = []
++        UserDefaults.standard.removeObject(forKey: key)
++        lock.unlock()
++        NotificationCenter.default.post(name: didChangeNotification, object: nil)
 +    }
 +}
 diff --git a/submodules/Display/Source/AyuTextShortcuts.swift b/submodules/Display/Source/AyuTextShortcuts.swift
@@ -42327,7 +42452,7 @@ index 9145478f..d351812a 100644
              
 diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
 new file mode 100644
-index 00000000..b01baa2a
+index 00000000..1624df26
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
 @@ -0,0 +1,144 @@
@@ -42465,7 +42590,7 @@ index 00000000..b01baa2a
 +            entries.append(.link(5, AyuAppearancePlusRow.effectAmount.rawValue, symbol("circle.grid.3x3.fill", 0xAF52DE), ru ? "Количество" : "Amount", String(format: "%g×", AyuOverlayEffects.amount)))
 +            entries.append(.link(5, AyuAppearancePlusRow.effectSpeed.rawValue, symbol("wind", 0x34C759), ru ? "Скорость" : "Speed", String(format: "%g×", AyuOverlayEffects.speed)))
 +        }
-+        entries.append(.info(5, AyuAppearancePlusRow.effectsInfo.rawValue, ru ? "Снег, листья и другие эффекты падают поверх всего приложения и не мешают нажатиям. При включённом «Уменьшении движения» в iOS эффекты не показываются." : "Snow, leaves and other effects fall over the whole app and never block taps. With iOS Reduce Motion on, effects are hidden."))
++        entries.append(.info(5, AyuAppearancePlusRow.effectsInfo.rawValue, ru ? "Снег — белые точки на фоне чата, под сообщениями. Листья и другие эффекты падают поверх приложения и не мешают нажатиям. При включённом «Уменьшении движения» в iOS эффекты не показываются." : "Snow is white dots in the chat background, under the messages. Leaves and other effects fall over the app and never block taps. With iOS Reduce Motion on, effects are hidden."))
 +        let data = ItemListPresentationData(presentationData)
 +        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Оформление+" : "Appearance+"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
 +        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
@@ -43703,10 +43828,10 @@ index 00000000..eb8ebd67
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuExtrasController.swift b/submodules/SettingsUI/Sources/AyuExtrasController.swift
 new file mode 100644
-index 00000000..f9051d52
+index 00000000..82777b56
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuExtrasController.swift
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,168 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -43754,6 +43879,7 @@ index 00000000..f9051d52
 +    AyuExtraRow(section: 2, id: 11, key: .disableHaptics, symbol: "iphone.slash", color: 0xFF9500, titleRu: "Без вибрации", titleEn: "No vibration", infoRu: "Отключает тактильный отклик во всём приложении", infoEn: "Turns off haptic feedback in the whole app"),
 +    AyuExtraRow(section: 2, id: 13, key: .springScroll, symbol: "arrow.up.and.down.text.horizontal", color: 0x32ADE6, titleRu: "Анимация прокрутки чата", titleEn: "Chat scrolling animation", infoRu: "Чат дольше скользит и мягко останавливается вместо резкой остановки", infoEn: "The chat glides longer and settles softly instead of stopping short"),
 +    AyuExtraRow(section: 2, id: 14, key: .notifyDeleted, symbol: "bell.badge.fill", color: 0xFF3B30, titleRu: "Уведомлять об удалённых", titleEn: "Notify about deletions", infoRu: "«X удалил сообщение в Y» — нужно сохранение удалённых в истории", infoEn: "\"X deleted a message in Y\" — needs saving deleted messages in History"),
++    AyuExtraRow(section: 2, id: 15, key: .readAfterReaction, symbol: "hand.thumbsup.fill", color: 0x007AFF, titleRu: "Прочитать после реакции", titleEn: "Read after a reaction", infoRu: "В режиме призрака реакция отмечает чат прочитанным, как ответ", infoEn: "In ghost mode a reaction marks the chat read, like a reply"),
 +    AyuExtraRow(section: 3, id: 21, key: .keepScreenOnInPlayer, symbol: "sun.max.fill", color: 0xFFCC00, titleRu: "Экран не гаснет в плеере", titleEn: "Keep screen on in player", infoRu: "Пока открыт музыкальный плеер", infoEn: "While the music player is open"),
 +    AyuExtraRow(section: 3, id: 22, key: .autoOpenLyrics, symbol: "quote.bubble.fill", color: 0xFF2D55, titleRu: "Сразу показывать текст", titleEn: "Open lyrics automatically", infoRu: "Плеер открывается с текстом песни", infoEn: "The player opens with the lyrics"),
 +    AyuExtraRow(section: 3, id: 23, key: .rememberPlaybackSpeed, symbol: "gauge.with.dots.needle.67percent", color: 0x32ADE6, titleRu: "Запоминать скорость", titleEn: "Remember speed", infoRu: "Последняя скорость музыки при открытии плеера", infoEn: "The last music speed when the player opens"),
@@ -46953,10 +47079,10 @@ index 00000000..c92e7cf9
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuToolsController.swift b/submodules/SettingsUI/Sources/AyuToolsController.swift
 new file mode 100644
-index 00000000..a0be6b44
+index 00000000..16d0169d
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuToolsController.swift
-@@ -0,0 +1,348 @@
+@@ -0,0 +1,360 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -47022,6 +47148,7 @@ index 00000000..a0be6b44
 +    case pluginProfiles = 62
 +    case bookmarks = 63
 +    case nowPlaying = 64
++    case shadowBan = 65
 +    case linksHeader = 70
 +    case linkRules = 71
 +    case linkInfo = 72
@@ -47187,6 +47314,16 @@ index 00000000..a0be6b44
 +            context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: shortcuts))
 +        case .pluginProfiles?:
 +            AyuPluginProfiles.present(context: context)
++        case .shadowBan?:
++            let alert = UIAlertController(title: ru ? "Теневой бан" : "Shadow ban", message: ru ? "Людей в списке: \(AyuShadowBan.users.count). Добавить человека: долгое нажатие на его сообщение в группе → «Теневой бан»." : "People on the list: \(AyuShadowBan.users.count). To add someone, long-press their message in a group → Shadow ban.", preferredStyle: .alert)
++            if !AyuShadowBan.users.isEmpty {
++                alert.addAction(UIAlertAction(title: ru ? "Очистить список" : "Clear the list", style: .destructive, handler: { _ in
++                    AyuShadowBan.clear()
++                    NotificationCenter.default.post(name: AyuTools.didChangeNotification, object: nil)
++                }))
++            }
++            alert.addAction(UIAlertAction(title: "OK", style: .cancel))
++            context.sharedContext.applicationBindings.presentNativeController(alert)
 +        case .bookmarks?:
 +            let bookmarks = AyuBookmarksController(russian: ru, open: { peerValue in
 +                let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: EnginePeer.Id(peerValue)))
@@ -47284,6 +47421,7 @@ index 00000000..a0be6b44
 +        entries.append(.link(7, AyuToolsRow.pluginProfiles.rawValue, symbol("square.stack.3d.up.fill", 0xAF52DE), ru ? "Профили плагинов" : "Plugin profiles", "\(AyuPluginProfiles.all.count)"))
 +        entries.append(.link(7, AyuToolsRow.bookmarks.rawValue, symbol("bookmark.fill", 0xFF9500), ru ? "Закладки" : "Bookmarks", "\(AyuBookmarks.all.count)"))
 +        entries.append(.toggle(7, AyuToolsRow.nowPlaying.rawValue, symbol("music.note", 0xFF2D55), ru ? "Сейчас играет в био" : "Now playing in bio", ru ? "Трек из плеера в «О себе»; при выключении био вернётся" : "The playing track in your bio; turning it off restores the bio", AyuTools.nowPlayingBio))
++        entries.append(.link(7, AyuToolsRow.shadowBan.rawValue, symbol("person.fill.xmark", 0x8E8E93), ru ? "Теневой бан" : "Shadow ban", "\(AyuShadowBan.users.count)"))
 +        entries.append(.header(8, AyuToolsRow.linksHeader.rawValue, ru ? "ССЫЛКИ" : "LINKS"))
 +        let activeRules = AyuLinkRewrite.Rule.allCases.filter { AyuLinkRewrite.isOn($0) }.count
 +        entries.append(.link(8, AyuToolsRow.linkRules.rawValue, symbol("arrow.triangle.swap", 0x007AFF), ru ? "Переписывание ссылок" : "Link rewriting", activeRules == 0 ? (ru ? "выкл." : "off") : "\(activeRules)"))
@@ -47809,6 +47947,35 @@ index 5afb5e98..362966c5 100644
          self.isChangingSelectedIndex = true
          self.requestUpdate()
      }
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift
+index a58e7364..65be1255 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift
+@@ -8,13 +8,22 @@ func ayuMarkReadAfterSending(postbox: Postbox, network: Network, stateManager: A
+     guard network.ayuGhostMode.current.advanced.markReadAfterSend, let first = messages.first,
+           first.id.peerId.namespace != Namespaces.Peer.SecretChat,
+           messages.allSatisfy({ $0.id.peerId == first.id.peerId && $0.threadId == nil && !$0.attributes.contains(where: { $0 is OutgoingScheduleInfoMessageAttribute }) }) else { return }
+-    let peerId = first.id.peerId
++    ayuMarkPeerRead(postbox: postbox, network: network, stateManager: stateManager, peerId: first.id.peerId, requireSetting: true)
++}
++
++/// "Read after a reaction": reacting to a message in ghost mode marks that chat read, like a reply does.
++func ayuMarkReadAfterReaction(postbox: Postbox, network: Network, stateManager: AccountStateManager, peerId: PeerId) {
++    guard UserDefaults.standard.bool(forKey: "ayu.extra.readAfterReaction"), !AyuDecoyState.isActive, peerId.namespace != Namespaces.Peer.SecretChat else { return }
++    ayuMarkPeerRead(postbox: postbox, network: network, stateManager: stateManager, peerId: peerId, requireSetting: false)
++}
++
++private func ayuMarkPeerRead(postbox: Postbox, network: Network, stateManager: AccountStateManager, peerId: PeerId, requireSetting: Bool) {
+     let _ = (postbox.transaction { transaction -> (Peer, MessageIndex)? in
+         guard let peer = transaction.getPeer(peerId), !peer.isForumOrMonoForum, peerKeepsReadState(peer),
+               let index = transaction.getTopPeerMessageIndex(peerId: peerId, namespace: Namespaces.Message.Cloud) else { return nil }
+         return (peer, index)
+     } |> mapToSignal { value -> Signal<Void, NoError> in
+-        guard let (peer, index) = value, network.ayuGhostMode.current.advanced.markReadAfterSend, let input = apiInputPeer(peer) else { return .complete() }
++        guard let (peer, index) = value, !requireSetting || network.ayuGhostMode.current.advanced.markReadAfterSend, let input = apiInputPeer(peer) else { return .complete() }
+         let receipt: Signal<Bool, NoError>
+         if let channel = apiInputChannel(peer) {
+             receipt = network.request(Api.functions.channels.readHistory(channel: channel, maxId: index.id.id), automaticFloodWait: false)
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuBotAuthorization.swift b/submodules/TelegramCore/Sources/AyuGram/AyuBotAuthorization.swift
 new file mode 100644
 index 00000000..3c5a53bf
@@ -49295,6 +49462,20 @@ index 92d7de3d..af0dbefc 100644
                  |> `catch` { _ -> Signal<Api.Bool, NoError> in
                      return .single(.boolFalse)
                  }
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+index fe15eed4..626b4573 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/TelegramEngineMessages.swift
+@@ -451,6 +451,9 @@ public extension TelegramEngine {
+             ids: [EngineMessage.Id],
+             reactions: [UpdateMessageReaction]
+         ) {
++            if let first = ids.first, !reactions.isEmpty {
++                ayuMarkReadAfterReaction(postbox: self.account.postbox, network: self.account.network, stateManager: self.account.stateManager, peerId: first.peerId)
++            }
+             let _ = updateMessageReactionsInteractively(
+                 account: self.account,
+                 messageIds: ids,
 diff --git a/submodules/TelegramCore/Sources/UpdatePeers.swift b/submodules/TelegramCore/Sources/UpdatePeers.swift
 index d90af5f2..0d834405 100644
 --- a/submodules/TelegramCore/Sources/UpdatePeers.swift
@@ -50227,10 +50408,10 @@ index ed6a26a2..4e8ffbef 100644
          self.isActiveValue = true
 diff --git a/submodules/TelegramUI/Sources/AyuAppExtras.swift b/submodules/TelegramUI/Sources/AyuAppExtras.swift
 new file mode 100644
-index 00000000..e034f0ae
+index 00000000..fb17eb4c
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuAppExtras.swift
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,212 @@
 +import Foundation
 +import UIKit
 +import MetricKit
@@ -50361,6 +50542,56 @@ index 00000000..e034f0ae
 +                }
 +            })
 +        })
++    }
++
++    /// First launch: a preset in one tap (or skip).
++    static func presentPresetsIfNeeded(sharedContext: SharedAccountContext) {
++        let key = "ayu.firstLaunch.presetShown"
++        // Existing installs (they already have a "what's new" version stored) are not asked.
++        guard !UserDefaults.standard.bool(forKey: key), UserDefaults.standard.string(forKey: "ayu.whatsNew.version") == nil, !AyuDecoyMode.isActive else {
++            UserDefaults.standard.set(true, forKey: key)
++            return
++        }
++        UserDefaults.standard.set(true, forKey: key)
++        let ru = sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let apply: (Int) -> Void = { preset in
++            let _ = (sharedContext.activeAccountContexts
++            |> take(1)
++            |> deliverOnMainQueue).startStandalone(next: { primary, _, _ in
++                guard let context = primary else { return }
++                try? context.account.network.ayuGhostMode.update { settings in
++                    switch preset {
++                    case 0:
++                        settings.hideReadReceipts = true
++                        settings.hideOnline = true
++                        settings.hideTyping = true
++                        settings.hideUploadProgress = true
++                    case 2:
++                        settings.interface.hideStories = true
++                        settings.interface.hideSimilarChannels = true
++                        settings.interface.hidePremiumStatuses = true
++                    default:
++                        break
++                    }
++                }
++                if preset == 0 {
++                    for key in [AyuExtras.Key.spoofPhotoMetadata, .randomFileNames, .cleanLinks, .blurInAppSwitcher] {
++                        AyuExtras.set(key, true)
++                    }
++                }
++                if preset == 0 || preset == 1 {
++                    let _ = context.engine.messages.updateAyuMessageHistory(saveEdits: true, saveDeleted: true).startStandalone()
++                }
++            })
++        }
++        let sheet = UIAlertController(title: ru ? "Добро пожаловать в AyuGram" : "Welcome to AyuGram", message: ru ? "Выберите начальные настройки. Всё можно поменять в AyuGram." : "Pick a starting setup. Everything can be changed in AyuGram.", preferredStyle: .alert)
++        sheet.addAction(UIAlertAction(title: ru ? "🕵️ Максимум приватности" : "🕵️ Maximum privacy", style: .default, handler: { _ in apply(0) }))
++        sheet.addAction(UIAlertAction(title: ru ? "🖥 Как AyuGram Desktop" : "🖥 Like AyuGram Desktop", style: .default, handler: { _ in apply(1) }))
++        sheet.addAction(UIAlertAction(title: ru ? "🧘 Минимализм" : "🧘 Minimalism", style: .default, handler: { _ in apply(2) }))
++        sheet.addAction(UIAlertAction(title: ru ? "Пропустить" : "Skip", style: .cancel))
++        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
++            sharedContext.applicationBindings.presentNativeController(sheet)
++        }
 +    }
 +
 +    /// "What's new" once after an update.
@@ -50499,6 +50730,118 @@ index 00000000..b248528f
 +        DispatchQueue.main.async {
 +            authenticate()
 +        }
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/AyuComposerBar.swift b/submodules/TelegramUI/Sources/AyuComposerBar.swift
+new file mode 100644
+index 00000000..984b9f4d
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/AyuComposerBar.swift
+@@ -0,0 +1,106 @@
++import Foundation
++import UIKit
++import Display
++import AccountContext
++import ChatPresentationInterfaceState
++
++/// A thin row of chips above the composer: plugin buttons (`ayu.composer.addButton`) and dot
++/// commands (`ayu.commands.register`). Buttons send `composerButton` { id, text } to their plugin;
++/// a command chip puts ".command " into the input. Hidden when no plugin adds anything.
++final class AyuComposerBar: UIView {
++    private let scrollView = UIScrollView()
++    private let stack = UIStackView()
++    private weak var controller: ChatControllerImpl?
++    private var observer: NSObjectProtocol?
++
++    init(controller: ChatControllerImpl) {
++        self.controller = controller
++        super.init(frame: .zero)
++        self.scrollView.showsHorizontalScrollIndicator = false
++        self.scrollView.translatesAutoresizingMaskIntoConstraints = false
++        self.stack.axis = .horizontal
++        self.stack.spacing = 8.0
++        self.stack.translatesAutoresizingMaskIntoConstraints = false
++        self.addSubview(self.scrollView)
++        self.scrollView.addSubview(self.stack)
++        NSLayoutConstraint.activate([
++            self.scrollView.leadingAnchor.constraint(equalTo: self.leadingAnchor),
++            self.scrollView.trailingAnchor.constraint(equalTo: self.trailingAnchor),
++            self.scrollView.topAnchor.constraint(equalTo: self.topAnchor),
++            self.scrollView.bottomAnchor.constraint(equalTo: self.bottomAnchor),
++            self.stack.leadingAnchor.constraint(equalTo: self.scrollView.contentLayoutGuide.leadingAnchor, constant: 12.0),
++            self.stack.trailingAnchor.constraint(equalTo: self.scrollView.contentLayoutGuide.trailingAnchor, constant: -12.0),
++            self.stack.centerYAnchor.constraint(equalTo: self.scrollView.centerYAnchor),
++            self.stack.heightAnchor.constraint(equalToConstant: 30.0)
++        ])
++        self.observer = NotificationCenter.default.addObserver(forName: AyuPluginUI.didChangeNotification, object: nil, queue: .main, using: { [weak self] _ in
++            self?.rebuild()
++        })
++        self.rebuild()
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        if let observer = self.observer {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++
++    private func chip(_ title: String, symbol: String?) -> UIButton {
++        let button = UIButton(type: .system)
++        var configuration = UIButton.Configuration.tinted()
++        configuration.title = title
++        configuration.cornerStyle = .capsule
++        configuration.buttonSize = .small
++        if let symbol {
++            configuration.image = UIImage(systemName: symbol)
++            configuration.imagePadding = 4.0
++        }
++        button.configuration = configuration
++        return button
++    }
++
++    private func rebuild() {
++        for view in self.stack.arrangedSubviews {
++            view.removeFromSuperview()
++        }
++        let buttons = AyuPluginUI.shared.composerButtons
++        let commands = AyuPluginUI.shared.commands
++        for item in buttons {
++            let button = self.chip(item.title, symbol: item.icon ?? "puzzlepiece.extension")
++            button.addAction(UIAction(handler: { [weak self] _ in
++                let text = self?.controller?.presentationInterfaceState.interfaceState.effectiveInputState.inputText.string ?? ""
++                AyuPluginUI.send("composerButton", to: item.owner, ["id": item.id, "text": text])
++            }), for: .touchUpInside)
++            self.stack.addArrangedSubview(button)
++        }
++        for command in commands {
++            let button = self.chip(command.name, symbol: nil)
++            button.accessibilityHint = command.description
++            button.addAction(UIAction(handler: { [weak self] _ in
++                self?.controller?.ayuSetInputText(command.name + " ")
++            }), for: .touchUpInside)
++            self.stack.addArrangedSubview(button)
++        }
++        self.isHidden = buttons.isEmpty && commands.isEmpty
++    }
++}
++
++extension ChatControllerImpl {
++    /// Adds the composer bar once, pinned just above the input panel and the keyboard.
++    func ayuInstallComposerBar() {
++        guard !AyuDecoyMode.isActive, !self.view.subviews.contains(where: { $0 is AyuComposerBar }) else { return }
++        let bar = AyuComposerBar(controller: self)
++        bar.translatesAutoresizingMaskIntoConstraints = false
++        self.view.addSubview(bar)
++        NSLayoutConstraint.activate([
++            bar.leadingAnchor.constraint(equalTo: self.view.leadingAnchor),
++            bar.trailingAnchor.constraint(equalTo: self.view.trailingAnchor),
++            bar.heightAnchor.constraint(equalToConstant: 36.0),
++            bar.bottomAnchor.constraint(equalTo: self.view.keyboardLayoutGuide.topAnchor, constant: -64.0)
++        ])
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuDecoyUI.swift b/submodules/TelegramUI/Sources/AyuDecoyUI.swift
@@ -54091,10 +54434,10 @@ index 00000000..d2171513
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuOnlineTools.swift b/submodules/TelegramUI/Sources/AyuOnlineTools.swift
 new file mode 100644
-index 00000000..8c4b5520
+index 00000000..4f0ee4b9
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuOnlineTools.swift
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,231 @@
 +import Foundation
 +import UIKit
 +import CryptoKit
@@ -54239,6 +54582,35 @@ index 00000000..8c4b5520
 +            return
 +        }
 +        request(context: context, title: title, instructions: instructions, prompt: prompt)
++    }
++
++    /// Local chat statistics over the newest stored messages: who writes most and when.
++    static func chatStats(context: AccountContext, peerId: EnginePeer.Id) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let _ = (context.engine.messages.ayuRecentMessages(peerId: peerId, limit: 100)
++        |> deliverOnMainQueue).startStandalone(next: { messages in
++            guard !messages.isEmpty else {
++                return present(context, title: ru ? "Статистика" : "Statistics", message: ru ? "Нет сохранённых сообщений." : "No stored messages.")
++            }
++            var authors: [String: Int] = [:]
++            var hours = [Int](repeating: 0, count: 24)
++            var characters = 0
++            let calendar = Calendar.current
++            for message in messages {
++                let name = message.author.map { $0.compactDisplayTitle } ?? "?"
++                authors[name, default: 0] += 1
++                hours[calendar.component(.hour, from: Date(timeIntervalSince1970: TimeInterval(message.timestamp)))] += 1
++                characters += message.text.count
++            }
++            let top = authors.sorted(by: { $0.value > $1.value }).prefix(5).map { "\($0.key): \($0.value)" }.joined(separator: "\n")
++            let busiest = hours.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
++            let first = messages.last.map { Date(timeIntervalSince1970: TimeInterval($0.timestamp)) } ?? Date()
++            let since = DateFormatter.localizedString(from: first, dateStyle: .medium, timeStyle: .short)
++            let text = ru
++                ? "По последним \(messages.count) сообщениям (с \(since)):\n\n\(top)\n\nСамый активный час: \(busiest):00\nСимволов: \(characters)"
++                : "Over the last \(messages.count) messages (since \(since)):\n\n\(top)\n\nBusiest hour: \(busiest):00\nCharacters: \(characters)"
++            present(context, title: ru ? "Статистика чата" : "Chat statistics", message: text)
++        })
 +    }
 +
 +    /// The last messages of a chat, summarised.
@@ -54407,10 +54779,10 @@ index 00000000..8e070628
 +}
 diff --git a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
 new file mode 100644
-index 00000000..c0c209d8
+index 00000000..09fe591a
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,249 @@
 +import Foundation
 +import UIKit
 +import SwiftSignalKit
@@ -54563,6 +54935,7 @@ index 00000000..c0c209d8
 +    AyuNowPlaying.sharedContext = sharedContext
 +    AyuToolsBridge.setNowPlaying = { AyuNowPlaying.setEnabled($0) }
 +    AyuAppExtras.install(sharedContext: sharedContext)
++    AyuAppExtras.presentPresetsIfNeeded(sharedContext: sharedContext)
 +    AyuAppExtras.presentWhatsNewIfNeeded(sharedContext: sharedContext)
 +    func primaryContext(_ completion: @escaping (AccountContext?) -> Void) {
 +        let _ = (sharedContext.activeAccountContexts
@@ -55364,19 +55737,21 @@ index 34bbb294..be09c205 100644
                  self.ayuGhostBarButton = UIBarButtonItem(image: enabled ? ayuGhostNavigationImage : ayuGhostNavigationOffImage, style: .plain, target: self, action: #selector(self.ayuGhostButtonPressed))
                  self.ayuGhostButtonEnabled = enabled
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index ac8d62e4..ed1b7087 100644
+index ac8d62e4..d0264d10 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
-@@ -7739,6 +7739,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7739,6 +7739,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      
      override public func viewWillAppear(_ animated: Bool) {
          super.viewWillAppear(animated)
 +        // AyuGram: a chat locked with Face ID stays covered until the owner authenticates.
 +        self.ayuApplyChatLock()
++        // Plugin composer buttons and dot-command chips.
++        self.ayuInstallComposerBar()
  
          self.walletTransferAnimationsVisible = true
          self.chatDisplayNode.historyNode.forEachVisibleMessageItemNode { itemNode in
-@@ -7911,7 +7913,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -7911,7 +7915,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
  
      override public func viewDidAppear(_ animated: Bool) {
          super.viewDidAppear(animated)
@@ -55396,7 +55771,7 @@ index ac8d62e4..ed1b7087 100644
          self.didAppear = true
          
          self.chatDisplayNode.historyNode.experimentalSnapScrollToItem = false
-@@ -8356,6 +8369,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8356,6 +8371,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      }
      
      override public func viewWillDisappear(_ animated: Bool) {
@@ -55407,7 +55782,7 @@ index ac8d62e4..ed1b7087 100644
          super.viewWillDisappear(animated)
  
          self.walletTransferAnimationsVisible = false
-@@ -8685,8 +8702,24 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -8685,8 +8704,24 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
      @objc func ayuGhostButtonPressed() {
          do {
              let store = self.context.account.network.ayuGhostMode
@@ -55434,7 +55809,7 @@ index ac8d62e4..ed1b7087 100644
              self.updateRightNavigationButtons(presentationInterfaceState: self.presentationInterfaceState, transition: .immediate)
          } catch {
              let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
-@@ -9249,6 +9282,40 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+@@ -9249,6 +9284,40 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
              return
          }
  
@@ -55489,8 +55864,42 @@ index 002e1ee8..c91eeb49 100644
                      } else if let previous = strongSelf.state.peerView, let secretChat = previous.peers[previous.peerId] as? TelegramSecretChat, case .active = secretChat.embeddedState, let updatedSecretChat = peerView.peers[peerView.peerId] as? TelegramSecretChat, case .terminated = updatedSecretChat.embeddedState {
                          shouldDismiss = true
                      }
+diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+index 48571724..e9d0d3df 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+@@ -2130,6 +2130,11 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+             displayMode = .aspectFit
+         }
+         self.backgroundNode.updateLayout(size: wallpaperBounds.size, displayMode: displayMode, transition: transition)
++        // AyuGram: "Snow" falls inside the wallpaper, under the messages.
++        if !self.backgroundNode.view.subviews.contains(where: { $0 is AyuChatBackgroundSnowView }) {
++            let snowView = AyuChatBackgroundSnowView(frame: CGRect(origin: CGPoint(), size: wallpaperBounds.size))
++            self.backgroundNode.view.addSubview(snowView)
++        }
+ 
+         transition.updateBounds(node: self.historyNodeContainer, bounds: contentBounds)
+         transition.updatePosition(node: self.historyNodeContainer, position: contentBounds.center)
+diff --git a/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift b/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
+index 70c867fa..5dcf26fc 100644
+--- a/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
++++ b/submodules/TelegramUI/Sources/ChatHistoryEntriesForView.swift
+@@ -184,8 +184,13 @@ func chatHistoryEntriesForView(
+         }
+     }
+     var count = 0
++    let ayuShadowBanned = AyuShadowBan.users
+     loop: for entry in view.entries {
+         var message = entry.message.withAppliedEphemeralReplacementMessage()
++        // AyuGram shadow ban: chosen people's messages are not shown in groups and channels.
++        if !ayuShadowBanned.isEmpty, message.id.peerId.namespace != Namespaces.Peer.CloudUser, let authorId = message.author?.id, ayuShadowBanned.contains(authorId.toInt64()) {
++            continue
++        }
+         if message.adAttribute == nil && (ayuHiddenMessageIds.contains(message.id) || message.groupingKey.map({ ayuHiddenGroups.contains($0) }) == true) {
+             continue
+         }
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index a84cdf21..97f18d25 100644
+index a84cdf21..5880b61e 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -9,6 +9,7 @@ import MobileCoreServices
@@ -55510,7 +55919,7 @@ index a84cdf21..97f18d25 100644
                      return UIImage(systemName: "puzzlepiece.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
                  }, action: { controller, _ in
                      controller?.dismiss(completion: {
-@@ -2515,6 +2516,103 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -2515,6 +2516,124 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
                      })
                  })))
              }
@@ -55552,6 +55961,17 @@ index a84cdf21..97f18d25 100644
 +                        })
 +                    })))
 +                }
++                if !AyuDecoyMode.isActive, message.id.peerId.namespace != Namespaces.Peer.CloudUser, let author = message.author, author.id != context.account.peerId {
++                    let authorValue = author.id.toInt64()
++                    let banned = AyuShadowBan.contains(authorValue)
++                    ayuActions.append(.action(ContextMenuActionItem(text: banned ? (ru ? "Снять теневой бан" : "Remove shadow ban") : (ru ? "Теневой бан" : "Shadow ban"), icon: { theme in
++                        return UIImage(systemName: banned ? "person.fill.checkmark" : "person.fill.xmark")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            AyuShadowBan.set(authorValue, !banned)
++                        })
++                    })))
++                }
 +                if !AyuDecoyMode.isActive {
 +                    let bookmarkPeerId = message.id.peerId.toInt64()
 +                    let bookmarkMessageId = message.id.id
@@ -55573,6 +55993,16 @@ index a84cdf21..97f18d25 100644
 +                                AyuBookmarks.add(AyuBookmarks.Bookmark(peerId: bookmarkPeerId, messageId: bookmarkMessageId, text: String(bookmarkText.prefix(2000)), chatTitle: bookmarkTitle, savedAt: Int64(Date().timeIntervalSince1970), tag: String(tag.prefix(32))))
 +                            }))
 +                            context.sharedContext.applicationBindings.presentNativeController(alert)
++                        })
++                    })))
++                }
++                if !AyuDecoyMode.isActive {
++                    let statsPeerId = message.id.peerId
++                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Статистика чата" : "Chat statistics", icon: { theme in
++                        return UIImage(systemName: "chart.bar.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
++                    }, action: { controller, _ in
++                        controller?.dismiss(completion: {
++                            AyuOnlineTools.chatStats(context: context, peerId: statsPeerId)
 +                        })
 +                    })))
 +                }

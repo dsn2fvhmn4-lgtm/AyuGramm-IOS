@@ -5,10 +5,14 @@ on:
     paths:
       - "patches/**"
       - "tools/mock-runner/**"
+      - "ci/test_lua.py"
+      - ".github/workflows/plugin-api-tests.yml"
   pull_request:
     paths:
       - "patches/**"
       - "tools/mock-runner/**"
+      - "ci/test_lua.py"
+      - ".github/workflows/plugin-api-tests.yml"
   workflow_dispatch:
 
 permissions:
@@ -19,6 +23,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lua:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Lua sandbox and memory regressions
+        run: python3 ci/test_lua.py --patch patches/ayugram-big-update.patch
+
   prelude:
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -20,6 +20,26 @@ It does not establish compatibility with every installer or LiveContainer versio
   or damaged existing key stops startup; generated key persistence is verified
   before opening the database.
 
+## Compatibility notice after re-signing (27.5.0)
+
+The old “Standalone storage” alert was recreated on every launch, including for an
+existing, working standalone account. The shorter “Compatibility mode” notice is
+now acknowledged once per standalone storage identity. Only tapping “Got it” saves
+the acknowledgement; scheduling or presenting an alert does not. The preference
+is outside the `ayu.` settings export and is independent of the app version,
+account selection and display language. Shared storage never requests this notice.
+
+This change does not grant App Group entitlements, migrate account databases or
+re-enable extensions/the wallet. The notice describes the active storage mode
+without claiming the current certificate necessarily lacks App Group access:
+an existing standalone identity is intentionally retained after re-signing.
+
+Source syntax was checked on Linux. Device checks remain: acknowledge and fully
+relaunch; switch accounts; re-sign without deleting the app; verify the original
+account remains available and the notice does not return. On a fresh standalone
+installation the notice appears once; killing the app before acknowledgement must
+leave it eligible for the next launch. Check shared-container installation too.
+
 LiveContainer also has host-level restrictions, including guest entitlements,
 extensions and remote notifications. App startup changes do not remove these:
 [LiveContainer limitations](https://github.com/LiveContainer/LiveContainer#limitations).

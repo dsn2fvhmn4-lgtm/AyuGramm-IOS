@@ -87084,7 +87084,7 @@ index 00000000..32e7bb96
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-index c9f23850..53b1c7ba 100644
+index c9f23850..9125da80 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 @@ -1,4 +1,7 @@
@@ -87095,11 +87095,14 @@ index c9f23850..53b1c7ba 100644
  
  public struct AyuInterfaceSettings: Codable, Equatable {
      public var showPeerIds = false
-@@ -154,20 +157,55 @@ public final class AyuSupportersManager {
+@@ -154,13 +157,48 @@ public final class AyuSupportersManager {
          1226061708: (5266966399934291023, "[📼] Пушистик **не поддержал(а)** разработку exteraGram, поэтому мы ему **ничерта** не выдали")
      ]
      private var ayuIosBadges: [Int64: (documentId: Int64?, text: String?)] = [:]
 +    private var ayuIosLabels: [Int64: (kind: String, text: String)] = [:]
++    private var ayuIosExpiry: [Int64: Double] = [:]
++    private var ownerDaily: (documentId: Int64, expiresAt: Double)?
++    private static let dailyTitle = "(name) — удача дня"
      private var isRefreshing = false
 +    private var lastRegistryRefresh: CFAbsoluteTime = 0.0
 +    private static let session = URLSession(configuration: .ephemeral)
@@ -87113,8 +87116,12 @@ index c9f23850..53b1c7ba 100644
 -        self.refreshAyuRegistry()
 +        self.refreshAyuRegistryIfStale()
          self.refresh()
-     }
- 
++        // Re-read on every return to the app, so a new badge shows without waiting 15 minutes.
++        NotificationCenter.default.addObserver(forName: NSNotification.Name("UIApplicationDidBecomeActiveNotification"), object: nil, queue: nil) { [weak self] _ in
++            self?.refreshAyuRegistryIfStale(interval: 10.0)
++        }
++    }
++
 +    /// Whether this account may hand out AyuGram for iOS badges and labels from a profile.
 +    public func canManageBadges(accountPeerId: Int64) -> Bool {
 +        return AyuSupportersManager.layout?.peer == accountPeerId
@@ -87135,10 +87142,10 @@ index c9f23850..53b1c7ba 100644
 +            try? FileManager.default.createDirectory(at: cacheUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
 +            try? data.write(to: cacheUrl, options: .atomic)
 +        }
-+    }
-+
+     }
+ 
      public func isSupporter(peerId: Int64) -> Bool {
-         return self.badge(peerId: peerId) != nil
+@@ -168,9 +206,23 @@ public final class AyuSupportersManager {
      }
  
      public func badge(peerId: Int64) -> AyuSupporterBadge? {
@@ -87146,22 +87153,35 @@ index c9f23850..53b1c7ba 100644
 +        guard let layout = AyuSupportersManager.layout else {
 +            return nil
 +        }
++        let now = Date().timeIntervalSince1970
 +        if peerId == layout.peer {
++            self.lock.lock()
++            let daily = self.ownerDaily
++            self.lock.unlock()
++            if let daily, daily.expiresAt > now {
++                return .ayuDeveloper(documentId: daily.documentId, text: AyuSupportersManager.dailyTitle)
++            }
 +            return .ayuDeveloper(documentId: layout.file, text: layout.text)
 +        }
          self.lock.lock()
          defer { self.lock.unlock() }
-         if let customBadge = self.ayuIosBadges[peerId] {
-@@ -208,11 +246,26 @@ public final class AyuSupportersManager {
+-        if let customBadge = self.ayuIosBadges[peerId] {
++        if let customBadge = self.ayuIosBadges[peerId], (self.ayuIosExpiry[peerId] ?? Double.infinity) > now {
+             if let documentId = customBadge.documentId {
+                 return .ayuDeveloper(documentId: documentId, text: customBadge.text)
+             }
+@@ -208,12 +260,37 @@ public final class AyuSupportersManager {
          self.parseAyuRegistry(data: data)
      }
  
+-    private func refreshAyuRegistry() {
+-        guard let url = URL(string: "https://raw.githubusercontent.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/main/assets/ayugram_ios_badges.json") else { return }
 +    /// The registry is re-read every 15 minutes while the app runs, so new badges appear
 +    /// without a relaunch.
-+    private func refreshAyuRegistryIfStale() {
++    private func refreshAyuRegistryIfStale(interval: Double = 15.0 * 60.0) {
 +        let now = CFAbsoluteTimeGetCurrent()
 +        self.lock.lock()
-+        let stale = now - self.lastRegistryRefresh > 15.0 * 60.0
++        let stale = now - self.lastRegistryRefresh > interval
 +        if stale {
 +            self.lastRegistryRefresh = now
 +        }
@@ -87171,20 +87191,35 @@ index c9f23850..53b1c7ba 100644
 +        }
 +    }
 +
-     private func refreshAyuRegistry() {
-         guard let url = URL(string: "https://raw.githubusercontent.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/main/assets/ayugram_ios_badges.json") else { return }
++    /// The badge server serves the registry without the raw file's CDN delay, with daily badges
++    /// applied; GitHub is the fallback when it cannot be reached.
++    private func refreshAyuRegistry(fallback: Bool = false) {
++        let address = fallback ? "https://raw.githubusercontent.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/main/assets/ayugram_ios_badges.json" : "https://badge.vinx.best/badges.json"
++        guard let url = URL(string: address) else { return }
          var request = URLRequest(url: url)
          request.timeoutInterval = 15.0
 -        URLSession(configuration: .ephemeral).dataTask(with: request) { [weak self] data, response, _ in
+-            guard let self, let data, let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
++        request.cachePolicy = .reloadIgnoringLocalCacheData
 +        AyuSupportersManager.session.dataTask(with: request) { [weak self] data, response, _ in
-             guard let self, let data, let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
++            guard let self else { return }
++            guard let data, let http = response as? HTTPURLResponse, http.statusCode == 200 else {
++                if !fallback {
++                    self.refreshAyuRegistry(fallback: true)
++                }
++                return
++            }
              self.parseAyuRegistry(data: data)
              if let cacheUrl = self.ayuRegistryCacheUrl {
-@@ -225,14 +278,30 @@ public final class AyuSupportersManager {
+                 try? FileManager.default.createDirectory(at: cacheUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
+@@ -225,14 +302,46 @@ public final class AyuSupportersManager {
      private func parseAyuRegistry(data: Data) {
          guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let badges = json["badges"] as? [[String: Any]] else { return }
          var parsed: [Int64: (documentId: Int64?, text: String?)] = [:]
 +        var labels: [Int64: (kind: String, text: String)] = [:]
++        var expiry: [Int64: Double] = [:]
++        var ownerDaily: (documentId: Int64, expiresAt: Double)?
++        let now = Date().timeIntervalSince1970
          for badge in badges {
 -            guard let id = (badge["id"] as? NSNumber)?.int64Value else {
 +            guard let id = (badge["id"] as? NSNumber)?.int64Value, let layout = AyuSupportersManager.layout else {
@@ -87194,11 +87229,19 @@ index c9f23850..53b1c7ba 100644
 +            if let label = badge["label"] as? [String: Any], let text = label["text"] as? String, !text.isEmpty {
 +                labels[id] = ((label["kind"] as? String) ?? "custom", String(text.prefix(160)))
 +            }
-+            if id == layout.peer {
-+                continue
-+            }
 +            let documentId = (badge["documentId"] as? NSNumber)?.int64Value
 +            let title = (badge["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
++            let expiresAt = (badge["expiresAt"] as? NSNumber)?.doubleValue
++            if let expiresAt, expiresAt <= now {
++                continue
++            }
++            if id == layout.peer {
++                // Only a timed daily badge from the badge server may cover the owner's badge.
++                if title == AyuSupportersManager.dailyTitle, let documentId, let expiresAt {
++                    ownerDaily = (documentId, expiresAt)
++                }
++                continue
++            }
 +            if documentId == nil && title == nil {
 +                continue
 +            }
@@ -87206,14 +87249,19 @@ index c9f23850..53b1c7ba 100644
 +                continue
 +            }
 +            parsed[id] = (documentId, title)
++            if let expiresAt {
++                expiry[id] = expiresAt
++            }
          }
          self.lock.lock()
          self.ayuIosBadges = parsed
++        self.ayuIosExpiry = expiry
++        self.ownerDaily = ownerDaily
 +        self.ayuIosLabels = labels
          self.lock.unlock()
      }
  
-@@ -253,8 +322,7 @@ public final class AyuSupportersManager {
+@@ -253,8 +362,7 @@ public final class AyuSupportersManager {
          }
          var request = URLRequest(url: url)
          request.timeoutInterval = 15.0
@@ -87223,7 +87271,7 @@ index c9f23850..53b1c7ba 100644
              guard let self else { return }
              if let http = response as? HTTPURLResponse, http.statusCode == 200, let data {
                  self.parse(data: data)
-@@ -302,4 +370,49 @@ public final class AyuSupportersManager {
+@@ -302,4 +410,49 @@ public final class AyuSupportersManager {
          self.customBadges = customBadges
          self.lock.unlock()
      }

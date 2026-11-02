@@ -80,7 +80,10 @@ def resource_files(archive, runtime, configuration):
                 relative = PurePosixPath(item.name[len(prefix):])
                 if '..' in relative.parts:
                     raise ValueError('Unexpected standard-library path')
-                if any(part in ('test', 'tests', '__pycache__', 'idlelib', 'tkinter', 'ensurepip') for part in relative.parts):
+                if any(part in ('test', 'tests', '__pycache__', 'idlelib', 'tkinter', 'turtledemo', 'ensurepip') for part in relative.parts):
+                    continue
+                # CPython's own C-API test modules (_testcapi, _ctypes_test, …) are not for plugins.
+                if relative.name.endswith('.so') and (relative.name.startswith('_test') or relative.name.startswith('_ctypes_test') or relative.name.startswith('_xxtestfuzz')):
                     continue
                 name = destination + relative.as_posix()
                 contents = bundle.extractfile(item).read()

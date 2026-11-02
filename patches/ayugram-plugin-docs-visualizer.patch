@@ -1,0 +1,90 @@
+diff --git a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+index 066fd2dd..2076e0bc 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+@@ -127,10 +127,6 @@ func ayuVoiceSettingsController(context: AccountContext) -> ViewController {
+         entries.append(.header(3, 30, ru ? "ПЛЕЕР" : "PLAYER"))
+         entries.append(.link(3, 31, symbol("waveform.path", 0xFF2D55), ru ? "Плавные переходы между треками" : "Smooth track transitions", fade == 0 ? (ru ? "выкл." : "off") : "\(fade) " + (ru ? "с" : "s")))
+         entries.append(.info(3, 32, ru ? "Музыка плавно затихает в конце трека и нарастает в начале следующего." : "Music fades out at the end of a track and fades in at the start of the next."))
+-        let visualizer = UserDefaults.standard.string(forKey: "ayu.player.visualizer") ?? "none"
+-        let visualizerTitles: [String: (String, String)] = ["none": ("Выключен", "Off"), "bars": ("Столбики", "Bars"), "mirror": ("Зеркальные столбики", "Mirrored bars"), "wave": ("Волна", "Wave"), "circle": ("Круг вокруг обложки", "Circle around the cover"), "dots": ("Точки", "Dots")]
+-        entries.append(.link(3, 33, symbol("chart.bar.fill", 0x34C759), ru ? "Визуализатор в плеере" : "Player visualizer", ru ? (visualizerTitles[visualizer]?.0 ?? "") : (visualizerTitles[visualizer]?.1 ?? "")))
+-        entries.append(.info(3, 34, ru ? "Настоящий спектр звучащего трека: столбики прыгают от баса и вокала." : "The real spectrum of the playing track: bars jump with the bass and vocals."))
+         return entries
+     }, open: { id, _, present in
+         let ru = ayuIsRussian(context)
+@@ -146,13 +142,6 @@ func ayuVoiceSettingsController(context: AccountContext) -> ViewController {
+                 eq[index] = value
+                 AyuMediaSettings.voiceEqualizer = eq
+             })
+-        case 33:
+-            let styles = ["none", "bars", "mirror", "wave", "circle", "dots"]
+-            let titles: [String: (String, String)] = ["none": ("Выключен", "Off"), "bars": ("Столбики", "Bars"), "mirror": ("Зеркальные столбики", "Mirrored bars"), "wave": ("Волна", "Wave"), "circle": ("Круг вокруг обложки", "Circle around the cover"), "dots": ("Точки", "Dots")]
+-            ayuChoose(present, title: ru ? "Визуализатор" : "Visualizer", ru: ru, options: styles, current: UserDefaults.standard.string(forKey: "ayu.player.visualizer") ?? "none", label: { ru ? (titles[$0]?.0 ?? $0) : (titles[$0]?.1 ?? $0) }, equal: { $0 == $1 }, pick: {
+-                UserDefaults.standard.set($0, forKey: "ayu.player.visualizer")
+-                NotificationCenter.default.post(name: Notification.Name("AyuGram.PlayerVisualizerChanged"), object: nil)
+-            })
+         case 31:
+             ayuChoose(present, title: ru ? "Плавные переходы" : "Smooth transitions", ru: ru, options: [0, 2, 4, 6, 8], current: UserDefaults.standard.integer(forKey: "ayu.extra.musicFadeSeconds"), label: { $0 == 0 ? (ru ? "Выключено" : "Off") : "\($0) " + (ru ? "с" : "s") }, equal: { $0 == $1 }, pick: { UserDefaults.standard.set($0, forKey: "ayu.extra.musicFadeSeconds") })
+         case 21:
+diff --git a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
+index 36cb3a18..ace2f522 100644
+--- a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
+@@ -21,6 +21,7 @@ private enum AyuDeveloperRow: Int32 {
+     case pluginConsole = 21
+     case experimentalPluginHooks = 22
+     case openPluginConsole = 23
++    case pluginDocs = 26
+     case allowUnofficialInjectPlugins = 24
+     case unofficialInjectInfo = 25
+     case showInternalIds = 31
+@@ -58,6 +59,8 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
+             AyuDevLog.shared.clear()
+         case .openPluginConsole:
+             push?(ayuPluginConsoleController(context: context))
++        case .pluginDocs:
++            context.sharedContext.applicationBindings.openUrl("https://github.com/murk-sus/AyuGramm-Plugin-SDK")
+         case .resetAll:
+             presentController?(textAlertController(context: context, title: ru ? "Сбросить настройки разработчика?" : "Reset developer settings?", text: ru ? "Все переключатели на этой странице будут выключены." : "Every switch on this page will be turned off.", actions: [
+                 TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+@@ -126,6 +129,7 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
+             toggle(2, .forceStockMusicPlayer, symbol("music.note", 0xFF2D55), ru ? "Стандартный плеер Telegram" : "Stock Telegram player", ru ? "Вместо плеера AyuGram" : "Instead of the AyuGram player", settings.forceStockMusicPlayer),
+             toggle(2, .lyricsDiagnostics, symbol("text.quote", 0x5856D6), ru ? "Диагностика текстов" : "Lyrics diagnostics", ru ? "Источник, совпадение и время поиска" : "Source, match score and lookup time", settings.lyricsDiagnostics),
+             .header(3, 20, ru ? "ПЛАГИНЫ" : "PLUGINS"),
++            .link(3, AyuDeveloperRow.pluginDocs.rawValue, symbol("book.fill", 0x007AFF), ru ? "Документация к плагинам" : "Plugin documentation", "GitHub"),
+             toggle(3, .pluginConsole, symbol("terminal.fill", 0x8E8E93), ru ? "Консоль плагинов" : "Plugin console", ru ? "Вывод print() и ошибки скриптов" : "Script print() output and errors", settings.pluginConsole),
+             toggle(3, .experimentalPluginHooks, symbol("flask.fill", 0xFF9500), ru ? "Мягкие лимиты плагинов" : "Relaxed plugin limits", ru ? "Таймаут хуков 2 с вместо 0,25 с, ошибки скриптов всплывают сообщением" : "2 s hook timeout instead of 0.25 s; script errors show as toasts", settings.experimentalPluginHooks)
+         ]
+diff --git a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
+index 5696876c..4df2e1f9 100644
+--- a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
++++ b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
+@@ -4,7 +4,7 @@ import Display
+ import AccountContext
+ import UniversalMediaPlayer
+ 
+-/// The look of the player visualizer: the user's choice, or a plugin's (`ayu.player.visualizer.set`).
++/// The look of the player visualizer a plugin chose (`ayu.player.visualizer.set`).
+ struct AyuPlayerVisualizerStyle: Equatable {
+     enum Kind: String, CaseIterable {
+         case none, bars, mirror, wave, circle, dots
+@@ -28,16 +28,13 @@ struct AyuPlayerVisualizerStyle: Equatable {
+     /// Gain applied to the 0…1 levels (sensitivity), 0.5…3.
+     var gain: CGFloat
+ 
+-    static let userKey = "ayu.player.visualizer"
+-
+-    /// A plugin's style wins over the user's own while the plugin runs.
++    /// Shown only while a plugin has chosen a style.
+     static var current: AyuPlayerVisualizerStyle {
+         if let config = AyuPluginUI.shared.playerVisualizer, let kind = Kind(rawValue: config["style"] as? String ?? "") {
+             let color = (config["color"] as? String).flatMap(AyuCustomization.parse).map { UIColor(rgb: $0) } ?? .white
+             return AyuPlayerVisualizerStyle(kind: kind, color: color, bands: max(8, min(96, (config["bands"] as? NSNumber)?.intValue ?? 32)), opacity: CGFloat(max(0.1, min(1.0, (config["opacity"] as? NSNumber)?.doubleValue ?? 0.85))), gain: CGFloat(max(0.5, min(3.0, (config["gain"] as? NSNumber)?.doubleValue ?? 1.0))))
+         }
+-        let kind = AyuDecoyMode.isActive ? .none : (Kind(rawValue: UserDefaults.standard.string(forKey: userKey) ?? "") ?? .none)
+-        return AyuPlayerVisualizerStyle(kind: kind, color: .white, bands: 32, opacity: 0.8, gain: 1.0)
++        return AyuPlayerVisualizerStyle(kind: .none, color: .white, bands: 32, opacity: 0.8, gain: 1.0)
+     }
+ }
+ 

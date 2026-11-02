@@ -83239,16 +83239,18 @@ index 00000000..f44fe39e
 +}
 diff --git a/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift b/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
 new file mode 100644
-index 00000000..faa36242
+index 00000000..6bf58dea
 --- /dev/null
 +++ b/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
-@@ -0,0 +1,398 @@
+@@ -0,0 +1,513 @@
 +import Foundation
 +import UIKit
++import Display
 +import AccountContext
 +
-+/// The plugin store: code plugins from the online catalog (github.com/murk-sus/AyuGramm-Plugins)
-+/// with search, one-tap install verified by SHA-256 and an "update available" mark.
++/// The plugin store: code plugins and fonts from the online catalog
++/// (github.com/murk-sus/AyuGramm-Plugins) with search, one-tap install verified by SHA-256 and an
++/// "update available" mark for plugins.
 +final class AyuScriptCatalogController: AyuPluginTableController, UISearchBarDelegate {
 +    private enum State {
 +        case loading
@@ -83260,6 +83262,9 @@ index 00000000..faa36242
 +    private let palette: AyuPreferencesPalette?
 +    private let presentAlert: ((_ title: String?, _ message: String, _ actions: [AyuPluginAlertAction]) -> Void)?
 +    private var state: State = .loading
++    /// Fonts load separately: a font catalog that fails must not hide the plugins.
++    private var fonts: [AyuFontCatalog.Entry] = []
++    private var installingFont: String?
 +    private var query = ""
 +    private var installing = Set<String>()
 +    private var observer: NSObjectProtocol?
@@ -83293,7 +83298,7 @@ index 00000000..faa36242
 +        let search = UISearchBar(frame: CGRect(x: 0.0, y: 0.0, width: self.tableView.bounds.width, height: 56.0))
 +        search.delegate = self
 +        search.searchBarStyle = .minimal
-+        search.placeholder = self.russian ? "Поиск плагинов" : "Search plugins"
++        search.placeholder = self.russian ? "Поиск плагинов и шрифтов" : "Search plugins and fonts"
 +        search.autoresizingMask = [.flexibleWidth]
 +        search.searchTextField.returnKeyType = .done
 +        self.tableView.tableHeaderView = search
@@ -83336,6 +83341,13 @@ index 00000000..faa36242
 +            }
 +            self.reload()
 +        })
++        AyuFontCatalog.shared.load(completion: { [weak self] result in
++            guard let self else { return }
++            if case let .success(fonts) = result {
++                self.fonts = fonts
++                self.reload()
++            }
++        })
 +    }
 +
 +    private var installed: [String: String] {
@@ -83354,6 +83366,13 @@ index 00000000..faa36242
 +        }
 +    }
 +
++    private var visibleFonts: [AyuFontCatalog.Entry] {
++        guard !self.query.isEmpty else { return self.fonts }
++        return self.fonts.filter { font in
++            [font.name, font.author, font.description ?? "", font.id].contains { $0.localizedCaseInsensitiveContains(self.query) }
++        }
++    }
++
 +    private func reload() {
 +        self.tableView.reloadData()
 +        let message: String?
@@ -83363,7 +83382,7 @@ index 00000000..faa36242
 +        case let .failed(text):
 +            message = text + (self.russian ? "\n\nПотяните вниз, чтобы повторить." : "\n\nPull down to retry.")
 +        case .loaded:
-+            message = self.entries.isEmpty ? (self.russian ? "Ничего не найдено." : "Nothing found.") : nil
++            message = self.entries.isEmpty && self.visibleFonts.isEmpty ? (self.russian ? "Ничего не найдено." : "Nothing found.") : nil
 +        }
 +        guard let message else {
 +            self.tableView.backgroundView = nil
@@ -83395,13 +83414,26 @@ index 00000000..faa36242
 +        searchBar.resignFirstResponder()
 +    }
 +
-+    override func numberOfSections(in tableView: UITableView) -> Int { return 1 }
++    override func numberOfSections(in tableView: UITableView) -> Int { return 2 }
 +
 +    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-+        return self.entries.count
++        return section == 0 ? self.entries.count : self.visibleFonts.count
++    }
++
++    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
++        if section == 0 {
++            return self.entries.isEmpty || self.visibleFonts.isEmpty ? nil : (self.russian ? "Плагины" : "Plugins")
++        }
++        return self.visibleFonts.isEmpty ? nil : (self.russian ? "Шрифты" : "Fonts")
 +    }
 +
 +    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
++        if section == 1 {
++            guard !self.visibleFonts.isEmpty else { return nil }
++            return self.russian
++                ? "Шрифты из github.com/murk-sus/AyuGramm-Plugins (fonts). Файл проверяется по SHA-256. Выбранный шрифт станет шрифтом приложения после перезапуска."
++                : "Fonts from github.com/murk-sus/AyuGramm-Plugins (fonts). Each file is checked against its SHA-256. The chosen font becomes the app font after a relaunch."
++        }
 +        guard case .loaded = self.state, !self.entries.isEmpty else { return nil }
 +        return self.russian
 +            ? "Плагины из github.com/murk-sus/AyuGramm-Plugins. Каждый файл проверяется по SHA-256 из каталога. Свой плагин можно прислать pull request'ом.\n\nБезопасная зона: обычные плагины (текст, отключение функций) можно ставить откуда угодно. Плагины с меткой «инжект» внедряются в приложение (плеер, тексты песен) и ставятся только с подписью AyuGram (✓ официальный). Неофициальные инжект-плагины можно разрешить в настройках разработчика — тогда вся ответственность лежит полностью на вас."
@@ -83426,6 +83458,9 @@ index 00000000..faa36242
 +    }
 +
 +    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
++        if indexPath.section == 1 {
++            return self.fontCell(at: indexPath.row)
++        }
 +        let entries = self.entries
 +        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
 +        guard indexPath.row < entries.count else { return cell }
@@ -83494,8 +83529,88 @@ index 00000000..faa36242
 +        return button
 +    }
 +
++    private func fontCell(at row: Int) -> UITableViewCell {
++        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
++        let fonts = self.visibleFonts
++        guard row < fonts.count else { return cell }
++        let font = fonts[row]
++        let primary = self.palette?.text ?? .label
++        let secondary = self.palette?.secondary ?? .secondaryLabel
++        let accent = self.palette?.accent ?? .systemBlue
++        cell.backgroundColor = self.palette?.panel ?? .secondarySystemGroupedBackground
++        cell.textLabel?.numberOfLines = 2
++        cell.detailTextLabel?.numberOfLines = 0
++        cell.textLabel?.attributedText = NSAttributedString(string: font.name, attributes: [.font: UIFont.systemFont(ofSize: 17.0, weight: .semibold), .foregroundColor: primary])
++        let detail = NSMutableAttributedString(string: font.author.isEmpty ? "—" : font.author, attributes: [.font: UIFont.systemFont(ofSize: 14.0, weight: .medium), .foregroundColor: accent])
++        if let description = font.description, !description.isEmpty {
++            detail.append(NSAttributedString(string: "\n" + description, attributes: [.font: UIFont.systemFont(ofSize: 14.0), .foregroundColor: secondary]))
++        }
++        cell.detailTextLabel?.attributedText = detail
++        if self.installingFont == font.id {
++            let spinner = UIActivityIndicatorView(style: .medium)
++            spinner.startAnimating()
++            cell.accessoryView = spinner
++        } else {
++            var configuration = UIButton.Configuration.plain()
++            configuration.attributedTitle = AttributedString(self.russian ? "Выбрать" : "Use", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 14.0, weight: .semibold)]))
++            configuration.baseForegroundColor = accent
++            configuration.background.backgroundColor = accent.withAlphaComponent(0.14)
++            configuration.background.cornerRadius = 14.0
++            configuration.contentInsets = NSDirectionalEdgeInsets(top: 5.0, leading: 12.0, bottom: 5.0, trailing: 12.0)
++            let button = UIButton(configuration: configuration, primaryAction: UIAction(handler: { [weak self] _ in
++                self?.confirmFont(font)
++            }))
++            button.sizeToFit()
++            cell.accessoryView = button
++        }
++        return cell
++    }
++
++    private func confirmFont(_ font: AyuFontCatalog.Entry) {
++        guard self.installingFont == nil else { return }
++        var message = font.author.isEmpty ? font.id : font.author
++        if let size = font.size {
++            message += " · " + ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
++        }
++        if let description = font.description, !description.isEmpty {
++            message += "\n\n" + description
++        }
++        message += self.russian
++            ? "\n\nШрифт скачается, проверится по SHA-256 и станет шрифтом приложения после перезапуска."
++            : "\n\nThe font is downloaded, checked against its SHA-256 and becomes the app font after a relaunch."
++        self.showAlert(title: font.name, message: message, actions: [
++            AyuPluginAlertAction(title: self.russian ? "Отмена" : "Cancel", style: .cancel, handler: nil),
++            AyuPluginAlertAction(title: self.russian ? "Выбрать шрифт" : "Use font", style: .default, handler: { [weak self] in
++                self?.installFont(font)
++            })
++        ])
++    }
++
++    private func installFont(_ font: AyuFontCatalog.Entry) {
++        self.installingFont = font.id
++        self.reload()
++        AyuFontCatalog.shared.install(font, completion: { [weak self] result in
++            guard let self else { return }
++            self.installingFont = nil
++            self.reload()
++            switch result {
++            case .success:
++                self.alert(title: font.name, message: self.russian ? "Шрифт выбран. Перезапустите приложение, чтобы он применился везде." : "Font selected. Relaunch the app to apply it everywhere.")
++            case let .failure(error):
++                self.alert(title: self.russian ? "Не удалось установить" : "Could not install", message: error.localizedDescription)
++            }
++        })
++    }
++
 +    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 +        tableView.deselectRow(at: indexPath, animated: true)
++        if indexPath.section == 1 {
++            let fonts = self.visibleFonts
++            if indexPath.row < fonts.count {
++                self.confirmFont(fonts[indexPath.row])
++            }
++            return
++        }
 +        let entries = self.entries
 +        guard indexPath.row < entries.count else { return }
 +        self.confirm(entries[indexPath.row])

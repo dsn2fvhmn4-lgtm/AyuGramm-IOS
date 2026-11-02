@@ -1,0 +1,748 @@
+diff --git a/submodules/SettingsUI/SnapshotTests/AyuSettingsSnapshotTests.swift b/submodules/SettingsUI/SnapshotTests/AyuSettingsSnapshotTests.swift
+--- a/submodules/SettingsUI/SnapshotTests/AyuSettingsSnapshotTests.swift
++++ b/submodules/SettingsUI/SnapshotTests/AyuSettingsSnapshotTests.swift
+@@ -11,6 +11,52 @@
+ 
+ /// Baselines must be captured/reviewed on the pinned simulator, never synthesized on Linux.
+ final class AyuSettingsSnapshotTests: XCTestCase {
++    @MainActor
++    func testSettingsIconStyleAndCache() throws {
++        let key = "ayu.appearance.monochromeSettingsIcons"
++        let saved = UserDefaults.standard.object(forKey: key)
++        defer {
++            if let saved { UserDefaults.standard.set(saved, forKey: key) }
++            else { UserDefaults.standard.removeObject(forKey: key) }
++        }
++        UserDefaults.standard.removeObject(forKey: key)
++        XCTAssertFalse(AyuSettingsIcons.monochrome)
++        let renderers: [() -> UIImage?] = [
++            { AyuSettingsIcons.symbol("paintbrush.fill", color: .systemPink) },
++            { AyuSettingsIcons.glyph("Item List/Icons/Premium", color: .systemPurple) },
++            { AyuSettingsIcons.telegram(color: .systemBlue) },
++            { AyuSettingsIcons.ghost(color: .systemPurple, plus: true) },
++            { AyuSettingsIcons.plugin(size: 30.0) }
++        ]
++        let coloured = try renderers.map { try XCTUnwrap($0()) }
++        for (index, render) in renderers.enumerated() {
++            XCTAssertTrue(coloured[index] === render(), "An unchanged icon must reuse its rasterization")
++        }
++        AyuSettingsIcons.monochrome = true
++        XCTAssertTrue(UserDefaults.standard.bool(forKey: key))
++        for (index, render) in renderers.enumerated() {
++            let mono = try XCTUnwrap(render())
++            XCTAssertEqual(mono.size, coloured[index].size)
++            XCTAssertFalse(mono === coloured[index])
++            XCTAssertTrue(mono === render())
++            let bytes = try pixels(XCTUnwrap(mono.cgImage))
++            var hasWhiteGlyph = false
++            for pixel in stride(from: 0, to: bytes.count, by: 4) {
++                XCTAssertEqual(bytes[pixel], bytes[pixel + 1])
++                XCTAssertEqual(bytes[pixel + 1], bytes[pixel + 2])
++                if bytes[pixel] > 200 { hasWhiteGlyph = true }
++            }
++            XCTAssertTrue(hasWhiteGlyph, "The vector glyph must still be visible")
++            let before = AyuSectionedEntry.link(0, 1, coloured[index], "Icon", "")
++            let after = AyuSectionedEntry.link(0, 1, mono, "Icon", "")
++            XCTAssertNotEqual(before, after, "A style-only change must redraw the row")
++        }
++        let swatch = try XCTUnwrap(AyuSettingsIcons.symbol("circle.fill", color: .systemRed, preserveColor: true))
++        AyuSettingsIcons.monochrome = false
++        XCTAssertTrue(swatch === AyuSettingsIcons.symbol("circle.fill", color: .systemRed, preserveColor: true))
++        for (index, render) in renderers.enumerated() { XCTAssertTrue(coloured[index] === render()) }
++    }
++
+     @MainActor
+     func testSettingsPreviews() throws {
+         ayuRegisterMessageShotPreview()
+diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+--- a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
++++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+@@ -101,7 +101,7 @@
+         return AyuSettingsIcons.symbol(name, color: UIColor(rgb: color))
+     }
+ 
+-    let signal = combineLatest(context.sharedContext.presentationData, ayuAppearancePlusSignal())
++    let signal = combineLatest(ayuSettingsPresentationData(context: context), ayuAppearancePlusSignal())
+     |> deliverOnMainQueue
+     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+@@ -134,7 +134,7 @@
+         }
+         entries.append(.info(5, AyuAppearancePlusRow.effectsInfo.rawValue, ru ? "Снег — белые точки на фоне чата, под сообщениями. Листья и другие эффекты падают поверх приложения и не мешают нажатиям. При включённом «Уменьшении движения» в iOS эффекты не показываются." : "Snow is white dots in the chat background, under the messages. Leaves and other effects fall over the app and never block taps. With iOS Reduce Motion on, effects are hidden."))
+         let data = ItemListPresentationData(presentationData)
+-        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Оформление+" : "Appearance+"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Панели, стекло и эффекты" : "Tabs, glass & effects"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
+     }
+     let controller = ItemListController(context: context, state: signal)
+diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+--- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+@@ -61,6 +61,14 @@
+     let subtitleRu: String
+     let subtitleEn: String
+     let open: (AccountContext, @escaping (ViewController) -> Void) -> Void
++    var imageName: String? = nil
++
++    var icon: UIImage? {
++        if let imageName {
++            return AyuSettingsIcons.glyph(imageName, color: UIColor(rgb: color), side: imageName.hasPrefix("AyuGram/") ? 20.0 : nil)
++        }
++        return AyuSettingsIcons.symbol(symbol, color: UIColor(rgb: color))
++    }
+ }
+ 
+ func ayuIsRussian(_ context: AccountContext) -> Bool {
+@@ -85,21 +93,21 @@
+     case .messages:
+         return [
+             AyuCategoryItem(id: 11, symbol: "trash.fill", color: 0xFF9500, titleRu: "Удалённые и изменённые", titleEn: "Deleted & edited", subtitleRu: "Сохранять удалённые сообщения и историю правок", subtitleEn: "Keep deleted messages and edit history", open: page { ayuMessageHistoryController(context: $0) }),
+-            AyuCategoryItem(id: 12, symbol: "photo.stack.fill", color: 0x34C759, titleRu: "Архив медиа", titleEn: "Media archive", subtitleRu: "Сохранённые фото и видео из удалённых", subtitleEn: "Saved photos and videos from deleted messages", open: page { AyuMediaArchiveScreen(context: $0) }),
++            AyuCategoryItem(id: 12, symbol: "photo.stack.fill", color: 0x34C759, titleRu: "Архив медиа", titleEn: "Media archive", subtitleRu: "Сохранённые фото и видео из удалённых", subtitleEn: "Saved photos and videos from deleted messages", open: page { AyuMediaArchiveScreen(context: $0) }, imageName: "AyuGram/MediaArchive"),
+             AyuCategoryItem(id: 13, symbol: "doc.on.doc.fill", color: 0x5856D6, titleRu: "Обход ограничений", titleEn: "Restriction bypass", subtitleRu: "Копирование, скриншоты, исчезающие медиа", subtitleEn: "Copying, screenshots, disappearing media", open: page { ayuRestrictionBypassController(context: $0) }),
+             AyuCategoryItem(id: 14, symbol: "textformat", color: 0x007AFF, titleRu: "Отправка", titleEn: "Sending", subtitleRu: "Автозамена, анти-капс, ответ с цитатой, отложенная отправка", subtitleEn: "Auto-replace, anti-caps, reply with a quote, delayed sending", open: page { ayuSendingController(context: $0) }),
+             AyuCategoryItem(id: 15, symbol: "character.bubble.fill", color: 0x34C759, titleRu: "Перевод", titleEn: "Translation", subtitleRu: "Сервис, кнопка на сообщениях, перевод перед отправкой", subtitleEn: "Service, button on messages, translation before sending", open: page { ayuTranslationSettingsController(context: $0) }),
+-            AyuCategoryItem(id: 16, symbol: "line.3.horizontal.decrease.circle.fill", color: 0xFF3B30, titleRu: "Фильтры", titleEn: "Filters", subtitleRu: "Скрывать сообщения по словам и регуляркам", subtitleEn: "Hide messages by words and patterns", open: page { ayuChatOptionsController(context: $0, regex: true) }),
++            AyuCategoryItem(id: 16, symbol: "line.3.horizontal.decrease.circle.fill", color: 0xFF3B30, titleRu: "Фильтры", titleEn: "Filters", subtitleRu: "Скрывать сообщения по словам и регуляркам", subtitleEn: "Hide messages by words and patterns", open: page { ayuChatOptionsController(context: $0, regex: true) }, imageName: "AyuGram/Filter"),
+             AyuCategoryItem(id: 17, symbol: "hand.tap.fill", color: 0xFF9500, titleRu: "Меню и жесты", titleEn: "Menu & gestures", subtitleRu: "Пункты меню сообщений и двойной тап", subtitleEn: "Message menu items and double tap", open: page { ayuInterfaceSettingsController(context: $0, contextMenu: true) }),
+             AyuCategoryItem(id: 18, symbol: "bubble.left.and.bubble.right.fill", color: 0x32ADE6, titleRu: "Чаты", titleEn: "Chats", subtitleRu: "Поведение чатов и реакции", subtitleEn: "Chat behaviour and reactions", open: page { ayuChatsSettingsController(context: $0) }),
+             AyuCategoryItem(id: 19, symbol: "magnifyingglass", color: 0x007AFF, titleRu: "Поиск каналов и людей", titleEn: "Find channels and people", subtitleRu: "", subtitleEn: "", open: page { ayuPeerSearchController(context: $0) }),
+-            AyuCategoryItem(id: 20, symbol: "bell.badge.fill", color: 0xFF3B30, titleRu: "Локальные уведомления", titleEn: "Local notifications", subtitleRu: "Действия, тихие часы, фильтр слов", subtitleEn: "Actions, quiet hours, keyword filter", open: page { ayuLocalNotificationsController(context: $0) })
++            AyuCategoryItem(id: 20, symbol: "bell.badge.fill", color: 0xFF3B30, titleRu: "Локальные уведомления", titleEn: "Local notifications", subtitleRu: "Действия, тихие часы, фильтр слов", subtitleEn: "Actions, quiet hours, keyword filter", open: page { ayuLocalNotificationsController(context: $0) }, imageName: "Item List/Icons/Notifications")
+         ]
+     case .media:
+         return [
+             AyuCategoryItem(id: 21, symbol: "waveform", color: 0xFF2D55, titleRu: "Голос", titleEn: "Voice", subtitleRu: "Смена голоса, эквалайзер, запикивание мата", subtitleEn: "Voice changer, equalizer, profanity bleep", open: page { ayuVoiceSettingsController(context: $0) }),
+             AyuCategoryItem(id: 22, symbol: "camera.fill", color: 0x34C759, titleRu: "Кружки и камера", titleEn: "Video messages & camera", subtitleRu: "Маски, качество, камера, водяной знак", subtitleEn: "Masks, quality, camera, watermark", open: page { ayuVideoMessagesController(context: $0) }),
+-            AyuCategoryItem(id: 23, symbol: "phone.fill", color: 0x34C759, titleRu: "Звонки", titleEn: "Calls", subtitleRu: "Подтверждение, тихий микрофон, статистика", subtitleEn: "Confirmation, silent mute, statistics", open: page { ayuCallsSettingsController(context: $0) }),
++            AyuCategoryItem(id: 23, symbol: "phone.fill", color: 0x34C759, titleRu: "Звонки", titleEn: "Calls", subtitleRu: "Подтверждение звонков и статистика", subtitleEn: "Call confirmation and statistics", open: page { ayuCallsSettingsController(context: $0) }),
+             AyuCategoryItem(id: 24, symbol: "arrow.down.circle.fill", color: 0x007AFF, titleRu: "Загрузки и качество", titleEn: "Downloads & quality", subtitleRu: "Крупные фото, качество, галерея", subtitleEn: "Large photos, quality, gallery", open: page { ayuWhiteGramController(context: $0, groups: [.photos], title: ayuIsRussian($0) ? "Загрузки и качество" : "Downloads & quality") }),
+             AyuCategoryItem(id: 25, symbol: "slider.vertical.3", color: 0xFF2D55, titleRu: "Эквалайзер плеера", titleEn: "Player equalizer", subtitleRu: "", subtitleEn: "", open: page { ayuEqualizerController(context: $0) }),
+             AyuCategoryItem(id: 26, symbol: "quote.bubble.fill", color: 0xFF2D55, titleRu: "Тексты песен", titleEn: "Lyrics", subtitleRu: "Источники текстов", subtitleEn: "Lyrics sources", open: page { ayuLyricsSourcesController(context: $0) }),
+@@ -111,11 +119,11 @@
+             AyuCategoryItem(id: 32, symbol: "list.bullet.rectangle.fill", color: 0x34C759, titleRu: "Список чатов", titleEn: "Chat list", subtitleRu: "Строки, свайпы, аватары и папки", subtitleEn: "Rows, swipes, avatars and folders", open: page { ayuWhiteGramController(context: $0, groups: [.interface], title: ayuIsRussian($0) ? "Список чатов" : "Chat list") }),
+             AyuCategoryItem(id: 33, symbol: "dock.rectangle", color: 0x5856D6, titleRu: "Панели", titleEn: "Panels", subtitleRu: "Таб-бар, поле ввода и навигация", subtitleEn: "Tab bar, input field and navigation", open: page { ayuWhiteGramController(context: $0, groups: [.tabBar], title: ayuIsRussian($0) ? "Панели" : "Panels") }),
+             AyuCategoryItem(id: 34, symbol: "slider.horizontal.3", color: 0x5856D6, titleRu: "Навигация и редактор", titleEn: "Navigation and composer", subtitleRu: "", subtitleEn: "", open: page { ayuInterfacePageController(context: $0, navigationOnly: true) }),
+-            AyuCategoryItem(id: 35, symbol: "paintbrush.pointed.fill", color: 0xFF2D55, titleRu: "Тема и фон", titleEn: "Theme & background", subtitleRu: "AMOLED, вкладки, старый дизайн, снег, эффекты", subtitleEn: "AMOLED, tabs, classic design, snow, effects", open: page { ayuAppearancePlusController(context: $0) }),
++            AyuCategoryItem(id: 35, symbol: "paintbrush.pointed.fill", color: 0xFF2D55, titleRu: "Панели, стекло и эффекты", titleEn: "Tabs, glass & effects", subtitleRu: "Вкладки, старый дизайн, анимации и снег", subtitleEn: "Tabs, classic design, animations and snow", open: page { ayuAppearancePlusController(context: $0) }),
+             AyuCategoryItem(id: 36, symbol: "drop.halffull", color: 0x32ADE6, titleRu: "Стекло и пузыри", titleEn: "Glass and bubbles", subtitleRu: "", subtitleEn: "", open: page { ayuGlassController(context: $0) }),
+-            AyuCategoryItem(id: 37, symbol: "paintpalette.fill", color: 0xAF52DE, titleRu: "Кастомизация", titleEn: "Customization", subtitleRu: "Цвета, бейджи", subtitleEn: "Colours, badges", open: page { ayuCustomizationController(context: $0) }),
+-            AyuCategoryItem(id: 38, symbol: "square.grid.2x2.fill", color: 0xFF9500, titleRu: "Иконки и бейдж", titleEn: "Icons & badge", subtitleRu: "Иконка приложения и значок AyuGram", subtitleEn: "App icon and the AyuGram badge", open: page { ayuIconsController(context: $0) }),
+-            AyuCategoryItem(id: 39, symbol: "person.crop.square.fill", color: 0x8E8E93, titleRu: "Профиль и настройки", titleEn: "Profile & settings", subtitleRu: "ID, дата-центр, даты и пункты Настроек", subtitleEn: "ID, data center, dates and Settings rows", open: page { ayuSettingsCategoryController(context: $0, category: 3) }),
++            AyuCategoryItem(id: 37, symbol: "paintpalette.fill", color: 0xAF52DE, titleRu: "Темы, цвета и бейджи", titleEn: "Themes, colours & badges", subtitleRu: "Готовые палитры, фон чата и свои цвета", subtitleEn: "Palettes, chat background and custom colours", open: page { ayuCustomizationController(context: $0) }),
++            AyuCategoryItem(id: 38, symbol: "square.grid.2x2.fill", color: 0xFF9500, titleRu: "Иконки и бейдж", titleEn: "Icons & badge", subtitleRu: "Иконка приложения, цветные или монохромные значки", subtitleEn: "App icon, coloured or monochrome glyphs", open: page { ayuIconsController(context: $0) }),
++            AyuCategoryItem(id: 39, symbol: "person.crop.square.fill", color: 0x8E8E93, titleRu: "Метки сообщений и MessageShot", titleEn: "Message labels & MessageShot", subtitleRu: "Время, метки правок и снимки сообщений", subtitleEn: "Timestamps, edit labels and message screenshots", open: page { ayuSettingsCategoryController(context: $0, category: 3) }),
+             AyuCategoryItem(id: 40, symbol: "switch.2", color: 0x6750A4, titleRu: "Material Design", titleEn: "Material Design", subtitleRu: "", subtitleEn: "", open: page { ayuMaterialDesignController(context: $0) })
+         ]
+     case .security:
+@@ -126,9 +134,9 @@
+         ]
+     case .more:
+         return [
+-            AyuCategoryItem(id: 61, symbol: "puzzlepiece.extension.fill", color: 0x007AFF, titleRu: "Плагины", titleEn: "Plugins", subtitleRu: "Каталог, консоль, разработка", subtitleEn: "Catalog, console, development", open: { context, _ in ayuPresentPlugins(context: context) }),
++            AyuCategoryItem(id: 61, symbol: "puzzlepiece.extension.fill", color: 0x007AFF, titleRu: "Плагины", titleEn: "Plugins", subtitleRu: "Каталог, консоль, разработка", subtitleEn: "Catalog, console, development", open: { context, _ in ayuPresentPlugins(context: context) }, imageName: "AyuGram/Plugins"),
+             AyuCategoryItem(id: 62, symbol: "wrench.and.screwdriver.fill", color: 0x8E8E93, titleRu: "Инструменты", titleEn: "Tools", subtitleRu: "VirusTotal, ИИ, прокси, бэкап, Last.fm", subtitleEn: "VirusTotal, AI, proxy, backup, Last.fm", open: page { ayuToolsController(context: $0) }),
+-            AyuCategoryItem(id: 63, symbol: "star.fill", color: 0xAF52DE, titleRu: "Локальный Premium", titleEn: "Local Premium", subtitleRu: "", subtitleEn: "", open: page { ayuLocalPremiumController(context: $0) }),
++            AyuCategoryItem(id: 63, symbol: "star.fill", color: 0xAF52DE, titleRu: "Локальный Premium", titleEn: "Local Premium", subtitleRu: "", subtitleEn: "", open: page { ayuLocalPremiumController(context: $0) }, imageName: "Item List/Icons/Premium"),
+             AyuCategoryItem(id: 64, symbol: "antenna.radiowaves.left.and.right", color: 0x007AFF, titleRu: "Контакты рядом", titleEn: "Nearby contact", subtitleRu: "", subtitleEn: "", open: page { ayuNearbyContactController(context: $0) }),
+             AyuCategoryItem(id: 65, symbol: "gearshape.fill", color: 0x8E8E93, titleRu: "Общие", titleEn: "General", subtitleRu: "", subtitleEn: "", open: page { ayuGeneralSettingsController(context: $0) }),
+             AyuCategoryItem(id: 66, symbol: "star.circle.fill", color: 0xFF9500, titleRu: "Прочее", titleEn: "Other", subtitleRu: "", subtitleEn: "", open: page { ayuOtherSettingsController(context: $0, navigation: nil) }),
+@@ -144,7 +152,7 @@
+         guard let item = items.first(where: { $0.id == id }) else { return }
+         item.open(context, { push?($0) })
+     }, toggle: { _, _ in })
+-    let signal = context.sharedContext.presentationData
++    let signal = ayuSettingsPresentationData(context: context)
+     |> deliverOnMainQueue
+     |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+@@ -156,7 +164,7 @@
+         }
+         for item in items {
+             let subtitle = ru ? item.subtitleRu : item.subtitleEn
+-            entries.append(.link(1, item.id, AyuSettingsIcons.symbol(item.symbol, color: UIColor(rgb: item.color)), ru ? item.titleRu : item.titleEn, subtitle))
++            entries.append(.link(1, item.id, item.icon, ru ? item.titleRu : item.titleEn, subtitle))
+         }
+         let data = ItemListPresentationData(presentationData)
+         let state = ItemListControllerState(presentationData: data, title: .text(category.title(ru)), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+diff --git a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+--- a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+@@ -24,7 +24,7 @@
+         toggle(id, value)
+         NotificationCenter.default.post(name: ayuLocalSettingsChanged, object: nil)
+     })
+-    let signal = combineLatest(context.sharedContext.presentationData, ayuChanges(notifications + [ayuLocalSettingsChanged, AyuExtras.didChangeNotification, AyuMediaSettings.didChangeNotification]))
++    let signal = combineLatest(ayuSettingsPresentationData(context: context), ayuChanges(notifications + [ayuLocalSettingsChanged, AyuExtras.didChangeNotification, AyuMediaSettings.didChangeNotification]))
+     |> deliverOnMainQueue
+     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+@@ -294,6 +294,8 @@
+         .header(1, 0, ru ? "ИКОНКИ" : "ICONS"),
+         .link(1, 1, symbol("app.badge.fill", 0xFF9500), ru ? "Иконка приложения" : "App icon", ""),
+         .link(1, 2, symbol("square.grid.2x2.fill", 0x32ADE6), ru ? "Набор иконок вкладок" : "Tab icon pack", AyuTools.iconPack.title(ru)),
++        .toggle(1, 3, symbol("circle.lefthalf.filled", 0x8E8E93), ru ? "Монохромные иконки настроек" : "Monochrome settings icons", nil, AyuSettingsIcons.monochrome),
++        .info(1, 4, ru ? "Белые значки на тёмно-сером фоне. Выключите, чтобы вернуть цветные иконки. Применяется сразу." : "White glyphs on a dark grey background. Turn off to restore coloured icons. Applies immediately."),
+         .header(2, 10, ru ? "БЕЙДЖ" : "BADGE"),
+         .toggle(2, 11, symbol("checkmark.seal.fill", 0x8E5CF7), ru ? "Скрыть значок AyuGram у людей" : "Hide the AyuGram badge on people", ru ? "В чатах не показывается; в профиле остаётся" : "Hidden in chats; still shown in the profile", AyuExtras.isOn(.hideAyuBadges))
+     ] }, open: { id, _, present in
+@@ -304,6 +306,7 @@
+         default: break
+         }
+     }, toggle: { id, value in
++        if id == 3 { AyuSettingsIcons.monochrome = value }
+         if id == 11 { AyuExtras.set(.hideAyuBadges, value) }
+     })
+ }
+diff --git a/submodules/SettingsUI/Sources/AyuCustomizationController.swift b/submodules/SettingsUI/Sources/AyuCustomizationController.swift
+--- a/submodules/SettingsUI/Sources/AyuCustomizationController.swift
++++ b/submodules/SettingsUI/Sources/AyuCustomizationController.swift
+@@ -175,19 +175,19 @@
+         return AyuSettingsIcons.symbol(name, color: UIColor(rgb: color))
+     }
+ 
+-    let signal = combineLatest(context.sharedContext.presentationData, ayuCustomizationSignal())
++    let signal = combineLatest(ayuSettingsPresentationData(context: context), ayuCustomizationSignal())
+     |> deliverOnMainQueue
+     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuSectionedEntry] = [.header(1, 0, ru ? "ГОТОВЫЕ ПАЛИТРЫ" : "PALETTES")]
+         for (index, preset) in AyuCustomization.presets.enumerated() where index < 15 {
+             let tint = preset.colors[.accent].flatMap(AyuCustomization.parse) ?? 0x8E5CF7
+-            entries.append(.link(1, Int32(1 + index), symbol("circle.hexagongrid.fill", tint), ru ? preset.nameRu : preset.nameEn, ""))
++            entries.append(.link(1, Int32(1 + index), AyuSettingsIcons.symbol("circle.hexagongrid.fill", color: UIColor(rgb: tint), preserveColor: true), ru ? preset.nameRu : preset.nameEn, ""))
+         }
+         entries.append(.header(2, 16, ru ? "СВОИ ЦВЕТА" : "YOUR COLOURS"))
+         for (index, row) in ayuColorRows.enumerated() {
+             let value = AyuCustomization.rgb(row.0)
+-            entries.append(.link(2, Int32(17 + index), symbol(row.1, value ?? 0x8E8E93), ru ? row.2 : row.3, AyuCustomization.hex(row.0) ?? (ru ? "как в теме" : "theme")))
++            entries.append(.link(2, Int32(17 + index), AyuSettingsIcons.symbol(row.1, color: UIColor(rgb: value ?? 0x8E8E93), preserveColor: true), ru ? row.2 : row.3, AyuCustomization.hex(row.0) ?? (ru ? "как в теме" : "theme")))
+         }
+         entries.append(.info(2, 26, ru ? "Цвета ложатся поверх любой темы и применяются после перезапуска приложения." : "Colours go on top of any theme and apply after the app is relaunched."))
+         entries.append(.header(3, 30, ru ? "БЕЙДЖИ" : "BADGES"))
+@@ -204,7 +204,7 @@
+         entries.append(.header(4, 97, ru ? "СБРОС" : "RESET"))
+         entries.append(.link(4, 99, symbol("arrow.counterclockwise", 0xFF3B30), ru ? "Сбросить кастомизацию" : "Reset customization", ""))
+         let data = ItemListPresentationData(presentationData)
+-        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Кастомизация" : "Customization"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Темы, цвета и бейджи" : "Themes, colours & badges"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
+     }
+     let controller = ItemListController(context: context, state: signal)
+diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+--- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+@@ -179,51 +179,25 @@
+             }
+         }
+     }, toggle: { _, _ in })
+-    let icons: [AyuGramRow: UIImage?] = [
+-        .playerText: AyuSettingsIcons.symbol("text.word.spacing", color: UIColor(rgb: 0xFF2D55)),
+-        .ghostMode: AyuSettingsIcons.ghost(color: UIColor(rgb: 0x8E5CF7)),
+-        .ghostModePlus: AyuSettingsIcons.ghost(color: UIColor(rgb: 0x5856D6), plus: true),
+-        .messageHistory: AyuSettingsIcons.glyph("Item List/Icons/Clock", color: UIColor(rgb: 0xFF9500)),
+-        .mediaArchive: AyuSettingsIcons.glyph("AyuGram/MediaArchive", color: UIColor(rgb: 0x34C759), side: 19.0),
+-        .localPremium: AyuSettingsIcons.glyph("Item List/Icons/Premium", color: UIColor(rgb: 0xAF52DE)),
+-        .filters: AyuSettingsIcons.glyph("AyuGram/Filter", color: UIColor(rgb: 0xFF3B30), side: 20.0),
+-        .nearbyContact: AyuSettingsIcons.symbol("antenna.radiowaves.left.and.right", color: UIColor(rgb: 0x007AFF)),
+-        .interface: AyuSettingsIcons.symbol("bubble.left.and.bubble.right.fill", color: UIColor(rgb: 0x32ADE6)),
+-        .navigationAndComposer: AyuSettingsIcons.symbol("slider.horizontal.3", color: UIColor(rgb: 0x5856D6)),
+-        .peerSearch: AyuSettingsIcons.symbol("magnifyingglass", color: UIColor(rgb: 0x007AFF)),
+-        .ghostExceptions: AyuSettingsIcons.symbol("person.crop.circle.badge.checkmark", color: UIColor(rgb: 0x8E5CF7)),
+-        .appearancePlus: AyuSettingsIcons.symbol("paintbrush.pointed.fill", color: UIColor(rgb: 0xFF2D55)),
+-        .lyricsSources: AyuSettingsIcons.symbol("quote.bubble.fill", color: UIColor(rgb: 0xFF2D55)),
+-        .whiteGram: AyuSettingsIcons.symbol("sparkles", color: UIColor(rgb: 0x8E8E93)),
+-        .clientGeneral: AyuSettingsIcons.symbol("gearshape.fill", color: UIColor(rgb: 0x8E8E93)),
+-        .clientAppearance: AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0x32ADE6)),
+-        .clientChats: AyuSettingsIcons.glyph("AyuGram/Chats", color: UIColor(rgb: 0x34C759), side: 20.0),
+-        .clientPlugins: AyuSettingsIcons.glyph("AyuGram/Plugins", color: UIColor(rgb: 0x007AFF), side: 20.0),
+-        .clientMaterialDesign: AyuSettingsIcons.symbol("switch.2", color: UIColor(rgb: 0x6750A4)),
+-        .clientOther: AyuSettingsIcons.symbol("star.fill", color: UIColor(rgb: 0xFF9500)),
+-        .developer: AyuSettingsIcons.symbol("hammer.fill", color: UIColor(rgb: 0x8E8E93)),
+-        .equalizer: AyuSettingsIcons.symbol("slider.vertical.3", color: UIColor(rgb: 0xFF2D55)),
+-        .extras: AyuSettingsIcons.symbol("hand.raised.fill", color: UIColor(rgb: 0x34C759)),
+-        .customization: AyuSettingsIcons.symbol("paintbrush.fill", color: UIColor(rgb: 0xAF52DE)),
+-        .glass: AyuSettingsIcons.symbol("drop.halffull", color: UIColor(rgb: 0x32ADE6)),
+-        .tools: AyuSettingsIcons.symbol("wrench.and.screwdriver.fill", color: UIColor(rgb: 0x8E8E93)),
+-        .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
+-        .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6)),
+-        .officialGroup: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
+-        .creditMurkGitHub: AyuSettingsIcons.symbol("person.crop.circle.fill", color: UIColor(rgb: 0x8E5CF7)),
+-        .creditMurkTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
+-        .creditNeistvGitHub: AyuSettingsIcons.symbol("person.crop.circle.fill", color: UIColor(rgb: 0xFF9500)),
+-        .creditNeistvTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
+-        .creditOwnerGitHub: AyuSettingsIcons.symbol("folder.fill", color: UIColor(rgb: 0x34C759)),
+-        .creditOwnerTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE))
+-    ]
+-    func link(_ section: Int32, _ row: AyuGramRow, _ title: String, _ label: String = "") -> AyuSectionedEntry {
+-        return .link(section, row.rawValue, icons[row] ?? nil, title, label)
+-    }
+     let search = AyuSettingsSearch(context: context)
+-    let signal = context.sharedContext.presentationData
++    let signal = ayuSettingsPresentationData(context: context)
+     |> deliverOnMainQueue
+     |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let icons: [AyuGramRow: UIImage?] = [
++            .developer: AyuSettingsIcons.symbol("hammer.fill", color: UIColor(rgb: 0x8E8E93)),
++            .channel: AyuSettingsIcons.symbol("megaphone.fill", color: UIColor(rgb: 0x007AFF)),
++            .sourceCode: AyuSettingsIcons.symbol("chevron.left.forwardslash.chevron.right", color: UIColor(rgb: 0x5856D6)),
++            .officialGroup: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
++            .creditMurkGitHub: AyuSettingsIcons.symbol("person.crop.circle.fill", color: UIColor(rgb: 0x8E5CF7)),
++            .creditMurkTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
++            .creditNeistvGitHub: AyuSettingsIcons.symbol("person.crop.circle.fill", color: UIColor(rgb: 0xFF9500)),
++            .creditNeistvTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE)),
++            .creditOwnerGitHub: AyuSettingsIcons.symbol("folder.fill", color: UIColor(rgb: 0x34C759)),
++            .creditOwnerTelegram: AyuSettingsIcons.telegram(color: UIColor(rgb: 0x2AABEE))
++        ]
++        func link(_ section: Int32, _ row: AyuGramRow, _ title: String, _ label: String = "") -> AyuSectionedEntry {
++            return .link(section, row.rawValue, icons[row] ?? nil, title, label)
++        }
+         search.updatePresentationData(presentationData)
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuSectionedEntry] = [
+@@ -374,7 +348,7 @@
+             if id == 1 { $0.setScheduling(value) } else if id == 11 { $0.setReadAfterSend(value) }
+         }
+     })
+-    let signal = combineLatest(context.sharedContext.presentationData, store.signal)
++    let signal = combineLatest(ayuSettingsPresentationData(context: context), store.signal)
+     |> deliverOnMainQueue
+     |> map { presentationData, settings -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+@@ -437,7 +411,7 @@
+         }
+     }, context: context)
+     let accountPeer = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.Peer(id: context.account.peerId))
+-    let signal = combineLatest(context.sharedContext.presentationData, store.signal, accountPeer)
++    let signal = combineLatest(ayuSettingsPresentationData(context: context), store.signal, accountPeer)
+     |> deliverOnMainQueue
+     |> map { presentationData, settings, peer -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+@@ -496,7 +470,7 @@
+     }, record: { id in
+         push?(ayuHistoryRecordController(context: context, recordId: id))
+     }, context: context)
+-    let signal = combineLatest(context.sharedContext.presentationData, context.engine.messages.ayuMessageHistory())
++    let signal = combineLatest(ayuSettingsPresentationData(context: context), context.engine.messages.ayuMessageHistory())
+     |> deliverOnMainQueue
+     |> map { presentationData, history -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+@@ -545,7 +519,7 @@
+     let arguments = AyuSettingsArguments(open: { _ in
+         push?(ayuMessageHistoryController(context: context, messageId: message.id))
+     }, update: { _, _ in }, record: { _ in })
+-    let signal = context.sharedContext.presentationData
++    let signal = ayuSettingsPresentationData(context: context)
+     |> deliverOnMainQueue
+     |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+@@ -569,7 +543,7 @@
+ 
+ func ayuHistoryRecordDetailsController(context: AccountContext, recordId: Int32) -> ViewController {
+     var openAttachment: ((String) -> Void)?
+-    let signal = combineLatest(context.sharedContext.presentationData, context.engine.messages.ayuMessageHistory())
++    let signal = combineLatest(ayuSettingsPresentationData(context: context), context.engine.messages.ayuMessageHistory())
+     |> deliverOnMainQueue
+     |> map { presentationData, history -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+--- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+@@ -196,7 +196,7 @@
+         return (AyuStrings.general.text(ru), [(51, AyuStrings.translationProviders.text(ru)), (2, AyuStrings.sendingOptions.text(ru)), (5, AyuStrings.interface.text(ru)), (6, AyuStrings.messageMenu.text(ru))])
+     case 3:
+         // Local Premium lives on the AyuGram page only; the app icon picker is not listed here.
+-        return (AyuStrings.appearance.text(ru), [(4, AyuStrings.chatAppearance.text(ru)), (7, AyuStrings.messageshotAppearance.text(ru))])
++        return (ru ? "Метки сообщений и MessageShot" : "Message labels & MessageShot", [(4, AyuStrings.chatAppearance.text(ru)), (7, AyuStrings.messageshotAppearance.text(ru))])
+     default:
+         return (AyuStrings.chats.text(ru), [(8, AyuStrings.hiddenMessages.text(ru)), (9, AyuStrings.chatReactions.text(ru))])
+     }
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -12,6 +12,20 @@
+ import PeerNameColorScreen
+ 
+ // Row models shared by the AyuGram and exteraGram settings pages.
++
++/// Refresh open settings pages when their icon style changes, including parent pages
++/// under the icon picker. The observer is disposed together with the page's signal.
++func ayuSettingsPresentationData(context: AccountContext) -> Signal<PresentationData, NoError> {
++    let icons = Signal<Void, NoError> { subscriber in
++        let observer = NotificationCenter.default.addObserver(forName: AyuSettingsIcons.didChangeNotification, object: nil, queue: .main) { _ in
++            subscriber.putNext(Void())
++        }
++        subscriber.putNext(Void())
++        return ActionDisposable { NotificationCenter.default.removeObserver(observer) }
++    }
++    return combineLatest(context.sharedContext.presentationData, icons)
++    |> map { data, _ in data }
++}
+ 
+ struct AyuSettingsArguments {
+     let open: (Int32) -> Void
+@@ -168,9 +182,9 @@
+         switch (lhs, rhs) {
+         case let (.logo(ls, li, ll, lt, lx), .logo(rs, ri, rl, rt, rx)): return ls == rs && li == ri && ll == rl && lt == rt && lx == rx
+         case let (.header(ls, li, lt), .header(rs, ri, rt)): return ls == rs && li == ri && lt == rt
+-        case let (.link(ls, li, _, lt, ll), .link(rs, ri, _, rt, rl)): return ls == rs && li == ri && lt == rt && ll == rl
+-        case let (.badgedLink(ls, li, _, lt, lb, lc), .badgedLink(rs, ri, _, rt, rb, rc)): return ls == rs && li == ri && lt == rt && lb == rb && lc == rc
+-        case let (.toggle(ls, li, _, lt, lx, lv), .toggle(rs, ri, _, rt, rx, rv)): return ls == rs && li == ri && lt == rt && lx == rx && lv == rv
++        case let (.link(ls, li, limage, lt, ll), .link(rs, ri, rimage, rt, rl)): return ls == rs && li == ri && limage === rimage && lt == rt && ll == rl
++        case let (.badgedLink(ls, li, limage, lt, lb, lc), .badgedLink(rs, ri, rimage, rt, rb, rc)): return ls == rs && li == ri && limage === rimage && lt == rt && lb == rb && lc == rc
++        case let (.toggle(ls, li, limage, lt, lx, lv), .toggle(rs, ri, rimage, rt, rx, rv)): return ls == rs && li == ri && limage === rimage && lt == rt && lx == rx && lv == rv
+         case let (.slider(ls, li, lv, lmin, lmax), .slider(rs, ri, rv, rmin, rmax)): return ls == rs && li == ri && lv == rv && lmin == rmin && lmax == rmax
+         case let (.info(ls, li, lt), .info(rs, ri, rt)): return ls == rs && li == ri && lt == rt
+         case let (.picture(ls, li, lp), .picture(rs, ri, rp)): return ls == rs && li == ri && lp == rp
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsSearch.swift b/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
+--- a/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsSearch.swift
+@@ -50,6 +50,7 @@
+     toggle("ui.format", "Панель форматирования", "Formatting toolbar", interface, \AyuGhostModeSettings.interface.formattingToolbar)
+     toggle("ui.doubleEdit", "Редактировать двойным нажатием", "Double tap to edit", interface, \AyuGhostModeSettings.interface.doubleTapToEdit)
+     let appearance = ru ? "Оформление" : "Appearance"
++    local("appearance.icons", "Монохромные иконки настроек", "Monochrome settings icons", appearance, { AyuSettingsIcons.monochrome }, { AyuSettingsIcons.monochrome = $0 })
+     local("appearance.contacts", "Скрыть вкладку Контакты", "Hide Contacts tab", appearance, { AyuAppearancePlus.hideContactsTab }, { AyuAppearancePlus.hideContactsTab = $0 })
+     local("appearance.calls", "Скрыть вкладку Звонки", "Hide Calls tab", appearance, { AyuAppearancePlus.hideCallsTab }, { AyuAppearancePlus.hideCallsTab = $0 })
+     local("appearance.titles", "Скрыть подписи вкладок", "Hide tab titles", appearance, { AyuAppearancePlus.hideTabTitles }, { AyuAppearancePlus.hideTabTitles = $0 })
+@@ -67,9 +68,10 @@
+     page("general", "Общие настройки клиента", "General client settings") { ayuGeneralSettingsController(context: context) }
+     page("chats", "Чаты", "Chats", "сообщения sending отправка") { ayuChatsSettingsController(context: context) }
+     page("appearance", "Оформление чатов", "Chat appearance", "секунды seconds метки label размер size") { ayuSettingsCategoryController(context: context, category: 3) }
+-    page("appearancePlus", "Оформление+", "Appearance+", "вкладки tabs стекло glass") { ayuAppearancePlusController(context: context) }
++    page("appearancePlus", "Панели, стекло и эффекты", "Tabs, glass & effects", "вкладки tabs стекло glass") { ayuAppearancePlusController(context: context) }
+     page("whiteGram", "Шрифты и оформление WhiteGram", "WhiteGram fonts and appearance", "font пузырьки bubble экспорт import") { ayuWhiteGramController(context: context) }
+-    page("custom", "Кастомизация", "Customization", "цвета colors палитра темы theme wallpaper обои") { ayuCustomizationController(context: context) }
++    page("custom", "Темы, цвета и бейджи", "Themes, colours & badges", "цвета colors палитра темы theme wallpaper обои") { ayuCustomizationController(context: context) }
++    page("icons", "Иконки и бейдж", "Icons & badge", "монохромные цветные monochrome coloured svg") { ayuIconsController(context: context) }
+     page("glass", "Стекло и пузыри", "Glass and bubbles") { ayuGlassController(context: context) }
+     page("lyricsMotion", "Анимация текста в плеере", "Player lyrics animation", "караоке karaoke волна wave свечение glow каскад cascade") { ayuPlayerTextSettingsController(context: context) }
+     page("lyrics", "Источники текстов песен", "Lyrics sources", "музыка music слова") { ayuLyricsSourcesController(context: context) }
+diff --git a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
+--- a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
++++ b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
+@@ -6,6 +6,45 @@
+ public enum AyuSettingsIcons {
+     private static let size = CGSize(width: 30.0, height: 30.0)
+     private static let cornerRadius: CGFloat = 8.0
++    private static let monochromeKey = "ayu.appearance.monochromeSettingsIcons"
++    public static let didChangeNotification = Notification.Name("AyuGram.SettingsIconsChanged")
++
++    /// Missing preferences keep the original coloured icons, including after an upgrade.
++    public static var monochrome: Bool {
++        get { return UserDefaults.standard.bool(forKey: monochromeKey) }
++        set {
++            guard newValue != monochrome else { return }
++            UserDefaults.standard.set(newValue, forKey: monochromeKey)
++            NotificationCenter.default.post(name: didChangeNotification, object: nil)
++        }
++    }
++
++    private static let images: NSCache<NSString, UIImage> = {
++        let cache = NSCache<NSString, UIImage>()
++        cache.countLimit = 256
++        cache.totalCostLimit = 4 * 1024 * 1024
++        return cache
++    }()
++
++    private static func tileColor(_ color: UIColor) -> UIColor {
++        return monochrome ? UIColor(rgb: 0x333333) : color
++    }
++
++    /// Keep the final rasterization, not a bitmap for every row refresh. NSCache is
++    /// thread-safe and evicts under memory pressure; size, colour and scale are keys.
++    private static func cachedImage(_ name: String, color: UIColor = .clear, draw: () -> UIImage?) -> UIImage? {
++        let resolved = color.resolvedColor(with: UITraitCollection.current)
++        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 0.0
++        resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
++        let key = "\(name):\(red):\(green):\(blue):\(alpha):\(UIScreen.main.scale)" as NSString
++        if let image = images.object(forKey: key) {
++            return image
++        }
++        guard let image = draw() else { return nil }
++        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
++        images.setObject(image, forKey: key, cost: cost)
++        return image
++    }
+ 
+     /// The mod's own full-bleed logo.
+     public static let logo: UIImage? = AyuSettingsIcons.bundleLogo("AyuGram/Brand", fallbackColor: UIColor(rgb: 0x8E5CF7))
+@@ -16,94 +55,105 @@
+     /// Telegram's paper plane, drawn from its SVG outline as one solid shape, white on a
+     /// colored rounded square.
+     public static func telegram(color: UIColor) -> UIImage? {
+-        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
+-            let bounds = CGRect(origin: CGPoint(), size: size)
+-            context.clear(bounds)
+-            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
+-            context.setFillColor(color.cgColor)
+-            context.fillPath()
+-            // 24 pt artwork; the plane's box is (5.4, 7.0)–(18.4, 17.7).
+-            guard let plane = try? convertSvgPath("M5.43,11.86 L17.35,7.26 C17.90,7.05 18.42,7.40 18.27,8.10 L16.40,16.90 C16.26,17.53 15.88,17.68 15.36,17.39 L12.30,15.15 L10.90,16.50 C10.74,16.66 10.61,16.79 10.31,16.79 L10.52,13.69 L15.80,8.92 C16.03,8.72 15.75,8.60 15.45,8.80 L8.92,12.91 L6.10,12.03 C5.49,11.84 5.30,11.92 5.43,11.86 Z") else {
+-                return
+-            }
+-            let scale: CGFloat = 1.35
+-            context.translateBy(x: size.width / 2.0 - 11.9 * scale - 0.5, y: size.height / 2.0 - 12.35 * scale)
+-            context.scaleBy(x: scale, y: scale)
+-            context.addPath(plane)
+-            context.setFillColor(UIColor.white.cgColor)
+-            context.fillPath()
+-        })
++        let color = tileColor(color)
++        return cachedImage("telegram", color: color) {
++            return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++                let bounds = CGRect(origin: CGPoint(), size: size)
++                context.clear(bounds)
++                context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++                context.setFillColor(color.cgColor)
++                context.fillPath()
++                // 24 pt artwork; the plane's box is (5.4, 7.0)–(18.4, 17.7).
++                guard let plane = try? convertSvgPath("M5.43,11.86 L17.35,7.26 C17.90,7.05 18.42,7.40 18.27,8.10 L16.40,16.90 C16.26,17.53 15.88,17.68 15.36,17.39 L12.30,15.15 L10.90,16.50 C10.74,16.66 10.61,16.79 10.31,16.79 L10.52,13.69 L15.80,8.92 C16.03,8.72 15.75,8.60 15.45,8.80 L8.92,12.91 L6.10,12.03 C5.49,11.84 5.30,11.92 5.43,11.86 Z") else {
++                    return
++                }
++                let scale: CGFloat = 1.35
++                context.translateBy(x: size.width / 2.0 - 11.9 * scale - 0.5, y: size.height / 2.0 - 12.35 * scale)
++                context.scaleBy(x: scale, y: scale)
++                context.addPath(plane)
++                context.setFillColor(UIColor.white.cgColor)
++                context.fillPath()
++            })
++        }
+     }
+ 
+     /// A white glyph from the app bundle on a colored rounded square. Telegram's own settings
+     /// glyphs ("Item List/Icons/…") are drawn at their full 30 pt canvas; the AyuGram ones, 24 pt
+     /// Solar-style artwork, are drawn into a centered square of `side` points.
+     public static func glyph(_ name: String, color: UIColor, side: CGFloat? = nil) -> UIImage? {
+-        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
+-            let bounds = CGRect(origin: CGPoint(), size: size)
+-            context.clear(bounds)
+-            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
+-            context.setFillColor(color.cgColor)
+-            context.fillPath()
+-            guard let image = UIImage(bundleImageName: name)?.withTintColor(.white, renderingMode: .alwaysOriginal), image.size.width > 0.0, image.size.height > 0.0 else {
+-                return
+-            }
+-            let imageSize = side.map { CGSize(width: $0, height: $0) } ?? image.size
+-            UIGraphicsPushContext(context)
+-            image.draw(in: CGRect(origin: CGPoint(x: (size.width - imageSize.width) / 2.0, y: (size.height - imageSize.height) / 2.0), size: imageSize))
+-            UIGraphicsPopContext()
+-        })
++        let color = tileColor(color)
++        return cachedImage("glyph:\(name):\(side ?? -1.0)", color: color) {
++            return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++                let bounds = CGRect(origin: CGPoint(), size: size)
++                context.clear(bounds)
++                context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++                context.setFillColor(color.cgColor)
++                context.fillPath()
++                guard let image = UIImage(bundleImageName: name)?.withTintColor(.white, renderingMode: .alwaysOriginal), image.size.width > 0.0, image.size.height > 0.0 else {
++                    return
++                }
++                let imageSize = side.map { CGSize(width: $0, height: $0) } ?? image.size
++                UIGraphicsPushContext(context)
++                image.draw(in: CGRect(origin: CGPoint(x: (size.width - imageSize.width) / 2.0, y: (size.height - imageSize.height) / 2.0), size: imageSize))
++                UIGraphicsPopContext()
++            })
++        }
+     }
+ 
+     /// AyuGram's ghost (the Solar ghost from AyuGram for Android) on a colored rounded square.
+     /// With `plus`, the ghost is a little smaller and a "+" badge sits at the bottom right, as
+     /// the Ghost Mode+ icon.
+     public static func ghost(color: UIColor, plus: Bool = false) -> UIImage? {
+-        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
+-            let bounds = CGRect(origin: CGPoint(), size: size)
+-            context.clear(bounds)
+-            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
+-            context.setFillColor(color.cgColor)
+-            context.fillPath()
+-            guard let image = UIImage(bundleImageName: "AyuGram/Ghost")?.withTintColor(.white, renderingMode: .alwaysOriginal) else {
+-                return
+-            }
+-            let side: CGFloat = plus ? 19.0 : 21.0
+-            let inset: CGFloat = plus ? 4.0 : 4.5
+-            UIGraphicsPushContext(context)
+-            image.draw(in: CGRect(x: inset, y: inset, width: side, height: side))
+-            UIGraphicsPopContext()
+-            guard plus else {
+-                return
+-            }
+-            // A white badge with a "+" in the square's color, ringed so it stands off the ghost.
+-            let center = CGPoint(x: 22.5, y: 22.5)
+-            context.setFillColor(color.cgColor)
+-            context.fillEllipse(in: CGRect(x: center.x - 6.5, y: center.y - 6.5, width: 13.0, height: 13.0))
+-            context.setFillColor(UIColor.white.cgColor)
+-            context.fillEllipse(in: CGRect(x: center.x - 5.0, y: center.y - 5.0, width: 10.0, height: 10.0))
+-            context.setFillColor(color.cgColor)
+-            context.addPath(UIBezierPath(roundedRect: CGRect(x: center.x - 0.9, y: center.y - 2.6, width: 1.8, height: 5.2), cornerRadius: 0.9).cgPath)
+-            context.addPath(UIBezierPath(roundedRect: CGRect(x: center.x - 2.6, y: center.y - 0.9, width: 5.2, height: 1.8), cornerRadius: 0.9).cgPath)
+-            context.fillPath()
+-        })
++        let color = tileColor(color)
++        return cachedImage("ghost:\(plus)", color: color) {
++            return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++                let bounds = CGRect(origin: CGPoint(), size: size)
++                context.clear(bounds)
++                context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++                context.setFillColor(color.cgColor)
++                context.fillPath()
++                guard let image = UIImage(bundleImageName: "AyuGram/Ghost")?.withTintColor(.white, renderingMode: .alwaysOriginal) else {
++                    return
++                }
++                let side: CGFloat = plus ? 19.0 : 21.0
++                let inset: CGFloat = plus ? 4.0 : 4.5
++                UIGraphicsPushContext(context)
++                image.draw(in: CGRect(x: inset, y: inset, width: side, height: side))
++                UIGraphicsPopContext()
++                guard plus else {
++                    return
++                }
++                // A white badge with a "+" in the square's color, ringed so it stands off the ghost.
++                let center = CGPoint(x: 22.5, y: 22.5)
++                context.setFillColor(color.cgColor)
++                context.fillEllipse(in: CGRect(x: center.x - 6.5, y: center.y - 6.5, width: 13.0, height: 13.0))
++                context.setFillColor(UIColor.white.cgColor)
++                context.fillEllipse(in: CGRect(x: center.x - 5.0, y: center.y - 5.0, width: 10.0, height: 10.0))
++                context.setFillColor(color.cgColor)
++                context.addPath(UIBezierPath(roundedRect: CGRect(x: center.x - 0.9, y: center.y - 2.6, width: 1.8, height: 5.2), cornerRadius: 0.9).cgPath)
++                context.addPath(UIBezierPath(roundedRect: CGRect(x: center.x - 2.6, y: center.y - 0.9, width: 5.2, height: 1.8), cornerRadius: 0.9).cgPath)
++                context.fillPath()
++            })
++        }
+     }
+ 
+     private static func bundleLogo(_ name: String, fallbackColor: UIColor) -> UIImage? {
+-        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
+-            let bounds = CGRect(origin: CGPoint(), size: size)
+-            context.clear(bounds)
+-            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
+-            context.clip()
+-            if let image = UIImage(bundleImageName: name) {
+-                UIGraphicsPushContext(context)
+-                image.draw(in: bounds)
+-                UIGraphicsPopContext()
+-            } else {
+-                context.setFillColor(fallbackColor.cgColor)
+-                context.fill(bounds)
+-            }
+-        })
++        return cachedImage("logo:\(name)", color: fallbackColor) {
++            return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++                let bounds = CGRect(origin: CGPoint(), size: size)
++                context.clear(bounds)
++                context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++                context.clip()
++                if let image = UIImage(bundleImageName: name) {
++                    UIGraphicsPushContext(context)
++                    image.draw(in: bounds)
++                    UIGraphicsPopContext()
++                } else {
++                    context.setFillColor(fallbackColor.cgColor)
++                    context.fill(bounds)
++                }
++            })
++        }
+     }
+ 
+     /// The Plugins icon (the Solar puzzle on blue, as on the exteraGram Plugins row) at any size,
+@@ -111,51 +161,59 @@
+     /// The plugin glyph alone, white, for places that draw their own background (the file
+     /// bubble of a .plugin or .iosplug).
+     public static func pluginGlyph(size: CGFloat) -> UIImage? {
+-        guard let image = UIImage(bundleImageName: "AyuGram/Plugins")?.withTintColor(.white, renderingMode: .alwaysOriginal) else {
+-            return nil
+-        }
+-        return generateImage(CGSize(width: size, height: size), rotatedContext: { size, context in
+-            context.clear(CGRect(origin: CGPoint(), size: size))
+-            UIGraphicsPushContext(context)
+-            image.draw(in: CGRect(origin: CGPoint(), size: size))
+-            UIGraphicsPopContext()
+-        })
++        return cachedImage("pluginGlyph:\(size)") {
++            guard let image = UIImage(bundleImageName: "AyuGram/Plugins")?.withTintColor(.white, renderingMode: .alwaysOriginal) else {
++                return nil
++            }
++            return generateImage(CGSize(width: size, height: size), rotatedContext: { size, context in
++                context.clear(CGRect(origin: CGPoint(), size: size))
++                UIGraphicsPushContext(context)
++                image.draw(in: CGRect(origin: CGPoint(), size: size))
++                UIGraphicsPopContext()
++            })
++        }
+     }
+ 
+     public static func plugin(size: CGFloat) -> UIImage? {
+-        let side = max(20.0, size)
+-        return generateImage(CGSize(width: side, height: side), rotatedContext: { size, context in
+-            let bounds = CGRect(origin: CGPoint(), size: size)
+-            context.clear(bounds)
+-            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: size.width * 8.0 / 30.0).cgPath)
+-            context.setFillColor(UIColor(rgb: 0x007AFF).cgColor)
+-            context.fillPath()
+-            guard let image = UIImage(bundleImageName: "AyuGram/Plugins")?.withTintColor(.white, renderingMode: .alwaysOriginal) else {
+-                return
+-            }
+-            let glyphSide = size.width * 20.0 / 30.0
+-            UIGraphicsPushContext(context)
+-            image.draw(in: CGRect(x: (size.width - glyphSide) / 2.0, y: (size.height - glyphSide) / 2.0, width: glyphSide, height: glyphSide))
+-            UIGraphicsPopContext()
+-        })
++        let color = tileColor(UIColor(rgb: 0x007AFF))
++        return cachedImage("plugin:\(size)", color: color) {
++            let side = max(20.0, size)
++            return generateImage(CGSize(width: side, height: side), rotatedContext: { size, context in
++                let bounds = CGRect(origin: CGPoint(), size: size)
++                context.clear(bounds)
++                context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: size.width * 8.0 / 30.0).cgPath)
++                context.setFillColor(color.cgColor)
++                context.fillPath()
++                guard let image = UIImage(bundleImageName: "AyuGram/Plugins")?.withTintColor(.white, renderingMode: .alwaysOriginal) else {
++                    return
++                }
++                let glyphSide = size.width * 20.0 / 30.0
++                UIGraphicsPushContext(context)
++                image.draw(in: CGRect(x: (size.width - glyphSide) / 2.0, y: (size.height - glyphSide) / 2.0, width: glyphSide, height: glyphSide))
++                UIGraphicsPopContext()
++            })
++        }
+     }
+ 
+     /// A white SF Symbol on a colored rounded square.
+-    public static func symbol(_ name: String, color: UIColor) -> UIImage? {
+-        return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
+-            let bounds = CGRect(origin: CGPoint(), size: size)
+-            context.clear(bounds)
+-            context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
+-            context.setFillColor(color.cgColor)
+-            context.fillPath()
+-            guard let image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15.0, weight: .semibold))?.withTintColor(.white, renderingMode: .alwaysOriginal), image.size.width > 0.0, image.size.height > 0.0 else {
+-                return
+-            }
+-            let scale = min(18.0 / image.size.width, 18.0 / image.size.height, 1.0)
+-            let imageSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+-            UIGraphicsPushContext(context)
+-            image.draw(in: CGRect(origin: CGPoint(x: (size.width - imageSize.width) / 2.0, y: (size.height - imageSize.height) / 2.0), size: imageSize))
+-            UIGraphicsPopContext()
+-        })
++    public static func symbol(_ name: String, color: UIColor, preserveColor: Bool = false) -> UIImage? {
++        let color = preserveColor ? color : tileColor(color)
++        return cachedImage("symbol:\(name)", color: color) {
++            return generateImage(AyuSettingsIcons.size, rotatedContext: { size, context in
++                let bounds = CGRect(origin: CGPoint(), size: size)
++                context.clear(bounds)
++                context.addPath(UIBezierPath(roundedRect: bounds, cornerRadius: AyuSettingsIcons.cornerRadius).cgPath)
++                context.setFillColor(color.cgColor)
++                context.fillPath()
++                guard let image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15.0, weight: .semibold))?.withTintColor(.white, renderingMode: .alwaysOriginal), image.size.width > 0.0, image.size.height > 0.0 else {
++                    return
++                }
++                let scale = min(18.0 / image.size.width, 18.0 / image.size.height, 1.0)
++                let imageSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
++                UIGraphicsPushContext(context)
++                image.draw(in: CGRect(origin: CGPoint(x: (size.width - imageSize.width) / 2.0, y: (size.height - imageSize.height) / 2.0), size: imageSize))
++                UIGraphicsPopContext()
++            })
++        }
+     }
+ }

@@ -108,6 +108,8 @@ if python_archive is not None:
     python_manifest = python_support.package(ipa, python_archive, port_root / "runtime", args.configuration)
 
 with zipfile.ZipFile(ipa) as archive:
+    bundle_bytes = sum(item.file_size for item in archive.infolist())
+    asset_catalog_bytes = sum(item.file_size for item in archive.infolist() if item.filename.endswith('/Assets.car'))
     info = plistlib.loads(archive.read("Payload/Telegram.app/Info.plist"))
     if args.phase == "port" and (source / "Telegram/Telegram-iOS/AyuBlue.icon").exists():
         alternate_icons = info.get("CFBundleIcons", {}).get("CFBundleAlternateIcons", {})
@@ -136,6 +138,7 @@ with zipfile.ZipFile(ipa) as archive:
     if any(name.endswith("embedded.mobileprovision") for name in archive.namelist()):
         raise SystemExit("Unsigned compilation artifact unexpectedly contains provisioning material")
 manifest = dict(phase=args.phase, configuration=args.configuration, xcode=actual_xcode, macos=macos,
+                ipa_bytes=ipa.stat().st_size, bundle_bytes=bundle_bytes, asset_catalog_bytes=asset_catalog_bytes,
                 native_arm64=True, macho_platform=platform_id,
                 signing="unsigned or ad-hoc / no provisioning", install_verified=False,
                 telegram_credentials_configured=has_credentials, python_runtime=python_manifest,
@@ -147,3 +150,4 @@ if summary_path:
     with open(summary_path, "a") as summary:
         summary.write(f"\n### {args.phase}\n\nNative arm64 compilation succeeded. **Unsigned; installation not verified.**\n\n")
         summary.write("Own Telegram API credentials: " + ("configured" if has_credentials else "absent; compilation only") + ".\n")
+        summary.write(f"IPA: {ipa.stat().st_size / 1024**2:.2f} MiB; unpacked bundle: {bundle_bytes / 1024**2:.2f} MiB; asset catalogs: {asset_catalog_bytes / 1024**2:.2f} MiB.\n")

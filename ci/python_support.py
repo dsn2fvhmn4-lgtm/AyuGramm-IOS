@@ -12,6 +12,7 @@ import tarfile
 import tempfile
 import urllib.request
 import zipfile
+from ipa_archive import COMPRESSION_LEVEL, copy_entry
 
 VERSION = '3.13-b15'
 SHA256 = '80175765a31babe43b0910395cf86ba4e8412adf1902b069d55b74d523ecc5d1'
@@ -137,18 +138,19 @@ def package(ipa, archive, runtime, configuration):
                 if path.is_file():
                     files[path.relative_to(stage).as_posix()] = path.read_bytes()
     destination = ipa.with_suffix('.python.ipa')
-    with zipfile.ZipFile(ipa) as source, zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as output:
+    with zipfile.ZipFile(ipa) as source, zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=COMPRESSION_LEVEL) as output:
+        output.comment = source.comment
         for item in source.infolist():
             relative = item.filename[len(prefix):] if item.filename.startswith(prefix) else ''
             if relative in files or relative.startswith('_CodeSignature/'):
                 continue
-            output.writestr(item, source.read(item.filename))
+            copy_entry(source, output, item)
         for name, contents in sorted(files.items()):
             item = zipfile.ZipInfo(prefix + name)
             item.create_system = 3
             item.compress_type = zipfile.ZIP_DEFLATED
             item.external_attr = (stat.S_IFREG | (0o755 if is_framework_binary(name) else 0o644)) << 16
-            output.writestr(item, contents)
+            output.writestr(item, contents, compresslevel=COMPRESSION_LEVEL)
     with zipfile.ZipFile(destination) as result:
         if result.testzip() is not None:
             raise ValueError('Repacked Python IPA failed ZIP integrity validation')

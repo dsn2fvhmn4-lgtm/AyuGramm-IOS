@@ -36,10 +36,23 @@ patches = [
     root / "patches" / "ayugram-fixed-player-fades.patch",
     root / "patches" / "ayugram-expanded-lyrics.patch",
     root / "patches" / "ayugram-big-update.patch",
+    root / "patches" / "ayugram-settings-optimization.patch",
 ]
 for patch in patches:
     subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)
     subprocess.run(["git", "apply", "--recount", str(patch)], cwd=source, check=True)
+
+# The largest in-app logo is 100 pt (AyuSettingsHeaderItem); the icon picker is
+# at most 72 pt. Ship 300 px previews for 3x screens instead of decoding 1254 px
+# launcher artwork in these rows. Icon Composer keeps its full-size originals.
+for name in ("Brand", "Blue", "Graphite"):
+    preview = root / "assets/branding/previews" / (name + ".png")
+    image_set = source / "submodules/TelegramUI/Images.xcassets/AyuGram" / (name + ".imageset")
+    shutil.copy2(preview, image_set / "AyuGram.png")
+    contents_path = image_set / "Contents.json"
+    contents = json.loads(contents_path.read_text())
+    contents["images"][0]["scale"] = "3x"
+    contents_path.write_text(json.dumps(contents, indent=2) + "\n")
 
 for badge_name in ("ExteraBadge", "ExteraDeveloperBadge"):
     badge_src = root / "assets" / "branding" / f"{badge_name}.imageset"

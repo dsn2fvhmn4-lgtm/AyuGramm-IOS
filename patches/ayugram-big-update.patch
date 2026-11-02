@@ -6133,10 +6133,10 @@ index 00000000..223c7092
 +}
 diff --git a/submodules/AccountContext/Sources/AyuPluginBundle.swift b/submodules/AccountContext/Sources/AyuPluginBundle.swift
 new file mode 100644
-index 00000000..eb246a58
+index 00000000..3f4f8826
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuPluginBundle.swift
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,136 @@
 +import Foundation
 +import Compression
 +
@@ -6145,6 +6145,12 @@ index 00000000..eb246a58
 +/// `require`, so a bundle installs and runs like a single-file plugin; plugins in different
 +/// languages talk through `ayu.bus`.
 +public enum AyuPluginBundle {
++    /// "ayujs", "ayupy" and "ayulua" are the same languages as "js", "py" and "lua".
++    static func language(_ fileExtension: String) -> String {
++        let lower = fileExtension.lowercased()
++        return lower.hasPrefix("ayu") ? String(lower.dropFirst(3)) : lower
++    }
++
 +    public static func isBundle(_ data: Data) -> Bool {
 +        return data.count > 4 && data.starts(with: [0x50, 0x4b, 0x03, 0x04])
 +    }
@@ -6154,8 +6160,8 @@ index 00000000..eb246a58
 +        guard isBundle(data), data.count <= 4 * 1024 * 1024, let files = readZip(data),
 +              let manifestData = files["plugin.json"], let manifest = (try? JSONSerialization.jsonObject(with: manifestData)) as? [String: Any],
 +              let main = manifest["main"] as? String, let mainData = files[main], let mainSource = String(data: mainData, encoding: .utf8) else { return nil }
-+        let ext = (main as NSString).pathExtension.lowercased()
-+        let modules = files.filter { $0.key != main && $0.key != "plugin.json" && ($0.key as NSString).pathExtension.lowercased() == ext }
++        let ext = AyuPluginBundle.language((main as NSString).pathExtension)
++        let modules = files.filter { $0.key != main && $0.key != "plugin.json" && AyuPluginBundle.language(($0.key as NSString).pathExtension) == ext }
 +            .sorted(by: { $0.key < $1.key })
 +            .compactMap { name, data -> (String, String)? in String(data: data, encoding: .utf8).map { (name, $0) } }
 +        // The main file's header comments stay on top so the plugin is recognised.
@@ -8010,10 +8016,10 @@ index 00000000..7a606e8d
 +}
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 new file mode 100644
-index 00000000..9c1049cb
+index 00000000..88c84197
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-@@ -0,0 +1,1265 @@
+@@ -0,0 +1,1266 @@
 +import Foundation
 +import JavaScriptCore
 +import CryptoKit
@@ -8105,7 +8111,8 @@ index 00000000..9c1049cb
 +
 +    public static let shared = AyuScriptRuntime()
 +    public static let didChangeNotification = Notification.Name("AyuGram.ScriptPluginsChanged")
-+    public static let fileExtensions: Set<String> = ["js", "ayujs", "py", "ayupy", "wasm"]
++    /// Every spelling of a code plugin: "plugin.ayu.js" ends in "js", "plugin.ayujs" in "ayujs".
++    public static let fileExtensions: Set<String> = ["js", "ayujs", "py", "ayupy", "lua", "ayulua", "wasm", "ayuwasm"]
 +
 +    /// Presents short host messages (`ayu.toast`); installed by the app on launch.
 +    public var toastHandler: ((String) -> Void)?
@@ -8184,7 +8191,7 @@ index 00000000..9c1049cb
 +        if data.starts(with: [0x00, 0x61, 0x73, 0x6d]) {
 +            return self.previewWasm(data, filename: filename)
 +        }
-+        let language: Language = (fileExtension == "py" || fileExtension == "ayupy") ? .python : (fileExtension == "lua" ? .lua : .javascript)
++        let language: Language = (fileExtension == "py" || fileExtension == "ayupy") ? .python : ((fileExtension == "lua" || fileExtension == "ayulua") ? .lua : .javascript)
 +        guard data.count <= 512 * 1024, let source = String(data: data, encoding: .utf8), !source.contains("\u{0}") else { return nil }
 +        let commentPrefix = language == .python ? "#" : (language == .lua ? "--" : "//")
 +        var fields: [String: String] = [:]
@@ -92108,7 +92115,7 @@ index ad077f5c..b9aa9653 100644
              return
          }
 diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
-index ed6a26a2..3051362d 100644
+index ed6a26a2..af1c48f9 100644
 --- a/submodules/TelegramUI/Sources/AppDelegate.swift
 +++ b/submodules/TelegramUI/Sources/AppDelegate.swift
 @@ -311,7 +311,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
@@ -92274,6 +92281,15 @@ index ed6a26a2..3051362d 100644
          self.isInForegroundValue = true
          self.isInForegroundPromise.set(true)
          self.isActiveValue = true
+@@ -3096,7 +3170,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         }
+         self.openUrlWhenReadyDisposable.set((signal
+         |> deliverOnMainQueue).start(next: { [weak self] context in
+-            if url.isFileURL, ["plugin", "iosplug"].contains(url.pathExtension.lowercased()) {
++            if url.isFileURL, ["plugin", "iosplug", "ayujs", "ayupy", "ayulua", "ayuwasm"].contains(url.pathExtension.lowercased()) || [".ayu.js", ".ayu.py", ".ayu.lua", ".ayu.wasm"].contains(where: { url.lastPathComponent.lowercased().hasSuffix($0) }) {
+                 ayuImportPlugin(context: context.context, fileURL: url, filename: url.lastPathComponent)
+             } else if (WalletContext.isTonConnectUrl(url.absoluteString) || url.scheme?.lowercased() == "ton"), !WalletConfiguration.with(appConfiguration: context.context.currentAppConfiguration.with { $0 }).isAvailable {
+                 self?.presentWalletUnavailable(in: context)
 @@ -3131,7 +3205,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                  } else {
                      if let (peerId, threadId) = peerIdFromNotification(response.notification) {
@@ -100708,7 +100724,7 @@ index 11a25bde..df6f639d 100644
                  
                  self.oggWriter.writeFrame(currentEncoderPacket.assumingMemoryBound(to: UInt8.self), frameByteCount: UInt(currentEncoderPacketSize))
 diff --git a/submodules/TelegramUI/Sources/OpenChatMessage.swift b/submodules/TelegramUI/Sources/OpenChatMessage.swift
-index 32f76b24..bc64daf9 100644
+index 32f76b24..e3c626ac 100644
 --- a/submodules/TelegramUI/Sources/OpenChatMessage.swift
 +++ b/submodules/TelegramUI/Sources/OpenChatMessage.swift
 @@ -233,7 +233,7 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
@@ -100716,7 +100732,7 @@ index 32f76b24..bc64daf9 100644
                  params.dismissInput()
                  let presentationData = params.context.sharedContext.currentPresentationData.with { $0 }
 -                if !immediateShare, let name = file.fileName, name.lowercased().hasSuffix(".plugin") || name.lowercased().hasSuffix(".iosplug"), !params.message.isCopyProtected(), !params.copyProtected, params.message.id.peerId.namespace != Namespaces.Peer.SecretChat {
-+                if !immediateShare, let name = file.fileName, name.lowercased().hasSuffix(".plugin") || name.lowercased().hasSuffix(".iosplug") || name.lowercased().hasSuffix(".ayujs") || name.lowercased().hasSuffix(".ayu.js"), !params.message.isCopyProtected(), !params.copyProtected, params.message.id.peerId.namespace != Namespaces.Peer.SecretChat {
++                if !immediateShare, let name = file.fileName, [".plugin", ".iosplug", ".ayujs", ".ayu.js", ".ayupy", ".ayu.py", ".ayulua", ".ayu.lua", ".ayuwasm", ".ayu.wasm"].contains(where: { name.lowercased().hasSuffix($0) }), !params.message.isCopyProtected(), !params.copyProtected, params.message.id.peerId.namespace != Namespaces.Peer.SecretChat {
                      let _ = (params.context.engine.resources.data(resource: EngineMediaResource(file.resource))
                      |> filter { $0.isComplete }
                      |> take(1)

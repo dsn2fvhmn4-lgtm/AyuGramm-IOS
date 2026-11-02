@@ -1,0 +1,43 @@
+name: Settings snapshots (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ayu-settings-snapshots-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  snapshots:
+    runs-on: xcode-27
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Select Xcode
+        run: sudo xcode-select --switch /Applications/Xcode_27.1.app/Contents/Developer
+      - name: Verify macOS dependencies
+        run: bash ci/prepare_macos.sh
+      - name: Fetch pinned source and apply port
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          pin = json.load(open('upstream.json'))
+          subprocess.run(['git', 'init', 'telegram'], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'remote', 'add', 'origin', pin['repository']], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'fetch', '--depth=1', 'origin', pin['commit']], check=True)
+          subprocess.run(['git', '-C', 'telegram', 'checkout', '--detach', 'FETCH_HEAD'], check=True)
+          PY
+          python3 ci/prepare.py telegram
+          git -C telegram submodule update --init --recursive --jobs=8 --depth=1
+      - name: Run snapshots (no IPA)
+        run: python3 ci/test_settings_snapshots.py telegram
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ayu-settings-snapshots-${{ github.run_number }}
+          path: |
+            telegram/artifacts/snapshots/
+            telegram/bazel-testlogs/submodules/SettingsUI/AyuSettingsSnapshotTests/

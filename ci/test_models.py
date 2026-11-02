@@ -8,12 +8,14 @@ from pathlib import Path
 import platform
 import subprocess
 import tempfile
+from test_local_policies import run as run_local_policies
 
 
 def run(source: Path):
     if platform.system() != 'Darwin':
         raise SystemExit('The actual Postbox host tests require the macOS build machine.')
     source = source.resolve()
+    run_local_policies(source)
     with tempfile.TemporaryDirectory(prefix='ayu-postbox-tests-') as directory:
         output = Path(directory)
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
@@ -67,7 +69,7 @@ def run(source: Path):
                         *map(str, codec), str(output / 'murmur.o'),
                         '-o', str(output / 'libPostbox.dylib')], check=True)
         ayu = source / 'submodules/TelegramCore/Sources/AyuGram'
-        models = [ayu / name for name in ('AyuIOSPluginEnvelope.swift', 'AyuNativeTextTools.swift', 'AyuReactionTotalSettings.swift', 'AyuGroupMentions.swift', 'AyuPluginCatalog.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuTextToolsPolicy.swift', 'AyuRegexSettings.swift',
+        models = [ayu / name for name in ('AyuIOSPluginEnvelope.swift', 'AyuNativeTextTools.swift', 'AyuReactionTotalSettings.swift', 'AyuGroupMentions.swift', 'AyuPluginCatalog.swift', 'AyuTextProgram.swift', 'AyuPlugins.swift', 'AyuAndroidPluginConverter.swift', 'AyuCameraFlipPolicy.swift', 'AyuChatColorSettings.swift', 'AyuAdvancedSettings.swift', 'AyuChatExportModels.swift', 'AyuLocalNotificationSettings.swift', 'AyuTranslationRequest.swift', 'AyuGhostModeSettings.swift', 'AyuDecoyState.swift', 'AyuAppearanceSettings.swift', 'AyuMediaSendSettings.swift', 'AyuInterfaceSettings.swift', 'AyuMessageShotPolicy.swift', 'AyuMessageShotSettings.swift', 'AyuHiddenMessagesSettings.swift', 'AyuReactionDisplaySettings.swift', 'AyuTextToolsPolicy.swift', 'AyuRegexSettings.swift',
                                          'AyuArchiveFileStore.swift', 'AyuMessageHistoryState.swift', 'AyuHooks.swift')]
         subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-warnings-as-errors',
                         '-D', 'AYU_POSTBOX_TESTS', '-I', str(output), '-L', str(output), '-lPostbox',

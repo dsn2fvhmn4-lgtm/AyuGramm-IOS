@@ -183,6 +183,25 @@ pub mod ui {
     }
 }
 
+/// Registers a text hook in one line:
+///
+/// ```ignore
+/// hook!(before OUTGOING_TEXT, |text, _ctx| text.ends_with("!!").then(|| text.to_uppercase()));
+/// hook!(after LINK_OPEN, |url, _ctx| Some(url.replace("x.com", "fxtwitter.com")));
+/// ```
+#[macro_export]
+macro_rules! hook {
+    (before $point:ident, |$text:ident, $ctx:ident| $body:expr) => {
+        $crate::hooks::before($crate::hooks::$point, |$text: &str, $ctx: &$crate::Context| -> Option<String> { $body })
+    };
+    (after $point:ident, |$text:ident, $ctx:ident| $body:expr) => {
+        $crate::hooks::after($crate::hooks::$point, |$text: &str, $ctx: &$crate::Context| -> Option<String> { $body })
+    };
+    (replace $point:ident, |$text:ident, $ctx:ident| $body:expr) => {
+        $crate::hooks::replace($crate::hooks::$point, |$text: &str, $ctx: &$crate::Context| -> Option<String> { $body })
+    };
+}
+
 /// Context handed to text hooks.
 pub struct Context {
     pub peer_id: String,
@@ -200,6 +219,9 @@ pub mod hooks {
     use super::{json, request, Context, HANDLERS};
 
     pub const OUTGOING_TEXT: &str = "message.outgoing.text";
+    pub const LINK_OPEN: &str = "link.open";
+    pub const MESSAGE_RENDER: &str = "message.render";
+    pub const NOTIFICATION_BEFORE_SHOW: &str = "notification.beforeShow";
     pub const LYRICS_TEXT: &str = "lyrics.text";
 
     fn register(point: &str, mode: &str, handler: impl Fn(&str, &Context) -> Option<String> + 'static) {

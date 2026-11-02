@@ -1,0 +1,1514 @@
+diff --git a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
+index a4dffd26..ad28e94e 100644
+--- a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
++++ b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
+@@ -12,6 +12,8 @@ public final class AyuPluginUI {
+         public let id: String
+         public let title: String
+         public let icon: String?
++        /// "photo": shown only on messages with a photo; nil: on every message.
++        public let media: String?
+     }
+ 
+     public struct ProfileBlock: Equatable {
+@@ -422,6 +424,15 @@ enum AyuPluginHostAPI {
+                     actions(op, args, done)
+                 }
+             }
++        // Former built-in message tools, now in catalog plugins. The app draws their results.
++        case "tools.chatStats", "tools.yearInReview", "tools.downloadChatMedia", "media.cutOutSticker", "media.describePhoto":
++            guard allowed(op == "media.cutOutSticker" ? .messages : .messagesRead) else { return nil }
++            return answerLater { done in
++                DispatchQueue.main.async {
++                    guard let actions = AyuPluginUI.shared.messageActions else { return done(["error": "Unavailable"]) }
++                    actions(op, args, done)
++                }
++            }
+         case "secrets.get":
+             guard allowed(.secrets) else { return nil }
+             return ["value": AyuKeychain.get("plugin:\(pluginId):" + string("key", 128)).map { $0 as Any } ?? NSNull()]
+@@ -629,7 +640,7 @@ enum AyuPluginHostAPI {
+             guard allowed(.menu) else { return nil }
+             let id = string("id", 64)
+             guard !id.isEmpty, !string("title").isEmpty else { return nil }
+-            AyuPluginUI.shared.setMenu(AyuPluginUI.MenuItem(owner: pluginId, id: id, title: string("title", 60), icon: args["icon"] as? String), remove: id, owner: pluginId)
++            AyuPluginUI.shared.setMenu(AyuPluginUI.MenuItem(owner: pluginId, id: id, title: string("title", 60), icon: args["icon"] as? String, media: (args["media"] as? String) == "photo" ? "photo" : nil), remove: id, owner: pluginId)
+             return ["ok": true]
+         case "ui.menu.remove":
+             AyuPluginUI.shared.setMenu(nil, remove: string("id", 64), owner: pluginId)
+diff --git a/submodules/AccountContext/Sources/AyuScriptCatalog.swift b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
+index 7a606e8d..ad881b42 100644
+--- a/submodules/AccountContext/Sources/AyuScriptCatalog.swift
++++ b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
+@@ -119,8 +119,12 @@ public final class AyuScriptCatalog {
+         }).resume()
+     }
+ 
+-    public func load(completion: @escaping (Result<[Entry], Failure>) -> Void) {
+-        guard let url = URL(string: self.catalogURL) else {
++    /// The port's own collection, listed beside the default catalog: former built-in tools that
++    /// are now plugins. The default catalog wins when both list the same id.
++    public static let portCatalogURL = "https://raw.githubusercontent.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/main/code-plugins/index.json"
++
++    private func loadIndex(_ address: String, completion: @escaping (Result<[Entry], Failure>) -> Void) {
++        guard let url = URL(string: address) else {
+             completion(.failure(.invalidCatalog))
+             return
+         }
+@@ -132,16 +136,37 @@ public final class AyuScriptCatalog {
+                     completion(.failure(.invalidCatalog))
+                     return
+                 }
+-                let valid = index.plugins.filter { entry in
++                completion(.success(index.plugins.filter { entry in
+                     entry.sha256.count == 64 && URL(string: entry.url)?.scheme?.lowercased() == "https" && !entry.id.isEmpty
+-                }
+-                completion(.success(valid.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })))
++                }))
+             case let .failure(error):
+                 completion(.failure(error))
+             }
+         })
+     }
+ 
++    public func load(completion: @escaping (Result<[Entry], Failure>) -> Void) {
++        let sort: ([Entry]) -> [Entry] = { entries in
++            return entries.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
++        }
++        self.loadIndex(self.catalogURL, completion: { primary in
++            // A custom catalog address replaces both lists.
++            guard self.catalogURL == AyuScriptCatalog.defaultURL else {
++                return completion(primary.map(sort))
++            }
++            self.loadIndex(AyuScriptCatalog.portCatalogURL, completion: { port in
++                let extra = (try? port.get()) ?? []
++                switch primary {
++                case let .success(entries):
++                    let ids = Set(entries.map(\.id))
++                    completion(.success(sort(entries + extra.filter { !ids.contains($0.id) })))
++                case let .failure(error):
++                    completion(extra.isEmpty ? .failure(error) : .success(sort(extra)))
++                }
++            })
++        })
++    }
++
+     /// Downloads a catalog file and checks it against the index's SHA-256.
+     public func download(_ entry: Entry, completion: @escaping (Result<Data, Failure>) -> Void) {
+         guard let url = URL(string: entry.url) else {
+diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
+index 88c84197..43a307cb 100644
+--- a/submodules/AccountContext/Sources/AyuScriptRuntime.swift
++++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
+@@ -1108,7 +1108,14 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+             media: Object.freeze({
+                 process: (data, ops, options) => requestAsync('media.process', Object.assign({}, options || {}, { data: text(data), ops: Array.isArray(ops) ? ops : [] })).then((answer) => answer.data),
+                 fromMessage: (peerId, messageId) => requestAsync('media.fromMessage', { peerId: text(peerId), messageId: Number(messageId) }),
+-                sendImage: (peerId, data, caption) => requestAsync('media.sendImage', { peerId: text(peerId), data: text(data), caption: text(caption) })
++                sendImage: (peerId, data, caption) => requestAsync('media.sendImage', { peerId: text(peerId), data: text(data), caption: text(caption) }),
++                cutOutSticker: (peerId, messageId) => requestAsync('media.cutOutSticker', { peerId: text(peerId), messageId: Number(messageId) }),
++                describePhoto: (peerId, messageId) => requestAsync('media.describePhoto', { peerId: text(peerId), messageId: Number(messageId) }).then((answer) => (answer && answer.text) || null)
++            }),
++            tools: Object.freeze({
++                chatStats: (peerId) => requestAsync('tools.chatStats', { peerId: text(peerId) }),
++                yearInReview: (peerId) => requestAsync('tools.yearInReview', { peerId: text(peerId) }),
++                downloadChatMedia: (peerId) => requestAsync('tools.downloadChatMedia', { peerId: text(peerId) })
+             }),
+             tl: Object.freeze({
+                 block: (method) => host.call('tl.block', { method: text(method) }),
+diff --git a/submodules/Display/Source/AyuCustomization.swift b/submodules/Display/Source/AyuCustomization.swift
+index 23390366..16d688af 100644
+--- a/submodules/Display/Source/AyuCustomization.swift
++++ b/submodules/Display/Source/AyuCustomization.swift
+@@ -156,7 +156,24 @@ public enum AyuCustomization {
+         Preset(nameRu: "Закат", nameEn: "Sunset", colors: [.accent: "#FF7043", .outgoingBubble: "#FFCCBC", .outgoingText: "#3E1408", .wallpaper: "#FFF3E0", .wallpaperSecond: "#FFE0B2"]),
+         Preset(nameRu: "Аметист", nameEn: "Amethyst", colors: [.accent: "#8E5CF7", .outgoingBubble: "#5B3FA8", .outgoingText: "#FFFFFF", .incomingBubble: "#2A2140", .incomingText: "#EDE7FF", .wallpaper: "#140F22", .wallpaperSecond: "#24183D"]),
+         Preset(nameRu: "Неон", nameEn: "Neon", colors: [.accent: "#00E5FF", .outgoingBubble: "#003B46", .outgoingText: "#B2FBFF", .incomingBubble: "#1A1A1A", .incomingText: "#E0E0E0", .wallpaper: "#000000", .wallpaperSecond: "#001A1F"]),
+-        Preset(nameRu: "Матрица", nameEn: "Matrix", colors: [.accent: "#00FF41", .outgoingBubble: "#003B00", .outgoingText: "#00FF41", .incomingBubble: "#0D0D0D", .incomingText: "#33FF66", .wallpaper: "#000000", .chatTitle: "#00FF41"])
++        Preset(nameRu: "Матрица", nameEn: "Matrix", colors: [.accent: "#00FF41", .outgoingBubble: "#003B00", .outgoingText: "#00FF41", .incomingBubble: "#0D0D0D", .incomingText: "#33FF66", .wallpaper: "#000000", .chatTitle: "#00FF41"]),
++        // Popular editor and terminal palettes, then a few more moods.
++        Preset(nameRu: "AMOLED", nameEn: "AMOLED", colors: [.accent: "#8E5CF7", .outgoingBubble: "#1F1A2E", .outgoingText: "#FFFFFF", .incomingBubble: "#0E0E10", .incomingText: "#FFFFFF", .wallpaper: "#000000", .listBackground: "#000000"]),
++        Preset(nameRu: "Nord", nameEn: "Nord", colors: [.accent: "#88C0D0", .outgoingBubble: "#5E81AC", .outgoingText: "#ECEFF4", .incomingBubble: "#3B4252", .incomingText: "#E5E9F0", .wallpaper: "#2E3440", .wallpaperSecond: "#3B4252", .listBackground: "#2E3440", .chatTitle: "#ECEFF4"]),
++        Preset(nameRu: "Dracula", nameEn: "Dracula", colors: [.accent: "#BD93F9", .outgoingBubble: "#6272A4", .outgoingText: "#F8F8F2", .incomingBubble: "#44475A", .incomingText: "#F8F8F2", .wallpaper: "#282A36", .listBackground: "#282A36", .chatTitle: "#FF79C6"]),
++        Preset(nameRu: "Catppuccin Mocha", nameEn: "Catppuccin Mocha", colors: [.accent: "#CBA6F7", .outgoingBubble: "#45475A", .outgoingText: "#CDD6F4", .incomingBubble: "#313244", .incomingText: "#CDD6F4", .wallpaper: "#1E1E2E", .wallpaperSecond: "#181825", .listBackground: "#1E1E2E", .chatTitle: "#F5C2E7"]),
++        Preset(nameRu: "Catppuccin Latte", nameEn: "Catppuccin Latte", colors: [.accent: "#8839EF", .outgoingBubble: "#DCE0E8", .outgoingText: "#4C4F69", .incomingBubble: "#FFFFFF", .incomingText: "#4C4F69", .wallpaper: "#EFF1F5", .wallpaperSecond: "#E6E9EF", .chatTitle: "#4C4F69"]),
++        Preset(nameRu: "Tokyo Night", nameEn: "Tokyo Night", colors: [.accent: "#7AA2F7", .outgoingBubble: "#3D59A1", .outgoingText: "#C0CAF5", .incomingBubble: "#24283B", .incomingText: "#C0CAF5", .wallpaper: "#1A1B26", .wallpaperSecond: "#16161E", .listBackground: "#1A1B26", .chatTitle: "#BB9AF7"]),
++        Preset(nameRu: "Gruvbox", nameEn: "Gruvbox", colors: [.accent: "#FABD2F", .outgoingBubble: "#504945", .outgoingText: "#EBDBB2", .incomingBubble: "#3C3836", .incomingText: "#EBDBB2", .wallpaper: "#282828", .listBackground: "#282828", .chatTitle: "#FE8019"]),
++        Preset(nameRu: "Solarized тёмная", nameEn: "Solarized dark", colors: [.accent: "#268BD2", .outgoingBubble: "#073642", .outgoingText: "#EEE8D5", .incomingBubble: "#0A3D4A", .incomingText: "#93A1A1", .wallpaper: "#002B36", .listBackground: "#002B36", .chatTitle: "#2AA198"]),
++        Preset(nameRu: "Solarized светлая", nameEn: "Solarized light", colors: [.accent: "#268BD2", .outgoingBubble: "#EEE8D5", .outgoingText: "#586E75", .incomingBubble: "#FFFFFF", .incomingText: "#586E75", .wallpaper: "#FDF6E3", .chatTitle: "#073642"]),
++        Preset(nameRu: "Rosé Pine", nameEn: "Rosé Pine", colors: [.accent: "#EBBCBA", .outgoingBubble: "#403D52", .outgoingText: "#E0DEF4", .incomingBubble: "#26233A", .incomingText: "#E0DEF4", .wallpaper: "#191724", .wallpaperSecond: "#1F1D2E", .listBackground: "#191724", .chatTitle: "#C4A7E7"]),
++        Preset(nameRu: "Мята", nameEn: "Mint", colors: [.accent: "#00A884", .outgoingBubble: "#D2F5E9", .outgoingText: "#0B3B2E", .wallpaper: "#EFFBF6", .wallpaperSecond: "#D8F3E8"]),
++        Preset(nameRu: "Лаванда", nameEn: "Lavender", colors: [.accent: "#7E57C2", .outgoingBubble: "#E6DCFA", .outgoingText: "#2A1858", .wallpaper: "#F5F0FF", .wallpaperSecond: "#E9E0FF"]),
++        Preset(nameRu: "Кофе", nameEn: "Coffee", colors: [.accent: "#C08A5B", .outgoingBubble: "#5A3E2B", .outgoingText: "#F5E6D3", .incomingBubble: "#2E241D", .incomingText: "#EADBC8", .wallpaper: "#1B1410", .wallpaperSecond: "#2A1F18", .listBackground: "#1B1410"]),
++        Preset(nameRu: "Вишня", nameEn: "Cherry", colors: [.accent: "#FF2D55", .outgoingBubble: "#7A0F2A", .outgoingText: "#FFE3EA", .incomingBubble: "#2A0C14", .incomingText: "#FFD9E1", .wallpaper: "#14060A", .wallpaperSecond: "#2B0A14", .listBackground: "#14060A"]),
++        Preset(nameRu: "Полночь", nameEn: "Midnight", colors: [.accent: "#5E9EFF", .outgoingBubble: "#1E3A6E", .outgoingText: "#E6F0FF", .incomingBubble: "#111A2E", .incomingText: "#DCE6F7", .wallpaper: "#070B16", .wallpaperSecond: "#0E1730", .listBackground: "#070B16"]),
++        Preset(nameRu: "Песок", nameEn: "Sand", colors: [.accent: "#B5835A", .outgoingBubble: "#F1E4D3", .outgoingText: "#3D2B1C", .wallpaper: "#FBF6EE", .wallpaperSecond: "#F3E9DA"])
+     ]
+ 
+     public static func apply(_ preset: Preset) {
+diff --git a/submodules/Display/Source/AyuFontCatalog.swift b/submodules/Display/Source/AyuFontCatalog.swift
+index 6326e07b..aa24bff4 100644
+--- a/submodules/Display/Source/AyuFontCatalog.swift
++++ b/submodules/Display/Source/AyuFontCatalog.swift
+@@ -54,8 +54,11 @@ public final class AyuFontCatalog {
+         }).resume()
+     }
+ 
+-    public func load(completion: @escaping (Result<[Entry], Failure>) -> Void) {
+-        guard let url = URL(string: AyuFontCatalog.indexURL) else { return completion(.failure(.invalidCatalog)) }
++    /// Google Fonts (SIL OFL) published by the port, listed after the catalog's own fonts.
++    public static let portIndexURL = "https://raw.githubusercontent.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/main/fonts/index.json"
++
++    private func loadIndex(_ address: String, completion: @escaping (Result<[Entry], Failure>) -> Void) {
++        guard let url = URL(string: address) else { return completion(.failure(.invalidCatalog)) }
+         self.fetch(url, limit: 1024 * 1024, completion: { data in
+             guard let data else { return completion(.failure(.network)) }
+             struct Index: Codable { let format: String; let fonts: [Entry] }
+@@ -66,6 +69,21 @@ public final class AyuFontCatalog {
+         })
+     }
+ 
++    public func load(completion: @escaping (Result<[Entry], Failure>) -> Void) {
++        self.loadIndex(AyuFontCatalog.indexURL, completion: { primary in
++            self.loadIndex(AyuFontCatalog.portIndexURL, completion: { port in
++                let extra = (try? port.get()) ?? []
++                switch primary {
++                case let .success(entries):
++                    let ids = Set(entries.map(\.id))
++                    completion(.success(entries + extra.filter { !ids.contains($0.id) }))
++                case let .failure(error):
++                    completion(extra.isEmpty ? .failure(error) : .success(extra))
++                }
++            })
++        })
++    }
++
+     /// Downloads, checks and installs a font, then makes it the app font. Returns its names.
+     public func install(_ entry: Entry, completion: @escaping (Result<[String], Error>) -> Void) {
+         guard let url = URL(string: entry.url) else { return completion(.failure(Failure.invalidCatalog)) }
+diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+index 150bfdef..1581cff7 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+@@ -46,7 +46,7 @@ enum AyuCategory: Int32, CaseIterable {
+         case .media: return AyuSettingsIcons.symbol("photo.on.rectangle.angled", color: UIColor(rgb: 0x34C759))
+         case .appearance: return AyuSettingsIcons.symbol("paintbrush.pointed.fill", color: UIColor(rgb: 0xFF2D55))
+         case .security: return AyuSettingsIcons.symbol("lock.fill", color: UIColor(rgb: 0xFF9500))
+-        case .more: return AyuSettingsIcons.symbol("ellipsis.circle.fill", color: UIColor(rgb: 0x8E8E93))
++        case .more: return AyuSettingsIcons.symbol("ellipsis", color: UIColor(rgb: 0x5856D6))
+         }
+     }
+ }
+@@ -151,16 +151,24 @@ func ayuCategoryController(context: AccountContext, category: AyuCategory) -> Vi
+     let arguments = AyuSectionedArguments(open: { id in
+         guard let item = items.first(where: { $0.id == id }) else { return }
+         item.open(context, { push?($0) })
+-    }, toggle: { _, _ in })
++    }, toggle: { _, _ in }, context: context)
+     let signal = ayuSettingsPresentationData(context: context)
+     |> deliverOnMainQueue
+     |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuSectionedEntry] = []
++        // Telegram's own bubbles, drawn the way the chat draws AyuGram's marks.
+         if category == .messages {
+-            entries.append(.picture(0, 0, .chatHistory))
++            entries.append(.chat(0, 0, AyuSectionedChatPreview(presentationData: presentationData, messages: [
++                ChatPreviewMessageItem(outgoing: false, reply: nil, text: ru ? "Это сообщение удалили, а оно осталось" : "This message was deleted, yet it stayed", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuDeleted: true),
++                ChatPreviewMessageItem(outgoing: true, reply: nil, text: ru ? "А это я исправил — история правок сохранена" : "And this one I edited; its history is kept", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuEdited: true)
++            ])))
+         } else if category == .privacy {
+-            entries.append(.picture(0, 0, .chatGhost(context.account.network.ayuGhostMode.current.isActive)))
++            let ghost = context.account.network.ayuGhostMode.current.isActive
++            entries.append(.chat(0, 0, AyuSectionedChatPreview(presentationData: presentationData, messages: [
++                ChatPreviewMessageItem(outgoing: false, reply: nil, text: ru ? "Ты тут? Не вижу, что ты онлайн 👀" : "Are you there? I can't see you online 👀", nameColor: .preset(.blue), backgroundEmojiId: nil),
++                ChatPreviewMessageItem(outgoing: true, reply: nil, text: ghost ? (ru ? "Читаю, но меня не видно 👻" : "Reading, but nobody sees me 👻") : (ru ? "Включи режим призрака — и не увидишь" : "Turn ghost mode on and you won't"), nameColor: .preset(.blue), backgroundEmojiId: nil)
++            ])))
+         }
+         for item in items {
+             let subtitle = ru ? item.subtitleRu : item.subtitleEn
+diff --git a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+index 066fd2dd..2076e0bc 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+@@ -127,10 +127,6 @@ func ayuVoiceSettingsController(context: AccountContext) -> ViewController {
+         entries.append(.header(3, 30, ru ? "ПЛЕЕР" : "PLAYER"))
+         entries.append(.link(3, 31, symbol("waveform.path", 0xFF2D55), ru ? "Плавные переходы между треками" : "Smooth track transitions", fade == 0 ? (ru ? "выкл." : "off") : "\(fade) " + (ru ? "с" : "s")))
+         entries.append(.info(3, 32, ru ? "Музыка плавно затихает в конце трека и нарастает в начале следующего." : "Music fades out at the end of a track and fades in at the start of the next."))
+-        let visualizer = UserDefaults.standard.string(forKey: "ayu.player.visualizer") ?? "none"
+-        let visualizerTitles: [String: (String, String)] = ["none": ("Выключен", "Off"), "bars": ("Столбики", "Bars"), "mirror": ("Зеркальные столбики", "Mirrored bars"), "wave": ("Волна", "Wave"), "circle": ("Круг вокруг обложки", "Circle around the cover"), "dots": ("Точки", "Dots")]
+-        entries.append(.link(3, 33, symbol("chart.bar.fill", 0x34C759), ru ? "Визуализатор в плеере" : "Player visualizer", ru ? (visualizerTitles[visualizer]?.0 ?? "") : (visualizerTitles[visualizer]?.1 ?? "")))
+-        entries.append(.info(3, 34, ru ? "Настоящий спектр звучащего трека: столбики прыгают от баса и вокала." : "The real spectrum of the playing track: bars jump with the bass and vocals."))
+         return entries
+     }, open: { id, _, present in
+         let ru = ayuIsRussian(context)
+@@ -146,13 +142,6 @@ func ayuVoiceSettingsController(context: AccountContext) -> ViewController {
+                 eq[index] = value
+                 AyuMediaSettings.voiceEqualizer = eq
+             })
+-        case 33:
+-            let styles = ["none", "bars", "mirror", "wave", "circle", "dots"]
+-            let titles: [String: (String, String)] = ["none": ("Выключен", "Off"), "bars": ("Столбики", "Bars"), "mirror": ("Зеркальные столбики", "Mirrored bars"), "wave": ("Волна", "Wave"), "circle": ("Круг вокруг обложки", "Circle around the cover"), "dots": ("Точки", "Dots")]
+-            ayuChoose(present, title: ru ? "Визуализатор" : "Visualizer", ru: ru, options: styles, current: UserDefaults.standard.string(forKey: "ayu.player.visualizer") ?? "none", label: { ru ? (titles[$0]?.0 ?? $0) : (titles[$0]?.1 ?? $0) }, equal: { $0 == $1 }, pick: {
+-                UserDefaults.standard.set($0, forKey: "ayu.player.visualizer")
+-                NotificationCenter.default.post(name: Notification.Name("AyuGram.PlayerVisualizerChanged"), object: nil)
+-            })
+         case 31:
+             ayuChoose(present, title: ru ? "Плавные переходы" : "Smooth transitions", ru: ru, options: [0, 2, 4, 6, 8], current: UserDefaults.standard.integer(forKey: "ayu.extra.musicFadeSeconds"), label: { $0 == 0 ? (ru ? "Выключено" : "Off") : "\($0) " + (ru ? "с" : "s") }, equal: { $0 == $1 }, pick: { UserDefaults.standard.set($0, forKey: "ayu.extra.musicFadeSeconds") })
+         case 21:
+diff --git a/submodules/SettingsUI/Sources/AyuCustomizationController.swift b/submodules/SettingsUI/Sources/AyuCustomizationController.swift
+index 2097d062..fa20681d 100644
+--- a/submodules/SettingsUI/Sources/AyuCustomizationController.swift
++++ b/submodules/SettingsUI/Sources/AyuCustomizationController.swift
+@@ -144,11 +144,19 @@ func ayuCustomizationController(context: AccountContext) -> ViewController {
+ 
+     let arguments = AyuSectionedArguments(open: { id in
+         switch id {
+-        case 1 ... 15:
++        case 1 ... 14:
+             let index = Int(id - 1)
+             if AyuCustomization.presets.indices.contains(index) {
+                 AyuCustomization.apply(AyuCustomization.presets[index])
+             }
++        case 15:
++            // The rest of the palettes, beyond the 14 the page lists.
++            let sheet = UIAlertController(title: russian ? "Ещё темы" : "More themes", message: nil, preferredStyle: .actionSheet)
++            for preset in AyuCustomization.presets.dropFirst(14) {
++                sheet.addAction(UIAlertAction(title: russian ? preset.nameRu : preset.nameEn, style: .default, handler: { _ in AyuCustomization.apply(preset) }))
++            }
++            sheet.addAction(UIAlertAction(title: russian ? "Отмена" : "Cancel", style: .cancel))
++            presentNative?(sheet)
+         case 17 ... 25:
+             let index = Int(id - 17)
+             if ayuColorRows.indices.contains(index) {
+@@ -180,10 +188,13 @@ func ayuCustomizationController(context: AccountContext) -> ViewController {
+     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuSectionedEntry] = [.header(1, 0, ru ? "ГОТОВЫЕ ПАЛИТРЫ" : "PALETTES")]
+-        for (index, preset) in AyuCustomization.presets.enumerated() where index < 15 {
++        for (index, preset) in AyuCustomization.presets.enumerated() where index < 14 {
+             let tint = preset.colors[.accent].flatMap(AyuCustomization.parse) ?? 0x8E5CF7
+             entries.append(.link(1, Int32(1 + index), AyuSettingsIcons.symbol("circle.hexagongrid.fill", color: UIColor(rgb: tint), preserveColor: true), ru ? preset.nameRu : preset.nameEn, ""))
+         }
++        if AyuCustomization.presets.count > 14 {
++            entries.append(.link(1, 15, AyuSettingsIcons.symbol("paintpalette.fill", color: UIColor(rgb: 0x5856D6)), ru ? "Ещё темы" : "More themes", "\(AyuCustomization.presets.count - 14)"))
++        }
+         entries.append(.header(2, 16, ru ? "СВОИ ЦВЕТА" : "YOUR COLOURS"))
+         for (index, row) in ayuColorRows.enumerated() {
+             let value = AyuCustomization.rgb(row.0)
+diff --git a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
+index 36cb3a18..ace2f522 100644
+--- a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
+@@ -21,6 +21,7 @@ private enum AyuDeveloperRow: Int32 {
+     case pluginConsole = 21
+     case experimentalPluginHooks = 22
+     case openPluginConsole = 23
++    case pluginDocs = 26
+     case allowUnofficialInjectPlugins = 24
+     case unofficialInjectInfo = 25
+     case showInternalIds = 31
+@@ -58,6 +59,8 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
+             AyuDevLog.shared.clear()
+         case .openPluginConsole:
+             push?(ayuPluginConsoleController(context: context))
++        case .pluginDocs:
++            context.sharedContext.applicationBindings.openUrl("https://github.com/murk-sus/AyuGramm-Plugin-SDK")
+         case .resetAll:
+             presentController?(textAlertController(context: context, title: ru ? "Сбросить настройки разработчика?" : "Reset developer settings?", text: ru ? "Все переключатели на этой странице будут выключены." : "Every switch on this page will be turned off.", actions: [
+                 TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
+@@ -126,6 +129,7 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
+             toggle(2, .forceStockMusicPlayer, symbol("music.note", 0xFF2D55), ru ? "Стандартный плеер Telegram" : "Stock Telegram player", ru ? "Вместо плеера AyuGram" : "Instead of the AyuGram player", settings.forceStockMusicPlayer),
+             toggle(2, .lyricsDiagnostics, symbol("text.quote", 0x5856D6), ru ? "Диагностика текстов" : "Lyrics diagnostics", ru ? "Источник, совпадение и время поиска" : "Source, match score and lookup time", settings.lyricsDiagnostics),
+             .header(3, 20, ru ? "ПЛАГИНЫ" : "PLUGINS"),
++            .link(3, AyuDeveloperRow.pluginDocs.rawValue, symbol("book.fill", 0x007AFF), ru ? "Документация к плагинам" : "Plugin documentation", "GitHub"),
+             toggle(3, .pluginConsole, symbol("terminal.fill", 0x8E8E93), ru ? "Консоль плагинов" : "Plugin console", ru ? "Вывод print() и ошибки скриптов" : "Script print() output and errors", settings.pluginConsole),
+             toggle(3, .experimentalPluginHooks, symbol("flask.fill", 0xFF9500), ru ? "Мягкие лимиты плагинов" : "Relaxed plugin limits", ru ? "Таймаут хуков 2 с вместо 0,25 с, ошибки скриптов всплывают сообщением" : "2 s hook timeout instead of 0.25 s; script errors show as toasts", settings.experimentalPluginHooks)
+         ]
+diff --git a/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift b/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift
+index 25693da1..d37b5cc1 100644
+--- a/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift
++++ b/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift
+@@ -16,6 +16,7 @@ private enum AyuLyricsSourceRow: Int32 {
+     case lrclibServer = 2
+     case netEase = 3
+     case lyricsOvh = 4
++    case genius = 5
+     /// Custom sources use 11 + 2i (switch) and 12 + 2i (edit), at most eight of them.
+     case addCustom = 29
+     case timeout = 40
+@@ -151,6 +152,7 @@ func ayuLyricsSourcesController(context: AccountContext) -> ViewController {
+             case .lrclib?: settings.lrclibEnabled = value
+             case .netEase?: settings.netEaseEnabled = value
+             case .lyricsOvh?: settings.lyricsOvhEnabled = value
++            case .genius?: settings.geniusEnabled = value
+             default: break
+             }
+         }
+@@ -179,6 +181,7 @@ func ayuLyricsSourcesController(context: AccountContext) -> ViewController {
+             .link(1, AyuLyricsSourceRow.lrclibServer.rawValue, symbol("server.rack", 0x8E8E93), ru ? "Сервер LRCLIB" : "LRCLIB server", URL(string: settings.lrclibBaseURL)?.host ?? settings.lrclibBaseURL),
+             .toggle(1, AyuLyricsSourceRow.netEase.rawValue, symbol("waveform", 0xFF3B30), "NetEase", ru ? "Тайминг по словам для многих песен" : "Word timing for many songs", settings.netEaseEnabled),
+             .toggle(1, AyuLyricsSourceRow.lyricsOvh.rawValue, symbol("doc.plaintext", 0x34C759), "lyrics.ovh", ru ? "Только текст, запасной вариант" : "Plain text fallback", settings.lyricsOvhEnabled),
++            .toggle(1, AyuLyricsSourceRow.genius.rawValue, symbol("music.quarternote.3", 0xFFCC00), "Genius", ru ? "Только текст, большая база, в том числе украинских и русских песен" : "Plain text, large catalogue including Ukrainian and Russian songs", settings.geniusEnabled),
+             .header(2, 10, ru ? "СВОИ API" : "YOUR APIS")
+         ]
+         for (index, provider) in settings.customProviders.enumerated() {
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index ef8c0145..ef728852 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -141,6 +141,27 @@ public func ayuPublicAppVersion() -> String {
+     return ayuAppVersion()
+ }
+ 
++/// Real Telegram chat bubbles on the user's wallpaper, drawn by ThemeSettingsChatPreviewItem.
++struct AyuSectionedChatPreview: Equatable {
++    let theme: PresentationTheme
++    let wallpaper: TelegramWallpaper
++    let fontSize: PresentationFontSize
++    let corners: PresentationChatBubbleCorners
++    let dateTimeFormat: PresentationDateTimeFormat
++    let nameOrder: PresentationPersonNameOrder
++    let messages: [ChatPreviewMessageItem]
++
++    init(presentationData: PresentationData, messages: [ChatPreviewMessageItem]) {
++        self.theme = presentationData.theme
++        self.wallpaper = presentationData.chatWallpaper
++        self.fontSize = presentationData.chatFontSize
++        self.corners = presentationData.chatBubbleCorners
++        self.dateTimeFormat = presentationData.dateTimeFormat
++        self.nameOrder = presentationData.nameDisplayOrder
++        self.messages = messages
++    }
++}
++
+ struct AyuSectionedArguments {
+     let open: (Int32) -> Void
+     let toggle: (Int32, Bool) -> Void
+@@ -161,17 +182,19 @@ enum AyuSectionedEntry: ItemListNodeEntry {
+     case info(Int32, Int32, String)
+     /// A drawn preview at the top of a page (a little chat, a menu…).
+     case picture(Int32, Int32, AyuPreviewPicture)
++    /// Telegram's own chat bubbles; needs `AyuSectionedArguments.context`.
++    case chat(Int32, Int32, AyuSectionedChatPreview)
+ 
+     var section: ItemListSectionId {
+         switch self {
+-        case let .logo(section, _, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .badgedLink(section, _, _, _, _, _), let .toggle(section, _, _, _, _, _), let .slider(section, _, _, _, _), let .info(section, _, _), let .picture(section, _, _):
++        case let .logo(section, _, _, _, _), let .header(section, _, _), let .link(section, _, _, _, _), let .badgedLink(section, _, _, _, _, _), let .toggle(section, _, _, _, _, _), let .slider(section, _, _, _, _), let .info(section, _, _), let .picture(section, _, _), let .chat(section, _, _):
+             return section
+         }
+     }
+ 
+     var stableId: Int32 {
+         switch self {
+-        case let .logo(_, id, _, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .badgedLink(_, id, _, _, _, _), let .toggle(_, id, _, _, _, _), let .slider(_, id, _, _, _), let .info(_, id, _), let .picture(_, id, _):
++        case let .logo(_, id, _, _, _), let .header(_, id, _), let .link(_, id, _, _, _), let .badgedLink(_, id, _, _, _, _), let .toggle(_, id, _, _, _, _), let .slider(_, id, _, _, _), let .info(_, id, _), let .picture(_, id, _), let .chat(_, id, _):
+             return id
+         }
+     }
+@@ -188,6 +211,7 @@ enum AyuSectionedEntry: ItemListNodeEntry {
+         case let (.slider(ls, li, lv, lmin, lmax), .slider(rs, ri, rv, rmin, rmax)): return ls == rs && li == ri && lv == rv && lmin == rmin && lmax == rmax
+         case let (.info(ls, li, lt), .info(rs, ri, rt)): return ls == rs && li == ri && lt == rt
+         case let (.picture(ls, li, lp), .picture(rs, ri, rp)): return ls == rs && li == ri && lp == rp
++        case let (.chat(ls, li, lp), .chat(rs, ri, rp)): return ls == rs && li == ri && lp == rp
+         default: return false
+         }
+     }
+@@ -212,6 +236,11 @@ enum AyuSectionedEntry: ItemListNodeEntry {
+             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+         case let .picture(_, _, picture):
+             return picture.item(theme: presentationData.theme, ru: presentationData.strings.baseLanguageCode.hasPrefix("ru"), sectionId: self.section)
++        case let .chat(_, _, preview):
++            guard let context = arguments.context else {
++                return ItemListTextItem(presentationData: presentationData, text: .plain(""), sectionId: self.section)
++            }
++            return ThemeSettingsChatPreviewItem(context: context, systemStyle: .glass, theme: preview.theme, componentTheme: preview.theme, strings: presentationData.strings, sectionId: self.section, fontSize: preview.fontSize, chatBubbleCorners: preview.corners, wallpaper: preview.wallpaper, dateTimeFormat: preview.dateTimeFormat, nameDisplayOrder: preview.nameOrder, messageItems: preview.messages)
+         }
+     }
+ }
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuBotWebAppInitData.swift b/submodules/TelegramCore/Sources/AyuGram/AyuBotWebAppInitData.swift
+new file mode 100644
+index 00000000..fa0cc7d1
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuBotWebAppInitData.swift
+@@ -0,0 +1,72 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++internal import TelegramApi
++import MtProtoKit
++
++/// The signed Mini App data (`tgWebAppData`) a bot's web app at `url` would receive, for a server
++/// that checks Telegram's signature. Asks for a simple web view first and, if Telegram refuses,
++/// for the web view of the chat with the bot, as an inline `web_app` button does. A failure
++/// carries Telegram's error code, so the caller can show what went wrong.
++public func ayuBotWebAppInitData(account: Account, botId: PeerId, url: String) -> Signal<String, String> {
++    return account.postbox.transaction { transaction -> (Api.InputUser, Api.InputPeer)? in
++        guard let bot = transaction.getPeer(botId), let inputBot = apiInputUser(bot), let inputPeer = apiInputPeer(bot) else {
++            return nil
++        }
++        return (inputBot, inputPeer)
++    }
++    |> castError(String.self)
++    |> mapToSignal { inputs -> Signal<String, String> in
++        guard let inputs else {
++            return .fail("BOT_NOT_FOUND")
++        }
++        let (inputBot, inputPeer) = inputs
++        let simple = account.network.request(Api.functions.messages.requestSimpleWebView(flags: 1 << 3, bot: inputBot, url: url, startParam: nil, themeParams: nil, platform: "ios"))
++        |> mapError { error -> String in
++            return error.errorDescription ?? "UNKNOWN"
++        }
++        |> mapToSignal { result -> Signal<String, String> in
++            switch result {
++            case let .webViewResultUrl(webViewResultUrlData):
++                if let initData = ayuInitData(webAppUrl: webViewResultUrlData.url) {
++                    return .single(initData)
++                }
++                return .fail("NO_INIT_DATA")
++            }
++        }
++        let chat = account.network.request(Api.functions.messages.requestWebView(flags: 1 << 1, peer: inputPeer, bot: inputBot, url: url, startParam: nil, themeParams: nil, platform: "ios", replyTo: nil, sendAs: nil))
++        |> mapError { error -> String in
++            return error.errorDescription ?? "UNKNOWN"
++        }
++        |> mapToSignal { result -> Signal<String, String> in
++            switch result {
++            case let .webViewResultUrl(webViewResultUrlData):
++                if let initData = ayuInitData(webAppUrl: webViewResultUrlData.url) {
++                    return .single(initData)
++                }
++                return .fail("NO_INIT_DATA")
++            }
++        }
++        return simple
++        |> `catch` { simpleError -> Signal<String, String> in
++            return chat
++            |> mapError { chatError -> String in
++                return simpleError == chatError ? simpleError : simpleError + ", " + chatError
++            }
++        }
++    }
++}
++
++/// The tgWebAppData parameter of the URL's fragment, which is a percent-encoded query string.
++public func ayuInitData(webAppUrl: String) -> String? {
++    guard let hash = webAppUrl.firstIndex(of: "#") else {
++        return nil
++    }
++    for pair in webAppUrl[webAppUrl.index(after: hash)...].split(separator: "&") {
++        let parts = pair.split(separator: "=", maxSplits: 1)
++        if parts.count == 2, parts[0] == "tgWebAppData", let value = String(parts[1]).removingPercentEncoding, !value.isEmpty {
++            return value
++        }
++    }
++    return nil
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift
+new file mode 100644
+index 00000000..d08917fa
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift
+@@ -0,0 +1,44 @@
++import Foundation
++
++/// A gift the owner granted through the AyuGram for iOS badge registry. It exists only in the
++/// registry: everyone running the port sees it in the peer's profile, Telegram does not.
++/// "unique" gifts are drawn from Telegram's own models, backdrops and patterns of `giftId`;
++/// a "plain" gift can be upgraded to a unique one for free.
++public struct AyuGrantedGift: Equatable {
++    public enum Kind: String {
++        case plain
++        case unique
++    }
++
++    /// Position in the registry entry's list, used to upgrade or remove this gift.
++    public let index: Int
++    public let kind: Kind
++    public let giftId: Int64
++    public let title: String?
++    public let number: Int32
++    public let model: String?
++    public let pattern: String?
++    public let backdrop: String?
++    public let date: Int32
++
++    init?(json: [String: Any], index: Int) {
++        let giftId = (json["giftId"] as? NSNumber)?.int64Value ?? (json["giftId"] as? String).flatMap(Int64.init)
++        guard let giftId, let kind = Kind(rawValue: json["kind"] as? String ?? "") else {
++            return nil
++        }
++        self.index = index
++        self.kind = kind
++        self.giftId = giftId
++        self.title = (json["title"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(64)) }
++        self.number = max(1, (json["number"] as? NSNumber)?.int32Value ?? 1)
++        self.model = json["model"] as? String
++        self.pattern = json["pattern"] as? String
++        self.backdrop = json["backdrop"] as? String
++        self.date = (json["date"] as? NSNumber)?.int32Value ?? 0
++    }
++
++    /// Shown as the gift's message, so nobody takes it for a gift Telegram knows about.
++    public static func note(_ russian: Bool) -> String {
++        return russian ? "Выдан в AyuGram-IOS. Виден только в AyuGram-IOS." : "Granted in AyuGram-IOS. Visible only in AyuGram-IOS."
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
+new file mode 100644
+index 00000000..a20578d8
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
+@@ -0,0 +1,74 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++/// Picks the attribute with this name, or the first one when the name is missing or unknown.
++private func ayuPick(_ attributes: [StarGift.UniqueGift.Attribute], name: String?, matches: (StarGift.UniqueGift.Attribute) -> String?) -> StarGift.UniqueGift.Attribute? {
++    let candidates = attributes.filter { matches($0) != nil }
++    if let name, let found = candidates.first(where: { matches($0) == name }) {
++        return found
++    }
++    return candidates.first
++}
++
++func ayuUniqueGift(_ granted: AyuGrantedGift, title: String, attributes: [StarGift.UniqueGift.Attribute], ownerPeerId: EnginePeer.Id) -> StarGift.UniqueGift? {
++    let model = ayuPick(attributes, name: granted.model, matches: { attribute in
++        if case let .model(name, _, _, _) = attribute { return name }
++        return nil
++    })
++    let pattern = ayuPick(attributes, name: granted.pattern, matches: { attribute in
++        if case let .pattern(name, _, _) = attribute { return name }
++        return nil
++    })
++    let backdrop = ayuPick(attributes, name: granted.backdrop, matches: { attribute in
++        if case let .backdrop(name, _, _, _, _, _, _) = attribute { return name }
++        return nil
++    })
++    guard let model, let pattern, let backdrop else {
++        return nil
++    }
++    let slug = "AyuGram-\(granted.giftId)-\(granted.number)"
++    return StarGift.UniqueGift(id: granted.giftId &+ Int64(granted.number), giftId: granted.giftId, title: granted.title ?? title, number: granted.number, slug: slug, owner: .peerId(ownerPeerId), attributes: [model, pattern, backdrop], availability: StarGift.UniqueGift.Availability(issued: granted.number, total: max(granted.number, 100000)), giftAddress: nil, resellAmounts: nil, resellForTonOnly: false, releasedBy: nil, valueAmount: nil, valueCurrency: nil, valueUsdAmount: nil, flags: [], themePeerId: nil, peerColor: nil, hostPeerId: nil, minOfferStars: nil, craftChancePermille: nil)
++}
++
++/// The peer's granted gifts as profile gift rows, pinned above the gifts Telegram returns.
++/// Emits an empty list at once, so the profile never waits for the attribute lookups.
++public func ayuGrantedProfileGifts(account: Account, peerId: EnginePeer.Id) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
++    let granted = AyuSupportersManager.shared.grantedGifts(peerId: peerId.id._internalGetInt64Value())
++    guard !granted.isEmpty else {
++        return .single([])
++    }
++    let catalog = _internal_cachedStarGifts(postbox: account.postbox)
++    |> take(1)
++    let uniqueIds = Array(Set(granted.filter { $0.kind == .unique }.map(\.giftId)))
++    let attributes = combineLatest(uniqueIds.map { giftId in
++        return _internal_getStarGiftUpgradeAttributes(account: account, giftId: giftId)
++        |> take(1)
++        |> map { (giftId, $0 ?? []) }
++    })
++    let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true || Locale.preferredLanguages.first?.hasPrefix("uk") == true
++    let loaded = combineLatest(catalog, attributes)
++    |> map { catalog, attributes -> [ProfileGiftsContext.State.StarGift] in
++        var generic: [Int64: StarGift.Gift] = [:]
++        for gift in catalog?.items ?? [] {
++            if case let .generic(value) = gift {
++                generic[value.id] = value
++            }
++        }
++        let attributesById = Dictionary(attributes, uniquingKeysWith: { first, _ in first })
++        return granted.compactMap { item -> ProfileGiftsContext.State.StarGift? in
++            let gift: StarGift
++            switch item.kind {
++            case .plain:
++                guard let base = generic[item.giftId] else { return nil }
++                gift = .generic(base)
++            case .unique:
++                guard let unique = ayuUniqueGift(item, title: generic[item.giftId]?.title ?? "Gift", attributes: attributesById[item.giftId] ?? [], ownerPeerId: peerId) else { return nil }
++                gift = .unique(unique)
++            }
++            return ProfileGiftsContext.State.StarGift(gift: gift, reference: nil, fromPeer: nil, date: item.date, text: AyuGrantedGift.note(ru), entities: nil, nameHidden: false, savedToProfile: true, pinnedToTop: true, convertStars: nil, canUpgrade: false, canExportDate: nil, upgradeStars: nil, transferStars: nil, canTransferDate: nil, canResaleDate: nil, collectionIds: nil, prepaidUpgradeHash: nil, upgradeSeparate: false, dropOriginalDetailsStars: nil, number: item.kind == .unique ? item.number : nil, isRefunded: false, canCraftAt: nil)
++        }
++    }
++    return .single([])
++    |> then(loaded)
++}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+index 9125da80..055b87a2 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -158,8 +158,11 @@ public final class AyuSupportersManager {
+     ]
+     private var ayuIosBadges: [Int64: (documentId: Int64?, text: String?)] = [:]
+     private var ayuIosLabels: [Int64: (kind: String, text: String)] = [:]
++    private var grantedGiftsByPeer: [Int64: [AyuGrantedGift]] = [:]
+     private var ayuIosExpiry: [Int64: Double] = [:]
+     private var ownerDaily: (documentId: Int64, expiresAt: Double)?
++    /// The emoji the owner chose for their own badge; its text stays the creator's.
++    private var ownerDocumentId: Int64?
+     private static let dailyTitle = "(name) — удача дня"
+     private var isRefreshing = false
+     private var lastRegistryRefresh: CFAbsoluteTime = 0.0
+@@ -201,6 +204,14 @@ public final class AyuSupportersManager {
+         }
+     }
+ 
++    /// Gifts the owner granted to a peer through the registry, newest first.
++    public func grantedGifts(peerId: Int64) -> [AyuGrantedGift] {
++        self.refreshAyuRegistryIfStale()
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.grantedGiftsByPeer[peerId] ?? []
++    }
++
+     public func isSupporter(peerId: Int64) -> Bool {
+         return self.badge(peerId: peerId) != nil
+     }
+@@ -214,11 +225,12 @@ public final class AyuSupportersManager {
+         if peerId == layout.peer {
+             self.lock.lock()
+             let daily = self.ownerDaily
++            let ownerDocumentId = self.ownerDocumentId
+             self.lock.unlock()
+             if let daily, daily.expiresAt > now {
+                 return .ayuDeveloper(documentId: daily.documentId, text: AyuSupportersManager.dailyTitle)
+             }
+-            return .ayuDeveloper(documentId: layout.file, text: layout.text)
++            return .ayuDeveloper(documentId: ownerDocumentId ?? layout.file, text: layout.text)
+         }
+         self.lock.lock()
+         defer { self.lock.unlock() }
+@@ -305,6 +317,8 @@ public final class AyuSupportersManager {
+         var labels: [Int64: (kind: String, text: String)] = [:]
+         var expiry: [Int64: Double] = [:]
+         var ownerDaily: (documentId: Int64, expiresAt: Double)?
++        var ownerDocumentId: Int64?
++        var gifts: [Int64: [AyuGrantedGift]] = [:]
+         let now = Date().timeIntervalSince1970
+         for badge in badges {
+             guard let id = (badge["id"] as? NSNumber)?.int64Value, let layout = AyuSupportersManager.layout else {
+@@ -313,6 +327,12 @@ public final class AyuSupportersManager {
+             if let label = badge["label"] as? [String: Any], let text = label["text"] as? String, !text.isEmpty {
+                 labels[id] = ((label["kind"] as? String) ?? "custom", String(text.prefix(160)))
+             }
++            if let list = badge["gifts"] as? [[String: Any]] {
++                let parsedGifts = list.enumerated().compactMap { AyuGrantedGift(json: $0.element, index: $0.offset) }
++                if !parsedGifts.isEmpty {
++                    gifts[id] = parsedGifts.reversed()
++                }
++            }
+             let documentId = (badge["documentId"] as? NSNumber)?.int64Value
+             let title = (badge["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+             let expiresAt = (badge["expiresAt"] as? NSNumber)?.doubleValue
+@@ -320,9 +340,12 @@ public final class AyuSupportersManager {
+                 continue
+             }
+             if id == layout.peer {
+-                // Only a timed daily badge from the badge server may cover the owner's badge.
++                // A timed daily badge covers the owner's badge; otherwise the owner may pick its
++                // emoji. The text is always the creator's, whatever the entry says.
+                 if title == AyuSupportersManager.dailyTitle, let documentId, let expiresAt {
+                     ownerDaily = (documentId, expiresAt)
++                } else if expiresAt == nil, let documentId {
++                    ownerDocumentId = documentId
+                 }
+                 continue
+             }
+@@ -341,6 +364,8 @@ public final class AyuSupportersManager {
+         self.ayuIosBadges = parsed
+         self.ayuIosExpiry = expiry
+         self.ownerDaily = ownerDaily
++        self.ownerDocumentId = ownerDocumentId
++        self.grantedGiftsByPeer = gifts
+         self.ayuIosLabels = labels
+         self.lock.unlock()
+     }
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
+index 2dccce2c..93caa69e 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
+@@ -22,6 +22,8 @@ public struct AyuLyricsProviderSettings: Codable, Equatable {
+     public var lrclibBaseURL = "https://lrclib.net"
+     public var netEaseEnabled = true
+     public var lyricsOvhEnabled = true
++    /// Genius texts through api.popcat.xyz: plain lyrics, good for songs the other sources miss.
++    public var geniusEnabled = true
+     public var customProviders: [CustomProvider] = []
+     /// Overall time budget for one lookup, in seconds.
+     public var timeout: Double = 12.0
+@@ -29,7 +31,7 @@ public struct AyuLyricsProviderSettings: Codable, Equatable {
+     public init() {}
+ 
+     private enum CodingKeys: String, CodingKey {
+-        case lrclibEnabled, lrclibBaseURL, netEaseEnabled, lyricsOvhEnabled, customProviders, timeout
++        case lrclibEnabled, lrclibBaseURL, netEaseEnabled, lyricsOvhEnabled, geniusEnabled, customProviders, timeout
+     }
+ 
+     public init(from decoder: Decoder) throws {
+@@ -38,6 +40,7 @@ public struct AyuLyricsProviderSettings: Codable, Equatable {
+         self.lrclibBaseURL = (try? values.decodeIfPresent(String.self, forKey: .lrclibBaseURL)) ?? "https://lrclib.net"
+         self.netEaseEnabled = (try? values.decodeIfPresent(Bool.self, forKey: .netEaseEnabled)) ?? true
+         self.lyricsOvhEnabled = (try? values.decodeIfPresent(Bool.self, forKey: .lyricsOvhEnabled)) ?? true
++        self.geniusEnabled = (try? values.decodeIfPresent(Bool.self, forKey: .geniusEnabled)) ?? true
+         self.customProviders = (try? values.decodeIfPresent([CustomProvider].self, forKey: .customProviders)) ?? []
+         self.timeout = min(30.0, max(4.0, (try? values.decodeIfPresent(Double.self, forKey: .timeout)) ?? 12.0))
+     }
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift b/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift
+index 7a4f486f..64b01648 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift
+@@ -3138,7 +3138,7 @@ public final class ProfileGiftsContext {
+     private let impl: QueueLocalObject<ProfileGiftsContextImpl>
+     
+     public var state: Signal<ProfileGiftsContext.State, NoError> {
+-        return Signal { subscriber in
++        let state = Signal<ProfileGiftsContext.State, NoError> { subscriber in
+             let disposable = MetaDisposable()
+             
+             self.impl.with { impl in
+@@ -3149,10 +3149,26 @@ public final class ProfileGiftsContext {
+             
+             return disposable
+         }
++        // AyuGram: gifts granted through the AyuGram for iOS registry, pinned on top.
++        guard self.collectionId == nil else {
++            return state
++        }
++        return combineLatest(state, ayuGrantedProfileGifts(account: self.ayuAccount, peerId: self.peerId))
++        |> map { state, granted -> ProfileGiftsContext.State in
++            guard !granted.isEmpty else {
++                return state
++            }
++            var state = state
++            state.gifts = granted + state.gifts
++            state.filteredGifts = granted + state.filteredGifts
++            state.count = (state.count ?? 0) + Int32(granted.count)
++            return state
++        }
+     }
+     
+     public let peerId: EnginePeer.Id
+     public let collectionId: Int32?
++    private let ayuAccount: Account
+     
+     public init(
+         account: Account,
+@@ -3164,6 +3180,7 @@ public final class ProfileGiftsContext {
+     ) {
+         self.peerId = peerId
+         self.collectionId = collectionId
++        self.ayuAccount = account
+         
+         let queue = self.queue
+         self.impl = QueueLocalObject(queue: queue, generate: {
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
+index 9b76fb8f..f2c88f91 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
+@@ -41,6 +41,20 @@ enum AyuBadgeEditor {
+             context.sharedContext.applicationBindings.presentNativeController(controller)
+         }
+ 
++        if peerId == context.account.peerId.id._internalGetInt64Value() {
++            // The owner's own badge: only its emoji changes; the creator's text stays.
++            let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Твой бейдж создателя" : "Your creator badge")
++            sheet.addAction(UIAlertAction(title: ru ? "Сменить эмодзи бейджа…" : "Change the badge emoji…", style: .default, handler: { _ in
++                AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present, ownBadge: true)
++            }))
++            sheet.addAction(UIAlertAction(title: ru ? "Вернуть стандартный" : "Restore the default", style: .destructive, handler: { _ in
++                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": NSNull()])
++            }))
++            AyuBadgeEditor.addGiftActions(to: sheet, context: context, peerId: peerId, ru: ru, present: present)
++            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++            present(sheet)
++            return
++        }
+         let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись AyuGram для iOS" : "AyuGram for iOS badge and label")
+         sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
+             AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present)
+@@ -70,6 +84,7 @@ enum AyuBadgeEditor {
+                 AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["label": NSNull()])
+             }))
+         }
++        AyuBadgeEditor.addGiftActions(to: sheet, context: context, peerId: peerId, ru: ru, present: present)
+         sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
+         present(sheet)
+     }
+@@ -78,7 +93,7 @@ enum AyuBadgeEditor {
+ 
+     /// Picks the badge's emoji the way Telegram picks an emoji status: recent emoji and every
+     /// saved custom emoji pack, with search. The text comes next.
+-    private static func chooseEmoji(context: AccountContext, controller: ViewController?, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void) {
++    private static func chooseEmoji(context: AccountContext, controller: ViewController?, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void, ownBadge: Bool = false) {
+         let currentDocumentId: Int64?
+         let currentText: String
+         switch AyuSupportersManager.shared.badge(peerId: peerId) {
+@@ -93,6 +108,12 @@ enum AyuBadgeEditor {
+             currentText = ""
+         }
+         let next: (Int64?) -> Void = { documentId in
++            if ownBadge {
++                if let documentId {
++                    AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": String(documentId)])
++                }
++                return
++            }
+             AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Показывается при нажатии на бейдж. (name) заменится именем." : "Shown when the badge is tapped. (name) becomes the name.", initial: currentText, ru: ru, present: present, done: { text in
+                 // Sent as a string: the id does not fit a JavaScript number.
+                 AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": documentId.map { String($0) as Any } ?? NSNull(), "title": text])
+@@ -161,7 +182,7 @@ enum AyuBadgeEditor {
+     /// Sends the change to the badge server and applies the registry it answers with. `change`
+     /// sets documentId, title or label; NSNull clears one.
+     private static func commit(context: AccountContext, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void, change: [String: Any]) {
+-        AyuBadgeEditor.upload(context: context, peerId: peerId, ru: ru, change: change, completion: { result in
++        AyuBadgeEditor.upload(context: context, ru: ru, route: "admin", body: ["peerId": String(peerId), "change": change], completion: { result in
+             DispatchQueue.main.async {
+                 switch result {
+                 case let .success(data):
+@@ -182,13 +203,21 @@ enum AyuBadgeEditor {
+         case failure(String)
+     }
+ 
+-    private static func upload(context: AccountContext, peerId: Int64, ru: Bool, change: [String: Any], completion: @escaping (UploadResult) -> Void) {
++    /// POSTs `body` with the signed Mini App data to the badge server's `route` and answers with
++    /// the registry it returns.
++    private static func upload(context: AccountContext, ru: Bool, route: String, body: [String: Any], completion: @escaping (UploadResult) -> Void) {
++        let failure: (String) -> Void = { code in
++            completion(.failure(ru ? "Telegram не выдал данные для входа на сервер бейджей (\(code)). Проверьте, что бот @\(AyuBadgeEditor.botUsername) не заблокирован." : "Telegram gave no sign-in data for the badge server (\(code)). Make sure @\(AyuBadgeEditor.botUsername) isn't blocked."))
++        }
++        var signedIn = false
+         let _ = (AyuBadgeEditor.signedInitData(context: context)
+         |> deliverOnMainQueue).startStandalone(next: { initData in
+-            guard let initData, let url = URL(string: AyuBadgeEditor.server + "/api/admin") else {
+-                return completion(.failure(ru ? "Telegram не выдал данные для входа на сервер бейджей. Проверьте, что бот @\(AyuBadgeEditor.botUsername) не заблокирован." : "Telegram gave no sign-in data for the badge server. Make sure @\(AyuBadgeEditor.botUsername) isn't blocked."))
++            signedIn = true
++            guard let url = URL(string: AyuBadgeEditor.server + "/api/" + route) else {
++                return
+             }
+-            let body: [String: Any] = ["initData": initData, "peerId": String(peerId), "change": change]
++            var body = body
++            body["initData"] = initData
+             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30.0)
+             request.httpMethod = "POST"
+             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+@@ -206,12 +235,19 @@ enum AyuBadgeEditor {
+                     completion(.failure((json?["error"] as? String) ?? (ru ? "Сервер бейджей ответил \(http.statusCode)." : "The badge server answered \(http.statusCode).")))
+                 }
+             }).resume()
++        }, error: { code in
++            failure(code)
++        }, completed: {
++            // The bot's username resolved to nothing.
++            if !signedIn {
++                failure("BOT_NOT_FOUND")
++            }
+         })
+     }
+ 
+     /// Mini App data Telegram signs for the badge bot: the server checks
+-    /// the signature and that the account is the owner's.
+-    private static func signedInitData(context: AccountContext) -> Signal<String?, NoError> {
++    /// the signature and that the account is the owner's. Fails with Telegram's error code.
++    private static func signedInitData(context: AccountContext) -> Signal<String, String> {
+         return context.engine.peers.resolvePeerByName(name: AyuBadgeEditor.botUsername, referrer: nil)
+         |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
+             guard case let .result(peer) = result else {
+@@ -220,32 +256,237 @@ enum AyuBadgeEditor {
+             return .single(peer)
+         }
+         |> take(1)
+-        |> mapToSignal { peer -> Signal<String?, NoError> in
++        |> castError(String.self)
++        |> mapToSignal { peer -> Signal<String, String> in
+             guard let peer else {
+-                return .single(nil)
++                return .fail("BOT_NOT_FOUND")
+             }
+-            return context.engine.messages.requestSimpleWebView(botId: peer.id, url: AyuBadgeEditor.server + "/", source: .generic, themeParams: nil)
+-            |> map { result -> String? in
+-                return AyuBadgeEditor.initData(webAppUrl: result.url)
+-            }
+-            |> `catch` { _ -> Signal<String?, NoError> in
+-                return .single(nil)
++            return ayuBotWebAppInitData(account: context.account, botId: peer.id, url: AyuBadgeEditor.server + "/")
++        }
++    }
++
++    // MARK: Gifts
++
++    private static func addGiftActions(to sheet: UIAlertController, context: AccountContext, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void) {
++        sheet.addAction(UIAlertAction(title: ru ? "Выдать подарок…" : "Grant a gift…", style: .default, handler: { _ in
++            AyuBadgeEditor.grantGift(context: context, peerId: peerId, ru: ru, present: present)
++        }))
++        let granted = AyuSupportersManager.shared.grantedGifts(peerId: peerId)
++        if !granted.isEmpty {
++            sheet.addAction(UIAlertAction(title: ru ? "Убрать выданный подарок…" : "Remove a granted gift…", style: .destructive, handler: { _ in
++                let list = AyuBadgeEditor.menu(title: ru ? "Выданные подарки" : "Granted gifts", message: nil)
++                for gift in granted {
++                    list.addAction(UIAlertAction(title: AyuBadgeEditor.describe(gift, ru: ru), style: .destructive, handler: { _ in
++                        AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": ["remove": gift.index]])
++                    }))
++                }
++                list.addAction(UIAlertAction(title: ru ? "Убрать все" : "Remove all", style: .destructive, handler: { _ in
++                    AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": NSNull()])
++                }))
++                list.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++                present(list)
++            }))
++        }
++    }
++
++    private static func describe(_ gift: AyuGrantedGift, ru: Bool) -> String {
++        let name = gift.title ?? (ru ? "Подарок" : "Gift")
++        switch gift.kind {
++        case .plain:
++            return name + (ru ? " · обычный" : " · plain")
++        case .unique:
++            return "\(name) #\(gift.number) · \(gift.model ?? "?")"
++        }
++    }
++
++    private static func giftLabel(_ gift: StarGift.Gift) -> String {
++        var emoji = ""
++        for attribute in gift.file.attributes {
++            if case let .Sticker(displayText, _, _) = attribute {
++                emoji = displayText
+             }
+         }
++        let name = gift.title ?? emoji
++        return (name.isEmpty ? "🎁" : name) + " · \(gift.price) ⭐"
+     }
+ 
+-    /// The tgWebAppData parameter of the URL's fragment, which is a percent-encoded query string.
+-    static func initData(webAppUrl: String) -> String? {
+-        guard let hash = webAppUrl.firstIndex(of: "#") else {
+-            return nil
++    /// Grants a plain gift, a unique gift assembled from Telegram's models, backdrops and patterns,
++    /// or a copy of an existing collectible from its t.me/nft link.
++    private static func grantGift(context: AccountContext, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void) {
++        let _ = (context.engine.payments.cachedStarGifts()
++        |> take(1)
++        |> deliverOnMainQueue).startStandalone(next: { gifts in
++            let generic: [StarGift.Gift] = (gifts ?? []).compactMap { gift in
++                if case let .generic(value) = gift { return value }
++                return nil
++            }.sorted(by: { $0.price < $1.price })
++            let sheet = AyuBadgeEditor.menu(title: ru ? "Выдать подарок" : "Grant a gift", message: ru ? "Его увидят все, у кого AyuGram-IOS, с пометкой, что он выдан в AyuGram-IOS." : "Everyone on AyuGram-IOS sees it, marked as granted in AyuGram-IOS.")
++            if !generic.isEmpty {
++                sheet.addAction(UIAlertAction(title: ru ? "Обычный подарок…" : "Plain gift…", style: .default, handler: { _ in
++                    AyuBadgeEditor.chooseGift(generic, ru: ru, present: present, done: { gift in
++                        AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": ["add": ["giftId": String(gift.id), "kind": "plain"]]])
++                    })
++                }))
++                let upgradable = generic.filter { $0.upgradeStars != nil }
++                sheet.addAction(UIAlertAction(title: ru ? "NFT: модель, фон и узор…" : "NFT: model, backdrop and pattern…", style: .default, handler: { _ in
++                    AyuBadgeEditor.chooseGift(upgradable.isEmpty ? generic : upgradable, ru: ru, present: present, done: { gift in
++                        AyuBadgeEditor.configureUnique(context: context, peerId: peerId, giftId: gift.id, title: gift.title, number: nil, preset: nil, ru: ru, present: present)
++                    })
++                }))
++            }
++            sheet.addAction(UIAlertAction(title: ru ? "NFT по ссылке t.me/nft/…" : "NFT from a t.me/nft/… link", style: .default, handler: { _ in
++                AyuBadgeEditor.askText(title: ru ? "Ссылка на NFT" : "NFT link", message: ru ? "Например t.me/nft/PlushPepe-1. Модель, фон, узор и номер возьмутся из него." : "For example t.me/nft/PlushPepe-1. Its model, backdrop, pattern and number are used.", initial: "", ru: ru, present: present, done: { text in
++                    let slug = String(text.split(separator: "/").last ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++                    let _ = (context.engine.payments.getUniqueStarGift(slug: slug)
++                    |> deliverOnMainQueue).startStandalone(next: { unique in
++                        var preset = (model: nil as String?, pattern: nil as String?, backdrop: nil as String?)
++                        for attribute in unique.attributes {
++                            switch attribute {
++                            case let .model(name, _, _, _): preset.model = name
++                            case let .pattern(name, _, _): preset.pattern = name
++                            case let .backdrop(name, _, _, _, _, _, _): preset.backdrop = name
++                            default: break
++                            }
++                        }
++                        guard let model = preset.model, let pattern = preset.pattern, let backdrop = preset.backdrop else {
++                            return AyuBadgeEditor.notify(ru ? "У этого NFT нет модели, фона или узора." : "This NFT has no model, backdrop or pattern.", ru: ru, present: present)
++                        }
++                        let choice = AyuBadgeEditor.menu(title: "\(unique.title) #\(unique.number)", message: "\(model) · \(backdrop) · \(pattern)")
++                        choice.addAction(UIAlertAction(title: ru ? "Выдать как есть" : "Grant as it is", style: .default, handler: { _ in
++                            AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": ["add": ["giftId": String(unique.giftId), "kind": "unique", "title": unique.title, "number": Int(unique.number), "model": model, "pattern": pattern, "backdrop": backdrop]]])
++                        }))
++                        choice.addAction(UIAlertAction(title: ru ? "Настроить модель, фон и узор…" : "Set model, backdrop and pattern…", style: .default, handler: { _ in
++                            AyuBadgeEditor.configureUnique(context: context, peerId: peerId, giftId: unique.giftId, title: unique.title, number: unique.number, preset: (model, pattern, backdrop), ru: ru, present: present)
++                        }))
++                        choice.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++                        present(choice)
++                    }, error: { _ in
++                        AyuBadgeEditor.notify(ru ? "NFT по этой ссылке не найден." : "No NFT found at this link.", ru: ru, present: present)
++                    })
++                })
++            }))
++            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++            present(sheet)
++        })
++    }
++
++    private static func chooseGift(_ gifts: [StarGift.Gift], ru: Bool, present: @escaping (UIViewController) -> Void, done: @escaping (StarGift.Gift) -> Void) {
++        let sheet = AyuBadgeEditor.menu(title: ru ? "Какой подарок" : "Which gift", message: nil)
++        for gift in gifts {
++            sheet.addAction(UIAlertAction(title: AyuBadgeEditor.giftLabel(gift), style: .default, handler: { _ in done(gift) }))
+         }
+-        for pair in webAppUrl[webAppUrl.index(after: hash)...].split(separator: "&") {
+-            let parts = pair.split(separator: "=", maxSplits: 1)
+-            if parts.count == 2, parts[0] == "tgWebAppData", let value = String(parts[1]).removingPercentEncoding, !value.isEmpty {
+-                return value
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++        present(sheet)
++    }
++
++    /// Model, backdrop and pattern from Telegram's own list for this gift, then the number.
++    private static func configureUnique(context: AccountContext, peerId: Int64, giftId: Int64, title: String?, number: Int32?, preset: (model: String, pattern: String, backdrop: String)?, ru: Bool, present: @escaping (UIViewController) -> Void) {
++        let _ = (context.engine.payments.getStarGiftUpgradeAttributes(giftId: giftId)
++        |> take(1)
++        |> deliverOnMainQueue).startStandalone(next: { attributes in
++            var models: [(String, Int32)] = []
++            var backdrops: [(String, Int32)] = []
++            var patterns: [(String, Int32)] = []
++            for attribute in attributes ?? [] {
++                switch attribute {
++                case let .model(name, _, rarity, _): models.append((name, rarity.permilleValue))
++                case let .backdrop(name, _, _, _, _, _, rarity): backdrops.append((name, rarity.permilleValue))
++                case let .pattern(name, _, rarity): patterns.append((name, rarity.permilleValue))
++                default: break
++                }
++            }
++            guard !models.isEmpty, !backdrops.isEmpty, !patterns.isEmpty else {
++                return AyuBadgeEditor.notify(ru ? "Telegram не отдал модели, фоны и узоры этого подарка." : "Telegram returned no models, backdrops or patterns for this gift.", ru: ru, present: present)
+             }
++            AyuBadgeEditor.pickAttribute(title: ru ? "Модель" : "Model", options: models, preset: preset?.model, ru: ru, present: present, done: { model in
++                AyuBadgeEditor.pickAttribute(title: ru ? "Фон" : "Backdrop", options: backdrops, preset: preset?.backdrop, ru: ru, present: present, done: { backdrop in
++                    AyuBadgeEditor.pickAttribute(title: ru ? "Узор" : "Pattern", options: patterns, preset: preset?.pattern, ru: ru, present: present, done: { pattern in
++                        let alert = UIAlertController(title: ru ? "Номер" : "Number", message: ru ? "Пусто — случайный." : "Empty for a random one.", preferredStyle: .alert)
++                        alert.addTextField(configurationHandler: { field in
++                            field.keyboardType = .numberPad
++                            field.text = number.map { String($0) } ?? ""
++                        })
++                        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++                        alert.addAction(UIAlertAction(title: ru ? "Выдать" : "Grant", style: .default, handler: { [weak alert] _ in
++                            var gift: [String: Any] = ["giftId": String(giftId), "kind": "unique", "model": model, "pattern": pattern, "backdrop": backdrop]
++                            if let title { gift["title"] = title }
++                            if let value = Int(alert?.textFields?.first?.text ?? ""), value >= 1 { gift["number"] = value }
++                            AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": ["add": gift]])
++                        }))
++                        present(alert)
++                    })
++                })
++            })
++        })
++    }
++
++    private static func pickAttribute(title: String, options: [(String, Int32)], preset: String?, ru: Bool, present: @escaping (UIViewController) -> Void, done: @escaping (String) -> Void) {
++        let sheet = AyuBadgeEditor.menu(title: title, message: nil)
++        sheet.addAction(UIAlertAction(title: ru ? "🎲 Случайно" : "🎲 Random", style: .default, handler: { _ in
++            if let random = options.randomElement() { done(random.0) }
++        }))
++        if let preset, options.contains(where: { $0.0 == preset }) {
++            sheet.addAction(UIAlertAction(title: (ru ? "Как в оригинале: " : "As in the original: ") + preset, style: .default, handler: { _ in done(preset) }))
++        }
++        for (name, permille) in options {
++            let rarity = permille > 0 ? String(format: " · %.1f%%", Double(permille) / 10.0) : ""
++            sheet.addAction(UIAlertAction(title: name + rarity, style: .default, handler: { _ in done(name) }))
+         }
+-        return nil
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++        present(sheet)
++    }
++
++    /// Whether the account has a plain gift from the registry it may upgrade for free.
++    static func canUpgradeGrantedGift(context: AccountContext) -> Bool {
++        return AyuSupportersManager.shared.grantedGifts(peerId: context.account.peerId.id._internalGetInt64Value()).contains(where: { $0.kind == .plain })
++    }
++
++    /// Upgrades a plain granted gift for 0 stars: a random model, backdrop and pattern from Telegram.
++    static func upgradeGrantedGift(context: AccountContext) {
++        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++        let present: (UIViewController) -> Void = { controller in
++            context.sharedContext.applicationBindings.presentNativeController(controller)
++        }
++        let plain = AyuSupportersManager.shared.grantedGifts(peerId: context.account.peerId.id._internalGetInt64Value()).filter { $0.kind == .plain }
++        let upgrade: (AyuGrantedGift) -> Void = { gift in
++            let _ = (context.engine.payments.getStarGiftUpgradeAttributes(giftId: gift.giftId)
++            |> take(1)
++            |> deliverOnMainQueue).startStandalone(next: { attributes in
++                var models: [String] = [], backdrops: [String] = [], patterns: [String] = []
++                for attribute in attributes ?? [] {
++                    switch attribute {
++                    case let .model(name, _, _, _): models.append(name)
++                    case let .backdrop(name, _, _, _, _, _, _): backdrops.append(name)
++                    case let .pattern(name, _, _): patterns.append(name)
++                    default: break
++                    }
++                }
++                guard let model = models.randomElement(), let backdrop = backdrops.randomElement(), let pattern = patterns.randomElement() else {
++                    return AyuBadgeEditor.notify(ru ? "Этот подарок Telegram не улучшает." : "Telegram does not upgrade this gift.", ru: ru, present: present)
++                }
++                AyuBadgeEditor.upload(context: context, ru: ru, route: "upgrade", body: ["index": gift.index, "model": model, "backdrop": backdrop, "pattern": pattern], completion: { result in
++                    DispatchQueue.main.async {
++                        switch result {
++                        case let .success(data):
++                            AyuSupportersManager.shared.applyAyuRegistry(data: data)
++                            AyuBadgeEditor.notify(ru ? "Подарок улучшен: \(model), \(backdrop), \(pattern). Откройте профиль заново." : "Upgraded: \(model), \(backdrop), \(pattern). Reopen the profile.", ru: ru, present: present)
++                        case let .failure(message):
++                            AyuBadgeEditor.notify(message, ru: ru, present: present)
++                        }
++                    }
++                })
++            })
++        }
++        if plain.count == 1, let gift = plain.first {
++            upgrade(gift)
++            return
++        }
++        let sheet = AyuBadgeEditor.menu(title: ru ? "Какой подарок улучшить" : "Which gift to upgrade", message: ru ? "Бесплатно, 0 ⭐" : "Free, 0 ⭐")
++        for gift in plain {
++            sheet.addAction(UIAlertAction(title: AyuBadgeEditor.describe(gift, ru: ru), style: .default, handler: { _ in upgrade(gift) }))
++        }
++        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++        present(sheet)
+     }
+ 
+     // MARK: UI helpers
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+index 7dd781c5..9bed847e 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+@@ -885,6 +885,20 @@ func infoItems(
+                 }
+             }
+         }
++        if isMyProfile, AyuBadgeEditor.canUpgradeGrantedGift(context: context) {
++            // A plain gift granted in AyuGram-IOS upgrades for free.
++            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9302, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Улучшить подарок AyuGram-IOS · 0 ⭐" : "Upgrade the AyuGram-IOS gift · 0 ⭐", action: {
++                AyuBadgeEditor.upgradeGrantedGift(context: context)
++            }))
++        }
++        if isMyProfile, AyuBadgeEditor.canOpen(context: context) {
++            // The owner changes the emoji of their own creator badge here.
++            let ayuPeerId = user.id.id._internalGetInt64Value()
++            let ayuName = EnginePeer.user(user).compactDisplayTitle
++            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9301, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Мой бейдж AyuGram-IOS…" : "My AyuGram-IOS badge…", action: {
++                AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName, controller: interaction.getController())
++            }))
++        }
+     } else if case let .channel(channel) = data.peer {
+         let ItemUsername = 1
+         let ItemUsernameInfo = 2
+diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
+index 6ba63739..571c49d5 100644
+--- a/submodules/TelegramUI/Sources/AyuLyrics.swift
++++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
+@@ -128,6 +128,9 @@ private final class AyuLyricsRequest {
+         if self.settings.lyricsOvhEnabled, self.artist != nil {
+             providers.append { [weak self] in self?.lyricsOvh() }
+         }
++        if self.settings.geniusEnabled {
++            providers.append { [weak self] in self?.genius() }
++        }
+         guard !providers.isEmpty else {
+             self.deliver(nil, cache: false)
+             return
+@@ -234,7 +237,7 @@ private final class AyuLyricsRequest {
+         let task = AyuLyricsRequest.session.dataTask(with: request, completionHandler: { [weak self] data, response, _ in
+             guard let self, !self.isOver else { return }
+             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+-            if (status == 503 || status == 429), attempt < 3, Date().timeIntervalSince(self.startedAt) + Double(attempt + 1) * 0.8 < self.settings.timeout - 1.0 {
++            if (status == 503 || status == 429), attempt < 4, Date().timeIntervalSince(self.startedAt) + Double(attempt + 1) * 0.8 < self.settings.timeout - 1.0 {
+                 DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + Double(attempt + 1) * 0.8) { [weak self] in
+                     self?.load(url, headers: headers, attempt: attempt + 1, completion: completion)
+                 }
+@@ -488,4 +491,52 @@ private final class AyuLyricsRequest {
+             self?.providerDone()
+         })
+     }
++
++    // MARK: Genius (through api.popcat.xyz)
++
++    private func genius() {
++        let query = [self.artist, AyuMusicMetadata.searchTitle(self.title)].compactMap { $0 }.joined(separator: " ")
++        guard var components = URLComponents(string: "https://api.popcat.xyz/v2/lyrics") else {
++            self.providerDone()
++            return
++        }
++        components.queryItems = [URLQueryItem(name: "song", value: query)]
++        guard let url = components.url else {
++            self.providerDone()
++            return
++        }
++        self.load(url, completion: { [weak self] response in
++            guard let self else { return }
++            // A miss answers {"error": true, "message": {"error": "Song not found!"}}.
++            if let record = (self.json(response) as? [String: Any])?["message"] as? [String: Any], let raw = record["lyrics"] as? String, let text = ayuCleanGeniusLyrics(raw) {
++                let score = AyuMusicMetadata.matchScore(candidateTitle: record["title"] as? String ?? "", candidateArtist: record["artist"] as? String, candidateDuration: nil, title: self.title, artist: self.artist, duration: self.duration)
++                // Search, not an exact lookup: plain text, never above lyrics.ovh's exact path.
++                if score >= 0.55 {
++                    self.offer(AyuLyricsCandidate(lyrics: .plain(text), source: "Genius", score: min(score, 0.75)))
++                }
++            }
++            self.providerDone()
++        })
++    }
++}
++
++/// Genius page text without its header ("254 Contributors…Lyrics", the description up to
++/// "Read More"), section tags like "[Chorus]", "You might also like" and the trailing "Embed".
++func ayuCleanGeniusLyrics(_ raw: String) -> String? {
++    var text = raw
++    if let more = text.range(of: "Read More") {
++        text = String(text[more.upperBound...])
++    } else if text.range(of: #"^\d+ Contributors"#, options: .regularExpression) != nil, let header = text.range(of: "Lyrics") {
++        text = String(text[header.upperBound...])
++    }
++    let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { line in
++        if line.hasPrefix("[") && line.hasSuffix("]") { return false }
++        return line != "You might also like"
++    }
++    var result = lines.joined(separator: "\n")
++        .replacingOccurrences(of: #"\d*Embed$"#, with: "", options: .regularExpression)
++        .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
++        .trimmingCharacters(in: .whitespacesAndNewlines)
++    if result.count < 20 { result = "" }
++    return result.isEmpty ? nil : result
+ }
+diff --git a/submodules/TelegramUI/Sources/AyuNameGuard.swift b/submodules/TelegramUI/Sources/AyuNameGuard.swift
+index 3dfa5b78..0ffda7da 100644
+--- a/submodules/TelegramUI/Sources/AyuNameGuard.swift
++++ b/submodules/TelegramUI/Sources/AyuNameGuard.swift
+@@ -6,11 +6,9 @@ import TelegramCore
+ import UndoUI
+ 
+ /// Anti-scam for people, not only links: a non-contact whose name mixes alphabets, poses as
+-/// Telegram staff, or whose account looks very new gets one quiet warning per chat and launch.
++/// Telegram staff gets one quiet warning per chat and launch.
+ enum AyuNameGuard {
+     private static var warned = Set<Int64>()
+-    /// User ids grow over time; ids above this were registered recently.
+-    private static let freshAccountId: Int64 = 8_500_000_000
+     private static let impersonated = ["telegram", "телеграм", "support", "поддержк", "durov", "дуров", "admin", "админ", "модератор", "moderator", "security", "безопасност", "ayugram"]
+ 
+     static func warning(firstName: String, lastName: String, userId: Int64, isVerified: Bool, russian: Bool) -> String? {
+@@ -33,9 +31,6 @@ enum AyuNameGuard {
+         if !isVerified, userId != 777000, impersonated.contains(where: { lowered.contains($0) }) {
+             reasons.append(russian ? "имя похоже на официальную поддержку — настоящая поддержка Telegram не пишет первой" : "the name looks like official support, and real Telegram support never writes first")
+         }
+-        if userId > freshAccountId {
+-            reasons.append(russian ? "аккаунт, похоже, создан недавно" : "the account looks recently created")
+-        }
+         guard !reasons.isEmpty else { return nil }
+         return (russian ? "Осторожно: " : "Careful: ") + reasons.joined(separator: "; ") + "."
+     }
+diff --git a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
+index 5696876c..4df2e1f9 100644
+--- a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
++++ b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
+@@ -4,7 +4,7 @@ import Display
+ import AccountContext
+ import UniversalMediaPlayer
+ 
+-/// The look of the player visualizer: the user's choice, or a plugin's (`ayu.player.visualizer.set`).
++/// The look of the player visualizer a plugin chose (`ayu.player.visualizer.set`).
+ struct AyuPlayerVisualizerStyle: Equatable {
+     enum Kind: String, CaseIterable {
+         case none, bars, mirror, wave, circle, dots
+@@ -28,16 +28,13 @@ struct AyuPlayerVisualizerStyle: Equatable {
+     /// Gain applied to the 0…1 levels (sensitivity), 0.5…3.
+     var gain: CGFloat
+ 
+-    static let userKey = "ayu.player.visualizer"
+-
+-    /// A plugin's style wins over the user's own while the plugin runs.
++    /// Shown only while a plugin has chosen a style.
+     static var current: AyuPlayerVisualizerStyle {
+         if let config = AyuPluginUI.shared.playerVisualizer, let kind = Kind(rawValue: config["style"] as? String ?? "") {
+             let color = (config["color"] as? String).flatMap(AyuCustomization.parse).map { UIColor(rgb: $0) } ?? .white
+             return AyuPlayerVisualizerStyle(kind: kind, color: color, bands: max(8, min(96, (config["bands"] as? NSNumber)?.intValue ?? 32)), opacity: CGFloat(max(0.1, min(1.0, (config["opacity"] as? NSNumber)?.doubleValue ?? 0.85))), gain: CGFloat(max(0.5, min(3.0, (config["gain"] as? NSNumber)?.doubleValue ?? 1.0))))
+         }
+-        let kind = AyuDecoyMode.isActive ? .none : (Kind(rawValue: UserDefaults.standard.string(forKey: userKey) ?? "") ?? .none)
+-        return AyuPlayerVisualizerStyle(kind: kind, color: .white, bands: 32, opacity: 0.8, gain: 1.0)
++        return AyuPlayerVisualizerStyle(kind: .none, color: .white, bands: 32, opacity: 0.8, gain: 1.0)
+     }
+ }
+ 
+diff --git a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
+index 6380880c..d79e6d31 100644
+--- a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
++++ b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
+@@ -258,6 +258,58 @@ func ayuInstallPluginAppServices(sharedContext: SharedAccountContext) {
+                 |> deliverOnMainQueue).startStandalone(next: { ids in
+                     completion(ids.contains(where: { $0 != nil }))
+                 })
++            case "tools.chatStats":
++                AyuOnlineTools.chatStats(context: context, peerId: peerId)
++                completion(true)
++            case "tools.yearInReview":
++                AyuOnlineTools.yearInReview(context: context, peerId: peerId)
++                completion(true)
++            case "tools.downloadChatMedia":
++                let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
++                |> deliverOnMainQueue).startStandalone(next: { peer in
++                    AyuBulkDownload.downloadChatMedia(context: context, peerId: peerId, title: peer?.compactDisplayTitle ?? "chat")
++                    completion(true)
++                })
++            case "media.cutOutSticker", "media.describePhoto":
++                guard let messageId else { return completion(["error": "messageId is required"]) }
++                if op == "media.cutOutSticker" && !AyuVisionTools.canCutOut {
++                    return completion(["error": "Subject lifting needs iOS 17"])
++                }
++                let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
++                let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Messages.Message(id: messageId))
++                |> deliverOnMainQueue).startStandalone(next: { message in
++                    guard let message, let image = message.media.first(where: { $0 is TelegramMediaImage }) as? TelegramMediaImage, let representation = largestImageRepresentation(image.representations) else {
++                        return completion(["error": "No photo in this message"])
++                    }
++                    let fetch = context.engine.resources.fetch(reference: AnyMediaReference.message(message: MessageReference(message._asMessage()), media: image).resourceReference(representation.resource), userLocation: .peer(peerId), userContentType: .image).startStandalone()
++                    var loaded = false
++                    let _ = (context.engine.resources.data(resource: EngineMediaResource(representation.resource))
++                    |> filter { $0.isComplete }
++                    |> take(1)
++                    |> timeout(30.0, queue: .mainQueue(), alternate: .complete())
++                    |> deliverOnMainQueue).startStandalone(next: { data in
++                        loaded = true
++                        fetch.dispose()
++                        if op == "media.describePhoto" {
++                            AyuVisionTools.describe(path: data.path, russian: ru, completion: { description in
++                                completion(["text": description.map { $0 as Any } ?? NSNull()])
++                            })
++                            return
++                        }
++                        AyuVisionTools.cutOut(path: data.path, completion: { sticker in
++                            guard let sticker, let chat = AyuPluginChatTracker.current else {
++                                return completion(["error": "No subject found in the photo"])
++                            }
++                            chat.enqueueStickerImage(sticker, isMemoji: false)
++                            completion(true)
++                        })
++                    }, completed: {
++                        fetch.dispose()
++                        if !loaded {
++                            completion(["error": "The photo did not download in 30 s"])
++                        }
++                    })
++                })
+             default:
+                 completion(["error": "Unknown operation"])
+             }
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index 0cf62c53..fb2168dd 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -7743,7 +7743,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+         self.ayuApplyChatLock()
+         // Plugin composer buttons and dot-command chips.
+         self.ayuInstallComposerBar()
+-        // Look-alike names, fake support and very new accounts (non-contacts only).
++        // Look-alike names and fake support (non-contacts only).
+         self.ayuCheckPeerName()
+ 
+         self.walletTransferAnimationsVisible = true
+diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+index d5d0a4d8..294e4695 100644
+--- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
++++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+@@ -2571,35 +2571,6 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+                         })
+                     })))
+                 }
+-                if !AyuDecoyMode.isActive, let photo = message.media.first(where: { $0 is TelegramMediaImage }) as? TelegramMediaImage, let representation = largestImageRepresentation(photo.representations), let photoPath = context.engine.resources.completedResourcePath(id: EngineMediaResource.Id(representation.resource.id)) {
+-                    if AyuVisionTools.canCutOut {
+-                        ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Сделать стикер" : "Make a sticker", icon: { theme in
+-                            return UIImage(systemName: "scissors")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+-                        }, action: { controller, _ in
+-                            controller?.dismiss(completion: {
+-                                AyuVisionTools.cutOut(path: photoPath, completion: { image in
+-                                    if let image, let chat = AyuPluginChatTracker.current {
+-                                        chat.enqueueStickerImage(image, isMemoji: false)
+-                                    } else {
+-                                        AyuOnlineTools.present(context, title: ru ? "Стикер" : "Sticker", message: ru ? "Не удалось найти объект на фото." : "No subject found in the photo.")
+-                                    }
+-                                })
+-                            })
+-                        })))
+-                    }
+-                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Описать фото" : "Describe photo", icon: { theme in
+-                        return UIImage(systemName: "text.viewfinder")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+-                    }, action: { controller, _ in
+-                        controller?.dismiss(completion: {
+-                            AyuVisionTools.describe(path: photoPath, russian: ru, completion: { description in
+-                                let text = description ?? (ru ? "Ничего не распознано." : "Nothing recognised.")
+-                                // VoiceOver reads it aloud; sighted users get the same text.
+-                                UIAccessibility.post(notification: .announcement, argument: text)
+-                                AyuOnlineTools.present(context, title: ru ? "Описание" : "Description", message: text)
+-                            })
+-                        })
+-                    })))
+-                }
+                 if let voice = message.media.first(where: { ($0 as? TelegramMediaFile)?.isVoice == true }) as? TelegramMediaFile, let path = context.engine.resources.completedResourcePath(id: EngineMediaResource.Id(voice.resource.id)) {
+                     ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Расшифровать на устройстве" : "Transcribe on device", icon: { theme in
+                         return UIImage(systemName: "text.bubble.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+@@ -2628,55 +2599,6 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+                         })
+                     })))
+                 }
+-                if !AyuDecoyMode.isActive {
+-                    let bookmarkPeerId = message.id.peerId.toInt64()
+-                    let bookmarkMessageId = message.id.id
+-                    let bookmarkText = message.text
+-                    let bookmarkTitle = chatPresentationInterfaceState.renderedPeer?.peer.flatMap { EnginePeer($0).compactDisplayTitle } ?? ""
+-                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "В закладки" : "Bookmark", icon: { theme in
+-                        return UIImage(systemName: "bookmark.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+-                    }, action: { controller, _ in
+-                        controller?.dismiss(completion: {
+-                            let alert = UIAlertController(title: ru ? "В закладки" : "Bookmark", message: ru ? "Тег необязателен: «прочитать позже», «рецепты»…" : "The tag is optional: \"read later\", \"recipes\"…", preferredStyle: .alert)
+-                            alert.addTextField { field in
+-                                field.placeholder = ru ? "тег" : "tag"
+-                                field.text = AyuBookmarks.tags.first
+-                                field.autocapitalizationType = .none
+-                            }
+-                            alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
+-                            alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
+-                                let tag = (alert?.textFields?.first?.text ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "# ")).lowercased()
+-                                AyuBookmarks.add(AyuBookmarks.Bookmark(peerId: bookmarkPeerId, messageId: bookmarkMessageId, text: String(bookmarkText.prefix(2000)), chatTitle: bookmarkTitle, savedAt: Int64(Date().timeIntervalSince1970), tag: String(tag.prefix(32))))
+-                            }))
+-                            context.sharedContext.applicationBindings.presentNativeController(alert)
+-                        })
+-                    })))
+-                }
+-                if !AyuDecoyMode.isActive {
+-                    let statsPeerId = message.id.peerId
+-                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Статистика чата" : "Chat statistics", icon: { theme in
+-                        return UIImage(systemName: "chart.bar.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+-                    }, action: { controller, _ in
+-                        controller?.dismiss(completion: {
+-                            AyuOnlineTools.chatStats(context: context, peerId: statsPeerId)
+-                        })
+-                    })))
+-                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Скачать все медиа" : "Download all media", icon: { theme in
+-                        return UIImage(systemName: "square.and.arrow.down.on.square.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+-                    }, action: { controller, _ in
+-                        controller?.dismiss(completion: {
+-                            let title = message.peers[statsPeerId].map { EnginePeer($0).compactDisplayTitle } ?? "chat"
+-                            AyuBulkDownload.downloadChatMedia(context: context, peerId: statsPeerId, title: title)
+-                        })
+-                    })))
+-                    ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Итоги года" : "Year in review", icon: { theme in
+-                        return UIImage(systemName: "calendar.badge.clock")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+-                    }, action: { controller, _ in
+-                        controller?.dismiss(completion: {
+-                            AyuOnlineTools.yearInReview(context: context, peerId: statsPeerId)
+-                        })
+-                    })))
+-                }
+                 if AyuOnDeviceAI.isAvailable || !AyuTools.aiKey.isEmpty {
+                     let chatPeerId = message.id.peerId
+                     ayuActions.append(.action(ContextMenuActionItem(text: ru ? "Что я пропустил (ИИ)" : "What did I miss (AI)", icon: { theme in
+@@ -2701,7 +2623,8 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             // Code plugins' own items (`ayu.ui.menu.add`); a tap sends `menuAction` to that plugin
+             // with this message's text, never to the others.
+             if message.id.peerId.namespace != Namespaces.Peer.SecretChat, !chatPresentationInterfaceState.copyProtectionEnabled {
+-                for item in AyuPluginUI.shared.menuItems {
++                let hasPhoto = message.media.contains(where: { $0 is TelegramMediaImage })
++                for item in AyuPluginUI.shared.menuItems where item.media != "photo" || hasPhoto {
+                     let payload: [String: Any] = ["itemId": item.id, "messageId": String(message.id.id), "peerId": String(message.id.peerId.toInt64()), "text": message.text]
+                     ayuActions.append(.action(ContextMenuActionItem(text: item.title, icon: { theme in
+                         return UIImage(systemName: item.icon ?? "puzzlepiece.extension.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)

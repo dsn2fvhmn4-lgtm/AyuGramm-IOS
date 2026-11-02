@@ -37,6 +37,8 @@ class PythonPackagingTests(unittest.TestCase):
                 'Python.xcframework/lib/python3.13/encodings/__init__.py': b'# encoding',
                 'Python.xcframework/lib/python3.13/test/skip.py': b'not bundled',
                 'Python.xcframework/ios-arm64/lib-arm64/python3.13/lib-dynload/math.cpython-313-iphoneos.so': b'binary',
+                'Python.xcframework/ios-arm64/lib-arm64/python3.13/lib-dynload/_testcapi.cpython-313-iphoneos.so': b'test module',
+                'Python.xcframework/ios-arm64/lib-arm64/python3.13/lib-dynload/_ctypes_test.cpython-313-iphoneos.so': b'test module',
             }
             with tarfile.open(archive, 'w:gz') as output:
                 for name, value in members.items():
@@ -48,6 +50,7 @@ class PythonPackagingTests(unittest.TestCase):
             (runtime / 'hook_map.json').write_text('{}', encoding='utf-8')
             files = resource_files(archive, runtime, 'release_arm64')
             self.assertNotIn('python/lib/python3.13/test/skip.py', files)
+            self.assertFalse([name for name in files if '_test' in name], 'CPython test modules must not ship')
             self.assertEqual(files['Frameworks/math.framework/math'], b'binary')
             marker = 'python/lib/python3.13/lib-dynload/math.cpython-313-iphoneos.fwork'
             self.assertEqual(files[marker].decode().strip(), 'Frameworks/math.framework/math')

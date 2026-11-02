@@ -28,7 +28,8 @@ the port (see `patches/ayugram-big-update.patch`).
 - Plugins screen → **+** → pick a `.js`, `.ayujs`, `.py`, `.ayupy` or `.wasm` file, or
 - tap a `.ayujs` / `.ayu.js` file in a chat, or
 - Plugins screen → **bag icon** (Catalog) → pick a plugin from
-  [murk-sus/AyuGramm-Plugins](https://github.com/murk-sus/AyuGramm-Plugins). The download must
+  [murk-sus/AyuGramm-Plugins](https://github.com/murk-sus/AyuGramm-Plugins) or the port's own
+  [`code-plugins/`](../code-plugins) (former built-in message tools). The download must
   match the SHA-256 and `@id` in the catalog's `index.json`; a newer catalog version shows
   **Update**. To publish a plugin, open a pull request there.
 
@@ -118,13 +119,18 @@ console error.
 | --- | --- | --- |
 | `ayu.ui.alert({ title, message, buttons: [{ id, title, style }] }, fn)` | `ui` | alert; `fn(buttonId)` |
 | `ayu.ui.sheet({ title, message, items: [{ id, title }] }, fn)` | `ui` | action sheet; `fn(itemId or null)` |
-| `ayu.ui.menu.add({ id, title, icon })` / `remove(id)` | `menu` | item in the message menu (5 per plugin, SF Symbol `icon`); taps send `menuAction` `{ itemId, messageId, peerId, text }` |
+| `ayu.ui.menu.add({ id, title, icon, media })` / `remove(id)` | `menu` | item in the message menu (5 per plugin, SF Symbol `icon`; `media: 'photo'` shows it only on messages with a photo); taps send `menuAction` `{ itemId, messageId, peerId, text }` |
 | `ayu.ui.profile.addBlock({ peerId?, block: { id, title, text } })` / `removeBlock(id)` | `profile` | text block in user profiles (all, or one `peerId`) |
 | `ayu.ui.profile.addButton({ peerId?, button: { id, title } })` / `removeButton(id)` | `profile` | button in profiles; taps send `profileButton` `{ buttonId, peerId }` |
 | `ayu.ui.overlay.create({ id, effect, amount, speed, color })` / `update(id, …)` / `remove(id)` | `overlay` | particles over the whole app: `snow`, `leaves`, `rain`, `stars`, `confetti`; `amount`/`speed` 0.1–3; never takes touches, paused by Reduce Motion |
 | `ayu.ui.overlay.addText({ id, text, anchor, size, color })` | `overlay` | text pinned to `topLeft`, `topRight`, `bottomLeft`, `bottomRight` or `center` |
 | `ayu.ui.font.set({ element, size })` / `reset(element)` | `fonts` | `messages` or `lists` text size in points (12–30), applied when the appearance is rebuilt |
 | `ayu.ui.badge.add({ peerId, badge: { text } })` / `remove({ peerId })` | `badges` | badge beside a chat's name in the chat list |
+| `ayu.media.cutOutSticker(peerId, messageId)` → Promise | `messages` | lifts the subject off the message's photo and sends it as a sticker to the open chat (iOS 17) |
+| `ayu.media.describePhoto(peerId, messageId)` → Promise<string or null> | `messages.read` | on-device description and text of the message's photo |
+| `ayu.tools.chatStats(peerId)` → Promise | `messages.read` | the app's chat statistics sheet for every message stored on the device |
+| `ayu.tools.yearInReview(peerId)` → Promise | `messages.read` | the app's year-in-review sheet for the chat |
+| `ayu.tools.downloadChatMedia(peerId)` → Promise | `messages.read` | saves the chat's photos, videos and files (up to 500) into one folder |
 | `ayu.registry.developers.isVerified(peerId)` / `info(peerId)` | — | AyuGram for iOS team label (Telegram user id) |
 | `ayu.ui.gifts.catalog.list(fn)` → Promise | — | Telegram's gift catalog, read-only: `[{ giftId, title, stars, fileId, limited, remains, total, soldOut }]` (Python: `ayu.ui.gifts.catalog.list(fn)`) |
 | `ayu.clipboard.write(text)` | `clipboard` | copy text |

@@ -89575,27 +89575,27 @@ index 24b4fba6..1e2191a7 100644
          let size = metrics.imageSize
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 new file mode 100644
-index 00000000..dda6a4a0
+index 00000000..9b76fb8f
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-@@ -0,0 +1,407 @@
+@@ -0,0 +1,264 @@
 +import Foundation
 +import UIKit
-+import Security
 +import Display
++import SwiftSignalKit
 +import TelegramCore
 +import AccountContext
 +import EntityKeyboard
 +import EmojiStatusSelectionComponent
 +
 +/// The repository owner's badge desk, opened from any profile: hands out an AyuGram for iOS
-+/// badge (custom emoji and text) and the label line under the name, by committing the change to
-+/// assets/ayugram_ios_badges.json with the owner's GitHub token. Everyone sees it after their
-+/// next registry refresh; the owner sees it at once.
++/// badge (custom emoji and text) and the label line under the name. The badge server commits the
++/// change to assets/ayugram_ios_badges.json; the app only proves it is the owner with Mini App data
++/// Telegram signs for the badge bot, so the phone keeps no keys. Everyone sees it the next time
++/// they return to the app; the owner sees it at once.
 +enum AyuBadgeEditor {
-+    private static let repository = "dsn2fvhmn4-lgtm/AyuGramm-IOS"
-+    private static let registryPath = "assets/ayugram_ios_badges.json"
-+    private static let keychainService = "one.ayugram.badge-editor"
++    private static let server = "https://badge.vinx.best"
++    private static let botUsername = "AyuZayavka_bot"
 +
 +    private struct LabelTemplate {
 +        let kind: String
@@ -89623,47 +89623,32 @@ index 00000000..dda6a4a0
 +        }
 +
 +        let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись AyuGram для iOS" : "AyuGram for iOS badge and label")
-+        sheet.addAction(UIAlertAction(title: ru ? "Токен GitHub…" : "GitHub token…", style: .default, handler: { _ in
-+            AyuBadgeEditor.askToken(ru: ru, present: present, done: {})
-+        }))
 +        sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
 +            AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present)
 +        }))
 +        sheet.addAction(UIAlertAction(title: ru ? "Бейдж без эмодзи…" : "Badge without emoji…", style: .default, handler: { _ in
 +            AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Покажется стандартный значок разработчика." : "The standard developer mark is shown.", initial: "", ru: ru, present: present, done: { text in
-+                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
-+                    entry["documentId"] = nil
-+                    entry["title"] = text
-+                })
++                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": NSNull(), "title": text])
 +            })
 +        }))
 +        for template in AyuBadgeEditor.labelTemplates {
 +            sheet.addAction(UIAlertAction(title: (ru ? "Надпись: " : "Label: ") + template.title(ru), style: .default, handler: { _ in
-+                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
-+                    entry["label"] = ["kind": template.kind, "text": template.text(ru)]
-+                })
++                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["label": ["kind": template.kind, "text": template.text(ru)]])
 +            }))
 +        }
 +        sheet.addAction(UIAlertAction(title: ru ? "Своя надпись…" : "Custom label…", style: .default, handler: { _ in
 +            AyuBadgeEditor.askText(title: ru ? "Своя надпись" : "Custom label", message: ru ? "Покажется под именем и в шапке чата." : "Shown under the name and atop the chat.", initial: AyuSupportersManager.shared.label(peerId: peerId)?.text ?? "", ru: ru, present: present, done: { text in
-+                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
-+                    entry["label"] = ["kind": "custom", "text": text]
-+                })
++                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["label": ["kind": "custom", "text": text]])
 +            })
 +        }))
 +        if AyuSupportersManager.shared.badge(peerId: peerId) != nil {
 +            sheet.addAction(UIAlertAction(title: ru ? "Убрать бейдж" : "Remove badge", style: .destructive, handler: { _ in
-+                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
-+                    entry["documentId"] = nil
-+                    entry["title"] = nil
-+                })
++                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": NSNull(), "title": NSNull()])
 +            }))
 +        }
 +        if AyuSupportersManager.shared.label(peerId: peerId) != nil {
 +            sheet.addAction(UIAlertAction(title: ru ? "Убрать надпись" : "Remove label", style: .destructive, handler: { _ in
-+                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
-+                    entry["label"] = nil
-+                })
++                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["label": NSNull()])
 +            }))
 +        }
 +        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
@@ -89690,10 +89675,8 @@ index 00000000..dda6a4a0
 +        }
 +        let next: (Int64?) -> Void = { documentId in
 +            AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Показывается при нажатии на бейдж. (name) заменится именем." : "Shown when the badge is tapped. (name) becomes the name.", initial: currentText, ru: ru, present: present, done: { text in
-+                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: { entry in
-+                    entry["documentId"] = documentId.map { NSNumber(value: $0) }
-+                    entry["title"] = text
-+                })
++                // Sent as a string: the id does not fit a JavaScript number.
++                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": documentId.map { String($0) as Any } ?? NSNull(), "title": text])
 +            })
 +        }
 +        guard let controller, controller.isViewLoaded else {
@@ -89756,67 +89739,18 @@ index 00000000..dda6a4a0
 +        present(alert)
 +    }
 +
-+    private static func askToken(ru: Bool, present: @escaping (UIViewController) -> Void, done: @escaping () -> Void) {
-+        let alert = UIAlertController(title: ru ? "Токен GitHub" : "GitHub token", message: ru ? "Fine-grained токен с правом Contents: Read and write на \(AyuBadgeEditor.repository). Хранится только в связке ключей этого телефона." : "A fine-grained token with Contents: Read and write on \(AyuBadgeEditor.repository). Kept only in this phone's keychain.", preferredStyle: .alert)
-+        alert.addTextField(configurationHandler: { field in
-+            field.isSecureTextEntry = true
-+            field.autocorrectionType = .no
-+            field.autocapitalizationType = .none
-+            field.placeholder = "github_pat_…"
-+        })
-+        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
-+        alert.addAction(UIAlertAction(title: ru ? "Сохранить" : "Save", style: .default, handler: { [weak alert] _ in
-+            let token = AyuBadgeEditor.cleanToken(alert?.textFields?.first?.text ?? "")
-+            guard !token.isEmpty else {
-+                return
-+            }
-+            AyuBadgeEditor.saveToken(token)
-+            done()
-+        }))
-+        if AyuBadgeEditor.readToken() != nil {
-+            alert.addAction(UIAlertAction(title: ru ? "Удалить сохранённый токен" : "Remove saved token", style: .destructive, handler: { _ in
-+                AyuBadgeEditor.deleteToken()
-+            }))
-+        }
-+        present(alert)
-+    }
-+
-+    /// Drops what tends to come along when a token is pasted: spaces, line breaks, quotes and a
-+    /// "Bearer"/"token" prefix.
-+    private static func cleanToken(_ raw: String) -> String {
-+        var token = raw.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'`«»")))
-+        for prefix in ["Bearer ", "bearer ", "token ", "Token "] where token.hasPrefix(prefix) {
-+            token = String(token.dropFirst(prefix.count))
-+        }
-+        return token.filter { !$0.isWhitespace }
-+    }
-+
-+    /// Reads the registry from GitHub, applies `change` to this peer's entry (creating it, or
-+    /// dropping it once nothing is left), and commits it straight to main.
-+    private static func commit(peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void, change: @escaping (inout [String: Any]) -> Void) {
-+        guard let token = AyuBadgeEditor.readToken() else {
-+            AyuBadgeEditor.askToken(ru: ru, present: present, done: {
-+                AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: change)
-+            })
-+            return
-+        }
-+        AyuBadgeEditor.upload(peerId: peerId, token: token, change: change, attempt: 0, completion: { result in
++    /// Sends the change to the badge server and applies the registry it answers with. `change`
++    /// sets documentId, title or label; NSNull clears one.
++    private static func commit(context: AccountContext, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void, change: [String: Any]) {
++        AyuBadgeEditor.upload(context: context, peerId: peerId, ru: ru, change: change, completion: { result in
 +            DispatchQueue.main.async {
 +                switch result {
 +                case let .success(data):
 +                    AyuSupportersManager.shared.applyAyuRegistry(data: data)
 +                    NotificationCenter.default.post(name: AyuVerifiedRegistry.didChangeNotification, object: nil)
-+                    AyuBadgeEditor.notify(ru ? "Готово. У остальных появится в течение ~15 минут." : "Done. Others will see it within ~15 minutes.", ru: ru, present: present)
++                    AyuBadgeEditor.notify(ru ? "Готово. Остальные увидят после перезахода в приложение." : "Done. Others will see it when they return to the app.", ru: ru, present: present)
 +                case let .failure(message):
 +                    let alert = UIAlertController(title: ru ? "Не удалось сохранить" : "Couldn't save", message: message, preferredStyle: .alert)
-+                    alert.addAction(UIAlertAction(title: ru ? "Изменить токен" : "Change token", style: .default, handler: { _ in
-+                        AyuBadgeEditor.askToken(ru: ru, present: present, done: {
-+                            AyuBadgeEditor.commit(peerId: peerId, ru: ru, present: present, change: change)
-+                        })
-+                    }))
-+                    alert.addAction(UIAlertAction(title: ru ? "Удалить токен" : "Remove token", style: .destructive, handler: { _ in
-+                        AyuBadgeEditor.deleteToken()
-+                    }))
 +                    alert.addAction(UIAlertAction(title: "OK", style: .cancel, handler: nil))
 +                    present(alert)
 +                }
@@ -89829,112 +89763,70 @@ index 00000000..dda6a4a0
 +        case failure(String)
 +    }
 +
-+    private static func upload(peerId: Int64, token: String, change: @escaping (inout [String: Any]) -> Void, attempt: Int, completion: @escaping (UploadResult) -> Void) {
-+        guard let url = URL(string: "https://api.github.com/repos/\(AyuBadgeEditor.repository)/contents/\(AyuBadgeEditor.registryPath)") else {
-+            return completion(.failure("URL"))
-+        }
-+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-+        components?.queryItems = [URLQueryItem(name: "ref", value: "main")]
-+        guard let readURL = components?.url else {
-+            return completion(.failure("URL"))
-+        }
-+        let session = URLSession(configuration: .ephemeral)
-+        session.dataTask(with: AyuBadgeEditor.request(url: readURL, token: token, method: "GET", body: nil), completionHandler: { data, response, error in
-+            guard let data, let http = response as? HTTPURLResponse else {
-+                session.finishTasksAndInvalidate()
-+                return completion(.failure(error?.localizedDescription ?? "network"))
++    private static func upload(context: AccountContext, peerId: Int64, ru: Bool, change: [String: Any], completion: @escaping (UploadResult) -> Void) {
++        let _ = (AyuBadgeEditor.signedInitData(context: context)
++        |> deliverOnMainQueue).startStandalone(next: { initData in
++            guard let initData, let url = URL(string: AyuBadgeEditor.server + "/api/admin") else {
++                return completion(.failure(ru ? "Telegram не выдал данные для входа на сервер бейджей. Проверьте, что бот @\(AyuBadgeEditor.botUsername) не заблокирован." : "Telegram gave no sign-in data for the badge server. Make sure @\(AyuBadgeEditor.botUsername) isn't blocked."))
 +            }
-+            guard http.statusCode == 200 else {
++            let body: [String: Any] = ["initData": initData, "peerId": String(peerId), "change": change]
++            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30.0)
++            request.httpMethod = "POST"
++            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
++            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
++            let session = URLSession(configuration: .ephemeral)
++            session.dataTask(with: request, completionHandler: { data, response, error in
 +                session.finishTasksAndInvalidate()
-+                return completion(.failure(AyuBadgeEditor.explain(status: http.statusCode, data: data, writing: false)))
-+            }
-+            guard let file = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-+                  let sha = file["sha"] as? String,
-+                  let encoded = file["content"] as? String,
-+                  let current = Data(base64Encoded: encoded.replacingOccurrences(of: "\n", with: "")),
-+                  var registry = (try? JSONSerialization.jsonObject(with: current)) as? [String: Any] else {
-+                session.finishTasksAndInvalidate()
-+                return completion(.failure("GitHub: unexpected file format"))
-+            }
-+            var badges = registry["badges"] as? [[String: Any]] ?? []
-+            let index = badges.firstIndex(where: { ($0["id"] as? NSNumber)?.int64Value == peerId })
-+            var entry = index.map { badges[$0] } ?? ["id": NSNumber(value: peerId)]
-+            change(&entry)
-+            let keepsSomething = entry["documentId"] != nil || entry["title"] != nil || entry["label"] != nil
-+            if let index {
-+                if keepsSomething {
-+                    badges[index] = entry
-+                } else {
-+                    badges.remove(at: index)
++                guard let data, let http = response as? HTTPURLResponse else {
++                    return completion(.failure(error?.localizedDescription ?? "network"))
 +                }
-+            } else if keepsSomething {
-+                badges.append(entry)
-+            }
-+            registry["badges"] = badges
-+            guard var updated = try? JSONSerialization.data(withJSONObject: registry, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else {
-+                session.finishTasksAndInvalidate()
-+                return completion(.failure("JSON"))
-+            }
-+            updated.append(0x0a)
-+            let body: [String: Any] = [
-+                "message": "Update badge for \(peerId) [skip ci]",
-+                "content": updated.base64EncodedString(),
-+                "sha": sha,
-+                "branch": "main"
-+            ]
-+            let bodyData = try? JSONSerialization.data(withJSONObject: body)
-+            session.dataTask(with: AyuBadgeEditor.request(url: url, token: token, method: "PUT", body: bodyData), completionHandler: { data, response, error in
-+                session.finishTasksAndInvalidate()
-+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-+                if status == 200 || status == 201 {
-+                    completion(.success(updated))
-+                } else if status == 409 && attempt == 0 && !AyuBadgeEditor.githubMessage(data).lowercased().contains("protected") {
-+                    // Someone committed in between; start again from the new file.
-+                    AyuBadgeEditor.upload(peerId: peerId, token: token, change: change, attempt: 1, completion: completion)
-+                } else if status == 0 {
-+                    completion(.failure(error?.localizedDescription ?? "network"))
++                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
++                if http.statusCode == 200, let registry = json?["registry"] as? String {
++                    completion(.success(Data(registry.utf8)))
 +                } else {
-+                    completion(.failure(AyuBadgeEditor.explain(status: status, data: data, writing: true)))
++                    completion(.failure((json?["error"] as? String) ?? (ru ? "Сервер бейджей ответил \(http.statusCode)." : "The badge server answered \(http.statusCode).")))
 +                }
 +            }).resume()
-+        }).resume()
++        })
 +    }
 +
-+    private static func githubMessage(_ data: Data?) -> String {
-+        guard let data, let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let message = json["message"] as? String else {
-+            return ""
++    /// Mini App data Telegram signs for the badge bot: the server checks
++    /// the signature and that the account is the owner's.
++    private static func signedInitData(context: AccountContext) -> Signal<String?, NoError> {
++        return context.engine.peers.resolvePeerByName(name: AyuBadgeEditor.botUsername, referrer: nil)
++        |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
++            guard case let .result(peer) = result else {
++                return .complete()
++            }
++            return .single(peer)
 +        }
-+        return message
++        |> take(1)
++        |> mapToSignal { peer -> Signal<String?, NoError> in
++            guard let peer else {
++                return .single(nil)
++            }
++            return context.engine.messages.requestSimpleWebView(botId: peer.id, url: AyuBadgeEditor.server + "/", source: .generic, themeParams: nil)
++            |> map { result -> String? in
++                return AyuBadgeEditor.initData(webAppUrl: result.url)
++            }
++            |> `catch` { _ -> Signal<String?, NoError> in
++                return .single(nil)
++            }
++        }
 +    }
 +
-+    /// GitHub's own reason plus what to do about it.
-+    private static func explain(status: Int, data: Data?, writing: Bool) -> String {
-+        let message = AyuBadgeEditor.githubMessage(data)
-+        let lowered = message.lowercased()
-+        let hint: String
-+        if status == 401 {
-+            hint = "Токен неверный или истёк. Создай новый и вставь через «Изменить токен»."
-+        } else if lowered.contains("protected") || lowered.contains("pull request") || lowered.contains("rule") {
-+            hint = "Ветку main защищает правило: в неё нельзя писать напрямую. Разреши своему аккаунту обходить защиту в настройках репозитория (Settings → Branches)."
-+        } else if status == 403 || (status == 404 && !writing) {
-+            hint = "У токена нет доступа. Нужен fine-grained токен на репозиторий \(AyuBadgeEditor.repository) с правом Contents: Read and write."
-+        } else {
-+            hint = ""
++    /// The tgWebAppData parameter of the URL's fragment, which is a percent-encoded query string.
++    static func initData(webAppUrl: String) -> String? {
++        guard let hash = webAppUrl.firstIndex(of: "#") else {
++            return nil
 +        }
-+        return ["GitHub \(status)" + (message.isEmpty ? "" : ": " + message), hint].filter { !$0.isEmpty }.joined(separator: "\n\n")
-+    }
-+
-+    private static func request(url: URL, token: String, method: String, body: Data?) -> URLRequest {
-+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20.0)
-+        request.httpMethod = method
-+        request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
-+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-+        if let body {
-+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-+            request.httpBody = body
++        for pair in webAppUrl[webAppUrl.index(after: hash)...].split(separator: "&") {
++            let parts = pair.split(separator: "=", maxSplits: 1)
++            if parts.count == 2, parts[0] == "tgWebAppData", let value = String(parts[1]).removingPercentEncoding, !value.isEmpty {
++                return value
++            }
 +        }
-+        return request
++        return nil
 +    }
 +
 +    // MARK: UI helpers
@@ -89949,41 +89841,6 @@ index 00000000..dda6a4a0
 +        let alert = UIAlertController(title: nil, message: text, preferredStyle: .alert)
 +        alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
 +        present(alert)
-+    }
-+
-+    // MARK: Keychain
-+
-+    private static var tokenQuery: [String: Any] {
-+        return [
-+            kSecClass as String: kSecClassGenericPassword,
-+            kSecAttrService as String: AyuBadgeEditor.keychainService,
-+            kSecAttrAccount as String: "github"
-+        ]
-+    }
-+
-+    private static func readToken() -> String? {
-+        var query = AyuBadgeEditor.tokenQuery
-+        query[kSecReturnData as String] = true
-+        query[kSecMatchLimit as String] = kSecMatchLimitOne
-+        var result: AnyObject?
-+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data, let stored = String(data: data, encoding: .utf8) else {
-+            return nil
-+        }
-+        // Tokens saved before cleaning existed may still carry a line break or quotes.
-+        let token = AyuBadgeEditor.cleanToken(stored)
-+        return token.isEmpty ? nil : token
-+    }
-+
-+    private static func deleteToken() {
-+        SecItemDelete(AyuBadgeEditor.tokenQuery as CFDictionary)
-+    }
-+
-+    private static func saveToken(_ token: String) {
-+        SecItemDelete(AyuBadgeEditor.tokenQuery as CFDictionary)
-+        var item = AyuBadgeEditor.tokenQuery
-+        item[kSecValueData as String] = Data(token.utf8)
-+        item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-+        SecItemAdd(item as CFDictionary, nil)
 +    }
 +}
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenAyuBannerItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/ListItems/PeerInfoScreenAyuBannerItem.swift

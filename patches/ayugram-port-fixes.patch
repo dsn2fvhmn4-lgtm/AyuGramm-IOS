@@ -56,6 +56,34 @@ index 36cb3a18..ace2f522 100644
              toggle(3, .pluginConsole, symbol("terminal.fill", 0x8E8E93), ru ? "Консоль плагинов" : "Plugin console", ru ? "Вывод print() и ошибки скриптов" : "Script print() output and errors", settings.pluginConsole),
              toggle(3, .experimentalPluginHooks, symbol("flask.fill", 0xFF9500), ru ? "Мягкие лимиты плагинов" : "Relaxed plugin limits", ru ? "Таймаут хуков 2 с вместо 0,25 с, ошибки скриптов всплывают сообщением" : "2 s hook timeout instead of 0.25 s; script errors show as toasts", settings.experimentalPluginHooks)
          ]
+diff --git a/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift b/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift
+index 25693da1..d37b5cc1 100644
+--- a/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift
++++ b/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift
+@@ -16,6 +16,7 @@ private enum AyuLyricsSourceRow: Int32 {
+     case lrclibServer = 2
+     case netEase = 3
+     case lyricsOvh = 4
++    case genius = 5
+     /// Custom sources use 11 + 2i (switch) and 12 + 2i (edit), at most eight of them.
+     case addCustom = 29
+     case timeout = 40
+@@ -151,6 +152,7 @@ func ayuLyricsSourcesController(context: AccountContext) -> ViewController {
+             case .lrclib?: settings.lrclibEnabled = value
+             case .netEase?: settings.netEaseEnabled = value
+             case .lyricsOvh?: settings.lyricsOvhEnabled = value
++            case .genius?: settings.geniusEnabled = value
+             default: break
+             }
+         }
+@@ -179,6 +181,7 @@ func ayuLyricsSourcesController(context: AccountContext) -> ViewController {
+             .link(1, AyuLyricsSourceRow.lrclibServer.rawValue, symbol("server.rack", 0x8E8E93), ru ? "Сервер LRCLIB" : "LRCLIB server", URL(string: settings.lrclibBaseURL)?.host ?? settings.lrclibBaseURL),
+             .toggle(1, AyuLyricsSourceRow.netEase.rawValue, symbol("waveform", 0xFF3B30), "NetEase", ru ? "Тайминг по словам для многих песен" : "Word timing for many songs", settings.netEaseEnabled),
+             .toggle(1, AyuLyricsSourceRow.lyricsOvh.rawValue, symbol("doc.plaintext", 0x34C759), "lyrics.ovh", ru ? "Только текст, запасной вариант" : "Plain text fallback", settings.lyricsOvhEnabled),
++            .toggle(1, AyuLyricsSourceRow.genius.rawValue, symbol("music.quarternote.3", 0xFFCC00), "Genius", ru ? "Только текст, большая база, в том числе украинских и русских песен" : "Plain text, large catalogue including Ukrainian and Russian songs", settings.geniusEnabled),
+             .header(2, 10, ru ? "СВОИ API" : "YOUR APIS")
+         ]
+         for (index, provider) in settings.customProviders.enumerated() {
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuBotWebAppInitData.swift b/submodules/TelegramCore/Sources/AyuGram/AyuBotWebAppInitData.swift
 new file mode 100644
 index 00000000..fa0cc7d1
@@ -134,6 +162,36 @@ index 00000000..fa0cc7d1
 +    }
 +    return nil
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
+index 2dccce2c..93caa69e 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
+@@ -22,6 +22,8 @@ public struct AyuLyricsProviderSettings: Codable, Equatable {
+     public var lrclibBaseURL = "https://lrclib.net"
+     public var netEaseEnabled = true
+     public var lyricsOvhEnabled = true
++    /// Genius texts through api.popcat.xyz: plain lyrics, good for songs the other sources miss.
++    public var geniusEnabled = true
+     public var customProviders: [CustomProvider] = []
+     /// Overall time budget for one lookup, in seconds.
+     public var timeout: Double = 12.0
+@@ -29,7 +31,7 @@ public struct AyuLyricsProviderSettings: Codable, Equatable {
+     public init() {}
+ 
+     private enum CodingKeys: String, CodingKey {
+-        case lrclibEnabled, lrclibBaseURL, netEaseEnabled, lyricsOvhEnabled, customProviders, timeout
++        case lrclibEnabled, lrclibBaseURL, netEaseEnabled, lyricsOvhEnabled, geniusEnabled, customProviders, timeout
+     }
+ 
+     public init(from decoder: Decoder) throws {
+@@ -38,6 +40,7 @@ public struct AyuLyricsProviderSettings: Codable, Equatable {
+         self.lrclibBaseURL = (try? values.decodeIfPresent(String.self, forKey: .lrclibBaseURL)) ?? "https://lrclib.net"
+         self.netEaseEnabled = (try? values.decodeIfPresent(Bool.self, forKey: .netEaseEnabled)) ?? true
+         self.lyricsOvhEnabled = (try? values.decodeIfPresent(Bool.self, forKey: .lyricsOvhEnabled)) ?? true
++        self.geniusEnabled = (try? values.decodeIfPresent(Bool.self, forKey: .geniusEnabled)) ?? true
+         self.customProviders = (try? values.decodeIfPresent([CustomProvider].self, forKey: .customProviders)) ?? []
+         self.timeout = min(30.0, max(4.0, (try? values.decodeIfPresent(Double.self, forKey: .timeout)) ?? 12.0))
+     }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 index 9b76fb8f..f51f9bbf 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
@@ -215,6 +273,82 @@ index 9b76fb8f..f51f9bbf 100644
      }
  
      // MARK: UI helpers
+diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
+index 6ba63739..571c49d5 100644
+--- a/submodules/TelegramUI/Sources/AyuLyrics.swift
++++ b/submodules/TelegramUI/Sources/AyuLyrics.swift
+@@ -128,6 +128,9 @@ private final class AyuLyricsRequest {
+         if self.settings.lyricsOvhEnabled, self.artist != nil {
+             providers.append { [weak self] in self?.lyricsOvh() }
+         }
++        if self.settings.geniusEnabled {
++            providers.append { [weak self] in self?.genius() }
++        }
+         guard !providers.isEmpty else {
+             self.deliver(nil, cache: false)
+             return
+@@ -234,7 +237,7 @@ private final class AyuLyricsRequest {
+         let task = AyuLyricsRequest.session.dataTask(with: request, completionHandler: { [weak self] data, response, _ in
+             guard let self, !self.isOver else { return }
+             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+-            if (status == 503 || status == 429), attempt < 3, Date().timeIntervalSince(self.startedAt) + Double(attempt + 1) * 0.8 < self.settings.timeout - 1.0 {
++            if (status == 503 || status == 429), attempt < 4, Date().timeIntervalSince(self.startedAt) + Double(attempt + 1) * 0.8 < self.settings.timeout - 1.0 {
+                 DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + Double(attempt + 1) * 0.8) { [weak self] in
+                     self?.load(url, headers: headers, attempt: attempt + 1, completion: completion)
+                 }
+@@ -488,4 +491,52 @@ private final class AyuLyricsRequest {
+             self?.providerDone()
+         })
+     }
++
++    // MARK: Genius (through api.popcat.xyz)
++
++    private func genius() {
++        let query = [self.artist, AyuMusicMetadata.searchTitle(self.title)].compactMap { $0 }.joined(separator: " ")
++        guard var components = URLComponents(string: "https://api.popcat.xyz/v2/lyrics") else {
++            self.providerDone()
++            return
++        }
++        components.queryItems = [URLQueryItem(name: "song", value: query)]
++        guard let url = components.url else {
++            self.providerDone()
++            return
++        }
++        self.load(url, completion: { [weak self] response in
++            guard let self else { return }
++            // A miss answers {"error": true, "message": {"error": "Song not found!"}}.
++            if let record = (self.json(response) as? [String: Any])?["message"] as? [String: Any], let raw = record["lyrics"] as? String, let text = ayuCleanGeniusLyrics(raw) {
++                let score = AyuMusicMetadata.matchScore(candidateTitle: record["title"] as? String ?? "", candidateArtist: record["artist"] as? String, candidateDuration: nil, title: self.title, artist: self.artist, duration: self.duration)
++                // Search, not an exact lookup: plain text, never above lyrics.ovh's exact path.
++                if score >= 0.55 {
++                    self.offer(AyuLyricsCandidate(lyrics: .plain(text), source: "Genius", score: min(score, 0.75)))
++                }
++            }
++            self.providerDone()
++        })
++    }
++}
++
++/// Genius page text without its header ("254 Contributors…Lyrics", the description up to
++/// "Read More"), section tags like "[Chorus]", "You might also like" and the trailing "Embed".
++func ayuCleanGeniusLyrics(_ raw: String) -> String? {
++    var text = raw
++    if let more = text.range(of: "Read More") {
++        text = String(text[more.upperBound...])
++    } else if text.range(of: #"^\d+ Contributors"#, options: .regularExpression) != nil, let header = text.range(of: "Lyrics") {
++        text = String(text[header.upperBound...])
++    }
++    let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { line in
++        if line.hasPrefix("[") && line.hasSuffix("]") { return false }
++        return line != "You might also like"
++    }
++    var result = lines.joined(separator: "\n")
++        .replacingOccurrences(of: #"\d*Embed$"#, with: "", options: .regularExpression)
++        .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
++        .trimmingCharacters(in: .whitespacesAndNewlines)
++    if result.count < 20 { result = "" }
++    return result.isEmpty ? nil : result
+ }
 diff --git a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
 index 5696876c..4df2e1f9 100644
 --- a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift

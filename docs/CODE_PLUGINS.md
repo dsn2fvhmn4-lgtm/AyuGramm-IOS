@@ -141,6 +141,34 @@ console error.
 (`ayu.ui.menu.add({...})`, `ayu.call('device.info')`); Rust has `ayugram_plugin::call(op, json)`
 and helpers in `ayugram_plugin::ui`.
 
+### Utility API (27.6)
+
+One hundred calls added in 27.6. Types are in `sdk/typescript/ayu.d.ts`; tests are in
+`tools/mock-runner/api276.test.ts` (`PRELUDE=…/AyuScriptRuntime.swift node --test api276.test.ts`).
+
+Answered by the app:
+
+- `ayu.crypto`: `sha256`, `sha1`, `sha512`, `md5`, `hmac(key, text)` (hex), `randomBytes(n)` (base64), `uuid()`. No permission.
+- `ayu.encoding`: `base64Encode`, `base64Decode`, `hexEncode`, `hexDecode`. No permission.
+- `ayu.app`: `version()`, `build()`, `name()`, `plugins()`. No permission.
+- `ayu.device` (`device`): `battery()`, `isCharging()`, `screen()`, `darkMode()`, `model()`, `systemVersion()`, `timezone()`, `isLowPower()`, `freeDisk()`, `memory()`, `uptime()`, `thermalState()`. Battery, charging, screen and dark mode come from a snapshot the main thread refreshes after each read, so the first read can return the defaults.
+- `ayu.clipboard`: `read()` (`clipboard.read`, a Promise; iOS shows its paste notice), `hasText()` (Promise), `clear()` (`clipboard`).
+- `ayu.speech` (`ui`): `speak(text, { language, rate })`, `stop()`, `isSpeaking()`, `voices()`.
+- `ayu.notify` (`notifications`): `schedule({ id, title, body, seconds })` returns the id; `cancel(id)`, `cancelAll()`. A plugin sees only its own reminders.
+- `ayu.haptics.pattern(styles, interval)`: up to 16 taps (`haptics`).
+
+Run inside the plugin, no permission:
+
+- `ayu.text`: `capitalize`, `titleCase`, `reverse`, `truncate`, `slugify`, `wordCount`, `charCount`, `stripEmoji`, `escapeHtml`, `unescapeHtml`, `translit`, `swapLayout` (ghbdtn ⇄ привет), `mock`, `between`, `template`.
+- `ayu.date`: `format(date, 'DD.MM.YYYY HH:mm')`, `relative`, `addDays`, `diffDays`, `isToday`, `startOfDay`, `parseDuration('1h 30m')`, `formatDuration`.
+- `ayu.color`: `hexToRgb`, `rgbToHex`, `lighten`, `darken`, `mix`, `contrastText`, `random`.
+- `ayu.math`: `clamp`, `lerp`, `random`, `randomInt`, `round`, `sum`, `average`, `median`, `percent`.
+- `ayu.url`: `parse`, `build`, `param`, `isUrl`, `extract`, `domain`.
+- `ayu.array`: `chunk`, `unique`, `shuffle`, `sample`, `groupBy`, `sortBy`.
+- `ayu.async`: `sleep`, `debounce`, `throttle`, `retry`, `timeout`.
+- `ayu.format`: `bytes`, `number`, `plural(n, ['яблоко', 'яблока', 'яблок'])`.
+- `ayu.extract`: `mentions`, `hashtags`, `emails`.
+
 ### Events
 
 `load`, `unload`, `chatOpen`, `chatClose`, `profileOpen`, `profileClose`, `screenChange`,

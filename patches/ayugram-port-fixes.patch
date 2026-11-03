@@ -216,7 +216,7 @@ index a9c651fd..4cee1a8c 100644
                  lines.append(line)
              }
 diff --git a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
-index a4dffd26..ad28e94e 100644
+index a4dffd26..a38dbceb 100644
 --- a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
 +++ b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
 @@ -12,6 +12,8 @@ public final class AyuPluginUI {
@@ -228,7 +228,23 @@ index a4dffd26..ad28e94e 100644
      }
  
      public struct ProfileBlock: Equatable {
-@@ -422,6 +424,15 @@ enum AyuPluginHostAPI {
+@@ -252,6 +254,7 @@ public enum AyuPluginPermission: String, CaseIterable {
+     case ui, menu, profile, overlay, fonts, badges, clipboard, device, haptics
+     case network, messages, ai, secrets, composer, notifications, links, screens, commands
+     case messagesRead = "messages.read"
++    case clipboardRead = "clipboard.read"
+ 
+     public func title(_ russian: Bool) -> String {
+         switch self {
+@@ -262,6 +265,7 @@ public enum AyuPluginPermission: String, CaseIterable {
+         case .fonts: return russian ? "размер шрифтов" : "font sizes"
+         case .badges: return russian ? "бейджи у чатов" : "chat badges"
+         case .clipboard: return russian ? "буфер обмена (запись)" : "clipboard (write)"
++        case .clipboardRead: return russian ? "⚠️ чтение буфера обмена" : "⚠️ reading the clipboard"
+         case .device: return russian ? "сведения об устройстве" : "device information"
+         case .haptics: return russian ? "вибрация" : "haptics"
+         case .network: return russian ? "интернет (только домены из @connect)" : "network (@connect hosts only)"
+@@ -422,6 +426,15 @@ enum AyuPluginHostAPI {
                      actions(op, args, done)
                  }
              }
@@ -244,7 +260,7 @@ index a4dffd26..ad28e94e 100644
          case "secrets.get":
              guard allowed(.secrets) else { return nil }
              return ["value": AyuKeychain.get("plugin:\(pluginId):" + string("key", 128)).map { $0 as Any } ?? NSNull()]
-@@ -629,7 +640,7 @@ enum AyuPluginHostAPI {
+@@ -629,7 +642,7 @@ enum AyuPluginHostAPI {
              guard allowed(.menu) else { return nil }
              let id = string("id", 64)
              guard !id.isEmpty, !string("title").isEmpty else { return nil }
@@ -253,6 +269,278 @@ index a4dffd26..ad28e94e 100644
              return ["ok": true]
          case "ui.menu.remove":
              AyuPluginUI.shared.setMenu(nil, remove: string("id", 64), owner: pluginId)
+@@ -802,7 +815,7 @@ enum AyuPluginHostAPI {
+             }
+             return ["ok": true]
+         default:
+-            return nil
++            return AyuPluginHostExtras.handle(pluginId: pluginId, op: op, args: args, allowed: allowed)
+         }
+     }
+ }
+diff --git a/submodules/AccountContext/Sources/AyuPluginHostExtras.swift b/submodules/AccountContext/Sources/AyuPluginHostExtras.swift
+new file mode 100644
+index 00000000..6b5baeb4
+--- /dev/null
++++ b/submodules/AccountContext/Sources/AyuPluginHostExtras.swift
+@@ -0,0 +1,257 @@
++import Foundation
++import UIKit
++import CryptoKit
++import AVFoundation
++import UserNotifications
++
++/// Host calls added with the 27.6 plugin API: hashing and encodings, app and device facts, the
++/// clipboard, speech, local reminders and haptic patterns. `AyuPluginHostAPI.handle` hands every
++/// call it does not know to `handle` here; nil means the call is unknown or was refused.
++enum AyuPluginHostExtras {
++    private static let maxText = 1_000_000
++
++    static func handle(pluginId: String, op: String, args: [String: Any], allowed: (AyuPluginPermission) -> Bool) -> Any? {
++        func string(_ key: String, _ limit: Int = maxText) -> String {
++            return String((args[key] as? String ?? "").prefix(limit))
++        }
++        func number(_ key: String, _ fallback: Double) -> Double {
++            return (args[key] as? NSNumber)?.doubleValue ?? fallback
++        }
++        func value(_ result: Any?) -> Any {
++            return ["value": result ?? NSNull()]
++        }
++
++        switch op {
++        // Hashes and encodings: pure, no permission.
++        case "crypto.sha256":
++            return value(hex(Data(SHA256.hash(data: Data(string("text").utf8)))))
++        case "crypto.sha1":
++            return value(hex(Data(Insecure.SHA1.hash(data: Data(string("text").utf8)))))
++        case "crypto.sha512":
++            return value(hex(Data(SHA512.hash(data: Data(string("text").utf8)))))
++        case "crypto.md5":
++            return value(hex(Data(Insecure.MD5.hash(data: Data(string("text").utf8)))))
++        case "crypto.hmac":
++            let key = SymmetricKey(data: Data(string("key", 4096).utf8))
++            return value(hex(Data(HMAC<SHA256>.authenticationCode(for: Data(string("text").utf8), using: key))))
++        case "crypto.randomBytes":
++            let count = max(1, min(1024, Int(number("count", 16))))
++            var bytes = [UInt8](repeating: 0, count: count)
++            guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
++                return value(nil)
++            }
++            return value(Data(bytes).base64EncodedString())
++        case "crypto.uuid":
++            return value(UUID().uuidString.lowercased())
++        case "encoding.base64Encode":
++            return value(Data(string("text").utf8).base64EncodedString())
++        case "encoding.base64Decode":
++            return value(Data(base64Encoded: string("text"), options: .ignoreUnknownCharacters).flatMap { String(data: $0, encoding: .utf8) })
++        case "encoding.hexEncode":
++            return value(hex(Data(string("text").utf8)))
++        case "encoding.hexDecode":
++            return value(unhex(string("text")).flatMap { String(data: $0, encoding: .utf8) })
++
++        // The app itself: no permission.
++        case "app.version":
++            return value(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)
++        case "app.build":
++            return value(Bundle.main.infoDictionary?["CFBundleVersion"] as? String)
++        case "app.name":
++            return value("VoidGram")
++        case "app.plugins":
++            return value(AyuScriptRuntime.shared.plugins.map { ["id": $0.id, "name": $0.name, "enabled": $0.enabled] })
++
++        // Device facts, behind `device`. The app may be waiting for the plugin on the main thread,
++        // so UIKit values come from a snapshot the main thread refreshes after every read.
++        case "device.battery", "device.isCharging", "device.screen", "device.darkMode":
++            guard allowed(.device) else { return nil }
++            let snapshot = uiSnapshot()
++            DispatchQueue.main.async { refreshUISnapshot() }
++            return value(snapshot[String(op.dropFirst("device.".count))])
++        case "device.model":
++            guard allowed(.device) else { return nil }
++            var system = utsname()
++            uname(&system)
++            let machine = withUnsafeBytes(of: &system.machine) { buffer in
++                String(decoding: buffer.prefix(while: { $0 != 0 }), as: UTF8.self)
++            }
++            return value(machine)
++        case "device.systemVersion":
++            guard allowed(.device) else { return nil }
++            let version = ProcessInfo.processInfo.operatingSystemVersion
++            return value("\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)")
++        case "device.timezone":
++            guard allowed(.device) else { return nil }
++            return value(["id": TimeZone.current.identifier, "offsetMinutes": TimeZone.current.secondsFromGMT() / 60])
++        case "device.isLowPower":
++            guard allowed(.device) else { return nil }
++            return value(ProcessInfo.processInfo.isLowPowerModeEnabled)
++        case "device.freeDisk":
++            guard allowed(.device) else { return nil }
++            let attributes = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())
++            return value((attributes?[.systemFreeSize] as? NSNumber)?.int64Value)
++        case "device.memory":
++            guard allowed(.device) else { return nil }
++            return value(Int64(ProcessInfo.processInfo.physicalMemory))
++        case "device.uptime":
++            guard allowed(.device) else { return nil }
++            return value(ProcessInfo.processInfo.systemUptime)
++        case "device.thermalState":
++            guard allowed(.device) else { return nil }
++            let names: [ProcessInfo.ThermalState: String] = [.nominal: "nominal", .fair: "fair", .serious: "serious", .critical: "critical"]
++            return value(names[ProcessInfo.processInfo.thermalState] ?? "nominal")
++
++        // The clipboard: reading needs its own permission; iOS shows its paste notice.
++        case "clipboard.read", "clipboard.hasText":
++            guard allowed(op == "clipboard.read" ? .clipboardRead : .clipboard) else { return nil }
++            // Answered later, as `uiResult`, once the main thread has read the pasteboard.
++            let requestId = string("requestId", 64)
++            DispatchQueue.main.async {
++                let answer: Any
++                if op == "clipboard.read" {
++                    answer = ["value": UIPasteboard.general.string.map { String($0.prefix(maxText)) as Any } ?? NSNull()]
++                } else {
++                    answer = ["value": UIPasteboard.general.hasStrings]
++                }
++                AyuPluginUI.send("uiResult", to: pluginId, ["requestId": requestId, "choice": answer])
++            }
++            return ["ok": true]
++        case "clipboard.clear":
++            guard allowed(.clipboard) else { return nil }
++            DispatchQueue.main.async { UIPasteboard.general.items = [] }
++            return ["ok": true]
++
++        // Speech, behind `ui`.
++        case "speech.speak":
++            guard allowed(.ui) else { return nil }
++            let text = string("text", 4000)
++            let language = string("language", 16)
++            let rate = Float(max(0.1, min(1.0, number("rate", Double(AVSpeechUtteranceDefaultSpeechRate)))))
++            DispatchQueue.main.async {
++                let utterance = AVSpeechUtterance(string: text)
++                utterance.rate = rate
++                utterance.voice = AVSpeechSynthesisVoice(language: language.isEmpty ? Locale.preferredLanguages.first : language)
++                AyuPluginSpeech.synthesizer.speak(utterance)
++            }
++            return ["ok": true]
++        case "speech.stop":
++            guard allowed(.ui) else { return nil }
++            DispatchQueue.main.async { AyuPluginSpeech.synthesizer.stopSpeaking(at: .immediate) }
++            return ["ok": true]
++        case "speech.isSpeaking":
++            guard allowed(.ui) else { return nil }
++            return value(AyuPluginSpeech.synthesizer.isSpeaking)
++        case "speech.voices":
++            guard allowed(.ui) else { return nil }
++            return value(Array(Set(AVSpeechSynthesisVoice.speechVoices().map(\.language))).sorted())
++
++        // Local reminders, behind `notifications`. Each plugin sees only its own.
++        case "notify.schedule":
++            guard allowed(.notifications) else { return nil }
++            let id = string("id", 64)
++            let content = UNMutableNotificationContent()
++            content.title = string("title", 200)
++            content.body = string("body", 1000)
++            content.sound = .default
++            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1.0, min(60.0 * 60.0 * 24.0 * 30.0, number("seconds", 5.0))), repeats: false)
++            let identifier = reminderPrefix(pluginId) + (id.isEmpty ? UUID().uuidString : id)
++            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
++            return value(String(identifier.dropFirst(reminderPrefix(pluginId).count)))
++        case "notify.cancel":
++            guard allowed(.notifications) else { return nil }
++            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [reminderPrefix(pluginId) + string("id", 64)])
++            return ["ok": true]
++        case "notify.cancelAll":
++            guard allowed(.notifications) else { return nil }
++            let prefix = reminderPrefix(pluginId)
++            UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
++                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: requests.map(\.identifier).filter { $0.hasPrefix(prefix) })
++            }
++            return ["ok": true]
++
++        // A row of taps: up to 16 styles, 30-1000 ms apart.
++        case "haptics.pattern":
++            guard allowed(.haptics), !AyuExtras.hapticsDisabled else { return nil }
++            let styles = Array((args["styles"] as? [String] ?? []).prefix(16))
++            let interval = max(0.03, min(1.0, number("interval", 120.0) / 1000.0))
++            DispatchQueue.main.async {
++                for (index, style) in styles.enumerated() {
++                    DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(index)) {
++                        let kind: UIImpactFeedbackGenerator.FeedbackStyle
++                        switch style {
++                        case "light": kind = .light
++                        case "heavy": kind = .heavy
++                        case "soft": kind = .soft
++                        case "rigid": kind = .rigid
++                        default: kind = .medium
++                        }
++                        UIImpactFeedbackGenerator(style: kind).impactOccurred()
++                    }
++                }
++            }
++            return ["ok": true]
++        default:
++            return nil
++        }
++    }
++
++    private static func reminderPrefix(_ pluginId: String) -> String {
++        return "ayu.plugin.\(pluginId)."
++    }
++
++    private static let snapshotLock = NSLock()
++    private static var snapshot: [String: Any] = [:]
++
++    private static func uiSnapshot() -> [String: Any] {
++        snapshotLock.lock()
++        defer { snapshotLock.unlock() }
++        if snapshot.isEmpty {
++            // The first read, before the main thread ever ran: what Foundation can tell.
++            return ["battery": NSNull(), "isCharging": false, "screen": NSNull(), "darkMode": false]
++        }
++        return snapshot
++    }
++
++    /// Main thread only.
++    static func refreshUISnapshot() {
++        let device = UIDevice.current
++        device.isBatteryMonitoringEnabled = true
++        let screen = UIScreen.main
++        let value: [String: Any] = [
++            "battery": device.batteryLevel < 0 ? NSNull() as Any : Double(device.batteryLevel) as Any,
++            "isCharging": device.batteryState == .charging || device.batteryState == .full,
++            "screen": ["width": Double(screen.bounds.width), "height": Double(screen.bounds.height), "scale": Double(screen.scale)],
++            "darkMode": screen.traitCollection.userInterfaceStyle == .dark
++        ]
++        snapshotLock.lock()
++        snapshot = value
++        snapshotLock.unlock()
++    }
++
++    private static func hex(_ data: Data) -> String {
++        return data.map { String(format: "%02x", $0) }.joined()
++    }
++
++    private static func unhex(_ text: String) -> Data? {
++        let characters = Array(text.lowercased().filter { !$0.isWhitespace })
++        guard characters.count % 2 == 0 else {
++            return nil
++        }
++        var data = Data(capacity: characters.count / 2)
++        var index = 0
++        while index < characters.count {
++            guard let byte = UInt8(String(characters[index ..< index + 2]), radix: 16) else {
++                return nil
++            }
++            data.append(byte)
++            index += 2
++        }
++        return data
++    }
++}
++
++/// One synthesizer for every plugin, so a new phrase can stop the one before.
++private enum AyuPluginSpeech {
++    static let synthesizer = AVSpeechSynthesizer()
++}
 diff --git a/submodules/AccountContext/Sources/AyuPluginServices.swift b/submodules/AccountContext/Sources/AyuPluginServices.swift
 index 2e495f4e..ec183546 100644
 --- a/submodules/AccountContext/Sources/AyuPluginServices.swift
@@ -327,7 +615,7 @@ index 7a606e8d..ad881b42 100644
      public func download(_ entry: Entry, completion: @escaping (Result<Data, Failure>) -> Void) {
          guard let url = URL(string: entry.url) else {
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-index 88c84197..6c7b8605 100644
+index 88c84197..bbda201c 100644
 --- a/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 @@ -77,7 +77,7 @@ public final class AyuScriptRuntime {
@@ -348,7 +636,100 @@ index 88c84197..6c7b8605 100644
              // Developer option: Safari → Develop → this device → the plugin's context.
              if #available(iOS 16.4, *), AyuDeveloperSettings.unlocked, UserDefaults.standard.bool(forKey: "ayu.dev.webInspector") {
                  context.isInspectable = true
-@@ -1108,7 +1108,14 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+@@ -968,6 +968,57 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+                 return typeof result === 'string' ? result : undefined;
+             });
+         }
++        // Helpers behind the 27.6 utility namespaces.
++        function hostValue(op, args) {
++            const answer = host.call(op, args || {});
++            return answer && typeof answer === 'object' && answer.value !== undefined ? answer.value : null;
++        }
++        const helpers = (function () {
++            const ruLat = { 'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo', 'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya', 'і': 'i', 'ї': 'yi', 'є': 'ye', 'ґ': 'g' };
++            const ruKeys = 'йцукенгшщзхъфывапролджэячсмитьбю.ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ,';
++            const enKeys = "qwertyuiop[]asdfghjkl;'zxcvbnm,./QWERTYUIOP{}ASDFGHJKL:\\"ZXCVBNM<>?";
++            const layout = {};
++            for (let i = 0; i < ruKeys.length; i++) { layout[ruKeys[i]] = enKeys[i]; if (layout[enKeys[i]] === undefined) layout[enKeys[i]] = ruKeys[i]; }
++            function translit(s) {
++                return Array.from(s).map((c) => {
++                    const lower = c.toLowerCase(); const t = ruLat[lower];
++                    if (t === undefined) return c;
++                    return c === lower ? t : (t.charAt(0).toUpperCase() + t.slice(1));
++                }).join('');
++            }
++            function plural(n, forms) {
++                if (forms.length < 3) return forms[n === 1 ? 0 : 1] || forms[0] || '';
++                const a = Math.abs(n) % 100; const b = a % 10;
++                if (a > 10 && a < 20) return forms[2];
++                if (b > 1 && b < 5) return forms[1];
++                return b === 1 ? forms[0] : forms[2];
++            }
++            function toDate(value) { return value instanceof Date ? new Date(value.getTime()) : new Date(typeof value === 'number' ? value : (value === undefined ? Date.now() : String(value))); }
++            function startOfDay(d) { const c = new Date(d.getTime()); c.setHours(0, 0, 0, 0); return c.getTime(); }
++            function rgb(hex) {
++                const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || '').trim());
++                if (!m) return null;
++                const h = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
++                return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
++            }
++            function mixHex(a, b, t) {
++                const x = rgb(a); const y = rgb(b); if (!x || !y) return null;
++                const k = Math.max(0, Math.min(1, t));
++                return '#' + ['r', 'g', 'b'].map((c) => Math.round(x[c] + (y[c] - x[c]) * k).toString(16).padStart(2, '0')).join('').toUpperCase();
++            }
++            function parseUrl(s) {
++                const m = /^([a-z][a-z0-9+.-]*):\\/\\/([^\\/?#:]+)(?::(\\d+))?([^?#]*)(?:\\?([^#]*))?(?:#(.*))?$/i.exec(s.trim());
++                if (!m) return null;
++                const query = {};
++                (m[5] || '').split('&').filter(Boolean).forEach((pair) => {
++                    const i = pair.indexOf('='); const key = i < 0 ? pair : pair.slice(0, i); const v = i < 0 ? '' : pair.slice(i + 1);
++                    try { query[decodeURIComponent(key.replace(/\\+/g, ' '))] = decodeURIComponent(v.replace(/\\+/g, ' ')); } catch (e) { query[key] = v; }
++                });
++                return { protocol: m[1].toLowerCase(), host: m[2].toLowerCase(), port: m[3] ? Number(m[3]) : null, path: m[4] || '/', query: query, hash: m[6] || '' };
++            }
++            function language() { const answer = host.call('i18n.language', {}); return (answer && answer.language) || 'en'; }
++            return { translit: translit, layout: layout, plural: plural, toDate: toDate, startOfDay: startOfDay, rgb: rgb, mixHex: mixHex, parseUrl: parseUrl, language: language };
++        })();
+         const ayu = Object.freeze({
+             pluginId: host.pluginId,
+             log: function () { host.log('info', fmt(arguments)); },
+@@ -1072,9 +1123,31 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+                     info: (peerId) => host.call('registry.isVerified', { peerId: text(peerId) }) || {}
+                 })
+             }),
+-            clipboard: Object.freeze({ write: (value) => host.call('clipboard.write', { text: text(value) }) }),
+-            device: Object.freeze({ info: () => host.call('device.info', {}) || {} }),
+-            haptics: Object.freeze({ play: (style) => host.call('haptics.play', { style: text(style || 'medium') }) }),
++            clipboard: Object.freeze({
++                write: (value) => host.call('clipboard.write', { text: text(value) }),
++                read: () => requestAsync('clipboard.read', {}).then((answer) => answer && typeof answer.value === 'string' ? answer.value : null),
++                hasText: () => requestAsync('clipboard.hasText', {}).then((answer) => !!(answer && answer.value)),
++                clear: () => !!host.call('clipboard.clear', {})
++            }),
++            device: Object.freeze({
++                info: () => host.call('device.info', {}) || {},
++                battery: () => hostValue('device.battery', {}),
++                isCharging: () => !!hostValue('device.isCharging', {}),
++                screen: () => hostValue('device.screen', {}),
++                darkMode: () => !!hostValue('device.darkMode', {}),
++                model: () => hostValue('device.model', {}),
++                systemVersion: () => hostValue('device.systemVersion', {}),
++                timezone: () => hostValue('device.timezone', {}),
++                isLowPower: () => !!hostValue('device.isLowPower', {}),
++                freeDisk: () => hostValue('device.freeDisk', {}),
++                memory: () => hostValue('device.memory', {}),
++                uptime: () => hostValue('device.uptime', {}),
++                thermalState: () => hostValue('device.thermalState', {})
++            }),
++            haptics: Object.freeze({
++                play: (style) => host.call('haptics.play', { style: text(style || 'medium') }),
++                pattern: (styles, interval) => !!host.call('haptics.pattern', { styles: (Array.isArray(styles) ? styles : [styles]).map(text), interval: Number(interval || 120) })
++            }),
+             secrets: Object.freeze({
+                 get: (key) => { const answer = host.call('secrets.get', { key: text(key) }); return answer && typeof answer.value === 'string' ? answer.value : null; },
+                 set: (key, value) => host.call('secrets.set', { key: text(key), value: value === null || value === undefined ? null : text(value) })
+@@ -1108,7 +1181,14 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
              media: Object.freeze({
                  process: (data, ops, options) => requestAsync('media.process', Object.assign({}, options || {}, { data: text(data), ops: Array.isArray(ops) ? ops : [] })).then((answer) => answer.data),
                  fromMessage: (peerId, messageId) => requestAsync('media.fromMessage', { peerId: text(peerId), messageId: Number(messageId) }),
@@ -364,6 +745,164 @@ index 88c84197..6c7b8605 100644
              }),
              tl: Object.freeze({
                  block: (method) => host.call('tl.block', { method: text(method) }),
+@@ -1231,6 +1311,157 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+                 disable: (name) => host.feature(text(name), true),
+                 enable: (name) => host.feature(text(name), false)
+             }),
++            // 27.6: hashes, encodings, the app, speech, reminders, and helpers that run in the plugin.
++            crypto: Object.freeze({
++                sha256: (value) => hostValue('crypto.sha256', { text: text(value) }),
++                sha1: (value) => hostValue('crypto.sha1', { text: text(value) }),
++                sha512: (value) => hostValue('crypto.sha512', { text: text(value) }),
++                md5: (value) => hostValue('crypto.md5', { text: text(value) }),
++                hmac: (key, value) => hostValue('crypto.hmac', { key: text(key), text: text(value) }),
++                randomBytes: (count) => hostValue('crypto.randomBytes', { count: Number(count || 16) }),
++                uuid: () => hostValue('crypto.uuid', {})
++            }),
++            encoding: Object.freeze({
++                base64Encode: (value) => hostValue('encoding.base64Encode', { text: text(value) }),
++                base64Decode: (value) => hostValue('encoding.base64Decode', { text: text(value) }),
++                hexEncode: (value) => hostValue('encoding.hexEncode', { text: text(value) }),
++                hexDecode: (value) => hostValue('encoding.hexDecode', { text: text(value) })
++            }),
++            app: Object.freeze({
++                version: () => hostValue('app.version', {}),
++                build: () => hostValue('app.build', {}),
++                name: () => hostValue('app.name', {}),
++                plugins: () => hostValue('app.plugins', {}) || []
++            }),
++            speech: Object.freeze({
++                speak: (value, options) => !!host.call('speech.speak', Object.assign({}, options || {}, { text: text(value) })),
++                stop: () => !!host.call('speech.stop', {}),
++                isSpeaking: () => !!hostValue('speech.isSpeaking', {}),
++                voices: () => hostValue('speech.voices', {}) || []
++            }),
++            notify: Object.freeze({
++                schedule: (options) => hostValue('notify.schedule', options || {}),
++                cancel: (id) => !!host.call('notify.cancel', { id: text(id) }),
++                cancelAll: () => !!host.call('notify.cancelAll', {})
++            }),
++            text: Object.freeze({
++                capitalize: (value) => { const s = text(value); return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; },
++                titleCase: (value) => text(value).toLowerCase().replace(/(^|[\\s\\-«"(])(\\p{L})/gu, (m, p, c) => p + c.toUpperCase()),
++                reverse: (value) => Array.from(text(value)).reverse().join(''),
++                truncate: (value, length, ellipsis) => {
++                    const chars = Array.from(text(value)); const max = Math.max(0, Number(length) || 0); const tail = ellipsis === undefined ? '…' : text(ellipsis);
++                    return chars.length <= max ? chars.join('') : chars.slice(0, Math.max(0, max - Array.from(tail).length)).join('') + tail;
++                },
++                slugify: (value) => helpers.translit(text(value)).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
++                wordCount: (value) => (text(value).match(/[\\p{L}\\p{N}]+(?:['’-][\\p{L}\\p{N}]+)*/gu) || []).length,
++                charCount: (value) => Array.from(text(value)).length,
++                stripEmoji: (value) => text(value).replace(/(?:\\p{Extended_Pictographic}|\\p{Emoji_Modifier}|‍|️|[\\u{1F1E6}-\\u{1F1FF}])/gu, '').replace(/\\s{2,}/g, ' ').trim(),
++                escapeHtml: (value) => text(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]),
++                unescapeHtml: (value) => text(value).replace(/&(amp|lt|gt|quot|#39);/g, (m, e) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[e]),
++                translit: (value) => helpers.translit(text(value)),
++                swapLayout: (value) => Array.from(text(value)).map((c) => helpers.layout[c] || c).join(''),
++                mock: (value) => { let i = 0; return Array.from(text(value)).map((c) => /\\p{L}/u.test(c) ? ((i++ % 2) ? c.toUpperCase() : c.toLowerCase()) : c).join(''); },
++                between: (value, start, end) => { const s = text(value); const a = s.indexOf(text(start)); if (a < 0) return null; const from = a + text(start).length; const b = end === undefined ? s.length : s.indexOf(text(end), from); return b < 0 ? null : s.slice(from, b); },
++                template: (value, vars) => text(value).replace(/\\{(\\w+)\\}/g, (m, key) => vars && vars[key] !== undefined && vars[key] !== null ? String(vars[key]) : m)
++            }),
++            date: Object.freeze({
++                format: (value, pattern) => {
++                    const d = helpers.toDate(value); const p = (n, w) => String(n).padStart(w || 2, '0');
++                    const map = { YYYY: d.getFullYear(), YY: p(d.getFullYear() % 100), MM: p(d.getMonth() + 1), DD: p(d.getDate()), HH: p(d.getHours()), mm: p(d.getMinutes()), ss: p(d.getSeconds()) };
++                    return text(pattern || 'YYYY-MM-DD HH:mm').replace(/YYYY|YY|MM|DD|HH|mm|ss/g, (t) => String(map[t]));
++                },
++                relative: (value, language) => {
++                    const ru = text(language || helpers.language()).startsWith('ru') || text(language || helpers.language()).startsWith('uk');
++                    const seconds = Math.round((helpers.toDate(value).getTime() - Date.now()) / 1000); const past = seconds <= 0; const abs = Math.abs(seconds);
++                    const units = [[60, 'second', ['секунду', 'секунды', 'секунд']], [60, 'minute', ['минуту', 'минуты', 'минут']], [24, 'hour', ['час', 'часа', 'часов']], [30, 'day', ['день', 'дня', 'дней']], [12, 'month', ['месяц', 'месяца', 'месяцев']], [Infinity, 'year', ['год', 'года', 'лет']]];
++                    let amount = abs; let i = 0;
++                    while (i < units.length - 1 && amount >= units[i][0]) { amount = Math.floor(amount / units[i][0]); i++; }
++                    if (abs < 10) return ru ? 'только что' : 'just now';
++                    const word = ru ? helpers.plural(amount, units[i][2]) : units[i][1] + (amount === 1 ? '' : 's');
++                    return ru ? (past ? amount + ' ' + word + ' назад' : 'через ' + amount + ' ' + word) : (past ? amount + ' ' + word + ' ago' : 'in ' + amount + ' ' + word);
++                },
++                addDays: (value, days) => { const d = helpers.toDate(value); d.setDate(d.getDate() + Number(days || 0)); return d; },
++                diffDays: (a, b) => Math.round((helpers.startOfDay(helpers.toDate(b === undefined ? Date.now() : b)) - helpers.startOfDay(helpers.toDate(a))) / 86400000),
++                isToday: (value) => helpers.startOfDay(helpers.toDate(value)) === helpers.startOfDay(new Date()),
++                startOfDay: (value) => new Date(helpers.startOfDay(helpers.toDate(value === undefined ? Date.now() : value))),
++                parseDuration: (value) => {
++                    const s = text(value).trim().toLowerCase(); const sizes = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000, w: 604800000 };
++                    let total = 0; let matched = false;
++                    s.replace(/(\\d+(?:\\.\\d+)?)\\s*(ms|s|m|h|d|w)/g, (m, n, unit) => { matched = true; total += Number(n) * sizes[unit]; return m; });
++                    return matched ? total : (/^\\d+$/.test(s) ? Number(s) * 1000 : null);
++                },
++                formatDuration: (ms, language) => {
++                    const ru = text(language || helpers.language()).startsWith('ru') || text(language || helpers.language()).startsWith('uk');
++                    let left = Math.max(0, Math.round(Number(ms || 0) / 1000)); const parts = [];
++                    for (const [size, en, short] of [[86400, 'd', 'д'], [3600, 'h', 'ч'], [60, 'm', 'мин'], [1, 's', 'с']]) {
++                        const n = Math.floor(left / size); left -= n * size; if (n) parts.push(n + (ru ? ' ' + short : en));
++                    }
++                    return parts.length ? parts.join(' ') : (ru ? '0 с' : '0s');
++                }
++            }),
++            color: Object.freeze({
++                hexToRgb: (hex) => helpers.rgb(hex),
++                rgbToHex: (r, g, b) => '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(Number(v) || 0))).toString(16).padStart(2, '0')).join('').toUpperCase(),
++                lighten: (hex, amount) => helpers.mixHex(hex, '#FFFFFF', amount === undefined ? 0.2 : Number(amount)),
++                darken: (hex, amount) => helpers.mixHex(hex, '#000000', amount === undefined ? 0.2 : Number(amount)),
++                mix: (a, b, amount) => helpers.mixHex(a, b, amount === undefined ? 0.5 : Number(amount)),
++                contrastText: (hex) => { const c = helpers.rgb(hex); if (!c) return '#000000'; const lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255; return lum > 0.55 ? '#000000' : '#FFFFFF'; },
++                random: () => '#' + Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0').toUpperCase()
++            }),
++            math: Object.freeze({
++                clamp: (value, min, max) => Math.min(Number(max), Math.max(Number(min), Number(value))),
++                lerp: (a, b, t) => Number(a) + (Number(b) - Number(a)) * Number(t),
++                random: (min, max) => Number(min || 0) + Math.random() * (Number(max === undefined ? 1 : max) - Number(min || 0)),
++                randomInt: (min, max) => { const lo = Math.ceil(Number(min)); const hi = Math.floor(Number(max)); return lo + Math.floor(Math.random() * (hi - lo + 1)); },
++                round: (value, digits) => { const f = Math.pow(10, Number(digits || 0)); return Math.round(Number(value) * f) / f; },
++                sum: (list) => (Array.isArray(list) ? list : []).reduce((a, b) => a + (Number(b) || 0), 0),
++                average: (list) => { const l = Array.isArray(list) ? list : []; return l.length ? l.reduce((a, b) => a + (Number(b) || 0), 0) / l.length : 0; },
++                median: (list) => { const l = (Array.isArray(list) ? list : []).map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b); if (!l.length) return 0; const m = Math.floor(l.length / 2); return l.length % 2 ? l[m] : (l[m - 1] + l[m]) / 2; },
++                percent: (part, total) => Number(total) ? Number(part) / Number(total) * 100 : 0
++            }),
++            url: Object.freeze({
++                parse: (value) => helpers.parseUrl(text(value)),
++                build: (base, params) => {
++                    const query = Object.keys(params || {}).filter((k) => params[k] !== undefined && params[k] !== null).map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(String(params[k]))).join('&');
++                    const s = text(base); return query ? s + (s.indexOf('?') < 0 ? '?' : (/[?&]$/.test(s) ? '' : '&')) + query : s;
++                },
++                param: (value, name) => { const parsed = helpers.parseUrl(text(value)); return parsed && Object.prototype.hasOwnProperty.call(parsed.query, text(name)) ? parsed.query[text(name)] : null; },
++                isUrl: (value) => /^(https?|tg):\\/\\/[^\\s]+$/i.test(text(value).trim()),
++                extract: (value) => text(value).match(/\\b(?:https?:\\/\\/|www\\.|t\\.me\\/)[^\\s<>"']+[^\\s<>"'.,;:!?)\\]]/gi) || [],
++                domain: (value) => { const parsed = helpers.parseUrl(text(value)); return parsed ? parsed.host.replace(/^www\\./, '') : null; }
++            }),
++            array: Object.freeze({
++                chunk: (list, size) => { const l = Array.isArray(list) ? list : []; const n = Math.max(1, Number(size) || 1); const out = []; for (let i = 0; i < l.length; i += n) out.push(l.slice(i, i + n)); return out; },
++                unique: (list, key) => { const seen = new Set(); return (Array.isArray(list) ? list : []).filter((item) => { const k = typeof key === 'function' ? key(item) : (key ? item && item[key] : item); if (seen.has(k)) return false; seen.add(k); return true; }); },
++                shuffle: (list) => { const l = (Array.isArray(list) ? list : []).slice(); for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = l[i]; l[i] = l[j]; l[j] = t; } return l; },
++                sample: (list) => { const l = Array.isArray(list) ? list : []; return l.length ? l[Math.floor(Math.random() * l.length)] : null; },
++                groupBy: (list, key) => (Array.isArray(list) ? list : []).reduce((groups, item) => { const k = String(typeof key === 'function' ? key(item) : item && item[key]); (groups[k] = groups[k] || []).push(item); return groups; }, {}),
++                sortBy: (list, key, descending) => (Array.isArray(list) ? list : []).slice().sort((a, b) => { const x = typeof key === 'function' ? key(a) : a && a[key]; const y = typeof key === 'function' ? key(b) : b && b[key]; const r = x < y ? -1 : (x > y ? 1 : 0); return descending ? -r : r; })
++            }),
++            async: Object.freeze({
++                sleep: (ms) => new Promise((resolve) => root.setTimeout(resolve, Number(ms) || 0)),
++                debounce: (fn, ms) => { let timer = null; return function () { const args = arguments; if (timer !== null) root.clearTimeout(timer); timer = root.setTimeout(() => { timer = null; fn.apply(null, args); }, Number(ms) || 0); }; },
++                throttle: (fn, ms) => { let last = 0; return function () { const now = Date.now(); if (now - last >= (Number(ms) || 0)) { last = now; return fn.apply(null, arguments); } }; },
++                retry: (fn, times, delay) => new Promise((resolve, reject) => {
++                    let left = Math.max(1, Number(times) || 3);
++                    const attempt = () => Promise.resolve().then(fn).then(resolve, (error) => { if (--left <= 0) reject(error); else root.setTimeout(attempt, Number(delay) || 0); });
++                    attempt();
++                }),
++                timeout: (promise, ms) => new Promise((resolve, reject) => {
++                    const timer = root.setTimeout(() => reject(new Error('Timed out after ' + ms + ' ms')), Number(ms) || 0);
++                    Promise.resolve(promise).then((v) => { root.clearTimeout(timer); resolve(v); }, (e) => { root.clearTimeout(timer); reject(e); });
++                })
++            }),
++            format: Object.freeze({
++                bytes: (value, digits) => { let n = Math.max(0, Number(value) || 0); const units = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; } return (i ? n.toFixed(digits === undefined ? 1 : Number(digits)) : String(Math.round(n))) + ' ' + units[i]; },
++                number: (value, digits) => { const n = Number(value) || 0; const fixed = digits === undefined ? String(Math.round(n * 100) / 100) : n.toFixed(Number(digits)); const parts = fixed.split('.'); parts[0] = parts[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' '); return parts.join(','); },
++                plural: (count, forms) => helpers.plural(Number(count) || 0, Array.isArray(forms) ? forms : [])
++            }),
++            extract: Object.freeze({
++                mentions: (value) => (text(value).match(/(?:^|[^\\w@])@([A-Za-z][A-Za-z0-9_]{3,31})\\b/g) || []).map((m) => m.replace(/^[^@]*@/, '@')),
++                hashtags: (value) => (text(value).match(/#[\\p{L}\\p{N}_]+/gu) || []),
++                emails: (value) => (text(value).match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g) || [])
++            }),
+             storage: Object.freeze({
+                 get: (key) => { const v = host.storageGet(text(key)); return v === undefined ? null : v; },
+                 set: (key, value) => host.storageSet(text(key), value === null || value === undefined ? null : text(value))
 diff --git a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift b/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
 index 2bad9fb0..6e085421 100644
 --- a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
@@ -3229,6 +3768,29 @@ index 9b76fb8f..17b2a973 100644
      private static func menu(title: String?, message: String?) -> UIAlertController {
          // Action sheets need an anchor on iPad; an alert works everywhere.
          let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad ? .alert : .actionSheet
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoPaneContainerNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoPaneContainerNode.swift
+index 7fc781ed..bfb5c617 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoPaneContainerNode.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoPaneContainerNode.swift
+@@ -576,6 +576,8 @@ private final class PeerInfoPendingPane {
+ }
+ 
+ final class PeerInfoPaneContainerNode: ASDisplayNode, ASGestureRecognizerDelegate {
++    /// Set by the screen while the blurred profile photo is its backdrop.
++    var ayuClearBackground = false
+     private let context: AccountContext
+     private let peerId: EnginePeer.Id
+     private let chatLocation: ChatLocation
+@@ -986,7 +988,8 @@ final class PeerInfoPaneContainerNode: ASDisplayNode, ASGestureRecognizerDelegat
+             }
+         }
+         
+-        self.backgroundColor = backgroundColor
++        // AyuGram: the blurred profile photo shows under the tabs and panes.
++        self.backgroundColor = self.ayuClearBackground ? .clear : backgroundColor
+ 
+         let isScrollingLockedAtTop = expansionFraction < 1.0 - CGFloat.ulpOfOne
+ 
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 index 7dd781c5..9d9fb783 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
@@ -3267,10 +3829,17 @@ index 7dd781c5..9d9fb783 100644
              }))
          }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-index 92d346da..1ca44a71 100644
+index 92d346da..3c77b880 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-@@ -340,6 +340,11 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -1,5 +1,6 @@
+ import Foundation
+ import UIKit
++import CoreImage
+ import Display
+ import AsyncDisplayKit
+ import TelegramCore
+@@ -340,6 +341,12 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
          }
      }
      private(set) var data: PeerInfoScreenData?
@@ -3279,10 +3848,11 @@ index 92d346da..1ca44a71 100644
 +    private var ayuAvatarBackdropDimView: UIView?
 +    private var ayuAvatarBackdropKey: String?
 +    private let ayuAvatarBackdropDisposable = MetaDisposable()
++    private var ayuBackdropPresentationData: (base: PresentationTheme, data: PresentationData)?
      
      var state = PeerInfoState(
          isEditing: false,
-@@ -2700,6 +2705,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -2700,6 +2707,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
      
      deinit {
          self.dataDisposable?.dispose()
@@ -3290,7 +3860,7 @@ index 92d346da..1ca44a71 100644
          self.walletStickersPreloadDisposable.dispose()
          self.hiddenMediaDisposable?.dispose()
          self.activeActionDisposable.dispose()
-@@ -2818,6 +2824,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -2818,6 +2826,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
              }
          }
          self.data = data
@@ -3298,7 +3868,7 @@ index 92d346da..1ca44a71 100644
          if previousData?.members?.membersContext !== data.members?.membersContext {
              if let peer = data.peer, let _ = data.members {
                  self.groupMembersSearchContext = GroupMembersSearchContext(context: self.context, peerId: peer.id)
-@@ -5577,6 +5584,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -5577,6 +5586,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
  
      func updatePresentationData(_ presentationData: PresentationData) {
          self.presentationData = presentationData
@@ -3306,7 +3876,7 @@ index 92d346da..1ca44a71 100644
          
          self.updateBackgroundColor()
      
-@@ -5646,6 +5654,9 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -5646,6 +5656,9 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
          self.ignoreScrolling = true
          
          transition.updateFrame(node: self.scrollNode, frame: CGRect(origin: CGPoint(), size: layout.size))
@@ -3316,7 +3886,25 @@ index 92d346da..1ca44a71 100644
          
          if self.isSettings {
              let edgeEffectHeight: CGFloat = layout.intrinsicInsets.bottom
-@@ -6024,6 +6035,67 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -5714,7 +5727,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+                         contentHeight -= 16.0
+                     }
+                 }
+-                let sectionHeight = sectionNode.update(context: self.context, width: sectionWidth, safeInsets: UIEdgeInsets(), hasCorners: !insets.left.isZero, presentationData: self.presentationData, items: sectionItems, transition: transition)
++                let sectionHeight = sectionNode.update(context: self.context, width: sectionWidth, safeInsets: UIEdgeInsets(), hasCorners: !insets.left.isZero, presentationData: self.ayuSectionPresentationData(), items: sectionItems, transition: transition, clipsCorners: self.ayuAvatarBackdropView != nil)
+                 let sectionFrame = CGRect(origin: CGPoint(x: insets.left, y: contentHeight), size: CGSize(width: sectionWidth, height: sectionHeight))
+                 if additive {
+                     transition.updateFrameAdditive(node: sectionNode, frame: sectionFrame)
+@@ -5775,7 +5788,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+                 }
+                 
+                 let sectionWidth = layout.size.width - insets.left - insets.right
+-                let sectionHeight = sectionNode.update(context: self.context, width: sectionWidth, safeInsets: UIEdgeInsets(), hasCorners: !insets.left.isZero, presentationData: self.presentationData, items: sectionItems, transition: transition)
++                let sectionHeight = sectionNode.update(context: self.context, width: sectionWidth, safeInsets: UIEdgeInsets(), hasCorners: !insets.left.isZero, presentationData: self.ayuSectionPresentationData(), items: sectionItems, transition: transition, clipsCorners: self.ayuAvatarBackdropView != nil)
+                 let sectionFrame = CGRect(origin: CGPoint(x: insets.left, y: contentHeight), size: CGSize(width: sectionWidth, height: sectionHeight))
+                 
+                 if wasAdded {
+@@ -6024,6 +6037,82 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
          }
      }
      
@@ -3330,6 +3918,7 @@ index 92d346da..1ca44a71 100644
 +            self.ayuAvatarBackdropView?.removeFromSuperview()
 +            self.ayuAvatarBackdropView = nil
 +            self.ayuAvatarBackdropDimView = nil
++            self.ayuBackdropPresentationData = nil
 +            return
 +        }
 +        let dark = self.presentationData.theme.overallDarkAppearance
@@ -3348,26 +3937,23 @@ index 92d346da..1ca44a71 100644
 +            backdropView.clipsToBounds = true
 +            backdropView.isUserInteractionEnabled = false
 +            backdropView.alpha = 0.0
-+            let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
-+            blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-+            backdropView.addSubview(blurView)
 +            let dimView = UIView()
 +            dimView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 +            backdropView.addSubview(dimView)
 +            self.ayuAvatarBackdropDimView = dimView
 +            backdropView.frame = self.bounds
-+            blurView.frame = backdropView.bounds
 +            dimView.frame = backdropView.bounds
 +            self.view.insertSubview(backdropView, at: 0)
 +            self.ayuAvatarBackdropView = backdropView
 +        }
-+        if let blurView = backdropView.subviews.first as? UIVisualEffectView {
-+            blurView.effect = UIBlurEffect(style: dark ? .dark : .light)
-+        }
 +        // Keeps the header text readable over a bright or a dark photo.
-+        self.ayuAvatarBackdropDimView?.backgroundColor = dark ? UIColor(white: 0.0, alpha: 0.35) : UIColor(white: 1.0, alpha: 0.35)
++        self.ayuAvatarBackdropDimView?.backgroundColor = dark ? UIColor(white: 0.0, alpha: 0.3) : UIColor(white: 1.0, alpha: 0.3)
 +
++        // The photo itself is blurred, so nothing else on the screen shows through.
 +        self.ayuAvatarBackdropDisposable.set((peerAvatarCompleteImage(account: self.context.account, peer: peer, size: CGSize(width: 320.0, height: 320.0), round: false, drawLetters: false, fullSize: true)
++        |> map { image -> UIImage? in
++            return image.flatMap(ayuBlurredBackdrop)
++        }
 +        |> deliverOnMainQueue).startStrict(next: { [weak backdropView] image in
 +            guard let backdropView, let image else {
 +                return
@@ -3381,10 +3967,35 @@ index 92d346da..1ca44a71 100644
 +        }))
 +    }
 +
++    /// Over the blurred photo, sections draw no theme colour around their rounded corners:
++    /// their corner images go clear and the section clips its items to a rounded shape instead.
++    private func ayuSectionPresentationData() -> PresentationData {
++        guard self.ayuAvatarBackdropView != nil else {
++            return self.presentationData
++        }
++        let theme = self.presentationData.theme
++        if let cached = self.ayuBackdropPresentationData, cached.base === theme {
++            return cached.data
++        }
++        let list = theme.list.withUpdated(blocksBackgroundColor: .clear)
++        let clearTheme = PresentationTheme(name: theme.name, index: theme.index, referenceTheme: theme.referenceTheme, overallDarkAppearance: theme.overallDarkAppearance, intro: theme.intro, passcode: theme.passcode, rootController: theme.rootController, list: list, chatList: theme.chatList, chat: theme.chat, actionSheet: theme.actionSheet, contextMenu: theme.contextMenu, inAppNotification: theme.inAppNotification, chart: theme.chart, preview: theme.preview)
++        let data = self.presentationData.withUpdated(theme: clearTheme)
++        self.ayuBackdropPresentationData = (theme, data)
++        return data
++    }
++
      private func updateBackgroundColor() {
          let color: UIColor
          if self.paneContainerNode.currentPaneKey == .gifts {
-@@ -7723,9 +7795,9 @@ extension PeerInfoScreenNode {
+@@ -6114,6 +6203,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+             // iPhone Duo: the panes and tabs stay out of the side strip; the container stays full width.
+             let paneSideInsets = peerInfoSideInsets(layout: layout)
+             self.paneContainerNode.stripInsets = (paneSideInsets.stripLeft, paneSideInsets.stripRight)
++            self.paneContainerNode.ayuClearBackground = self.ayuAvatarBackdropView != nil
+             self.paneContainerNode.update(size: self.paneContainerNode.bounds.size, sideInset: paneSideInsets.paneSideInset, topInset: paneContainerTopInset, bottomInset: bottomInset, deviceMetrics: layout.deviceMetrics, visibleHeight: visibleHeight, expansionFraction: self.initialExpandPanes ? 1.0 : effectiveAreaExpansionFraction, presentationData: self.presentationData, data: self.data, areTabsHidden: self.headerNode.customNavigationContentNode != nil, disableTabSwitching: disableTabSwitching, navigationHeight: navigationHeight, transition: transition)
+           
+             // iPhone Duo unfolded portrait: the search field ends left of the status island.
+@@ -7723,11 +7813,27 @@ extension PeerInfoScreenNode {
                  }
              } catch {
                  let data = context.sharedContext.currentPresentationData.with { $0 }
@@ -3396,6 +4007,64 @@ index 92d346da..1ca44a71 100644
          picker.pushController = { [weak self] controller in self?.controller?.push(controller) }
          self.emojiStatusSelectionController = picker
          self.controller?.present(picker, in: .window(.root))
+     }
+ }
++
++/// The profile photo for the backdrop: heavily blurred, a little more saturated, edges kept.
++private func ayuBlurredBackdrop(_ image: UIImage) -> UIImage? {
++    guard let input = CIImage(image: image) else {
++        return nil
++    }
++    let extent = input.extent
++    let blurred = input.clampedToExtent()
++    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: extent.width * 0.08])
++    .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.2])
++    .cropped(to: extent)
++    guard let cgImage = CIContext(options: nil).createCGImage(blurred, from: extent) else {
++        return nil
++    }
++    return UIImage(cgImage: cgImage)
++}
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenItemSectionContainerNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenItemSectionContainerNode.swift
+index 7a821b3c..5daf9ed3 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenItemSectionContainerNode.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenItemSectionContainerNode.swift
+@@ -35,7 +35,7 @@ final class PeerInfoScreenItemSectionContainerNode: ASDisplayNode {
+         self.addSubnode(self.bottomSeparatorNode)
+     }
+     
+-    func update(context: AccountContext, width: CGFloat, safeInsets: UIEdgeInsets, hasCorners: Bool, presentationData: PresentationData, items: [PeerInfoScreenItem], transition: ContainedViewLayoutTransition) -> CGFloat {
++    func update(context: AccountContext, width: CGFloat, safeInsets: UIEdgeInsets, hasCorners: Bool, presentationData: PresentationData, items: [PeerInfoScreenItem], transition: ContainedViewLayoutTransition, clipsCorners: Bool = false) -> CGFloat {
+         self.backgroundNode.backgroundColor = presentationData.theme.list.itemBlocksBackgroundColor
+         self.topSeparatorNode.backgroundColor = presentationData.theme.list.itemBlocksSeparatorColor
+         self.bottomSeparatorNode.backgroundColor = presentationData.theme.list.itemBlocksSeparatorColor
+@@ -127,6 +127,26 @@ final class PeerInfoScreenItemSectionContainerNode: ASDisplayNode {
+         transition.updateFrame(node: self.topSeparatorNode, frame: CGRect(origin: CGPoint(x: 0.0, y: contentWithBackgroundOffset - UIScreenPixel), size: CGSize(width: width, height: UIScreenPixel)))
+         transition.updateFrame(node: self.bottomSeparatorNode, frame: CGRect(origin: CGPoint(x: 0.0, y: contentWithBackgroundHeight), size: CGSize(width: width, height: UIScreenPixel)))
+         
++        // AyuGram: over the profile's blurred photo the items' corner images are clear, so the
++        // section's own shape rounds them: the header above, the rounded panel, the comments below.
++        if clipsCorners && hasCorners {
++            let radius: CGFloat = 26.0
++            let panel = CGRect(x: 0.0, y: contentWithBackgroundOffset, width: width, height: max(0.0, contentWithBackgroundHeight - contentWithBackgroundOffset))
++            let path = UIBezierPath(rect: CGRect(x: 0.0, y: -1000.0, width: width, height: 1000.0 + panel.minY))
++            path.append(UIBezierPath(roundedRect: panel, cornerRadius: min(radius, panel.height / 2.0)))
++            path.append(UIBezierPath(rect: CGRect(x: 0.0, y: panel.maxY, width: width, height: max(0.0, contentHeight - panel.maxY) + 1000.0)))
++            let mask = (self.itemContainerNode.layer.mask as? CAShapeLayer) ?? CAShapeLayer()
++            mask.path = path.cgPath
++            self.itemContainerNode.layer.mask = mask
++            self.backgroundNode.cornerRadius = min(radius, panel.height / 2.0)
++            if #available(iOS 13.0, *) {
++                self.backgroundNode.layer.cornerCurve = .continuous
++            }
++        } else {
++            self.itemContainerNode.layer.mask = nil
++            self.backgroundNode.cornerRadius = 0.0
++        }
++
+         if contentHeight.isZero {
+             transition.updateAlpha(node: self.topSeparatorNode, alpha: 0.0)
+             transition.updateAlpha(node: self.bottomSeparatorNode, alpha: 0.0)
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
 index db64b678..e773778f 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift

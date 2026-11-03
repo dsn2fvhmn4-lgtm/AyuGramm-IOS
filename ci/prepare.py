@@ -71,7 +71,7 @@ for name in ("GlassBlue", "GlassGraphite"):
 classic_fills = {
     "Default": "#2B2242", "Alt": "#9C7CFF", "Discord": "#5865F2", "Spotify": "#121212",
     "Extera": "#E53935", "Nothing": "#F4F4F4", "Bard": "#FFFFFF", "Yaplus": "#FBF4F8",
-    "Win95": "#008080", "Chibi": "#2B2242", "Chibi2": "#C9B8FF", "Extera2": "#E53935",
+    "Win95": "#008080", "Chibi": "#2A282A", "Chibi2": "#C9B8FF", "Extera2": "#E53935",
 }
 for name, fill in classic_fills.items():
     bundle = icons / f"AyuOriginal{name}.icon"

@@ -39,7 +39,7 @@ paths = {"blades": fillet_path(left, left_r) + " " + fillet_path(right, right_r)
 # mark bounding box in these units
 bbox = (outer_bottom, apex, 2*cx - outer_bottom, base)
 
-def svg(size, bg=None, blade="#FFFFFF", core="#BBBBBB", scale=0.53, dy=0.0):
+def svg(size, bg=None, blade="#FFFFFF", core="#BBBBBB", scale=0.66, dy=0.0):
     w = bbox[2] - bbox[0]; h = bbox[3] - bbox[1]
     k = size * scale / w
     tx = size/2 - (bbox[0] + w/2) * k; ty = size/2 - (bbox[1] + h/2) * k + dy*size

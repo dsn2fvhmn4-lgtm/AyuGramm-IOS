@@ -8,7 +8,7 @@ SIZE = 1024
 LEFT, RIGHT = mark.paths["blades"].split(" M")
 RIGHT = "M" + RIGHT
 
-def icon(bg, left, right, core, defs="", extra="", scale=0.56, face=False):
+def icon(bg, left, right, core, defs="", extra="", scale=0.68, face=False):
     w = mark.bbox[2] - mark.bbox[0]; h = mark.bbox[3] - mark.bbox[1]
     k = SIZE * scale / w
     tx = SIZE / 2 - (mark.bbox[0] + w / 2) * k; ty = SIZE / 2 - (mark.bbox[1] + h / 2) * k
@@ -46,7 +46,7 @@ STYLES = {
     "Yaplus": icon("#FBF4F8", "url(#ya)", "url(#ya)", "url(#ya)",
                    defs=grad("ya", (("0", "#FF5F45"), ("0.5", "#E0309A"), ("1", "#7B4BFF")))),
     "Win95": None,  # pixel art, drawn below
-    "Chibi": icon("#2B2242", "#F4F2FA", "#C7B3FF", "#FFFFFF", face=True),
+    # Chibi is the owner's snow leopard artwork (classic/Chibi.png), not drawn here.
     "Chibi2": icon("#C9B8FF", "#FFFFFF", "#FFFFFF", "#FFFFFF", face=True),
     "Extera2": icon("#E53935", "#FFFFFF", "#FFFFFF", "#FFC9C6"),
 }
@@ -79,5 +79,5 @@ for name, svg in STYLES.items():
         continue
     render(svg, "classic/%s.png" % name)
     Image.open("classic/%s.png" % name).convert("RGB").save("classic/%s.png" % name, optimize=True)
-for name in ("Chibi", "Chibi2"):
+for name in ("Chibi2",):
     pixelate("classic/%s.png" % name, 128)

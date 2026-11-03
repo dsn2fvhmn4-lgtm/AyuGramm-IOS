@@ -143,7 +143,7 @@ and helpers in `ayugram_plugin::ui`.
 
 ### Utility API (27.6)
 
-One hundred calls added in 27.6. Types are in `sdk/typescript/ayu.d.ts`; tests are in
+One hundred and fifty-two calls added in 27.6. Types are in `sdk/typescript/ayu.d.ts`; tests are in
 `tools/mock-runner/api276.test.ts` (`PRELUDE=…/AyuScriptRuntime.swift node --test api276.test.ts`).
 
 Answered by the app:
@@ -168,6 +168,17 @@ Run inside the plugin, no permission:
 - `ayu.async`: `sleep`, `debounce`, `throttle`, `retry`, `timeout`.
 - `ayu.format`: `bytes`, `number`, `plural(n, ['яблоко', 'яблока', 'яблок'])`.
 - `ayu.extract`: `mentions`, `hashtags`, `emails`.
+
+The second batch (52 more, also in the prelude, no permission):
+
+- `ayu.text`: `normalizeSpaces`, `removeUrls`, `removeMentions`, `detectScript`, `wrap(text, width)`, `occurrences`, `randomString` (up to 10000), `isEmojiOnly`, `firstLine`.
+- `ayu.date`: `weekday`, `monthName`, `isWeekend`, `daysInMonth`, `age`, `unix`, `fromUnix`, `countdown`.
+- `ayu.math`: `factorial`, `gcd`, `lcm`, `isPrime` (null above 10¹²), `fibonacci`, `mod`, `roundTo`, `range` (up to 100000 numbers).
+- `ayu.color`: `toHsl`, `fromHsl`, `invert`, `grayscale`, `rgba`.
+- `ayu.array`: `flatten`, `zip`, `countBy`, `partition`, `last`, `compact` (keeps 0), `intersect`, `difference`.
+- `ayu.object`: `pick`, `omit`, `merge` (deep), `get('a.b.0')`, `set('a.b', value)`.
+- `ayu.validate`: `email`, `phone`, `username`, `hexColor`.
+- `ayu.storage`: `remove`, `has`, `getJSON`, `setJSON`, `increment`.
 
 ### Events
 

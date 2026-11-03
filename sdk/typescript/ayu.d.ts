@@ -110,7 +110,7 @@ declare namespace Ayu {
       declare(items: { key: string; type: "toggle" | "text" | "slider" | "color" | "select" | "preview"; title: string; subtitle?: string; default?: Json; min?: number; max?: number; step?: number; options?: (string | { value: string; title: string })[] }[]): void;
       get(key: string): Json;
     };
-    storage: { get(key: string): string | null; set(key: string, value: string | null): void };
+    storage: { get(key: string): string | null; set(key: string, value: string | null): void; remove(key: string): void; has(key: string): boolean; getJSON<T = unknown>(key: string, fallback?: T): T | null; setJSON(key: string, value: unknown): void; increment(key: string, by?: number): number };
     /** Keychain-backed values, separate from storage (permission `secrets`). */
     secrets: { get(key: string): string | null; set(key: string, value: string | null): void };
     ui: Ui;
@@ -231,6 +231,11 @@ declare namespace Ayu {
       /** ghbdtn ⇄ привет */
       swapLayout(text: string): string; mock(text: string): string; between(text: string, start: string, end?: string): string | null;
       template(text: string, vars: Record<string, unknown>): string;
+      normalizeSpaces(text: string): string; removeUrls(text: string): string; removeMentions(text: string): string;
+      detectScript(text: string): "cyrillic" | "latin" | "mixed" | "other"; wrap(text: string, width: number): string;
+      occurrences(text: string, part: string): number;
+      /** At most 10000 characters. */
+      randomString(length?: number, alphabet?: string): string; isEmojiOnly(text: string): boolean; firstLine(text: string): string;
     };
     date: {
       format(date: Date | number | string, pattern?: string): string; relative(date: Date | number | string, language?: string): string;
@@ -238,11 +243,27 @@ declare namespace Ayu {
       isToday(date: Date | number | string): boolean; startOfDay(date?: Date | number | string): Date;
       /** "1h 30m" → 5400000 ms; units ms s m h d w. */
       parseDuration(text: string): number | null; formatDuration(ms: number, language?: string): string;
+      weekday(date: Date | number | string, language?: string): string; monthName(date: Date | number | string, language?: string): string;
+      isWeekend(date: Date | number | string): boolean; daysInMonth(date: Date | number | string): number;
+      age(birth: Date | number | string, at?: Date | number | string): number; unix(date?: Date | number | string): number; fromUnix(seconds: number): Date;
+      countdown(target: Date | number | string): { days: number; hours: number; minutes: number; seconds: number };
     };
-    color: { hexToRgb(hex: string): { r: number; g: number; b: number } | null; rgbToHex(r: number, g: number, b: number): string; lighten(hex: string, amount?: number): string | null; darken(hex: string, amount?: number): string | null; mix(a: string, b: string, amount?: number): string | null; contrastText(hex: string): "#000000" | "#FFFFFF"; random(): string };
-    math: { clamp(value: number, min: number, max: number): number; lerp(a: number, b: number, t: number): number; random(min?: number, max?: number): number; randomInt(min: number, max: number): number; round(value: number, digits?: number): number; sum(list: number[]): number; average(list: number[]): number; median(list: number[]): number; percent(part: number, total: number): number };
+    color: { hexToRgb(hex: string): { r: number; g: number; b: number } | null; rgbToHex(r: number, g: number, b: number): string; lighten(hex: string, amount?: number): string | null; darken(hex: string, amount?: number): string | null; mix(a: string, b: string, amount?: number): string | null; contrastText(hex: string): "#000000" | "#FFFFFF"; random(): string;
+      toHsl(hex: string): { h: number; s: number; l: number } | null; fromHsl(h: number, s: number, l: number): string; invert(hex: string): string | null; grayscale(hex: string): string | null; rgba(hex: string, alpha?: number): string | null };
+    math: { clamp(value: number, min: number, max: number): number; lerp(a: number, b: number, t: number): number; random(min?: number, max?: number): number; randomInt(min: number, max: number): number; round(value: number, digits?: number): number; sum(list: number[]): number; average(list: number[]): number; median(list: number[]): number; percent(part: number, total: number): number;
+      factorial(n: number): number; gcd(a: number, b: number): number; lcm(a: number, b: number): number;
+      /** null above 1e12. */
+      isPrime(n: number): boolean | null; fibonacci(n: number): number; mod(a: number, b: number): number; roundTo(value: number, step: number): number;
+      /** At most 100000 numbers. */
+      range(start: number, end?: number, step?: number): number[] };
     url: { parse(url: string): { protocol: string; host: string; port: number | null; path: string; query: Record<string, string>; hash: string } | null; build(base: string, params: Record<string, unknown>): string; param(url: string, name: string): string | null; isUrl(text: string): boolean; extract(text: string): string[]; domain(url: string): string | null };
-    array: { chunk<T>(list: T[], size: number): T[][]; unique<T>(list: T[], key?: keyof T | ((item: T) => unknown)): T[]; shuffle<T>(list: T[]): T[]; sample<T>(list: T[]): T | null; groupBy<T>(list: T[], key: keyof T | ((item: T) => unknown)): Record<string, T[]>; sortBy<T>(list: T[], key: keyof T | ((item: T) => unknown), descending?: boolean): T[] };
+    array: { chunk<T>(list: T[], size: number): T[][]; unique<T>(list: T[], key?: keyof T | ((item: T) => unknown)): T[]; shuffle<T>(list: T[]): T[]; sample<T>(list: T[]): T | null; groupBy<T>(list: T[], key: keyof T | ((item: T) => unknown)): Record<string, T[]>; sortBy<T>(list: T[], key: keyof T | ((item: T) => unknown), descending?: boolean): T[];
+      flatten(list: unknown[], depth?: number): unknown[]; zip(...lists: unknown[][]): unknown[][]; countBy<T>(list: T[], key?: keyof T | ((item: T) => unknown)): Record<string, number>;
+      partition<T>(list: T[], fn: (item: T) => unknown): [T[], T[]]; last<T>(list: T[]): T | null;
+      /** Drops null, undefined, false, '' and NaN; keeps 0. */
+      compact<T>(list: T[]): T[]; intersect<T>(a: T[], b: T[]): T[]; difference<T>(a: T[], b: T[]): T[] };
+    object: { pick<T extends object>(value: T, keys: (keyof T)[]): Partial<T>; omit<T extends object>(value: T, keys: (keyof T)[]): Partial<T>; merge<A, B>(target: A, source: B): A & B; get(value: unknown, path: string, fallback?: unknown): unknown; set<T extends object>(value: T, path: string, item: unknown): T };
+    validate: { email(text: string): boolean; phone(text: string): boolean; username(text: string): boolean; hexColor(text: string): boolean };
     async: { sleep(ms: number): Promise<void>; debounce<F extends (...args: any[]) => void>(fn: F, ms: number): F; throttle<F extends (...args: any[]) => unknown>(fn: F, ms: number): F; retry<T>(fn: () => T | Promise<T>, times?: number, delay?: number): Promise<T>; timeout<T>(promise: Promise<T>, ms: number): Promise<T> };
     format: { bytes(value: number, digits?: number): string; number(value: number, digits?: number): string; plural(count: number, forms: [string, string, string] | [string, string]): string };
     extract: { mentions(text: string): string[]; hashtags(text: string): string[]; emails(text: string): string[] };

@@ -105,3 +105,39 @@ test("async helpers", async () => {
   assert.deepEqual(await out, ["slept", 3, "Timed out after 10 ms", 7]);
   sandbox.dispose();
 });
+
+test("second batch: text, date, math, color", () => {
+  const { out } = run(`
+    const d = new Date(2026, 10, 7);
+    return [
+      ayu.text.normalizeSpaces('  a   b \\n\\n\\n\\n c '), ayu.text.removeUrls('see https://x.y/z now'), ayu.text.removeMentions('hi @neosay !'),
+      ayu.text.detectScript('привет hi'), ayu.text.detectScript('привет'), ayu.text.wrap('one two three four', 9), ayu.text.occurrences('abcabcab', 'ab'),
+      ayu.text.randomString(12).length, ayu.text.randomString(1e15).length, ayu.text.isEmojiOnly('👍 🔥'), ayu.text.isEmojiOnly('hi 👍'), ayu.text.firstLine('a\\nb'),
+      ayu.date.weekday(d, 'ru'), ayu.date.monthName(d, 'en'), ayu.date.isWeekend(d), ayu.date.daysInMonth(new Date(2024, 1, 10)),
+      ayu.date.age(new Date(2012, 4, 8), new Date(2026, 10, 3)), ayu.date.unix(new Date(1000000)), ayu.date.fromUnix(1).getTime(),
+      Object.keys(ayu.date.countdown(Date.now() + 90061000)).join(','),
+      ayu.math.factorial(5), ayu.math.gcd(12, 18), ayu.math.lcm(4, 6), ayu.math.isPrime(97), ayu.math.isPrime(91), ayu.math.isPrime(2), ayu.math.fibonacci(10),
+      ayu.math.mod(-1, 5), ayu.math.roundTo(17, 5), ayu.math.range(5), ayu.math.range(10, 0, -3),
+      ayu.color.toHsl('#FF0000'), ayu.color.fromHsl(120, 100, 50), ayu.color.invert('#000000'), ayu.color.grayscale('#FF0000'), ayu.color.rgba('#FF8000', 0.5)
+    ];`);
+  assert.deepEqual(out, ["a b\n\nc", "see now", "hi !", "mixed", "cyrillic", "one two\nthree\nfour", 3, 12, 10000, true, false, "a",
+    "суббота", "November", true, 29, 14, 1000, 1000, "days,hours,minutes,seconds",
+    120, 6, 12, true, false, true, 55, 4, 15, [0, 1, 2, 3, 4], [10, 7, 4, 1],
+    { h: 0, s: 100, l: 50 }, "#00FF00", "#FFFFFF", "#363636", "rgba(255, 128, 0, 0.5)"]);
+});
+
+test("second batch: array, object, validate, storage", () => {
+  const { out } = run(`return [
+    ayu.array.flatten([1, [2, [3]]]), ayu.array.zip([1, 2, 3], ['a', 'b']), ayu.array.countBy(['a', 'b', 'a']), ayu.array.partition([1, 2, 3, 4], (n) => n > 2),
+    ayu.array.last([1, 2]), ayu.array.compact([0, 1, null, '', 'x', false, NaN]), ayu.array.intersect([1, 2, 3], [2, 3, 4]), ayu.array.difference([1, 2, 3], [2]),
+    ayu.object.pick({ a: 1, b: 2 }, ['a']), ayu.object.omit({ a: 1, b: 2 }, ['a']), ayu.object.merge({ a: { x: 1 }, b: 1 }, { a: { y: 2 } }),
+    ayu.object.get({ a: { b: [5] } }, 'a.b.0'), ayu.object.get({}, 'x.y', 'none'), ayu.object.set({}, 'a.b', 3),
+    ayu.validate.email('me@void.gram'), ayu.validate.email('nope@'), ayu.validate.phone('+380 (67) 123-45-67'), ayu.validate.username('@neosay'),
+    ayu.validate.username('ab'), ayu.validate.hexColor('#abc'),
+    (ayu.storage.setJSON('cfg', { on: true }), ayu.storage.getJSON('cfg')), ayu.storage.has('cfg'), ayu.storage.increment('n'), ayu.storage.increment('n', 5),
+    (ayu.storage.remove('cfg'), ayu.storage.has('cfg')), ayu.storage.getJSON('missing', [])
+  ];`);
+  assert.deepEqual(out, [[1, 2, 3], [[1, "a"], [2, "b"]], { a: 2, b: 1 }, [[3, 4], [1, 2]], 2, [0, 1, "x"], [2, 3], [1, 3],
+    { a: 1 }, { b: 2 }, { a: { x: 1, y: 2 }, b: 1 }, 5, "none", { a: { b: 3 } }, true, false, true, true, false, true,
+    { on: true }, true, 1, 6, false, []]);
+});

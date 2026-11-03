@@ -615,7 +615,7 @@ index 7a606e8d..ad881b42 100644
      public func download(_ entry: Entry, completion: @escaping (Result<Data, Failure>) -> Void) {
          guard let url = URL(string: entry.url) else {
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-index 88c84197..bbda201c 100644
+index 88c84197..0b4f1b32 100644
 --- a/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 @@ -77,7 +77,7 @@ public final class AyuScriptRuntime {
@@ -745,7 +745,7 @@ index 88c84197..bbda201c 100644
              }),
              tl: Object.freeze({
                  block: (method) => host.call('tl.block', { method: text(method) }),
-@@ -1231,6 +1311,157 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+@@ -1231,9 +1311,216 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
                  disable: (name) => host.feature(text(name), true),
                  enable: (name) => host.feature(text(name), false)
              }),
@@ -800,7 +800,16 @@ index 88c84197..bbda201c 100644
 +                swapLayout: (value) => Array.from(text(value)).map((c) => helpers.layout[c] || c).join(''),
 +                mock: (value) => { let i = 0; return Array.from(text(value)).map((c) => /\\p{L}/u.test(c) ? ((i++ % 2) ? c.toUpperCase() : c.toLowerCase()) : c).join(''); },
 +                between: (value, start, end) => { const s = text(value); const a = s.indexOf(text(start)); if (a < 0) return null; const from = a + text(start).length; const b = end === undefined ? s.length : s.indexOf(text(end), from); return b < 0 ? null : s.slice(from, b); },
-+                template: (value, vars) => text(value).replace(/\\{(\\w+)\\}/g, (m, key) => vars && vars[key] !== undefined && vars[key] !== null ? String(vars[key]) : m)
++                template: (value, vars) => text(value).replace(/\\{(\\w+)\\}/g, (m, key) => vars && vars[key] !== undefined && vars[key] !== null ? String(vars[key]) : m),
++                normalizeSpaces: (value) => text(value).replace(/[ \\t ]+/g, ' ').replace(/ *\\n */g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim(),
++                removeUrls: (value) => text(value).replace(/\\b(?:https?:\\/\\/|www\\.|t\\.me\\/)[^\\s<>"']+/gi, '').replace(/[ \\t]{2,}/g, ' ').trim(),
++                removeMentions: (value) => text(value).replace(/(^|[^\\w@])@[A-Za-z][A-Za-z0-9_]{3,31}\\b/g, '$1').replace(/[ \\t]{2,}/g, ' ').trim(),
++                detectScript: (value) => { const s = text(value); const cyr = (s.match(/\\p{Script=Cyrillic}/gu) || []).length; const lat = (s.match(/\\p{Script=Latin}/gu) || []).length; return cyr && lat ? 'mixed' : (cyr ? 'cyrillic' : (lat ? 'latin' : 'other')); },
++                wrap: (value, width) => { const max = Math.max(1, Number(width) || 40); return text(value).split('\\n').map((line) => { const out = []; let cur = ''; line.split(' ').forEach((word) => { if (cur && Array.from(cur + ' ' + word).length > max) { out.push(cur); cur = word; } else cur = cur ? cur + ' ' + word : word; }); out.push(cur); return out.join('\\n'); }).join('\\n'); },
++                occurrences: (value, part) => { const s = text(value); const p = text(part); if (!p) return 0; let n = 0; let i = s.indexOf(p); while (i >= 0) { n++; i = s.indexOf(p, i + p.length); } return n; },
++                randomString: (length, alphabet) => { const chars = Array.from(text(alphabet || 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')); let out = ''; for (let i = 0; i < Math.min(10000, Math.max(0, Number(length) || 8)); i++) out += chars[Math.floor(Math.random() * chars.length)]; return out; },
++                isEmojiOnly: (value) => { const s = text(value).replace(/\\s/g, ''); return !!s && /^(?:\\p{Extended_Pictographic}|\\p{Emoji_Modifier}|‍|️|[\\u{1F1E6}-\\u{1F1FF}])+$/u.test(s); },
++                firstLine: (value) => text(value).split('\\n')[0]
 +            }),
 +            date: Object.freeze({
 +                format: (value, pattern) => {
@@ -835,7 +844,15 @@ index 88c84197..bbda201c 100644
 +                        const n = Math.floor(left / size); left -= n * size; if (n) parts.push(n + (ru ? ' ' + short : en));
 +                    }
 +                    return parts.length ? parts.join(' ') : (ru ? '0 с' : '0s');
-+                }
++                },
++                weekday: (value, language) => { const ru = text(language || helpers.language()).startsWith('ru') || text(language || helpers.language()).startsWith('uk'); const names = ru ? ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'] : ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']; return names[helpers.toDate(value).getDay()]; },
++                monthName: (value, language) => { const ru = text(language || helpers.language()).startsWith('ru') || text(language || helpers.language()).startsWith('uk'); const names = ru ? ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'] : ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']; return names[helpers.toDate(value).getMonth()]; },
++                isWeekend: (value) => { const d = helpers.toDate(value).getDay(); return d === 0 || d === 6; },
++                daysInMonth: (value) => { const d = helpers.toDate(value); return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); },
++                age: (birth, at) => { const b = helpers.toDate(birth); const now = helpers.toDate(at === undefined ? Date.now() : at); let years = now.getFullYear() - b.getFullYear(); if (now.getMonth() < b.getMonth() || (now.getMonth() === b.getMonth() && now.getDate() < b.getDate())) years--; return years; },
++                unix: (value) => Math.floor(helpers.toDate(value === undefined ? Date.now() : value).getTime() / 1000),
++                fromUnix: (seconds) => new Date(Number(seconds) * 1000),
++                countdown: (target) => { let ms = Math.max(0, helpers.toDate(target).getTime() - Date.now()); const days = Math.floor(ms / 86400000); ms -= days * 86400000; const hours = Math.floor(ms / 3600000); ms -= hours * 3600000; const minutes = Math.floor(ms / 60000); ms -= minutes * 60000; return { days: days, hours: hours, minutes: minutes, seconds: Math.floor(ms / 1000) }; }
 +            }),
 +            color: Object.freeze({
 +                hexToRgb: (hex) => helpers.rgb(hex),
@@ -844,7 +861,12 @@ index 88c84197..bbda201c 100644
 +                darken: (hex, amount) => helpers.mixHex(hex, '#000000', amount === undefined ? 0.2 : Number(amount)),
 +                mix: (a, b, amount) => helpers.mixHex(a, b, amount === undefined ? 0.5 : Number(amount)),
 +                contrastText: (hex) => { const c = helpers.rgb(hex); if (!c) return '#000000'; const lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255; return lum > 0.55 ? '#000000' : '#FFFFFF'; },
-+                random: () => '#' + Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0').toUpperCase()
++                random: () => '#' + Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0').toUpperCase(),
++                toHsl: (hex) => { const c = helpers.rgb(hex); if (!c) return null; const r = c.r / 255; const g = c.g / 255; const b = c.b / 255; const max = Math.max(r, g, b); const min = Math.min(r, g, b); const l = (max + min) / 2; let h = 0; let s = 0; if (max !== min) { const d = max - min; s = l > 0.5 ? d / (2 - max - min) : d / (max + min); h = max === r ? (g - b) / d + (g < b ? 6 : 0) : (max === g ? (b - r) / d + 2 : (r - g) / d + 4); h *= 60; } return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) }; },
++                fromHsl: (h, s, l) => { const sat = Math.max(0, Math.min(100, Number(s))) / 100; const lig = Math.max(0, Math.min(100, Number(l))) / 100; const k = (n) => (n + Number(h) / 30) % 12; const a = sat * Math.min(lig, 1 - lig); const f = (n) => lig - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return '#' + [f(0), f(8), f(4)].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('').toUpperCase(); },
++                invert: (hex) => { const c = helpers.rgb(hex); return c ? '#' + [255 - c.r, 255 - c.g, 255 - c.b].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase() : null; },
++                grayscale: (hex) => { const c = helpers.rgb(hex); if (!c) return null; const y = Math.round(0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b).toString(16).padStart(2, '0'); return ('#' + y + y + y).toUpperCase(); },
++                rgba: (hex, alpha) => { const c = helpers.rgb(hex); return c ? 'rgba(' + c.r + ', ' + c.g + ', ' + c.b + ', ' + Math.max(0, Math.min(1, Number(alpha === undefined ? 1 : alpha))) + ')' : null; }
 +            }),
 +            math: Object.freeze({
 +                clamp: (value, min, max) => Math.min(Number(max), Math.max(Number(min), Number(value))),
@@ -855,7 +877,15 @@ index 88c84197..bbda201c 100644
 +                sum: (list) => (Array.isArray(list) ? list : []).reduce((a, b) => a + (Number(b) || 0), 0),
 +                average: (list) => { const l = Array.isArray(list) ? list : []; return l.length ? l.reduce((a, b) => a + (Number(b) || 0), 0) / l.length : 0; },
 +                median: (list) => { const l = (Array.isArray(list) ? list : []).map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b); if (!l.length) return 0; const m = Math.floor(l.length / 2); return l.length % 2 ? l[m] : (l[m - 1] + l[m]) / 2; },
-+                percent: (part, total) => Number(total) ? Number(part) / Number(total) * 100 : 0
++                percent: (part, total) => Number(total) ? Number(part) / Number(total) * 100 : 0,
++                factorial: (n) => { let r = 1; for (let i = 2; i <= Math.min(170, Math.floor(Number(n) || 0)); i++) r *= i; return r; },
++                gcd: (a, b) => { let x = Math.abs(Math.round(Number(a))); let y = Math.abs(Math.round(Number(b))); while (y) { const t = y; y = x % y; x = t; } return x; },
++                lcm: (a, b) => { const x = Math.abs(Math.round(Number(a))); const y = Math.abs(Math.round(Number(b))); if (!x || !y) return 0; let g = x; let h = y; while (h) { const t = h; h = g % h; g = t; } return x / g * y; },
++                isPrime: (n) => { const x = Math.floor(Number(n)); if (!(x >= 2) || x > 1e12) return x > 1e12 ? null : false; if (x % 2 === 0) return x === 2; for (let i = 3; i * i <= x; i += 2) if (x % i === 0) return false; return true; },
++                fibonacci: (n) => { let a = 0; let b = 1; for (let i = 0; i < Math.min(1476, Math.floor(Number(n) || 0)); i++) { const t = a + b; a = b; b = t; } return a; },
++                mod: (a, b) => ((Number(a) % Number(b)) + Number(b)) % Number(b),
++                roundTo: (value, step) => { const s = Number(step) || 1; return Math.round(Number(value) / s) * s; },
++                range: (start, end, step) => { const s = Number(step) || 1; const out = []; if (end === undefined) { end = start; start = 0; } for (let i = Number(start); s > 0 ? i < Number(end) : i > Number(end); i += s) { out.push(i); if (out.length >= 100000) break; } return out; }
 +            }),
 +            url: Object.freeze({
 +                parse: (value) => helpers.parseUrl(text(value)),
@@ -874,14 +904,22 @@ index 88c84197..bbda201c 100644
 +                shuffle: (list) => { const l = (Array.isArray(list) ? list : []).slice(); for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = l[i]; l[i] = l[j]; l[j] = t; } return l; },
 +                sample: (list) => { const l = Array.isArray(list) ? list : []; return l.length ? l[Math.floor(Math.random() * l.length)] : null; },
 +                groupBy: (list, key) => (Array.isArray(list) ? list : []).reduce((groups, item) => { const k = String(typeof key === 'function' ? key(item) : item && item[key]); (groups[k] = groups[k] || []).push(item); return groups; }, {}),
-+                sortBy: (list, key, descending) => (Array.isArray(list) ? list : []).slice().sort((a, b) => { const x = typeof key === 'function' ? key(a) : a && a[key]; const y = typeof key === 'function' ? key(b) : b && b[key]; const r = x < y ? -1 : (x > y ? 1 : 0); return descending ? -r : r; })
++                sortBy: (list, key, descending) => (Array.isArray(list) ? list : []).slice().sort((a, b) => { const x = typeof key === 'function' ? key(a) : a && a[key]; const y = typeof key === 'function' ? key(b) : b && b[key]; const r = x < y ? -1 : (x > y ? 1 : 0); return descending ? -r : r; }),
++                flatten: (list, depth) => (Array.isArray(list) ? list : []).flat(depth === undefined ? Infinity : Number(depth)),
++                zip: function () { const lists = Array.prototype.map.call(arguments, (l) => Array.isArray(l) ? l : []); const n = lists.length ? Math.min.apply(null, lists.map((l) => l.length)) : 0; const out = []; for (let i = 0; i < n; i++) out.push(lists.map((l) => l[i])); return out; },
++                countBy: (list, key) => (Array.isArray(list) ? list : []).reduce((counts, item) => { const k = String(typeof key === 'function' ? key(item) : (key ? item && item[key] : item)); counts[k] = (counts[k] || 0) + 1; return counts; }, {}),
++                partition: (list, fn) => { const yes = []; const no = []; (Array.isArray(list) ? list : []).forEach((item) => (fn(item) ? yes : no).push(item)); return [yes, no]; },
++                last: (list) => { const l = Array.isArray(list) ? list : []; return l.length ? l[l.length - 1] : null; },
++                compact: (list) => (Array.isArray(list) ? list : []).filter((item) => item !== null && item !== undefined && item !== false && item !== '' && !(typeof item === 'number' && isNaN(item))),
++                intersect: (a, b) => { const set = new Set(Array.isArray(b) ? b : []); return (Array.isArray(a) ? a : []).filter((item) => set.has(item)); },
++                difference: (a, b) => { const set = new Set(Array.isArray(b) ? b : []); return (Array.isArray(a) ? a : []).filter((item) => !set.has(item)); }
 +            }),
 +            async: Object.freeze({
 +                sleep: (ms) => new Promise((resolve) => root.setTimeout(resolve, Number(ms) || 0)),
 +                debounce: (fn, ms) => { let timer = null; return function () { const args = arguments; if (timer !== null) root.clearTimeout(timer); timer = root.setTimeout(() => { timer = null; fn.apply(null, args); }, Number(ms) || 0); }; },
 +                throttle: (fn, ms) => { let last = 0; return function () { const now = Date.now(); if (now - last >= (Number(ms) || 0)) { last = now; return fn.apply(null, arguments); } }; },
 +                retry: (fn, times, delay) => new Promise((resolve, reject) => {
-+                    let left = Math.max(1, Number(times) || 3);
++                    let left = Math.min(20, Math.max(1, Number(times) || 3));
 +                    const attempt = () => Promise.resolve().then(fn).then(resolve, (error) => { if (--left <= 0) reject(error); else root.setTimeout(attempt, Number(delay) || 0); });
 +                    attempt();
 +                }),
@@ -900,9 +938,31 @@ index 88c84197..bbda201c 100644
 +                hashtags: (value) => (text(value).match(/#[\\p{L}\\p{N}_]+/gu) || []),
 +                emails: (value) => (text(value).match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g) || [])
 +            }),
++            object: Object.freeze({
++                pick: (value, keys) => { const out = {}; (Array.isArray(keys) ? keys : []).forEach((k) => { if (value && Object.prototype.hasOwnProperty.call(value, k)) out[k] = value[k]; }); return out; },
++                omit: (value, keys) => { const drop = new Set(Array.isArray(keys) ? keys : []); const out = {}; Object.keys(value || {}).forEach((k) => { if (!drop.has(k)) out[k] = value[k]; }); return out; },
++                merge: function merge(target, source) { const out = Object.assign({}, target || {}); Object.keys(source || {}).forEach((k) => { const a = out[k]; const b = source[k]; out[k] = a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b) ? merge(a, b) : b; }); return out; },
++                get: (value, path, fallback) => { let cur = value; for (const part of text(path).split('.').filter(Boolean)) { if (cur === null || cur === undefined) break; cur = cur[part]; } return cur === undefined ? (fallback === undefined ? null : fallback) : cur; },
++                set: (value, path, item) => { const parts = text(path).split('.').filter(Boolean); const root = value && typeof value === 'object' ? value : {}; let cur = root; parts.forEach((part, i) => { if (i === parts.length - 1) cur[part] = item; else { if (!cur[part] || typeof cur[part] !== 'object') cur[part] = {}; cur = cur[part]; } }); return root; }
++            }),
++            validate: Object.freeze({
++                email: (value) => /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/.test(text(value).trim()),
++                phone: (value) => { const digits = text(value).replace(/[\\s()\\-.]/g, ''); return /^\\+?\\d{7,15}$/.test(digits); },
++                username: (value) => /^@?[A-Za-z](?!.*__)[A-Za-z0-9_]{3,30}[A-Za-z0-9]$/.test(text(value).trim()),
++                hexColor: (value) => /^#?(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(text(value).trim())
++            }),
              storage: Object.freeze({
                  get: (key) => { const v = host.storageGet(text(key)); return v === undefined ? null : v; },
-                 set: (key, value) => host.storageSet(text(key), value === null || value === undefined ? null : text(value))
+-                set: (key, value) => host.storageSet(text(key), value === null || value === undefined ? null : text(value))
++                set: (key, value) => host.storageSet(text(key), value === null || value === undefined ? null : text(value)),
++                remove: (key) => host.storageSet(text(key), null),
++                has: (key) => { const v = host.storageGet(text(key)); return v !== undefined && v !== null; },
++                getJSON: (key, fallback) => { const v = host.storageGet(text(key)); if (v === undefined || v === null) return fallback === undefined ? null : fallback; try { return JSON.parse(v); } catch (e) { return fallback === undefined ? null : fallback; } },
++                setJSON: (key, value) => host.storageSet(text(key), value === undefined ? null : JSON.stringify(value)),
++                increment: (key, by) => { const v = Number(host.storageGet(text(key))) || 0; const next = v + (by === undefined ? 1 : Number(by) || 0); host.storageSet(text(key), String(next)); return next; }
+             })
+         });
+         root.ayu = ayu;
 diff --git a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift b/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
 index 2bad9fb0..6e085421 100644
 --- a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
@@ -4378,10 +4438,27 @@ index f908a716..35f740bb 100644
                      // Secret chats, a locked app or disabled previews never put message text on the lock screen.
                      let showsText = displayPreviews && inAppSettings.displayPreviews && inAppSettings.displayNameOnLockscreen && !isLocked && peerId.namespace != Namespaces.Peer.SecretChat
 diff --git a/submodules/TelegramUI/Sources/AyuDecoyUI.swift b/submodules/TelegramUI/Sources/AyuDecoyUI.swift
-index 36c1f8b3..7e6f77d2 100644
+index 36c1f8b3..2b152e6a 100644
 --- a/submodules/TelegramUI/Sources/AyuDecoyUI.swift
 +++ b/submodules/TelegramUI/Sources/AyuDecoyUI.swift
-@@ -48,7 +48,7 @@ final class AyuDecoyCoordinator {
+@@ -18,11 +18,14 @@ final class AyuDecoyCoordinator {
+ 
+     // MARK: Launch
+ 
+-    /// Called once the main window exists. Shows the splash, then the code lock when needed.
++    /// Called once the main window exists. Shows the splash only where decoy mode needs it (its
++    /// double tap opens the decoy), then the code lock when needed; otherwise the app opens at once.
+     func attach(window: UIWindow, sharedContext: SharedAccountContextImpl) {
+         self.window = window
+         self.sharedContext = sharedContext
+-        self.showSplash()
++        if AyuDecoyState.isConfigured && !AyuDecoyState.codeRequired && !AyuDecoyState.isActive {
++            self.showSplash()
++        }
+         if AyuDecoyState.codeRequired && AyuDecoyState.isConfigured {
+             self.showLock()
+         } else if AyuDecoyState.isActive && AyuDecoyState.decoyAccountId == nil {
+@@ -48,7 +51,7 @@ final class AyuDecoyCoordinator {
          icon.transform = CGAffineTransform(scaleX: 0.55, y: 0.55).translatedBy(x: 0.0, y: 40.0)
          splash.addSubview(icon)
          let title = UILabel()
@@ -4390,7 +4467,7 @@ index 36c1f8b3..7e6f77d2 100644
          title.font = UIFont.systemFont(ofSize: 22.0, weight: .semibold)
          title.textColor = UIColor.label
          title.sizeToFit()
-@@ -203,12 +203,12 @@ final class AyuBrokenView: UIView {
+@@ -203,12 +206,12 @@ final class AyuBrokenView: UIView {
          let icon = UIImageView(image: UIImage(systemName: "exclamationmark.triangle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 54.0, weight: .regular)))
          icon.tintColor = UIColor.systemOrange
          let title = UILabel()

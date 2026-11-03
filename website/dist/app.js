@@ -218,7 +218,7 @@
       completed.add(current);
       save();
       updateProgress();
-      live.textContent = completed.size === panels.length ? 'Все шаги отмечены. AyuGram готов к запуску.' : 'Последний шаг отмечен. Можно вернуться к остальным шагам.';
+      live.textContent = completed.size === panels.length ? 'Все шаги отмечены. VoidGram готов к запуску.' : 'Последний шаг отмечен. Можно вернуться к остальным шагам.';
     }
   });
   complete.addEventListener('click', () => {

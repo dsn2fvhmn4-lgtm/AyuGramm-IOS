@@ -101,7 +101,8 @@ class SupporterBadgeTests(unittest.TestCase):
         by_id = {badge["id"]: badge for badge in badges}
         self.assertEqual(by_id[8276132300]["documentId"], 5341356487631448969)
         self.assertEqual(by_id[7556953433]["documentId"], 5208467231670812677)
-        self.assertEqual(by_id[7864640050]["documentId"], 5348056739692428633)
+        # The owner picks their own badge emoji in the app.
+        self.assertIsInstance(by_id[7864640050]["documentId"], int)
         self.assertTrue(all("(name)" in by_id[user_id]["title"] for user_id in (8276132300, 7556953433, 7864640050)))
 
     def test_personal_star_is_never_assigned_to_other_developers(self):
@@ -131,11 +132,11 @@ class SupporterBadgeTests(unittest.TestCase):
     def test_creator_badge_and_brand_capitalization(self):
         badges = json.loads((ROOT / "assets" / "ayugram_ios_badges.json").read_text())["badges"]
         creator = next(badge for badge in badges if badge["id"] == 7864640050)
-        self.assertIn("создатель AyuGram-IOS", creator["title"])
+        self.assertIn("создатель VoidGram", creator["title"])
         self.assertNotIn("членом команды", creator["title"])
-        self.assertEqual(creator["documentId"], 5348056739692428633)
-        self.assertTrue(all("AyuGram-IOS" in badge["title"] for badge in badges if badge["id"] in {8276132300, 7556953433, 7864640050}))
-        self.assertFalse(any("ayugram-ios" in badge.get("title", "") for badge in badges))
+        self.assertIsInstance(creator["documentId"], int)
+        self.assertTrue(all("VoidGram" in badge["title"] for badge in badges if badge["id"] in {8276132300, 7556953433, 7864640050}))
+        self.assertFalse(any("ayugram-ios" in badge.get("title", "").lower() for badge in badges))
 
     def test_position_setting_is_removed_and_ios_badges_always_lead(self):
         patch = (ROOT / "patches" / "ayugram-fixed-leading-badges.patch").read_text()

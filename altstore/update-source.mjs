@@ -18,7 +18,7 @@ const entry = {
   version,
   buildVersion: String(build),
   date: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
-  localizedDescription: notes || `AyuGram ${version}`,
+  localizedDescription: notes || `VoidGram ${version}`,
   downloadURL: `https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/download/${tag}/${path.basename(ipaPath)}`,
   size: fs.statSync(ipaPath).size,
   minOSVersion: "15.0",

@@ -55,6 +55,17 @@ for name in ("Brand", "Blue", "Graphite"):
     contents["images"][0]["scale"] = "3x"
     contents_path.write_text(json.dumps(contents, indent=2) + "\n")
 
+# VoidGram artwork replaces the launcher icons the patches ship: the full-bleed
+# Icon Composer layers and the glass icons' backdrop and glass logo.
+voidgram = root / "assets/branding/voidgram"
+icons = source / "Telegram/Telegram-iOS"
+for name, folder in (("Brand", "Telegram"), ("Blue", "AyuBlue"), ("Graphite", "AyuGraphite")):
+    shutil.copy2(voidgram / (name + ".png"), icons / (folder + ".icon") / "Assets" / "AyuGram.png")
+for name in ("GlassBlue", "GlassGraphite"):
+    for layer in ("Background", "Logo"):
+        shutil.copy2(voidgram / f"{name}-{layer}.png", icons / f"Ayu{name}.icon" / "Assets" / f"{layer}.png")
+    shutil.copy2(voidgram / f"{name}-Preview.png", source / "submodules/TelegramUI/Images.xcassets/AyuGram" / f"{name}.imageset" / "AyuGram.png")
+
 for badge_name in ("ExteraBadge", "ExteraDeveloperBadge"):
     badge_src = root / "assets" / "branding" / f"{badge_name}.imageset"
     if badge_src.is_dir():
@@ -82,4 +93,4 @@ if eblan_src.is_file():
 missing = missing_port_sources(source)
 if missing:
     raise SystemExit("Port patch is missing required native source files:\n" + "\n".join(missing))
-print("Applied native AyuGram changes to " + actual)
+print("Applied native VoidGram changes to " + actual)

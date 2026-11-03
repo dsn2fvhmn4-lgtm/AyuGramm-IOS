@@ -1,3 +1,211 @@
+diff --git a/Telegram/AyuIntents/AyuAppIntents.swift b/Telegram/AyuIntents/AyuAppIntents.swift
+index 6195b04c..2897c42b 100644
+--- a/Telegram/AyuIntents/AyuAppIntents.swift
++++ b/Telegram/AyuIntents/AyuAppIntents.swift
+@@ -58,7 +58,7 @@ private var ayuRussian: Bool {
+ @available(iOS 16.0, *)
+ struct AyuSetGhostModeIntent: AppIntent {
+     static let title: LocalizedStringResource = "Ghost Mode"
+-    static let description = IntentDescription("Turns AyuGram Ghost Mode on or off: no read receipts, online status, typing or upload progress.")
++    static let description = IntentDescription("Turns VoidGram Ghost Mode on or off: no read receipts, online status, typing or upload progress.")
+ 
+     @Parameter(title: "Enabled", default: true)
+     var enabled: Bool
+@@ -69,7 +69,7 @@ struct AyuSetGhostModeIntent: AppIntent {
+ 
+     func perform() async throws -> some IntentResult & ProvidesDialog {
+         guard let answer = await AyuIntentChannel.ask("ghost.set", ["enabled": self.enabled]), answer["ok"] as? Bool == true else {
+-            throw AyuIntentError(message: ayuRussian ? "AyuGram ещё не готов. Откройте приложение и попробуйте снова." : "AyuGram is not ready yet. Open the app and try again.")
++            throw AyuIntentError(message: ayuRussian ? "VoidGram ещё не готов. Откройте приложение и попробуйте снова." : "VoidGram is not ready yet. Open the app and try again.")
+         }
+         let text = self.enabled ? (ayuRussian ? "Режим призрака включён" : "Ghost Mode is on") : (ayuRussian ? "Режим призрака выключен" : "Ghost Mode is off")
+         return .result(dialog: IntentDialog(stringLiteral: text))
+@@ -78,7 +78,7 @@ struct AyuSetGhostModeIntent: AppIntent {
+ 
+ @available(iOS 16.0, *)
+ struct AyuSendMessageIntent: AppIntent {
+-    static let title: LocalizedStringResource = "Send a Message with AyuGram"
++    static let title: LocalizedStringResource = "Send a Message with VoidGram"
+     static let description = IntentDescription("Sends a text message to a username (@name) or to a chat by its title.")
+ 
+     @Parameter(title: "Recipient", description: "A @username or a chat title")
+@@ -104,12 +104,12 @@ struct AyuSendMessageIntent: AppIntent {
+ 
+ @available(iOS 16.0, *)
+ struct AyuUnreadCountIntent: AppIntent {
+-    static let title: LocalizedStringResource = "Unread Chats in AyuGram"
++    static let title: LocalizedStringResource = "Unread Chats in VoidGram"
+     static let description = IntentDescription("Tells how many unread messages and chats there are.")
+ 
+     func perform() async throws -> some IntentResult & ReturnsValue<Int> & ProvidesDialog {
+         guard let answer = await AyuIntentChannel.ask("unread.count") else {
+-            throw AyuIntentError(message: ayuRussian ? "AyuGram ещё не готов." : "AyuGram is not ready yet.")
++            throw AyuIntentError(message: ayuRussian ? "VoidGram ещё не готов." : "VoidGram is not ready yet.")
+         }
+         let messages = answer["messages"] as? Int ?? 0
+         let chats = answer["chats"] as? Int ?? 0
+diff --git a/Telegram/BUILD b/Telegram/BUILD
+index d0de06d1..0b540e78 100644
+--- a/Telegram/BUILD
++++ b/Telegram/BUILD
+@@ -656,7 +656,7 @@ plist_fragment(
+     template =
+     """
+     <key>CFBundleDisplayName</key>
+-    <string>AyuGram</string>
++    <string>VoidGram</string>
+     """
+ )
+ 
+@@ -1718,7 +1718,7 @@ plist_fragment(
+     <key>CFBundleDevelopmentRegion</key>
+     <string>en</string>
+     <key>CFBundleDisplayName</key>
+-    <string>AyuGram</string>
++    <string>VoidGram</string>
+     <key>CFBundleIdentifier</key>
+     <string>{telegram_bundle_id}</string>
+     <key>CFBundleName</key>
+@@ -1780,7 +1780,7 @@ plist_fragment(
+     <key>NSCameraUsageDescription</key>
+     <string>We need this so that you can take and share photos and videos.</string>
+     <key>NSLocalNetworkUsageDescription</key>
+-    <string>AyuGram uses the local network to find nearby iPhones when you share your contact with them.</string>
++    <string>VoidGram uses the local network to find nearby iPhones when you share your contact with them.</string>
+     <key>NSBonjourServices</key>
+     <array>
+         <string>_ayu-contact._tcp</string>
+@@ -1883,7 +1883,7 @@ plist_fragment(
+             <key>UTTypeIdentifier</key>
+             <string>one.ayugram.ios.plugin</string>
+             <key>UTTypeDescription</key>
+-            <string>AyuGram Plugin</string>
++            <string>VoidGram Plugin</string>
+             <key>UTTypeConformsTo</key>
+             <array><string>public.data</string></array>
+             <key>UTTypeTagSpecification</key>
+@@ -1914,7 +1914,7 @@ plist_fragment(
+     <key>CFBundleDocumentTypes</key>
+     <array>
+         <dict>
+-            <key>CFBundleTypeName</key><string>AyuGram Plugin</string>
++            <key>CFBundleTypeName</key><string>VoidGram Plugin</string>
+             <key>CFBundleTypeRole</key><string>Viewer</string>
+             <key>LSHandlerRank</key><string>Alternate</string>
+             <key>LSItemContentTypes</key><array><string>one.ayugram.ios.plugin</string></array>
+diff --git a/Telegram/Telegram-iOS/AyuGlassGraphite.icon/icon.json b/Telegram/Telegram-iOS/AyuGlassGraphite.icon/icon.json
+index 35984300..11aaf7d1 100644
+--- a/Telegram/Telegram-iOS/AyuGlassGraphite.icon/icon.json
++++ b/Telegram/Telegram-iOS/AyuGlassGraphite.icon/icon.json
+@@ -1,6 +1,6 @@
+ {
+   "fill": {
+-    "automatic-gradient": "extended-srgb:0.04,0.08,0.18,1.00000"
++    "automatic-gradient": "extended-srgb:0.06,0.06,0.06,1.00000"
+   },
+   "groups": [
+     {
+diff --git a/Telegram/Telegram-iOS/AyuGraphite.icon/icon.json b/Telegram/Telegram-iOS/AyuGraphite.icon/icon.json
+index fab8aefc..d0217474 100644
+--- a/Telegram/Telegram-iOS/AyuGraphite.icon/icon.json
++++ b/Telegram/Telegram-iOS/AyuGraphite.icon/icon.json
+@@ -1,6 +1,6 @@
+ {
+   "fill": {
+-    "automatic-gradient": "extended-srgb:0.12,0.12,0.12,1.00000"
++    "automatic-gradient": "extended-srgb:0.85,0.85,0.85,1.00000"
+   },
+   "groups": [
+     {
+diff --git a/Telegram/Telegram-iOS/Telegram.icon/icon.json b/Telegram/Telegram-iOS/Telegram.icon/icon.json
+index 93021774..7dd4ba99 100644
+--- a/Telegram/Telegram-iOS/Telegram.icon/icon.json
++++ b/Telegram/Telegram-iOS/Telegram.icon/icon.json
+@@ -1,6 +1,6 @@
+ {
+   "fill": {
+-    "automatic-gradient": "extended-srgb:0.16863,0.13333,0.25882,1.00000"
++    "automatic-gradient": "extended-srgb:0.10000,0.10000,0.10000,1.00000"
+   },
+   "groups": [
+     {
+diff --git a/Telegram/WidgetKitWidget/AyuSystemWidgets.swift b/Telegram/WidgetKitWidget/AyuSystemWidgets.swift
+index 990bca88..b34a1208 100644
+--- a/Telegram/WidgetKitWidget/AyuSystemWidgets.swift
++++ b/Telegram/WidgetKitWidget/AyuSystemWidgets.swift
+@@ -103,8 +103,8 @@ struct AyuGhostControl: ControlWidget {
+                 Label(isOn ? "On" : "Off", systemImage: isOn ? "eye.slash.fill" : "eye.fill")
+             }
+         }
+-        .displayName("AyuGram Ghost Mode")
+-        .description("Turns AyuGram Ghost Mode on and off.")
++        .displayName("VoidGram Ghost Mode")
++        .description("Turns VoidGram Ghost Mode on and off.")
+     }
+ }
+ #endif
+diff --git a/submodules/AccountContext/Sources/AyuAdvancedControllers.swift b/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
+index c9327353..e92ae40e 100644
+--- a/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
++++ b/submodules/AccountContext/Sources/AyuAdvancedControllers.swift
+@@ -34,7 +34,7 @@ private final class AyuTranslationController: UITableViewController {
+     private var result = ""
+     private var status = ""
+     private var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
+-    init(context: AccountContext, text: String) { self.context = context; self.text = text; super.init(style: .insetGrouped); self.title = "AyuGram · Translate" }
++    init(context: AccountContext, text: String) { self.context = context; self.text = text; super.init(style: .insetGrouped); self.title = "VoidGram · Translate" }
+     required init?(coder: NSCoder) { return nil }
+     deinit { self.request.dispose() }
+     override func viewDidLoad() {
+diff --git a/submodules/AccountContext/Sources/AyuExportControllers.swift b/submodules/AccountContext/Sources/AyuExportControllers.swift
+index a97df50f..025633aa 100644
+--- a/submodules/AccountContext/Sources/AyuExportControllers.swift
++++ b/submodules/AccountContext/Sources/AyuExportControllers.swift
+@@ -13,7 +13,7 @@ final class AyuChatExportController: UITableViewController, UIDocumentPickerDele
+     private var status = ""
+     private var directory: URL?
+     private var ru: Bool { return self.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru") }
+-    init(context: AccountContext, peerId: EnginePeer.Id) { self.context = context; self.peerId = peerId; super.init(style: .insetGrouped); self.title = "AyuGram · Export" }
++    init(context: AccountContext, peerId: EnginePeer.Id) { self.context = context; self.peerId = peerId; super.init(style: .insetGrouped); self.title = "VoidGram · Export" }
+     required init?(coder: NSCoder) { return nil }
+     deinit { self.request.dispose(); if let directory = self.directory { try? FileManager.default.removeItem(at: directory) } }
+     override func viewDidLoad() {
+diff --git a/submodules/AccountContext/Sources/AyuPluginAppBridge.swift b/submodules/AccountContext/Sources/AyuPluginAppBridge.swift
+index 223c7092..3b6777fa 100644
+--- a/submodules/AccountContext/Sources/AyuPluginAppBridge.swift
++++ b/submodules/AccountContext/Sources/AyuPluginAppBridge.swift
+@@ -45,14 +45,14 @@ public enum AyuPluginTrust {
+ 
+     public static func refusalText(_ russian: Bool) -> String {
+         return russian
+-            ? "Этот плагин внедряется в работу приложения (плеер, тексты песен и т.п.). Такие плагины можно ставить только из официального каталога AyuGram.\n\nЧтобы всё равно поставить его, включите «Инжект-плагины не из официального источника» в настройках разработчика."
+-            : "This plugin injects into the app (player, lyrics and so on). Such plugins can only be installed from the official AyuGram catalog.\n\nTo install it anyway, turn on \"Injecting plugins from unofficial sources\" in the developer settings."
++            ? "Этот плагин внедряется в работу приложения (плеер, тексты песен и т.п.). Такие плагины можно ставить только из официального каталога VoidGram.\n\nЧтобы всё равно поставить его, включите «Инжект-плагины не из официального источника» в настройках разработчика."
++            : "This plugin injects into the app (player, lyrics and so on). Such plugins can only be installed from the official VoidGram catalog.\n\nTo install it anyway, turn on \"Injecting plugins from unofficial sources\" in the developer settings."
+     }
+ 
+     public static func disclaimerText(_ russian: Bool) -> String {
+         return russian
+-            ? "⚠️ Плагин НЕ из официального источника и внедряется в работу приложения.\n\nAyuGram не проверял этот код. Он может сломать плеер, тексты песен или другие функции и вести себя не так, как обещает описание.\n\nВся ответственность за установку и любые последствия лежит полностью на вас. Разработчики AyuGram за это не отвечают."
+-            : "⚠️ This plugin is NOT from the official source and injects into the app.\n\nAyuGram has not reviewed this code. It may break the player, lyrics or other features and may not behave as described.\n\nYou take full responsibility for installing it and for any consequences. The AyuGram developers are not responsible."
++            ? "⚠️ Плагин НЕ из официального источника и внедряется в работу приложения.\n\nVoidGram не проверял этот код. Он может сломать плеер, тексты песен или другие функции и вести себя не так, как обещает описание.\n\nВся ответственность за установку и любые последствия лежит полностью на вас. Разработчики VoidGram за это не отвечают."
++            : "⚠️ This plugin is NOT from the official source and injects into the app.\n\nVoidGram has not reviewed this code. It may break the player, lyrics or other features and may not behave as described.\n\nYou take full responsibility for installing it and for any consequences. The VoidGram developers are not responsible."
+     }
+ }
+ 
+diff --git a/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift b/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift
+index a9c651fd..4cee1a8c 100644
+--- a/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift
++++ b/submodules/AccountContext/Sources/AyuPluginEngineInstance.swift
+@@ -93,7 +93,7 @@ final class AyuPluginEngineInstance: AyuPluginInstance {
+             let trimmed = line.trimmingCharacters(in: .whitespaces)
+             if prefixes.contains(where: { trimmed.hasPrefix($0) }) {
+                 let indent = String(line.prefix(while: { $0 == " " || $0 == "\t" }))
+-                lines.append(indent + "pass  # AyuGram: " + trimmed)
++                lines.append(indent + "pass  # VoidGram: " + trimmed)
+             } else {
+                 lines.append(line)
+             }
 diff --git a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
 index a4dffd26..ad28e94e 100644
 --- a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
@@ -36,6 +244,19 @@ index a4dffd26..ad28e94e 100644
              return ["ok": true]
          case "ui.menu.remove":
              AyuPluginUI.shared.setMenu(nil, remove: string("id", 64), owner: pluginId)
+diff --git a/submodules/AccountContext/Sources/AyuPluginServices.swift b/submodules/AccountContext/Sources/AyuPluginServices.swift
+index 2e495f4e..ec183546 100644
+--- a/submodules/AccountContext/Sources/AyuPluginServices.swift
++++ b/submodules/AccountContext/Sources/AyuPluginServices.swift
+@@ -90,7 +90,7 @@ enum AyuPluginNetwork {
+     static func complete(pluginId: String, args: [String: Any], completion: @escaping (Any) -> Void) {
+         let key = AyuTools.aiKey
+         guard !key.isEmpty, let url = URL(string: AyuTools.aiEndpoint), url.scheme == "https" else {
+-            return completion(["error": "No AI service is set up in AyuGram → Tools."])
++            return completion(["error": "No AI service is set up in VoidGram → Tools."])
+         }
+         AyuPluginPrivacy.shared.record(pluginId, api: "ai.complete", host: url.host)
+         var messages: [[String: String]] = []
 diff --git a/submodules/AccountContext/Sources/AyuScriptCatalog.swift b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
 index 7a606e8d..ad881b42 100644
 --- a/submodules/AccountContext/Sources/AyuScriptCatalog.swift
@@ -97,9 +318,27 @@ index 7a606e8d..ad881b42 100644
      public func download(_ entry: Entry, completion: @escaping (Result<Data, Failure>) -> Void) {
          guard let url = URL(string: entry.url) else {
 diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-index 88c84197..43a307cb 100644
+index 88c84197..6c7b8605 100644
 --- a/submodules/AccountContext/Sources/AyuScriptRuntime.swift
 +++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
+@@ -77,7 +77,7 @@ public final class AyuScriptRuntime {
+             let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true
+             switch self {
+             case let .missingDependency(requirement): return ru ? "Сначала установите плагин \(requirement)." : "Install \(requirement) first."
+-            case let .revoked(reason): return (ru ? "Команда AyuGram отозвала этот плагин." : "The AyuGram team revoked this plugin.") + (reason.isEmpty ? "" : " " + reason)
++            case let .revoked(reason): return (ru ? "Команда VoidGram отозвала этот плагин." : "The VoidGram team revoked this plugin.") + (reason.isEmpty ? "" : " " + reason)
+             case .invalidFile: return ru ? "Файл не является плагином на JavaScript, Python или WebAssembly." : "The file is not a JavaScript, Python or WebAssembly plugin."
+             case .tooLarge: return ru ? "Плагин слишком большой (код — до 512 КБ, WebAssembly — до 2 МБ)." : "The plugin is too large (512 KB for code, 2 MB for WebAssembly)."
+             case .invalidIdentifier: return ru ? "Укажите @id из латинских букв, цифр, «-» и «_»." : "Use an @id of latin letters, digits, - and _."
+@@ -673,7 +673,7 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+             }
+             self.vm = vm
+             self.context = context
+-            context.name = "AyuGram plugin " + self.id
++            context.name = "VoidGram plugin " + self.id
+             // Developer option: Safari → Develop → this device → the plugin's context.
+             if #available(iOS 16.4, *), AyuDeveloperSettings.unlocked, UserDefaults.standard.bool(forKey: "ayu.dev.webInspector") {
+                 context.isInspectable = true
 @@ -1108,7 +1108,14 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
              media: Object.freeze({
                  process: (data, ops, options) => requestAsync('media.process', Object.assign({}, options || {}, { data: text(data), ops: Array.isArray(ops) ? ops : [] })).then((answer) => answer.data),
@@ -116,6 +355,18 @@ index 88c84197..43a307cb 100644
              }),
              tl: Object.freeze({
                  block: (method) => host.call('tl.block', { method: text(method) }),
+diff --git a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift b/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
+index 2bad9fb0..6e085421 100644
+--- a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
++++ b/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
+@@ -163,6 +163,6 @@ public final class AyuVerifiedRegistry {
+ 
+     /// The label line the app shows under the user's name.
+     public static func caption(_ entry: Entry, russian: Bool) -> String {
+-        return entry.text + (russian ? " — подтверждено командой AyuGram для iOS." : " — confirmed by the AyuGram for iOS team.")
++        return entry.text + (russian ? " — подтверждено командой VoidGram." : " — confirmed by the VoidGram team.")
+     }
+ }
 diff --git a/submodules/Display/Source/AyuCustomization.swift b/submodules/Display/Source/AyuCustomization.swift
 index 23390366..16d688af 100644
 --- a/submodules/Display/Source/AyuCustomization.swift
@@ -186,6 +437,19 @@ index 6326e07b..aa24bff4 100644
      /// Downloads, checks and installs a font, then makes it the app font. Returns its names.
      public func install(_ entry: Entry, completion: @escaping (Result<[String], Error>) -> Void) {
          guard let url = URL(string: entry.url) else { return completion(.failure(Failure.invalidCatalog)) }
+diff --git a/submodules/Display/Source/AyuSettingsTransfer.swift b/submodules/Display/Source/AyuSettingsTransfer.swift
+index 68b9ba65..8b0cb194 100644
+--- a/submodules/Display/Source/AyuSettingsTransfer.swift
++++ b/submodules/Display/Source/AyuSettingsTransfer.swift
+@@ -29,7 +29,7 @@ public enum AyuSettingsTransfer {
+ 
+     /// Writes the export to a temporary `.ayusettings` file for the share sheet.
+     public static func exportFile() throws -> URL {
+-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AyuGram-settings.ayusettings")
++        let url = FileManager.default.temporaryDirectory.appendingPathComponent("VoidGram-settings.ayusettings")
+         try self.exportData().write(to: url, options: .atomic)
+         return url
+     }
 diff --git a/submodules/Display/Source/AyuSpeechBleep.swift b/submodules/Display/Source/AyuSpeechBleep.swift
 index a23cb92a..13b4df1e 100644
 --- a/submodules/Display/Source/AyuSpeechBleep.swift
@@ -212,10 +476,67 @@ index a23cb92a..13b4df1e 100644
              guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId)), recognizer.isAvailable, recognizer.supportsOnDeviceRecognition,
                    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000.0, channels: 1, interleaved: false),
                    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)), let channel = buffer.floatChannelData?[0] else {
+diff --git a/submodules/SettingsUI/Sources/AyuAppIconPickerController.swift b/submodules/SettingsUI/Sources/AyuAppIconPickerController.swift
+index e9b8bba6..9dbc3f27 100644
+--- a/submodules/SettingsUI/Sources/AyuAppIconPickerController.swift
++++ b/submodules/SettingsUI/Sources/AyuAppIconPickerController.swift
+@@ -74,7 +74,7 @@ final class AyuAppIconPickerController: UICollectionViewController {
+                 self.changing = false; self.navigationItem.leftBarButtonItem = nil
+                 if success { self.selected = choice.name; self.collectionView.reloadData() }
+                 else {
+-                    let alert = UIAlertController(title: "AyuGram", message: self.russian ? "iOS не применила иконку. Текущий выбор сохранён. Проверь способ установки и повтори попытку." : "iOS did not apply the icon. The current selection was retained. Check the installation method and try again.", preferredStyle: .alert)
++                    let alert = UIAlertController(title: "VoidGram", message: self.russian ? "iOS не применила иконку. Текущий выбор сохранён. Проверь способ установки и повтори попытку." : "iOS did not apply the icon. The current selection was retained. Check the installation method and try again.", preferredStyle: .alert)
+                     alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
+                 }
+             }
+diff --git a/submodules/SettingsUI/Sources/AyuAppearanceController.swift b/submodules/SettingsUI/Sources/AyuAppearanceController.swift
+index c6bbae2e..734f3f8d 100644
+--- a/submodules/SettingsUI/Sources/AyuAppearanceController.swift
++++ b/submodules/SettingsUI/Sources/AyuAppearanceController.swift
+@@ -147,7 +147,7 @@ public func ayuAppearanceController(context: AccountContext) -> ViewController {
+         ]
+         var entries: [AyuAppearanceEntry] = [
+             .preview(appearance, presentationData.theme, presentationData.chatWallpaper, presentationData.chatFontSize, presentationData.chatBubbleCorners, presentationData.dateTimeFormat, presentationData.nameDisplayOrder, previewItems),
+-            .header(1, "AYUGRAM"),
++            .header(1, "VOIDGRAM"),
+             .toggle(2, AyuStrings.secondsMessageTimestamps.text(ru), appearance.showMessageSeconds),
+             .toggle(3, AyuStrings.ghostButtonChatHeader.text(ru), appearance.showGhostButton),
+             .header(10, AyuStrings.deletedMessageMark.text(ru)),
+@@ -178,7 +178,7 @@ public func ayuAppearanceController(context: AccountContext) -> ViewController {
+         } else {
+             text = AyuStrings.chatAppearanceCouldNotSaved.text(ru)
+         }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: text, actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: text, actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+diff --git a/submodules/SettingsUI/Sources/AyuBackup.swift b/submodules/SettingsUI/Sources/AyuBackup.swift
+index 3c24b434..037d6aa0 100644
+--- a/submodules/SettingsUI/Sources/AyuBackup.swift
++++ b/submodules/SettingsUI/Sources/AyuBackup.swift
+@@ -41,7 +41,7 @@ enum AyuBackup {
+             guard status == errSecSuccess, let sealed = try? AES.GCM.seal(plain, using: key(password: password, salt: salt)).combined else { return completion(nil) }
+             let formatter = DateFormatter()
+             formatter.dateFormat = "yyyy-MM-dd"
+-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("AyuGram-backup-\(formatter.string(from: Date())).ayubackup")
++            let url = FileManager.default.temporaryDirectory.appendingPathComponent("VoidGram-backup-\(formatter.string(from: Date())).ayubackup")
+             do {
+                 try (magic + salt + sealed).write(to: url, options: .atomic)
+                 completion(url)
 diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
-index 150bfdef..1581cff7 100644
+index 150bfdef..b1426ea6 100644
 --- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
 +++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+@@ -35,7 +35,7 @@ enum AyuCategory: Int32, CaseIterable {
+         case .media: return ru ? "Голос, кружки, звонки и загрузки" : "Voice, video messages, calls and downloads"
+         case .appearance: return ru ? "Сообщения, список чатов, панели и иконки" : "Messages, chat list, panels and icons"
+         case .security: return ru ? "Защита чатов, код-пароль и аккаунты" : "Chat protection, passcode and accounts"
+-        case .more: return ru ? "Плагины, инструменты, бейджи, настройки AyuGram" : "Plugins, tools, badges, AyuGram settings"
++        case .more: return ru ? "Плагины, инструменты, бейджи, настройки VoidGram" : "Plugins, tools, badges, VoidGram settings"
+         }
+     }
+ 
 @@ -46,7 +46,7 @@ enum AyuCategory: Int32, CaseIterable {
          case .media: return AyuSettingsIcons.symbol("photo.on.rectangle.angled", color: UIColor(rgb: 0x34C759))
          case .appearance: return AyuSettingsIcons.symbol("paintbrush.pointed.fill", color: UIColor(rgb: 0xFF2D55))
@@ -223,6 +544,24 @@ index 150bfdef..1581cff7 100644
 -        case .more: return AyuSettingsIcons.symbol("ellipsis.circle.fill", color: UIColor(rgb: 0x8E8E93))
 +        case .more: return AyuSettingsIcons.symbol("ellipsis", color: UIColor(rgb: 0x5856D6))
          }
+     }
+ }
+@@ -130,7 +130,7 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+         return [
+             AyuCategoryItem(id: 51, symbol: "lock.fill", color: 0xFF9500, titleRu: "Защита чатов", titleEn: "Chat protection", subtitleRu: "Face ID на чаты, скрытые чаты, скриншоты", subtitleEn: "Face ID chats, hidden chats, screenshots", open: page { ayuChatProtectionController(context: $0) }),
+             AyuCategoryItem(id: 52, symbol: "theatermasks.fill", color: 0x5856D6, titleRu: "Режим-приманка и двойное дно", titleEn: "Decoy & hidden account", subtitleRu: "Второй аккаунт за отдельным кодом", subtitleEn: "A second account behind its own code", open: page { ayuDecoySettingsController(context: $0) }),
+-            AyuCategoryItem(id: 53, symbol: "person.2.fill", color: 0x007AFF, titleRu: "Аккаунты", titleEn: "Accounts", subtitleRu: "Настройки AyuGram для каждого аккаунта", subtitleEn: "AyuGram settings per account", open: page { ayuAccountsSettingsController(context: $0) })
++            AyuCategoryItem(id: 53, symbol: "person.2.fill", color: 0x007AFF, titleRu: "Аккаунты", titleEn: "Accounts", subtitleRu: "Настройки VoidGram для каждого аккаунта", subtitleEn: "VoidGram settings per account", open: page { ayuAccountsSettingsController(context: $0) })
+         ]
+     case .more:
+         return [
+@@ -140,7 +140,7 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+             AyuCategoryItem(id: 64, symbol: "antenna.radiowaves.left.and.right", color: 0x007AFF, titleRu: "Контакты рядом", titleEn: "Nearby contact", subtitleRu: "", subtitleEn: "", open: page { ayuNearbyContactController(context: $0) }),
+             AyuCategoryItem(id: 65, symbol: "gearshape.fill", color: 0x8E8E93, titleRu: "Общие", titleEn: "General", subtitleRu: "", subtitleEn: "", open: page { ayuGeneralSettingsController(context: $0) }),
+             AyuCategoryItem(id: 66, symbol: "star.circle.fill", color: 0xFF9500, titleRu: "Прочее", titleEn: "Other", subtitleRu: "", subtitleEn: "", open: page { ayuOtherSettingsController(context: $0, navigation: nil) }),
+-            AyuCategoryItem(id: 67, symbol: "square.and.arrow.up.on.square.fill", color: 0x34C759, titleRu: "Настройки AyuGram", titleEn: "AyuGram settings", subtitleRu: "Экспорт, импорт, сброс, пункты Настроек", subtitleEn: "Export, import, reset, Settings rows", open: page { ayuWhiteGramController(context: $0, groups: [.settings], title: ayuIsRussian($0) ? "Настройки AyuGram" : "AyuGram settings") })
++            AyuCategoryItem(id: 67, symbol: "square.and.arrow.up.on.square.fill", color: 0x34C759, titleRu: "Настройки VoidGram", titleEn: "VoidGram settings", subtitleRu: "Экспорт, импорт, сброс, пункты Настроек", subtitleEn: "Export, import, reset, Settings rows", open: page { ayuWhiteGramController(context: $0, groups: [.settings], title: ayuIsRussian($0) ? "Настройки VoidGram" : "VoidGram settings") })
+         ]
      }
  }
 @@ -151,16 +151,24 @@ func ayuCategoryController(context: AccountContext, category: AyuCategory) -> Vi
@@ -254,9 +593,18 @@ index 150bfdef..1581cff7 100644
          for item in items {
              let subtitle = ru ? item.subtitleRu : item.subtitleEn
 diff --git a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
-index 066fd2dd..2076e0bc 100644
+index 066fd2dd..f16e5455 100644
 --- a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
 +++ b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+@@ -56,7 +56,7 @@ func ayuRestrictionBypassController(context: AccountContext) -> ViewController {
+     return ayuPage(context: context, title: { $0 ? "Обход ограничений" : "Restriction bypass" }, notifications: [], entries: { ru in [
+         .header(1, 0, ru ? "ИСЧЕЗАЮЩИЕ МЕДИА" : "DISAPPEARING MEDIA"),
+         .toggle(1, 1, symbol("photo.badge.arrow.down.fill", 0x30B0C7), ru ? "Сохранять одноразовые медиа" : "Save view-once media", ru ? "Фото, видео и кружки «на один просмотр» сохраняются в «Фото» при открытии" : "View-once photos, videos and video messages are saved to Photos when opened", AyuExtras.isOn(.saveViewOnce)),
+-        .info(1, 2, ru ? "Запрет копирования и пересылки, который владелец чата включил сам (в том числе в платных каналах), AyuGram не обходит, и уведомления о скриншотах в секретных чатах не скрывает." : "Copy and forward restrictions the chat owner turned on (paid channels included) are respected, and secret-chat screenshot notices are not hidden.")
++        .info(1, 2, ru ? "Запрет копирования и пересылки, который владелец чата включил сам (в том числе в платных каналах), VoidGram не обходит, и уведомления о скриншотах в секретных чатах не скрывает." : "Copy and forward restrictions the chat owner turned on (paid channels included) are respected, and secret-chat screenshot notices are not hidden.")
+     ] }, open: { _, _, _ in }, toggle: { id, value in
+         if id == 1 { AyuExtras.set(.saveViewOnce, value) }
+     })
 @@ -127,10 +127,6 @@ func ayuVoiceSettingsController(context: AccountContext) -> ViewController {
          entries.append(.header(3, 30, ru ? "ПЛЕЕР" : "PLAYER"))
          entries.append(.link(3, 31, symbol("waveform.path", 0xFF2D55), ru ? "Плавные переходы между треками" : "Smooth track transitions", fade == 0 ? (ru ? "выкл." : "off") : "\(fade) " + (ru ? "с" : "s")))
@@ -282,10 +630,94 @@ index 066fd2dd..2076e0bc 100644
          case 31:
              ayuChoose(present, title: ru ? "Плавные переходы" : "Smooth transitions", ru: ru, options: [0, 2, 4, 6, 8], current: UserDefaults.standard.integer(forKey: "ayu.extra.musicFadeSeconds"), label: { $0 == 0 ? (ru ? "Выключено" : "Off") : "\($0) " + (ru ? "с" : "s") }, equal: { $0 == $1 }, pick: { UserDefaults.standard.set($0, forKey: "ayu.extra.musicFadeSeconds") })
          case 21:
+@@ -297,7 +286,7 @@ func ayuIconsController(context: AccountContext) -> ViewController {
+         .toggle(1, 3, symbol("circle.lefthalf.filled", 0x8E8E93), ru ? "Монохромные иконки настроек" : "Monochrome settings icons", nil, AyuSettingsIcons.monochrome),
+         .info(1, 4, ru ? "Белые значки на тёмно-сером фоне. Выключите, чтобы вернуть цветные иконки. Применяется сразу." : "White glyphs on a dark grey background. Turn off to restore coloured icons. Applies immediately."),
+         .header(2, 10, ru ? "БЕЙДЖ" : "BADGE"),
+-        .toggle(2, 11, symbol("checkmark.seal.fill", 0x8E5CF7), ru ? "Скрыть значок AyuGram у людей" : "Hide the AyuGram badge on people", ru ? "В чатах не показывается; в профиле остаётся" : "Hidden in chats; still shown in the profile", AyuExtras.isOn(.hideAyuBadges))
++        .toggle(2, 11, symbol("checkmark.seal.fill", 0x8E5CF7), ru ? "Скрыть значок VoidGram у людей" : "Hide the VoidGram badge on people", ru ? "В чатах не показывается; в профиле остаётся" : "Hidden in chats; still shown in the profile", AyuExtras.isOn(.hideAyuBadges))
+     ] }, open: { id, _, present in
+         let ru = ayuIsRussian(context)
+         switch id {
+@@ -320,10 +309,10 @@ func ayuChatProtectionController(context: AccountContext) -> ViewController {
+         .link(1, 1, symbol("eye.slash.fill", 0x8E8E93), ru ? "Скрытые чаты" : "Hidden chats", "\(AyuChatPrivacy.hidden.count)"),
+         .info(1, 2, ru ? "Заблокировать чат Face ID или скрыть его: долгое нажатие на чат в списке." : "Lock a chat with Face ID or hide it: long-press it in the chat list."),
+         .header(2, 10, ru ? "ЭКРАН" : "SCREEN"),
+-        .toggle(2, 11, symbol("rectangle.dashed.badge.record", 0xFF3B30), ru ? "Запретить скриншоты в AyuGram" : "Block screenshots in AyuGram", ru ? "Снимки экрана и запись показывают пустой экран" : "Screenshots and recordings show an empty screen", AyuExtras.isOn(.blockScreenshots)),
++        .toggle(2, 11, symbol("rectangle.dashed.badge.record", 0xFF3B30), ru ? "Запретить скриншоты в VoidGram" : "Block screenshots in VoidGram", ru ? "Снимки экрана и запись показывают пустой экран" : "Screenshots and recordings show an empty screen", AyuExtras.isOn(.blockScreenshots)),
+         .toggle(2, 12, symbol("eye.slash.fill", 0x8E8E93), ru ? "Размытие в переключателе" : "Blur in app switcher", nil, AyuExtras.isOn(.blurInAppSwitcher)),
+         .header(3, 20, ru ? "КОД-ПАРОЛЬ" : "PASSCODE"),
+-        .toggle(3, 21, symbol("faceid", 0x34C759), ru ? "Face ID для настроек AyuGram" : "Face ID for AyuGram settings", ru ? "Настройки AyuGram открываются только после проверки" : "AyuGram settings open only after authentication", AyuExtras.isOn(.lockAyuSettings))
++        .toggle(3, 21, symbol("faceid", 0x34C759), ru ? "Face ID для настроек VoidGram" : "Face ID for VoidGram settings", ru ? "Настройки VoidGram открываются только после проверки" : "VoidGram settings open only after authentication", AyuExtras.isOn(.lockAyuSettings))
+     ] }, open: { id, _, _ in
+         if id == 1 {
+             AyuHiddenChatsController.present(context: context, open: { peer in
+@@ -349,7 +338,7 @@ func ayuAccountsSettingsController(context: AccountContext) -> ViewController {
+     let accountId = context.account.peerId.toInt64()
+     return ayuPage(context: context, title: { $0 ? "Аккаунты" : "Accounts" }, notifications: [], entries: { ru in [
+         .header(1, 0, ru ? "ЭТОТ АККАУНТ" : "THIS ACCOUNT"),
+-        .toggle(1, 1, symbol("power.circle.fill", 0xFF3B30), ru ? "AyuGram на этом аккаунте" : "AyuGram on this account", ru ? "Выключите, чтобы этот аккаунт работал как обычный Telegram: без призрака, фильтров и настроек интерфейса AyuGram" : "Turn off to run this account as plain Telegram: no ghost mode, filters or AyuGram interface settings", !AyuAccountScope.isDisabled(accountId)),
++        .toggle(1, 1, symbol("power.circle.fill", 0xFF3B30), ru ? "VoidGram на этом аккаунте" : "VoidGram on this account", ru ? "Выключите, чтобы этот аккаунт работал как обычный Telegram: без призрака, фильтров и настроек интерфейса VoidGram" : "Turn off to run this account as plain Telegram: no ghost mode, filters or VoidGram interface settings", !AyuAccountScope.isDisabled(accountId)),
+         .header(2, 10, ru ? "ВСЕ АККАУНТЫ" : "ALL ACCOUNTS"),
+         .toggle(2, 11, symbol("paintpalette.fill", 0xAF52DE), ru ? "Свой акцент у каждого аккаунта" : "Accent per account", nil, AyuExtras.isOn(.accentPerAccount)),
+         .toggle(2, 12, symbol("person.2.circle.fill", 0x007AFF), ru ? "Кнопка аккаунтов в Чатах" : "Accounts button in Chats", ru ? "Быстрое переключение аккаунтов из списка чатов" : "Switch accounts from the chat list", AyuExtras.isOn(.accountsButton)),
+@@ -380,7 +369,7 @@ public func ayuOpenSettingsAuthenticated(context: AccountContext, _ open: @escap
+     var error: NSError?
+     guard authentication.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return open() }
+     let ru = ayuIsRussian(context)
+-    authentication.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: ru ? "Откройте настройки AyuGram" : "Open AyuGram settings", reply: { success, _ in
++    authentication.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: ru ? "Откройте настройки VoidGram" : "Open VoidGram settings", reply: { success, _ in
+         if success {
+             DispatchQueue.main.async(execute: open)
+         }
+diff --git a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
+index 6daf4d3b..99cbe6ef 100644
+--- a/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
++++ b/submodules/SettingsUI/Sources/AyuChatOptionsController.swift
+@@ -173,7 +173,7 @@ public func ayuChatOptionsController(context: AccountContext, regex: Bool, initi
+                 return AyuOptionsChatPreview(theme: presentationData.theme, wallpaper: presentationData.chatWallpaper, fontSize: presentationData.chatFontSize, corners: presentationData.chatBubbleCorners, dateTimeFormat: presentationData.dateTimeFormat, nameOrder: presentationData.nameDisplayOrder, messages: messages, overlay: overlay)
+             }
+             // The same alert the chat shows before a GIF goes out (ChatControllerAyuMediaSending).
+-            entries.append(.chat(1, 11, chatPreview([ChatPreviewMessageItem(outgoing: false, reply: nil, text: AyuStrings.sendSomethingFunny.text(ru), nameColor: .preset(.blue), backgroundEmojiId: nil)], .alert(title: "AyuGram", text: AyuStrings.sendGif.text(ru), cancel: presentationData.strings.Common_Cancel, confirm: AyuStrings.send.text(ru)))))
++            entries.append(.chat(1, 11, chatPreview([ChatPreviewMessageItem(outgoing: false, reply: nil, text: AyuStrings.sendSomethingFunny.text(ru), nameColor: .preset(.blue), backgroundEmojiId: nil)], .alert(title: "VoidGram", text: AyuStrings.sendGif.text(ru), cancel: presentationData.strings.Common_Cancel, confirm: AyuStrings.send.text(ru)))))
+             entries.append(.toggle(2, 20, nil, AyuStrings.previewVoiceRecordings.text(ru), media.previewVoice))
+             entries.append(.chat(2, 21, chatPreview([ChatPreviewMessageItem(outgoing: true, reply: nil, text: "", nameColor: .preset(.blue), backgroundEmojiId: nil, ayuMedia: .voice)], nil)))
+             entries.append(.toggle(3, 30, nil, AyuStrings.previewVideoNotes.text(ru), media.previewRound))
+@@ -246,7 +246,7 @@ public func ayuChatOptionsController(context: AccountContext, regex: Bool, initi
+     }
+     presentError = { [weak controller] message in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: message, actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: message, actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     if regex, let pattern = initialPatterns?.last {
+         Queue.mainQueue().after(0.4) {
+diff --git a/submodules/SettingsUI/Sources/AyuCodePluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuCodePluginDetailsController.swift
+index cd667259..58f922b1 100644
+--- a/submodules/SettingsUI/Sources/AyuCodePluginDetailsController.swift
++++ b/submodules/SettingsUI/Sources/AyuCodePluginDetailsController.swift
+@@ -49,7 +49,7 @@ final class AyuCodePluginDetailsController: UITableViewController {
+     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+         switch section {
+         case 0: return self.russian ? "Выключите разрешение, чтобы забрать его у плагина. Плагин перезапустится." : "Turn a permission off to take it back. The plugin restarts."
+-        case 3: return self.russian ? "Если хук работает дольше 100 мс, AyuGram предупредит, что плагин тормозит." : "AyuGram warns when a hook takes longer than 100 ms."
++        case 3: return self.russian ? "Если хук работает дольше 100 мс, VoidGram предупредит, что плагин тормозит." : "VoidGram warns when a hook takes longer than 100 ms."
+         default: return nil
+         }
+     }
 diff --git a/submodules/SettingsUI/Sources/AyuCustomizationController.swift b/submodules/SettingsUI/Sources/AyuCustomizationController.swift
-index 2097d062..fa20681d 100644
+index 2097d062..30d931b1 100644
 --- a/submodules/SettingsUI/Sources/AyuCustomizationController.swift
 +++ b/submodules/SettingsUI/Sources/AyuCustomizationController.swift
+@@ -125,7 +125,7 @@ func ayuCustomizationController(context: AccountContext) -> ViewController {
+             |> take(1)
+             |> deliverOnMainQueue).startStandalone(next: { peer in
+                 guard let peer else {
+-                    let failed = UIAlertController(title: "AyuGram", message: russian ? "Не нашёл @\(name)." : "Could not find @\(name).", preferredStyle: .alert)
++                    let failed = UIAlertController(title: "VoidGram", message: russian ? "Не нашёл @\(name)." : "Could not find @\(name).", preferredStyle: .alert)
+                     failed.addAction(UIAlertAction(title: "OK", style: .default))
+                     presentNative?(failed)
+                     return
 @@ -144,11 +144,19 @@ func ayuCustomizationController(context: AccountContext) -> ViewController {
  
      let arguments = AyuSectionedArguments(open: { id in
@@ -322,8 +754,56 @@ index 2097d062..fa20681d 100644
          entries.append(.header(2, 16, ru ? "СВОИ ЦВЕТА" : "YOUR COLOURS"))
          for (index, row) in ayuColorRows.enumerated() {
              let value = AyuCustomization.rgb(row.0)
+diff --git a/submodules/SettingsUI/Sources/AyuDailyTableController.swift b/submodules/SettingsUI/Sources/AyuDailyTableController.swift
+index 7006a3b1..37cb640f 100644
+--- a/submodules/SettingsUI/Sources/AyuDailyTableController.swift
++++ b/submodules/SettingsUI/Sources/AyuDailyTableController.swift
+@@ -76,7 +76,7 @@ class AyuDailyTableController: AyuPluginTableController {
+     }
+ 
+     func showError(_ text: String) {
+-        let alert = UIAlertController(title: "AyuGram", message: text, preferredStyle: .alert)
++        let alert = UIAlertController(title: "VoidGram", message: text, preferredStyle: .alert)
+         alert.addAction(UIAlertAction(title: "OK", style: .default))
+         self.present(alert, animated: true)
+     }
+diff --git a/submodules/SettingsUI/Sources/AyuDecoySettingsController.swift b/submodules/SettingsUI/Sources/AyuDecoySettingsController.swift
+index 0b0e769f..f4a1d917 100644
+--- a/submodules/SettingsUI/Sources/AyuDecoySettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuDecoySettingsController.swift
+@@ -37,7 +37,7 @@ func ayuDecoySettingsController(context: AccountContext) -> ViewController {
+         let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+         switch AyuDecoyRow(rawValue: id) {
+         case .codes?:
+-            let alert = UIAlertController(title: ru ? "Коды" : "Codes", message: ru ? "Настоящий код возвращает в ваш аккаунт. Фейковый показывает «AyuGram больше не работает» и стирает все локальные данные. Минимум 4 символа, коды должны различаться." : "The real code returns to your account. The fake code shows \"AyuGram no longer works\" and wipes all local data. At least 4 characters; the codes must differ.", preferredStyle: .alert)
++            let alert = UIAlertController(title: ru ? "Коды" : "Codes", message: ru ? "Настоящий код возвращает в ваш аккаунт. Фейковый показывает «VoidGram больше не работает» и стирает все локальные данные. Минимум 4 символа, коды должны различаться." : "The real code returns to your account. The fake code shows \"VoidGram no longer works\" and wipes all local data. At least 4 characters; the codes must differ.", preferredStyle: .alert)
+             alert.addTextField { field in
+                 field.placeholder = ru ? "Настоящий код" : "Real code"
+                 field.isSecureTextEntry = true
+@@ -107,7 +107,7 @@ func ayuDecoySettingsController(context: AccountContext) -> ViewController {
+             .link(1, AyuDecoyRow.account.rawValue, AyuSettingsIcons.symbol("person.2.fill", color: UIColor(rgb: 0x007AFF)), ru ? "Что показывать" : "What to show", decoyName),
+             .info(1, AyuDecoyRow.info.rawValue, ru ? "Работает, когда включено и заданы оба кода." : "Works when it is on and both codes are set."),
+             .header(2, AyuDecoyRow.howHeader.rawValue, ru ? "КАК ЭТО РАБОТАЕТ" : "HOW IT WORKS"),
+-            .info(2, AyuDecoyRow.how.rawValue, ru ? "При запуске появляется иконка AyuGram. Два быстрых нажатия по ней — и открывается фейк: второй аккаунт или встроенный липовый Telegram. В фейке нет раздела AyuGram, все функции AyuGram выключены.\n\nПосле полного закрытия приложения AyuGram спросит код. Настоящий код вернёт ваш аккаунт и больше не будет спрашиваться до следующего фейка. Фейковый код покажет «AyuGram больше не работает» и сотрёт все локальные данные — понадобится переустановка." : "At launch the AyuGram icon appears. Two quick taps on it open the decoy: a second account or a built-in stand-in Telegram. The decoy has no AyuGram section and every AyuGram feature is off.\n\nAfter the app is fully closed, AyuGram asks for a code. The real code brings your account back and is not asked again until the next decoy. The fake code shows \"AyuGram no longer works\" and wipes all local data — a reinstall is needed.")
++            .info(2, AyuDecoyRow.how.rawValue, ru ? "При запуске появляется иконка VoidGram. Два быстрых нажатия по ней — и открывается фейк: второй аккаунт или встроенный липовый Telegram. В фейке нет раздела VoidGram, все функции VoidGram выключены.\n\nПосле полного закрытия приложения VoidGram спросит код. Настоящий код вернёт ваш аккаунт и больше не будет спрашиваться до следующего фейка. Фейковый код покажет «VoidGram больше не работает» и сотрёт все локальные данные — понадобится переустановка." : "At launch the VoidGram icon appears. Two quick taps on it open the decoy: a second account or a built-in stand-in Telegram. The decoy has no VoidGram section and every VoidGram feature is off.\n\nAfter the app is fully closed, VoidGram asks for a code. The real code brings your account back and is not asked again until the next decoy. The fake code shows \"VoidGram no longer works\" and wipes all local data — a reinstall is needed.")
+         ]
+         let data = ItemListPresentationData(presentationData)
+         let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Фейк-режим" : "Decoy mode"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+diff --git a/submodules/SettingsUI/Sources/AyuDesktopImport.swift b/submodules/SettingsUI/Sources/AyuDesktopImport.swift
+index 7976ce86..1893756e 100644
+--- a/submodules/SettingsUI/Sources/AyuDesktopImport.swift
++++ b/submodules/SettingsUI/Sources/AyuDesktopImport.swift
+@@ -87,7 +87,7 @@ enum AyuDesktopImport {
+                     }
+                     let _ = (context.engine.messages.ayuImportDesktopHistory(rows)
+                     |> deliverOnMainQueue).startStandalone(next: { added in
+-                        alert(context, ru ? "Найдено \(rows.count), добавлено \(added). Сообщения появятся в истории AyuGram для этих чатов. Сохранение удалённых/изменённых должно быть включено." : "Found \(rows.count), added \(added). They appear in AyuGram history for those chats. Saving deleted/edited messages must be on.")
++                        alert(context, ru ? "Найдено \(rows.count), добавлено \(added). Сообщения появятся в истории VoidGram для этих чатов. Сохранение удалённых/изменённых должно быть включено." : "Found \(rows.count), added \(added). They appear in VoidGram history for those chats. Saving deleted/edited messages must be on.")
+                     })
+                 }
+             }
 diff --git a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
-index 36cb3a18..ace2f522 100644
+index 36cb3a18..c6bf269e 100644
 --- a/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuDeveloperSettingsController.swift
 @@ -21,6 +21,7 @@ private enum AyuDeveloperRow: Int32 {
@@ -334,6 +814,15 @@ index 36cb3a18..ace2f522 100644
      case allowUnofficialInjectPlugins = 24
      case unofficialInjectInfo = 25
      case showInternalIds = 31
+@@ -50,7 +51,7 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
+             }
+         case .shareLog:
+             guard let url = AyuDevLog.shared.fileURL, FileManager.default.fileExists(atPath: url.path) else {
+-                presentController?(textAlertController(context: context, title: "AyuGram", text: ru ? "Журнал пока пуст. Включите подробный журнал и повторите действие." : "The log is empty. Turn on verbose logging and reproduce the issue.", actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]))
++                presentController?(textAlertController(context: context, title: "VoidGram", text: ru ? "Журнал пока пуст. Включите подробный журнал и повторите действие." : "The log is empty. Turn on verbose logging and reproduce the issue.", actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]))
+                 return
+             }
+             presentNative?(UIActivityViewController(activityItems: [url], applicationActivities: nil))
 @@ -58,6 +59,8 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
              AyuDevLog.shared.clear()
          case .openPluginConsole:
@@ -343,14 +832,191 @@ index 36cb3a18..ace2f522 100644
          case .resetAll:
              presentController?(textAlertController(context: context, title: ru ? "Сбросить настройки разработчика?" : "Reset developer settings?", text: ru ? "Все переключатели на этой странице будут выключены." : "Every switch on this page will be turned off.", actions: [
                  TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
-@@ -126,6 +129,7 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
-             toggle(2, .forceStockMusicPlayer, symbol("music.note", 0xFF2D55), ru ? "Стандартный плеер Telegram" : "Stock Telegram player", ru ? "Вместо плеера AyuGram" : "Instead of the AyuGram player", settings.forceStockMusicPlayer),
+@@ -72,7 +75,7 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
+             guard !value else { return }
+             let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+             let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+-            presentController?(textAlertController(context: context, title: ru ? "Выключить режим разработчика?" : "Turn off developer mode?", text: ru ? "Все опции разработчика выключатся, а раздел «Отладка» исчезнет после перезапуска. Включить снова — 5 тапов по версии AyuGram." : "Every developer option is turned off and the Debugging section disappears after a relaunch. To turn it back on, tap the AyuGram version 5 times.", actions: [
++            presentController?(textAlertController(context: context, title: ru ? "Выключить режим разработчика?" : "Turn off developer mode?", text: ru ? "Все опции разработчика выключатся, а раздел «Отладка» исчезнет после перезапуска. Включить снова — 5 тапов по версии VoidGram." : "Every developer option is turned off and the Debugging section disappears after a relaunch. To turn it back on, tap the VoidGram version 5 times.", actions: [
+                 TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {
+                     // Redraw the switch back on.
+                     NotificationCenter.default.post(name: AyuDeveloperSettings.didChangeNotification, object: nil)
+@@ -121,19 +124,20 @@ func ayuDeveloperSettingsController(context: AccountContext) -> ViewController {
+             .header(1, 0, ru ? "ИНТЕРФЕЙС" : "INTERFACE"),
+             toggle(1, .playerDebugOverlay, symbol("ladybug.fill", 0xFF3B30), ru ? "Отладка плеера" : "Player debug overlay", ru ? "Состояние воспроизведения в правом нижнем углу плеера" : "Playback state in the player's bottom-right corner", settings.playerDebugOverlay),
+             toggle(1, .fpsCounter, symbol("speedometer", 0x34C759), ru ? "Счётчик FPS" : "FPS counter", nil, settings.fpsCounter),
+-            toggle(1, .highlightAyuViews, symbol("square.dashed", 0xAF52DE), ru ? "Подсветить элементы AyuGram" : "Outline AyuGram views", nil, settings.highlightAyuViews),
++            toggle(1, .highlightAyuViews, symbol("square.dashed", 0xAF52DE), ru ? "Подсветить элементы VoidGram" : "Outline VoidGram views", nil, settings.highlightAyuViews),
+             .header(2, 10, ru ? "МУЗЫКА" : "MUSIC"),
+-            toggle(2, .forceStockMusicPlayer, symbol("music.note", 0xFF2D55), ru ? "Стандартный плеер Telegram" : "Stock Telegram player", ru ? "Вместо плеера AyuGram" : "Instead of the AyuGram player", settings.forceStockMusicPlayer),
++            toggle(2, .forceStockMusicPlayer, symbol("music.note", 0xFF2D55), ru ? "Стандартный плеер Telegram" : "Stock Telegram player", ru ? "Вместо плеера VoidGram" : "Instead of the VoidGram player", settings.forceStockMusicPlayer),
              toggle(2, .lyricsDiagnostics, symbol("text.quote", 0x5856D6), ru ? "Диагностика текстов" : "Lyrics diagnostics", ru ? "Источник, совпадение и время поиска" : "Source, match score and lookup time", settings.lyricsDiagnostics),
              .header(3, 20, ru ? "ПЛАГИНЫ" : "PLUGINS"),
 +            .link(3, AyuDeveloperRow.pluginDocs.rawValue, symbol("book.fill", 0x007AFF), ru ? "Документация к плагинам" : "Plugin documentation", "GitHub"),
              toggle(3, .pluginConsole, symbol("terminal.fill", 0x8E8E93), ru ? "Консоль плагинов" : "Plugin console", ru ? "Вывод print() и ошибки скриптов" : "Script print() output and errors", settings.pluginConsole),
              toggle(3, .experimentalPluginHooks, symbol("flask.fill", 0xFF9500), ru ? "Мягкие лимиты плагинов" : "Relaxed plugin limits", ru ? "Таймаут хуков 2 с вместо 0,25 с, ошибки скриптов всплывают сообщением" : "2 s hook timeout instead of 0.25 s; script errors show as toasts", settings.experimentalPluginHooks)
          ]
+         if settings.pluginConsole {
+             entries.append(.link(3, AyuDeveloperRow.openPluginConsole.rawValue, symbol("list.bullet.rectangle.fill", 0x007AFF), ru ? "Открыть консоль" : "Open console", ""))
+         }
+-        entries.append(toggle(3, .allowUnofficialInjectPlugins, symbol("exclamationmark.shield.fill", 0xFF3B30), ru ? "Инжект-плагины не из официального источника" : "Injecting plugins from unofficial sources", ru ? "Разрешить плагины, которые внедряются в приложение, без подписи AyuGram" : "Allow plugins that inject into the app without an AyuGram signature", settings.allowUnofficialInjectPlugins))
+-        entries.append(.info(3, AyuDeveloperRow.unofficialInjectInfo.rawValue, ru ? "⚠️ Такие плагины не проверены AyuGram. Перед установкой каждого будет предупреждение, а вся ответственность за последствия лежит полностью на вас." : "⚠️ Such plugins are not reviewed by AyuGram. Each one shows a warning before installing, and the responsibility for the consequences is entirely yours."))
++        entries.append(toggle(3, .allowUnofficialInjectPlugins, symbol("exclamationmark.shield.fill", 0xFF3B30), ru ? "Инжект-плагины не из официального источника" : "Injecting plugins from unofficial sources", ru ? "Разрешить плагины, которые внедряются в приложение, без подписи VoidGram" : "Allow plugins that inject into the app without a VoidGram signature", settings.allowUnofficialInjectPlugins))
++        entries.append(.info(3, AyuDeveloperRow.unofficialInjectInfo.rawValue, ru ? "⚠️ Такие плагины не проверены VoidGram. Перед установкой каждого будет предупреждение, а вся ответственность за последствия лежит полностью на вас." : "⚠️ Such plugins are not reviewed by VoidGram. Each one shows a warning before installing, and the responsibility for the consequences is entirely yours."))
+         entries.append(contentsOf: [
+             .header(4, 30, ru ? "ДАННЫЕ" : "DATA"),
+             toggle(4, .showInternalIds, symbol("number", 0x32ADE6), ru ? "Внутренние ID в меню" : "Internal IDs in menus", nil, settings.showInternalIds),
+diff --git a/submodules/SettingsUI/Sources/AyuExtrasController.swift b/submodules/SettingsUI/Sources/AyuExtrasController.swift
+index d46ff0ec..2d5a6d20 100644
+--- a/submodules/SettingsUI/Sources/AyuExtrasController.swift
++++ b/submodules/SettingsUI/Sources/AyuExtrasController.swift
+@@ -54,7 +54,7 @@ private let ayuExtraRows: [AyuExtraRow] = [
+     AyuExtraRow(section: 3, id: 22, key: .autoOpenLyrics, symbol: "quote.bubble.fill", color: 0xFF2D55, titleRu: "Сразу показывать текст", titleEn: "Open lyrics automatically", infoRu: "Плеер открывается с текстом песни", infoEn: "The player opens with the lyrics"),
+     AyuExtraRow(section: 3, id: 23, key: .rememberPlaybackSpeed, symbol: "gauge.with.dots.needle.67percent", color: 0x32ADE6, titleRu: "Запоминать скорость", titleEn: "Remember speed", infoRu: "Последняя скорость музыки при открытии плеера", infoEn: "The last music speed when the player opens"),
+     AyuExtraRow(section: 3, id: 24, key: .noAutoplayNextVoice, symbol: "waveform.slash", color: 0xAF52DE, titleRu: "Не включать следующее голосовое", titleEn: "Don't play the next voice", infoRu: "Голосовое и кружок останавливаются в конце", infoEn: "Voice and video messages stop at their end"),
+-    AyuExtraRow(section: 3, id: 25, key: .nowPlayingLiveActivity, symbol: "platter.filled.bottom.iphone", color: 0xFF2D55, titleRu: "Трек на экране блокировки", titleEn: "Track on the Lock Screen", infoRu: "Live Activity плеера AyuGram: экран блокировки и Dynamic Island (iOS 16.2+)", infoEn: "AyuGram player Live Activity: Lock Screen and Dynamic Island (iOS 16.2+)"),
++    AyuExtraRow(section: 3, id: 25, key: .nowPlayingLiveActivity, symbol: "platter.filled.bottom.iphone", color: 0xFF2D55, titleRu: "Трек на экране блокировки", titleEn: "Track on the Lock Screen", infoRu: "Live Activity плеера VoidGram: экран блокировки и Dynamic Island (iOS 16.2+)", infoEn: "VoidGram player Live Activity: Lock Screen and Dynamic Island (iOS 16.2+)"),
+     AyuExtraRow(section: 4, id: 31, key: .skipOwnDeleted, symbol: "trash.slash.fill", color: 0xFF3B30, titleRu: "Не показывать мои удалённые", titleEn: "Don't show my deleted", infoRu: "Свои удалённые сообщения не сохраняются — только чужие", infoEn: "Your own deleted messages are not kept, only other people's"),
+     AyuExtraRow(section: 4, id: 32, key: .skipOwnEdited, symbol: "pencil.slash", color: 0xFF9500, titleRu: "Не показывать оригинал моих изменённых", titleEn: "Don't show originals of my edits", infoRu: "Оригинал своих изменённых сообщений не сохраняется", infoEn: "The original text of your own edited messages is not kept"),
+     AyuExtraRow(section: 4, id: 33, key: .stayAfterBan, symbol: "door.left.hand.open", color: 0x8E8E93, titleRu: "Оставаться в чате после бана", titleEn: "Stay in chat after a ban", infoRu: "Чат не закрывается: название, фото и загруженная история остаются. Новых сообщений не будет — после бана сервер Telegram их не отдаёт", infoEn: "The chat stays open with its title, photo and downloaded history. New messages stop: after a ban Telegram's server no longer serves them"),
+@@ -109,7 +109,7 @@ func ayuExtrasController(context: AccountContext) -> ViewController {
+         if id == 38 {
+             let _ = (context.engine.messages.ayuExportHistory() |> deliverOnMainQueue).startStandalone(next: { data in
+                 guard let data else { return }
+-                let url = FileManager.default.temporaryDirectory.appendingPathComponent("AyuGram-messages.json")
++                let url = FileManager.default.temporaryDirectory.appendingPathComponent("VoidGram-messages.json")
+                 guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+                 context.sharedContext.applicationBindings.presentNativeController(UIActivityViewController(activityItems: [url], applicationActivities: nil))
+             })
+diff --git a/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift b/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift
+index 700ebc87..71bc3257 100644
+--- a/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGhostExceptionsController.swift
+@@ -71,7 +71,7 @@ func ayuGhostExceptionsController(context: AccountContext) -> ViewController {
+             try store.update { transform(&$0) }
+         } catch {
+             let data = context.sharedContext.currentPresentationData.with { $0 }
+-            presentController?(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
++            presentController?(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
+         }
+     }
+ 
+diff --git a/submodules/SettingsUI/Sources/AyuGhostModeController.swift b/submodules/SettingsUI/Sources/AyuGhostModeController.swift
+index 7f15252a..f2c80b77 100644
+--- a/submodules/SettingsUI/Sources/AyuGhostModeController.swift
++++ b/submodules/SettingsUI/Sources/AyuGhostModeController.swift
+@@ -107,7 +107,7 @@ public func ayuGhostModeController(context: AccountContext) -> ViewController {
+     presentError = { [weak controller] in
+         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+         let isRussian = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: AyuStrings.settingsCouldNotSavedChangeWas.text(isRussian), actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: AyuStrings.settingsCouldNotSavedChangeWas.text(isRussian), actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+index 0f1cb145..268e7799 100644
+--- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+@@ -87,11 +87,11 @@ private func ayuVersionTapped(context: AccountContext, present: @escaping (ViewC
+         ]))
+         return
+     }
+-    present(textAlertController(context: context, title: ru ? "Режим разработчика" : "Developer mode", text: ru ? "Открыть настройки разработчика? Это отладочные функции для тех, кто понимает, что делает. Они появятся в AyuGram после перезапуска приложения." : "Unlock the developer settings? These are debugging options for people who know what they are doing. They appear in AyuGram after the app is relaunched.", actions: [
++    present(textAlertController(context: context, title: ru ? "Режим разработчика" : "Developer mode", text: ru ? "Открыть настройки разработчика? Это отладочные функции для тех, кто понимает, что делает. Они появятся в VoidGram после перезапуска приложения." : "Unlock the developer settings? These are debugging options for people who know what they are doing. They appear in VoidGram after the app is relaunched.", actions: [
+         TextAlertAction(type: .genericAction, title: data.strings.Common_Cancel, action: {}),
+         TextAlertAction(type: .defaultAction, title: ru ? "Включить" : "Unlock", action: {
+             AyuDeveloperSettings.unlocked = true
+-            present(textAlertController(context: context, title: ru ? "Готово" : "Done", text: ru ? "Перезапустите приложение — в AyuGram появится раздел «Отладка» с настройками разработчика." : "Relaunch the app: AyuGram will show a Debugging section with the developer settings.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
++            present(textAlertController(context: context, title: ru ? "Готово" : "Done", text: ru ? "Перезапустите приложение — в VoidGram появится раздел «Отладка» с настройками разработчика." : "Relaunch the app: VoidGram will show a Debugging section with the developer settings.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
+         })
+     ]))
+ }
+@@ -201,7 +201,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+         search.updatePresentationData(presentationData)
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuSectionedEntry] = [
+-            .logo(0, -1, .ayuGram, "AyuGram \(ayuAppVersion())", AyuStrings.justExteragramBasedClientTosBreaking.text(ru)),
++            .logo(0, -1, .ayuGram, "VoidGram \(ayuAppVersion())", AyuStrings.justExteragramBasedClientTosBreaking.text(ru)),
+             .header(1, 0, ru ? "КАТЕГОРИИ" : "CATEGORIES"),
+         ] + AyuCategory.allCases.map { category in
+             AyuSectionedEntry.link(1, category.rawValue, category.icon, category.title(ru), "")
+@@ -371,7 +371,7 @@ func ayuGhostModePlusController(context: AccountContext) -> ViewController {
+     presentController = { [weak controller] in controller?.present($0, in: .window(.root)) }
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+@@ -436,7 +436,7 @@ func ayuLocalPremiumController(context: AccountContext) -> ViewController {
+     let controller = ItemListController(context: context, state: signal)
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+@@ -459,7 +459,7 @@ func ayuMessageHistoryController(context: AccountContext, messageId: EngineMessa
+         guard id == 10 else { return }
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+         let ru = data.strings.baseLanguageCode.hasPrefix("ru")
+-        present?(textAlertController(context: context, title: "AyuGram", text: AyuStrings.clearEntireLocalArchiveAccount.text(ru), actions: [
++        present?(textAlertController(context: context, title: "VoidGram", text: AyuStrings.clearEntireLocalArchiveAccount.text(ru), actions: [
+             TextAlertAction(type: .genericAction, title: data.strings.Common_Cancel, action: {}),
+             TextAlertAction(type: .destructiveAction, title: data.strings.Common_OK, action: {
+                 let _ = context.engine.messages.updateAyuMessageHistory(clear: true).startStandalone()
+@@ -559,7 +559,7 @@ func ayuHistoryRecordDetailsController(context: AccountContext, recordId: Int32)
+             entries = [.info(0, AyuStrings.entryWasClearedHasExpired.text(ru))]
+         }
+         let data = ItemListPresentationData(presentationData)
+-        let state = ItemListControllerState(presentationData: data, title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        let state = ItemListControllerState(presentationData: data, title: .text("VoidGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), AyuSettingsArguments(open: { _ in }, update: { _, _ in }, record: { _ in }, context: context, attachment: { openAttachment?($0) })))
+     }
+     let controller = ItemListController(context: context, state: signal)
+@@ -570,7 +570,7 @@ func ayuHistoryRecordDetailsController(context: AccountContext, recordId: Int32)
+             guard let controller else { return }
+             guard let url else {
+                 let data = context.sharedContext.currentPresentationData.with { $0 }
+-                controller.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Файл отсутствует в локальном архиве." : "This file is no longer available in the local archive.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++                controller.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Файл отсутствует в локальном архиве." : "This file is no longer available in the local archive.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+                 return
+             }
+             let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+diff --git a/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift b/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift
+index 8105fdc9..44a483e0 100644
+--- a/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift
++++ b/submodules/SettingsUI/Sources/AyuHiddenMessagesController.swift
+@@ -82,11 +82,11 @@ public func ayuHiddenMessagesController(context: AccountContext) -> ViewControll
+     let controller = ItemListController(context: context, state: signal)
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить список скрытых сообщений." : "The hidden-message list could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить список скрытых сообщений." : "The hidden-message list could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     confirmAll = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Убрать все отметки скрытия этого аккаунта? Это не восстанавливает сообщения, удалённые на сервере." : "Remove all local hiding marks for this account? This does not recover messages deleted on the server.", actions: [
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Убрать все отметки скрытия этого аккаунта? Это не восстанавливает сообщения, удалённые на сервере." : "Remove all local hiding marks for this account? This does not recover messages deleted on the server.", actions: [
+             TextAlertAction(type: .genericAction, title: data.strings.Common_Cancel, action: {}),
+             TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {
+                 do { try store.update { $0.hiddenMessages.restoreAll() } }
+diff --git a/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift b/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift
+index 4c4435cc..28d55288 100644
+--- a/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift
++++ b/submodules/SettingsUI/Sources/AyuHistoryFeedController.swift
+@@ -191,7 +191,7 @@ final class AyuHistoryFeedController: UITableViewController, UISearchResultsUpda
+     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+         guard !self.shown.isEmpty else {
+-            cell.textLabel?.text = self.russian ? "Пока пусто: включите сохранение удалённых и изменённых в AyuGram → История." : "Nothing yet: turn on saving deleted and edited messages in AyuGram → History."
++            cell.textLabel?.text = self.russian ? "Пока пусто: включите сохранение удалённых и изменённых в VoidGram → История." : "Nothing yet: turn on saving deleted and edited messages in VoidGram → History."
+             cell.textLabel?.numberOfLines = 0
+             cell.textLabel?.textColor = .secondaryLabel
+             cell.selectionStyle = .none
 diff --git a/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift b/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift
 index 25693da1..d37b5cc1 100644
 --- a/submodules/SettingsUI/Sources/AyuLyricsSourcesController.swift
@@ -379,6 +1045,170 @@ index 25693da1..d37b5cc1 100644
              .header(2, 10, ru ? "СВОИ API" : "YOUR APIS")
          ]
          for (index, provider) in settings.customProviders.enumerated() {
+diff --git a/submodules/SettingsUI/Sources/AyuNearbyContactScreen.swift b/submodules/SettingsUI/Sources/AyuNearbyContactScreen.swift
+index 22fd855c..cd97c220 100644
+--- a/submodules/SettingsUI/Sources/AyuNearbyContactScreen.swift
++++ b/submodules/SettingsUI/Sources/AyuNearbyContactScreen.swift
+@@ -66,7 +66,7 @@ private final class AyuNearbyContactTransport: NSObject, MCNearbyServiceAdvertis
+             }
+             result.append(character)
+         }
+-        return result.isEmpty ? "AyuGram" : result
++        return result.isEmpty ? "VoidGram" : result
+     }
+ 
+     func start() {
+diff --git a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
+index 396637bb..dadaedf1 100644
+--- a/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
++++ b/submodules/SettingsUI/Sources/AyuPluginDetailsController.swift
+@@ -192,7 +192,7 @@ final class AyuPluginDetailsController: AyuPluginTableController {
+         return cell
+     }
+     private func showError() {
+-        let alert = UIAlertController(title: "AyuGram", message: self.russian ? "Не удалось применить изменения плагина. Предыдущие настройки сохранены." : "Plugin changes could not be applied. Previous settings were retained.", preferredStyle: .alert)
++        let alert = UIAlertController(title: "VoidGram", message: self.russian ? "Не удалось применить изменения плагина. Предыдущие настройки сохранены." : "Plugin changes could not be applied. Previous settings were retained.", preferredStyle: .alert)
+         alert.addAction(UIAlertAction(title: "OK", style: .default)); self.present(alert, animated: true)
+     }
+     @objc private func toggle(_ toggle: UISwitch) {
+diff --git a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
+index b57cf074..04ce4668 100644
+--- a/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
++++ b/submodules/SettingsUI/Sources/AyuPluginManagerController.swift
+@@ -515,7 +515,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+         }
+     }
+     private func error(_ error: Error) {
+-        let message = self.russian ? "Этот плагин пока не поддерживается в AyuGram для iOS. Установленные плагины не изменились." : "This plugin is not supported by AyuGram for iOS yet. Installed plugins were not changed."
++        let message = self.russian ? "Этот плагин пока не поддерживается в VoidGram. Установленные плагины не изменились." : "This plugin is not supported by VoidGram yet. Installed plugins were not changed."
+         let detail = (error as? LocalizedError)?.errorDescription
+         self.alert(title: self.russian ? "Ошибка плагина" : "Plugin error", message: message + (detail.map { "\n\n" + String($0.prefix(512)) } ?? ""))
+     }
+@@ -550,7 +550,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+             let lines = self.codePlugins?.lineCount(id: plugin.id) ?? 0
+             var message = "\(plugin.id) · \(plugin.version) · \(plugin.languageLabel)\n"
+             if lines > 0 { message += self.russian ? "Строк кода: \(lines)" : "Lines of code: \(lines)" }
+-            if plugin.official { message += self.russian ? "\n✓ Официальный плагин AyuGram" : "\n✓ Official AyuGram plugin" }
++            if plugin.official { message += self.russian ? "\n✓ Официальный плагин VoidGram" : "\n✓ Official VoidGram plugin" }
+             if plugin.injects { message += self.russian ? "\nВнедряется в приложение (плеер, тексты…)" : "\nInjects into the app (player, lyrics…)" }
+             message += plugin.description.isEmpty ? "" : "\n\n" + plugin.description
+             self.showAlert(title: plugin.name, message: message, actions: [
+@@ -722,7 +722,7 @@ final class AyuPluginManagerController: AyuPluginTableController, UIDocumentPick
+                         return
+                     }
+                     guard let plugin = card.plugin else {
+-                        self.alert(title: card.name, message: self.russian ? "Этого плагина нет в вашей версии AyuGram. Обновите приложение." : "This plugin is not in your version of AyuGram. Update the app.")
++                        self.alert(title: card.name, message: self.russian ? "Этого плагина нет в вашей версии VoidGram. Обновите приложение." : "This plugin is not in your version of VoidGram. Update the app.")
+                         return
+                     }
+                     let installed = AyuNativePlugins.isInstalled(plugin)
+diff --git a/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift b/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
+index 6bf58dea..73762039 100644
+--- a/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
++++ b/submodules/SettingsUI/Sources/AyuScriptCatalogController.swift
+@@ -191,8 +191,8 @@ final class AyuScriptCatalogController: AyuPluginTableController, UISearchBarDel
+         }
+         guard case .loaded = self.state, !self.entries.isEmpty else { return nil }
+         return self.russian
+-            ? "Плагины из github.com/murk-sus/AyuGramm-Plugins. Каждый файл проверяется по SHA-256 из каталога. Свой плагин можно прислать pull request'ом.\n\nБезопасная зона: обычные плагины (текст, отключение функций) можно ставить откуда угодно. Плагины с меткой «инжект» внедряются в приложение (плеер, тексты песен) и ставятся только с подписью AyuGram (✓ официальный). Неофициальные инжект-плагины можно разрешить в настройках разработчика — тогда вся ответственность лежит полностью на вас."
+-            : "Plugins from github.com/murk-sus/AyuGramm-Plugins. Every file is checked against the catalog's SHA-256. Send your own plugin as a pull request.\n\nSafe zone: ordinary plugins (text, switching features off) can come from anywhere. Plugins marked \"inject\" change the app itself (player, lyrics) and install only when signed by AyuGram (✓ official). Unofficial injecting plugins can be allowed in the developer settings — the responsibility is then entirely yours."
++            ? "Плагины из github.com/murk-sus/AyuGramm-Plugins. Каждый файл проверяется по SHA-256 из каталога. Свой плагин можно прислать pull request'ом.\n\nБезопасная зона: обычные плагины (текст, отключение функций) можно ставить откуда угодно. Плагины с меткой «инжект» внедряются в приложение (плеер, тексты песен) и ставятся только с подписью VoidGram (✓ официальный). Неофициальные инжект-плагины можно разрешить в настройках разработчика — тогда вся ответственность лежит полностью на вас."
++            : "Plugins from github.com/murk-sus/AyuGramm-Plugins. Every file is checked against the catalog's SHA-256. Send your own plugin as a pull request.\n\nSafe zone: ordinary plugins (text, switching features off) can come from anywhere. Plugins marked \"inject\" change the app itself (player, lyrics) and install only when signed by VoidGram (✓ official). Unofficial injecting plugins can be allowed in the developer settings — the responsibility is then entirely yours."
+     }
+ 
+     private enum Status {
+@@ -399,7 +399,7 @@ final class AyuScriptCatalogController: AyuPluginTableController, UISearchBarDel
+             message += self.russian ? "\n\nПредыдущая версия \(version) сохранена — её можно вернуть в списке плагинов." : "\n\nThe previous version \(version) is kept and can be restored from the plugin list."
+         }
+         if entry.signature != nil {
+-            message += self.russian ? "\n\n✓ Официальный плагин: подпись AyuGram проверяется при установке." : "\n\n✓ Official plugin: the AyuGram signature is checked on install."
++            message += self.russian ? "\n\n✓ Официальный плагин: подпись VoidGram проверяется при установке." : "\n\n✓ Official plugin: the VoidGram signature is checked on install."
+         }
+         if entry.injects == true {
+             message += self.russian ? "\nВнедряется в приложение (плеер, тексты песен)." : "\nInjects into the app (player, lyrics)."
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+index 92e2f07a..1b9e749a 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+@@ -101,9 +101,9 @@ func ayuOtherSettingsController(context: AccountContext, navigation: NavigationC
+                         $0.messageShot = AyuMessageShotSettings()
+                         $0.reactionDisplay = AyuReactionDisplaySettings()
+                     }
+-                    present?(textAlertController(context: context, title: "AyuGram", text: AyuStrings.preferencesHaveBeenReset.text(ru), actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
++                    present?(textAlertController(context: context, title: "VoidGram", text: AyuStrings.preferencesHaveBeenReset.text(ru), actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
+                 } catch {
+-                    present?(textAlertController(context: context, title: "AyuGram", text: AyuStrings.settingsCouldNotReset.text(ru), actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
++                    present?(textAlertController(context: context, title: "VoidGram", text: AyuStrings.settingsCouldNotReset.text(ru), actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
+                 }
+             })]))
+         case .deleteAccount:
+@@ -191,7 +191,7 @@ func ayuPresentAppIcons(context: AccountContext) {
+ func ayuCategoryRows(category: Int, ru: Bool) -> (title: String, rows: [(Int32, String)]) {
+     switch category {
+     case 0:
+-        return ("AyuGram", [(0, "Ghost Mode"), (50, "Ghost Mode+"), (1, AyuStrings.messageHistory.text(ru)), (53, AyuStrings.mediaArchive.text(ru))])
++        return ("VoidGram", [(0, "Ghost Mode"), (50, "Ghost Mode+"), (1, AyuStrings.messageHistory.text(ru)), (53, AyuStrings.mediaArchive.text(ru))])
+     case 2:
+         return (AyuStrings.general.text(ru), [(51, AyuStrings.translationProviders.text(ru)), (2, AyuStrings.sendingOptions.text(ru)), (5, AyuStrings.interface.text(ru)), (6, AyuStrings.messageMenu.text(ru))])
+     case 3:
+@@ -340,7 +340,7 @@ func ayuGeneralSettingsController(context: AccountContext) -> ViewController {
+     push = { [weak controller] in controller?.push($0) }
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+@@ -449,7 +449,7 @@ func ayuChatsSettingsController(context: AccountContext) -> ViewController {
+     push = { [weak controller] in controller?.push($0) }
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+@@ -491,7 +491,7 @@ func ayuReactionSettingsController(context: AccountContext) -> ViewController {
+     let controller = ItemListController(context: context, state: signal)
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить показ реакций." : "Reaction display settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить показ реакций." : "Reaction display settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+@@ -741,7 +741,7 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
+     let controller = ItemListController(context: context, state: signal)
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки." : "Settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+@@ -790,7 +790,7 @@ func ayuInterfaceSettingsController(context: AccountContext, contextMenu: Bool =
+     let controller = ItemListController(context: context, state: signal)
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки интерфейса." : "Interface settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Не удалось сохранить настройки интерфейса." : "Interface settings could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift b/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
+index 4c44d474..8c903359 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
+@@ -63,7 +63,7 @@ enum AyuSettingsPreviews {
+         ])
+         var ayu: [(String, String, Bool)] = []
+         if interface.showMessageShot {
+-            ayu.append(("photo.on.rectangle", "AyuGram · MessageShot", false))
++            ayu.append(("photo.on.rectangle", "VoidGram · MessageShot", false))
+         }
+         ayu.append(("character.bubble", AyuStrings.ayugramTranslate.text(ru), false))
+         if interface.showCopyMessageIds {
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 index ef8c0145..ef728852 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
@@ -453,6 +1283,182 @@ index ef8c0145..ef728852 100644
          }
      }
  }
+diff --git a/submodules/SettingsUI/Sources/AyuStrings.swift b/submodules/SettingsUI/Sources/AyuStrings.swift
+index 9d56f3b3..9a31d401 100644
+--- a/submodules/SettingsUI/Sources/AyuStrings.swift
++++ b/submodules/SettingsUI/Sources/AyuStrings.swift
+@@ -305,9 +305,9 @@ enum AyuStrings {
+         case .archiveEmptyEntriesAppearAfterNew: return "Архив пока пуст. Записи появятся после новых правок или удалений."
+         case .archivedChats: return "АРХИВ"
+         case .authorNames: return "Имена авторов"
+-        case .ayugramCopyMessageIds: return "AyuGram · Копировать ID"
+-        case .ayugramHeader: return "Заголовок AyuGram"
+-        case .ayugramTranslate: return "AyuGram · Перевести"
++        case .ayugramCopyMessageIds: return "VoidGram · Копировать ID"
++        case .ayugramHeader: return "Заголовок VoidGram"
++        case .ayugramTranslate: return "VoidGram · Перевести"
+         case .backgroundNotifications: return "Уведомления в фоне"
+         case .badgeEmojiStatusesPremiumEmojiStickers: return "Значок, эмодзи-статусы, Premium-эмодзи и стикеры — только в этом приложении, подписки это не даёт. Другие видят Premium-эмодзи ссылками.\n\nСтатус выбирается в профиле: нажми на значок рядом с именем."
+         case .cancel: return "Отмена"
+@@ -447,15 +447,15 @@ enum AyuStrings {
+         case .notSet: return "Не задан"
+         case .notValidRegularExpressionCheckBrackets: return "Это не регулярное выражение: проверь скобки и спецсимволы."
+         case .nearbyContact: return "Контакт рядом"
+-        case .nearbyContactFooter: return "Отправляется твоё имя и временная ссылка на профиль, как в QR-коде контакта. Номер телефона не передаётся. Работает между iPhone с AyuGram, на которых открыт этот экран."
++        case .nearbyContactFooter: return "Отправляется твоё имя и временная ссылка на профиль, как в QR-коде контакта. Номер телефона не передаётся. Работает между iPhone с VoidGram, на которых открыт этот экран."
+         case .nearbyContactNearby: return "Рядом"
+         case .nearbyContactOpenProfile: return "Открыть профиль"
+-        case .nearbyContactSearching: return "Ищем iPhone рядом… Попроси друга открыть этот же экран в AyuGram. Bluetooth и Wi-Fi должны быть включены."
++        case .nearbyContactSearching: return "Ищем iPhone рядом… Попроси друга открыть этот же экран в VoidGram. Bluetooth и Wi-Fi должны быть включены."
+         case .nearbyContactSend: return "Отправить"
+         case .nearbyContactSendMine: return "Отправить свой"
+         case .nearbyContactSent: return "Отправлено"
+         case .nearbyContactTokenFailed: return "Не удалось получить ссылку на профиль. Проверь подключение к интернету."
+-        case .nearbyContactUnavailable: return "Не удалось начать поиск. Разреши AyuGram доступ к локальной сети: Настройки → Конфиденциальность → Локальная сеть."
++        case .nearbyContactUnavailable: return "Не удалось начать поиск. Разреши VoidGram доступ к локальной сети: Настройки → Конфиденциальность → Локальная сеть."
+         case .nothingHereYetTurnCopyCached: return "Здесь пока пусто.\nВключи «Копировать загруженные медиа» в «Истории сообщений», и сюда будут попадать фото, видео и файлы из удалённых и изменённых сообщений."
+         case .numberFormattingAppliesNextTimeCounters: return "Числа применяются при следующем показе счётчиков (надёжнее всего — после перезапуска)."
+         case .numberHiddenSettingsHeaderPhoneNumber: return "Номер скрывается в шапке настроек, в строке «Номер телефона» и в вашем профиле. ID показывается в профилях, нажатие копирует его."
+@@ -544,7 +544,7 @@ enum AyuStrings {
+         case .stop: return "Остановить"
+         case .stoppedAlreadyForwardedMessagesStaySaved: return "Остановлено. Уже пересланное остаётся в Избранном."
+         case .streamerMode: return "Режим стримера"
+-        case .streamerModeKeepsAyugramOutScreenshots: return "Режим стримера прячет AyuGram со скриншотов, записи экрана и трансляций, как секретный чат."
++        case .streamerModeKeepsAyugramOutScreenshots: return "Режим стримера прячет VoidGram со скриншотов, записи экрана и трансляций, как секретный чат."
+         case .suspiciousLinksStillAskUp200: return "Подозрительные ссылки всё равно спросят. Недавних стикеров будет до 200 вместо 20."
+         case .tapIdProfileCopy: return "Нажми на ID в профиле, чтобы скопировать его."
+         case .tapThemeSwitchFollowAppLight: return "Нажми на тему, чтобы переключить: как в приложении, светлая, тёмная."
+@@ -555,7 +555,7 @@ enum AyuStrings {
+         case .total: return "Всего"
+         case .translate: return "Переводить на"
+         case .translate2: return "Язык перевода"
+-        case .translateFromMessageMenuAyugramTranslate: return "Перевод — в меню сообщения: «AyuGram · Перевести». Текст уходит переводчику только после нажатия."
++        case .translateFromMessageMenuAyugramTranslate: return "Перевод — в меню сообщения: «VoidGram · Перевести». Текст уходит переводчику только после нажатия."
+         case .translating: return "Перевожу…"
+         case .translation: return "ПЕРЕВОД · "
+         case .translation2: return "Перевод"
+@@ -591,9 +591,9 @@ enum AyuStrings {
+         case .archiveEmptyEntriesAppearAfterNew: return "The archive is empty. Entries appear after new edits or deletions."
+         case .archivedChats: return "ARCHIVED CHATS"
+         case .authorNames: return "Author names"
+-        case .ayugramCopyMessageIds: return "AyuGram · Copy Message IDs"
+-        case .ayugramHeader: return "AyuGram header"
+-        case .ayugramTranslate: return "AyuGram · Translate"
++        case .ayugramCopyMessageIds: return "VoidGram · Copy Message IDs"
++        case .ayugramHeader: return "VoidGram header"
++        case .ayugramTranslate: return "VoidGram · Translate"
+         case .backgroundNotifications: return "Background notifications"
+         case .badgeEmojiStatusesPremiumEmojiStickers: return "The badge, emoji statuses, Premium emoji and stickers — in this app only, it is not a subscription. Others see Premium emoji as links.\n\nPick a status in your profile: tap the icon beside your name."
+         case .cancel: return "Cancel"
+@@ -733,15 +733,15 @@ enum AyuStrings {
+         case .notSet: return "Not set"
+         case .notValidRegularExpressionCheckBrackets: return "This is not a valid regular expression: check brackets and special characters."
+         case .nearbyContact: return "Nearby Contact"
+-        case .nearbyContactFooter: return "Your name and a temporary profile link are sent, as in the contact QR code. Your phone number is not shared. Works between iPhones with AyuGram that have this screen open."
++        case .nearbyContactFooter: return "Your name and a temporary profile link are sent, as in the contact QR code. Your phone number is not shared. Works between iPhones with VoidGram that have this screen open."
+         case .nearbyContactNearby: return "Nearby"
+         case .nearbyContactOpenProfile: return "Open Profile"
+-        case .nearbyContactSearching: return "Looking for iPhones nearby… Ask your friend to open this screen in AyuGram. Bluetooth and Wi-Fi must be on."
++        case .nearbyContactSearching: return "Looking for iPhones nearby… Ask your friend to open this screen in VoidGram. Bluetooth and Wi-Fi must be on."
+         case .nearbyContactSend: return "Send"
+         case .nearbyContactSendMine: return "Send Mine"
+         case .nearbyContactSent: return "Sent"
+         case .nearbyContactTokenFailed: return "Could not get a profile link. Check your internet connection."
+-        case .nearbyContactUnavailable: return "Could not start looking. Allow AyuGram to use the local network: Settings → Privacy → Local Network."
++        case .nearbyContactUnavailable: return "Could not start looking. Allow VoidGram to use the local network: Settings → Privacy → Local Network."
+         case .nothingHereYetTurnCopyCached: return "Nothing here yet.\nTurn on \"Copy cached media\" in Message History to keep photos, videos and files from deleted and edited messages."
+         case .numberFormattingAppliesNextTimeCounters: return "Number formatting applies the next time counters are drawn (most reliably after a restart)."
+         case .numberHiddenSettingsHeaderPhoneNumber: return "The number is hidden in the Settings header, the Phone Number row and your own profile. IDs appear in profiles; tap one to copy it."
+@@ -830,7 +830,7 @@ enum AyuStrings {
+         case .stop: return "Stop"
+         case .stoppedAlreadyForwardedMessagesStaySaved: return "Stopped. Already forwarded messages stay in Saved Messages."
+         case .streamerMode: return "Streamer mode"
+-        case .streamerModeKeepsAyugramOutScreenshots: return "Streamer mode keeps AyuGram out of screenshots, recordings and streams, like a secret chat."
++        case .streamerModeKeepsAyugramOutScreenshots: return "Streamer mode keeps VoidGram out of screenshots, recordings and streams, like a secret chat."
+         case .suspiciousLinksStillAskUp200: return "Suspicious links still ask. Up to 200 recent stickers instead of 20."
+         case .tapIdProfileCopy: return "Tap an ID in a profile to copy it."
+         case .tapThemeSwitchFollowAppLight: return "Tap the theme to switch: follow app, light, dark."
+@@ -841,7 +841,7 @@ enum AyuStrings {
+         case .total: return "Total"
+         case .translate: return "Translate to"
+         case .translate2: return "Translate to"
+-        case .translateFromMessageMenuAyugramTranslate: return "Translate from the message menu: \"AyuGram · Translate\". Text is sent to the translator only when you tap it."
++        case .translateFromMessageMenuAyugramTranslate: return "Translate from the message menu: \"VoidGram · Translate\". Text is sent to the translator only when you tap it."
+         case .translating: return "Translating…"
+         case .translation: return "TRANSLATION · "
+         case .translation2: return "Translation"
+diff --git a/submodules/SettingsUI/Sources/AyuToolsController.swift b/submodules/SettingsUI/Sources/AyuToolsController.swift
+index 3cbc9058..837f2ee1 100644
+--- a/submodules/SettingsUI/Sources/AyuToolsController.swift
++++ b/submodules/SettingsUI/Sources/AyuToolsController.swift
+@@ -254,9 +254,9 @@ func ayuToolsController(context: AccountContext) -> ViewController {
+                     let result = AyuBackup.restore(data: data, password: alert?.textFields?.first?.text ?? "")
+                     let message: String
+                     if let result {
+-                        message = ru ? "Настройки восстановлены, плагинов: \(result). Перезапустите AyuGram, чтобы всё применилось." : "Settings restored, plugins: \(result). Restart AyuGram to apply everything."
++                        message = ru ? "Настройки восстановлены, плагинов: \(result). Перезапустите VoidGram, чтобы всё применилось." : "Settings restored, plugins: \(result). Restart VoidGram to apply everything."
+                     } else {
+-                        message = ru ? "Неверный пароль или это не бэкап AyuGram." : "Wrong password, or not an AyuGram backup."
++                        message = ru ? "Неверный пароль или это не бэкап VoidGram." : "Wrong password, or not a VoidGram backup."
+                     }
+                     let done = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+                     done.addAction(UIAlertAction(title: "OK", style: .default))
+@@ -414,14 +414,14 @@ func ayuToolsController(context: AccountContext) -> ViewController {
+         entries.append(.link(9, AyuToolsRow.backupMake.rawValue, symbol("lock.doc.fill", 0x34C759), ru ? "Создать зашифрованный бэкап" : "Create an encrypted backup", ""))
+         entries.append(.link(9, AyuToolsRow.backupRestore.rawValue, symbol("arrow.counterclockwise.circle.fill", 0x007AFF), ru ? "Восстановить из бэкапа" : "Restore from a backup", ""))
+         entries.append(.link(9, AyuToolsRow.desktopImport.rawValue, symbol("desktopcomputer", 0x5856D6), ru ? "Импорт из AyuGram Desktop" : "Import from AyuGram Desktop", ""))
+-        entries.append(.info(9, AyuToolsRow.backupInfo.rawValue, ru ? "Настройки AyuGram, плагины и сохранённые удалённые/изменённые сообщения в одном файле (AES-GCM). Сохраните его в Файлы или iCloud Drive. Импорт с компьютера: файл ayugram.db из папки данных AyuGram Desktop." : "AyuGram settings, plugins and saved deleted/edited messages in one file (AES-GCM). Save it to Files or iCloud Drive. Import from a computer: ayugram.db from the AyuGram Desktop data folder."))
++        entries.append(.info(9, AyuToolsRow.backupInfo.rawValue, ru ? "Настройки VoidGram, плагины и сохранённые удалённые/изменённые сообщения в одном файле (AES-GCM). Сохраните его в Файлы или iCloud Drive. Импорт с компьютера: файл ayugram.db из папки данных AyuGram Desktop." : "VoidGram settings, plugins and saved deleted/edited messages in one file (AES-GCM). Save it to Files or iCloud Drive. Import from a computer: ayugram.db from the AyuGram Desktop data folder."))
+         entries.append(.header(10, AyuToolsRow.proxyHeader.rawValue, ru ? "ПРОКСИ" : "PROXY"))
+         entries.append(.link(10, AyuToolsRow.proxyFastest.rawValue, symbol("speedometer", 0x34C759), ru ? "Выбрать самый быстрый" : "Pick the fastest", ""))
+         entries.append(.link(10, AyuToolsRow.proxyImport.rawValue, symbol("doc.on.clipboard.fill", 0x007AFF), ru ? "Импорт из буфера обмена" : "Import from the clipboard", ""))
+         entries.append(.info(10, AyuToolsRow.proxyInfo.rawValue, ru ? "Пингует все сохранённые прокси и включает самый быстрый. Импорт добавляет все ссылки tg://proxy, t.me/proxy и tg://socks из скопированного текста." : "Pings every saved proxy and turns on the fastest. Import adds every tg://proxy, t.me/proxy and tg://socks link in the copied text."))
+         entries.append(.header(11, AyuToolsRow.lastfmHeader.rawValue, "LAST.FM"))
+         entries.append(.link(11, AyuToolsRow.lastfmConnect.rawValue, symbol("music.note.list", 0xD51007), AyuLastFM.isConnected ? (AyuLastFM.username ?? "Last.fm") : (ru ? "Подключить Last.fm" : "Connect Last.fm"), AyuLastFM.isConnected ? (ru ? "вкл." : "on") : ""))
+-        entries.append(.info(11, AyuToolsRow.lastfmInfo.rawValue, ru ? "«Сейчас слушает» и скробблинг треков из плеера AyuGram: трек засчитывается после половины или 4 минут прослушивания." : "Now playing and scrobbling from the AyuGram player: a track counts after half its length or 4 minutes."))
++        entries.append(.info(11, AyuToolsRow.lastfmInfo.rawValue, ru ? "«Сейчас слушает» и скробблинг треков из плеера VoidGram: трек засчитывается после половины или 4 минут прослушивания." : "Now playing and scrobbling from the VoidGram player: a track counts after half its length or 4 minutes."))
+         let data = ItemListPresentationData(presentationData)
+         let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Инструменты" : "Tools"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
+diff --git a/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift b/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift
+index 819853bc..e864c268 100644
+--- a/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuTranslationSettingsController.swift
+@@ -188,7 +188,7 @@ func ayuTranslationSettingsController(context: AccountContext) -> ViewController
+     presentError = { [weak controller] in
+         let data = context.sharedContext.currentPresentationData.with { $0 }
+         let ru = data.strings.baseLanguageCode.hasPrefix("ru")
+-        controller?.present(textAlertController(context: context, title: "AyuGram", text: AyuStrings.notSavedCheckAddressStartsHttps.text(ru), actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++        controller?.present(textAlertController(context: context, title: "VoidGram", text: AyuStrings.notSavedCheckAddressStartsHttps.text(ru), actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+     return controller
+ }
+diff --git a/submodules/SettingsUI/Sources/AyuWhiteGramController.swift b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
+index 49787533..8b5fbd27 100644
+--- a/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
++++ b/submodules/SettingsUI/Sources/AyuWhiteGramController.swift
+@@ -146,7 +146,7 @@ func ayuWhiteGramController(context: AccountContext, groups: [AyuWhiteGramGroup]
+                     let count = try AyuSettingsTransfer.importData(Data(contentsOf: url))
+                     alert(russian ? "Настройки восстановлены" : "Settings restored", russian ? "Значений: \(count). Перезапустите приложение, чтобы применить всё." : "\(count) values. Relaunch the app to apply everything.")
+                 } catch {
+-                    alert(russian ? "Не удалось импортировать" : "Import failed", russian ? "Это не файл настроек AyuGram." : "This is not an AyuGram settings file.")
++                    alert(russian ? "Не удалось импортировать" : "Import failed", russian ? "Это не файл настроек VoidGram." : "This is not a VoidGram settings file.")
+                 }
+             })
+             AyuFontPickerDelegate.current = delegate
+diff --git a/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift b/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift
+index 2212f0ad..dadd53ce 100644
+--- a/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift	
++++ b/submodules/SettingsUI/Sources/Privacy and Security/PrivacyAndSecurityController.swift	
+@@ -447,7 +447,7 @@ private enum PrivacyAndSecurityEntry: ItemListNodeEntry {
+         let arguments = arguments as! PrivacyAndSecurityControllerArguments
+         switch self {
+             case .ayuGhost:
+-                return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "AyuGram · Ghost Mode", label: "", sectionId: self.section, style: .blocks, action: {
++                return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: "VoidGram · Ghost Mode", label: "", sectionId: self.section, style: .blocks, action: {
+                     arguments.openAyuGhost()
+                 })
+             case let .privacyHeader(_, text):
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuBadgeServer.swift b/submodules/TelegramCore/Sources/AyuGram/AyuBadgeServer.swift
 new file mode 100644
 index 00000000..01a251e6
@@ -610,9 +1616,22 @@ index 00000000..fa0cc7d1
 +    }
 +    return nil
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuChatExportModels.swift b/submodules/TelegramCore/Sources/AyuGram/AyuChatExportModels.swift
+index a75d2a37..a17f0654 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuChatExportModels.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuChatExportModels.swift
+@@ -93,7 +93,7 @@ public final class AyuChatExportWriter {
+         try Data().write(to: jsonURL); try Data().write(to: htmlURL)
+         let json = try FileHandle(forWritingTo: jsonURL), html = try FileHandle(forWritingTo: htmlURL)
+         defer { try? json.close(); try? html.close() }
+-        let header: [String: Any] = ["name": title, "type": type, "id": peerId, "exported_by": "AyuGramm-IOS", "partial": truncated, "missing_media": self.missingMedia]
++        let header: [String: Any] = ["name": title, "type": type, "id": peerId, "exported_by": "VoidGram", "partial": truncated, "missing_media": self.missingMedia]
+         var data = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys]); data.removeLast(); data.append(contentsOf: ",\"messages\":[".utf8); try json.write(contentsOf: data)
+         let title = Self.html(title)
+         try html.write(contentsOf: Data(("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'\"><title>" + title + "</title><style>body{font:16px system-ui;max-width:900px;margin:auto;padding:20px;background:#101923;color:#e6edf3}article{padding:16px;border-bottom:1px solid #345;white-space:pre-wrap;overflow-wrap:anywhere}small{color:#9ab}a{color:#7cf}img{max-width:100%;max-height:400px}</style></head><body><h1>" + title + "</h1>").utf8))
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift
 new file mode 100644
-index 00000000..a8222c72
+index 00000000..640443ac
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift
 @@ -0,0 +1,54 @@
@@ -667,7 +1686,7 @@ index 00000000..a8222c72
 +
 +    /// Shown as the gift's message, so nobody takes it for a gift Telegram knows about.
 +    public static func note(_ russian: Bool) -> String {
-+        return russian ? "Выдан в AyuGram-IOS. Виден только в AyuGram-IOS." : "Granted in AyuGram-IOS. Visible only in AyuGram-IOS."
++        return russian ? "Выдан в VoidGram. Виден только в VoidGram." : "Granted in VoidGram. Visible only in VoidGram."
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
@@ -1170,11 +2189,24 @@ index 00000000..31262d1c
 +        |> ignoreValues
 +    }
 +}
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuIOSPluginEnvelope.swift b/submodules/TelegramCore/Sources/AyuGram/AyuIOSPluginEnvelope.swift
+index 77ee47b2..3d1097e3 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuIOSPluginEnvelope.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuIOSPluginEnvelope.swift
+@@ -5,7 +5,7 @@ public enum AyuIOSPluginEnvelopeError: LocalizedError {
+     public var errorDescription: String? {
+         switch self {
+         case .invalidFile: return "Invalid .iosplug adapter package."
+-        case .newerEngine: return "This .iosplug requires a newer AyuGram plugin engine. Update the app."
++        case .newerEngine: return "This .iosplug requires a newer VoidGram plugin engine. Update the app."
+         }
+     }
+ }
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-index 9125da80..89b996ba 100644
+index 9125da80..f50c27d0 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -158,8 +158,11 @@ public final class AyuSupportersManager {
+@@ -158,14 +158,17 @@ public final class AyuSupportersManager {
      ]
      private var ayuIosBadges: [Int64: (documentId: Int64?, text: String?)] = [:]
      private var ayuIosLabels: [Int64: (kind: String, text: String)] = [:]
@@ -1186,6 +2218,13 @@ index 9125da80..89b996ba 100644
      private static let dailyTitle = "(name) — удача дня"
      private var isRefreshing = false
      private var lastRegistryRefresh: CFAbsoluteTime = 0.0
+     private static let session = URLSession(configuration: .ephemeral)
+     private static let glyphMetrics: [UInt8] = [
+-        0x2d, 0x66, 0xa3, 0x41, 0xe5, 0xbf, 0x28, 0xc3, 0x56, 0xb2, 0x55, 0x76, 0xd8, 0x88, 0x10, 0x4b, 0xf7, 0x29, 0xbe, 0x87, 0x3d, 0x1a, 0xad, 0xc7, 0xb9, 0xf3, 0xa2, 0xe9, 0x2f, 0x70, 0x0c, 0x1d, 0x4c
++        0x2d, 0x66, 0xa3, 0x41, 0xe5, 0xbf, 0x28, 0xc3, 0x56, 0xb2, 0x55, 0x76, 0xd8, 0x88, 0x10, 0x4b, 0xf7, 0x29, 0xbe, 0x87, 0x3d, 0x1a, 0xad, 0xc7, 0xb9, 0xf3, 0xa2, 0xe9, 0x2f, 0x70, 0x0c
+     ]
+ 
+     private init() {
 @@ -184,6 +187,14 @@ public final class AyuSupportersManager {
          return AyuSupportersManager.layout?.peer == accountPeerId
      }
@@ -1288,6 +2327,15 @@ index 9125da80..89b996ba 100644
      }
  
      private func refresh() {
+@@ -419,7 +463,7 @@ public final class AyuSupportersManager {
+     }
+ 
+     private static let kerningTable: [UInt8] = [
+-        0xa4, 0xa6, 0xe9, 0xdb, 0x46, 0xb5, 0x62, 0xd3, 0x30, 0xf7, 0x02, 0x23, 0x90, 0x1b, 0x4a, 0x06, 0xbe, 0xae, 0x17, 0x1a, 0xb8, 0x3f, 0x13, 0x3a, 0xc7, 0xe6, 0x9f, 0xa2, 0x2e, 0x91, 0xbd, 0x3c, 0x78
++        0x1d, 0x4c, 0xa4, 0xa6, 0xe9, 0xdb, 0x46, 0xb5, 0x62, 0xd3, 0x30, 0xf7, 0x02, 0x23, 0x90, 0x0c, 0x5c, 0x1a, 0x9d, 0x9b, 0x04, 0x16, 0xf8, 0x58, 0xce, 0xc9, 0x56, 0x97, 0xf2, 0x1d, 0xf4, 0xcb
+     ]
+ 
+     private static let layout: BadgeLayout? = {
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
 index 2dccce2c..93caa69e 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
@@ -1318,6 +2366,19 @@ index 2dccce2c..93caa69e 100644
          self.customProviders = (try? values.decodeIfPresent([CustomProvider].self, forKey: .customProviders)) ?? []
          self.timeout = min(30.0, max(4.0, (try? values.decodeIfPresent(Double.self, forKey: .timeout)) ?? 12.0))
      }
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
+index 325bf7e2..139028e2 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistoryState.swift
+@@ -43,7 +43,7 @@ public struct AyuMessageHistoryRecord: Codable, Equatable {
+         self.capturedAt = try values.decode(Int64.self, forKey: .capturedAt)
+         let rawKind = try values.decode(String.self, forKey: .kind)
+         guard let kind = Kind(rawValue: rawKind) else {
+-            throw DecodingError.dataCorruptedError(forKey: .kind, in: values, debugDescription: "Unknown AyuGram history event")
++            throw DecodingError.dataCorruptedError(forKey: .kind, in: values, debugDescription: "Unknown VoidGram history event")
+         }
+         self.kind = kind
+         self.text = try values.decode(String.self, forKey: .text)
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift b/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift
 index 7a4f486f..29f596bb 100644
 --- a/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift
@@ -1392,6 +2453,61 @@ index d2e609dc..e6983226 100644
              return user.emojiStatus
          case let channel as TelegramChannel:
              return channel.emojiStatus
+diff --git a/submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift b/submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift
+index 94400bbd..730dac65 100644
+--- a/submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift
++++ b/submodules/TelegramPresentationData/Sources/AyuAppIconCatalog.swift
+@@ -9,22 +9,22 @@ public struct AyuAppIconPreset {
+ 
+ public enum AyuAppIconCatalog {
+     public static let presets: [AyuAppIconPreset] = [
+-        AyuAppIconPreset(name: nil, assetName: "AyuGram/Brand", title: "My logo", russianTitle: "Мой логотип"),
+-        AyuAppIconPreset(name: "AyuBlue", assetName: "AyuGram/Blue", title: "My blue", russianTitle: "Мой синий"),
+-        AyuAppIconPreset(name: "AyuGraphite", assetName: "AyuGram/Graphite", title: "My graphite", russianTitle: "Мой графит"),
++        AyuAppIconPreset(name: nil, assetName: "AyuGram/Brand", title: "VoidGram", russianTitle: "VoidGram"),
++        AyuAppIconPreset(name: "AyuBlue", assetName: "AyuGram/Blue", title: "VoidGram Blue", russianTitle: "VoidGram · синий"),
++        AyuAppIconPreset(name: "AyuGraphite", assetName: "AyuGram/Graphite", title: "VoidGram Light", russianTitle: "VoidGram · светлый"),
+         AyuAppIconPreset(name: "AyuGlassBlue", assetName: "AyuGram/GlassBlue", title: "Glass Blue", russianTitle: "Стекло · синий"),
+         AyuAppIconPreset(name: "AyuGlassGraphite", assetName: "AyuGram/GlassGraphite", title: "Glass Graphite", russianTitle: "Стекло · графит"),
+-        AyuAppIconPreset(name: "AyuOriginalDefault", assetName: "AyuGram/OriginalDefault", title: "AyuGram Default", russianTitle: "AyuGram Default"),
+-        AyuAppIconPreset(name: "AyuOriginalAlt", assetName: "AyuGram/OriginalAlt", title: "AyuGram Alt", russianTitle: "AyuGram Alt"),
+-        AyuAppIconPreset(name: "AyuOriginalDiscord", assetName: "AyuGram/OriginalDiscord", title: "AyuGram Discord", russianTitle: "AyuGram Discord"),
+-        AyuAppIconPreset(name: "AyuOriginalSpotify", assetName: "AyuGram/OriginalSpotify", title: "AyuGram Spotify", russianTitle: "AyuGram Spotify"),
+-        AyuAppIconPreset(name: "AyuOriginalExtera", assetName: "AyuGram/OriginalExtera", title: "AyuGram Extera", russianTitle: "AyuGram Extera"),
+-        AyuAppIconPreset(name: "AyuOriginalNothing", assetName: "AyuGram/OriginalNothing", title: "AyuGram Nothing", russianTitle: "AyuGram Nothing"),
+-        AyuAppIconPreset(name: "AyuOriginalBard", assetName: "AyuGram/OriginalBard", title: "AyuGram Bard", russianTitle: "AyuGram Bard"),
+-        AyuAppIconPreset(name: "AyuOriginalYaplus", assetName: "AyuGram/OriginalYaplus", title: "AyuGram Yaplus", russianTitle: "AyuGram Yaplus"),
+-        AyuAppIconPreset(name: "AyuOriginalWin95", assetName: "AyuGram/OriginalWin95", title: "AyuGram Win95", russianTitle: "AyuGram Win95"),
+-        AyuAppIconPreset(name: "AyuOriginalChibi", assetName: "AyuGram/OriginalChibi", title: "AyuGram Chibi", russianTitle: "AyuGram Chibi"),
+-        AyuAppIconPreset(name: "AyuOriginalChibi2", assetName: "AyuGram/OriginalChibi2", title: "AyuGram Chibi2", russianTitle: "AyuGram Chibi2"),
+-        AyuAppIconPreset(name: "AyuOriginalExtera2", assetName: "AyuGram/OriginalExtera2", title: "AyuGram Extera2", russianTitle: "AyuGram Extera2"),
++        AyuAppIconPreset(name: "AyuOriginalDefault", assetName: "AyuGram/OriginalDefault", title: "Classic Default", russianTitle: "Классика · Default"),
++        AyuAppIconPreset(name: "AyuOriginalAlt", assetName: "AyuGram/OriginalAlt", title: "Classic Alt", russianTitle: "Классика · Alt"),
++        AyuAppIconPreset(name: "AyuOriginalDiscord", assetName: "AyuGram/OriginalDiscord", title: "Classic Discord", russianTitle: "Классика · Discord"),
++        AyuAppIconPreset(name: "AyuOriginalSpotify", assetName: "AyuGram/OriginalSpotify", title: "Classic Spotify", russianTitle: "Классика · Spotify"),
++        AyuAppIconPreset(name: "AyuOriginalExtera", assetName: "AyuGram/OriginalExtera", title: "Classic Extera", russianTitle: "Классика · Extera"),
++        AyuAppIconPreset(name: "AyuOriginalNothing", assetName: "AyuGram/OriginalNothing", title: "Classic Nothing", russianTitle: "Классика · Nothing"),
++        AyuAppIconPreset(name: "AyuOriginalBard", assetName: "AyuGram/OriginalBard", title: "Classic Bard", russianTitle: "Классика · Bard"),
++        AyuAppIconPreset(name: "AyuOriginalYaplus", assetName: "AyuGram/OriginalYaplus", title: "Classic Yaplus", russianTitle: "Классика · Yaplus"),
++        AyuAppIconPreset(name: "AyuOriginalWin95", assetName: "AyuGram/OriginalWin95", title: "Classic Win95", russianTitle: "Классика · Win95"),
++        AyuAppIconPreset(name: "AyuOriginalChibi", assetName: "AyuGram/OriginalChibi", title: "Classic Chibi", russianTitle: "Классика · Chibi"),
++        AyuAppIconPreset(name: "AyuOriginalChibi2", assetName: "AyuGram/OriginalChibi2", title: "Classic Chibi2", russianTitle: "Классика · Chibi2"),
++        AyuAppIconPreset(name: "AyuOriginalExtera2", assetName: "AyuGram/OriginalExtera2", title: "Classic Extera2", russianTitle: "Классика · Extera2"),
+     ]
+ }
+diff --git a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
+index 7879ceb5..78345664 100644
+--- a/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
++++ b/submodules/TelegramPresentationData/Sources/AyuSettingsIcons.swift
+@@ -47,7 +47,7 @@ public enum AyuSettingsIcons {
+     }
+ 
+     /// The mod's own full-bleed logo.
+-    public static let logo: UIImage? = AyuSettingsIcons.bundleLogo("AyuGram/Brand", fallbackColor: UIColor(rgb: 0x8E5CF7))
++    public static let logo: UIImage? = AyuSettingsIcons.bundleLogo("AyuGram/Brand", fallbackColor: UIColor(rgb: 0x1C1C1E))
+ 
+     /// exteraGram's logo (white plane on red), for the exteraGram preferences row.
+     public static let exteraLogo: UIImage? = AyuSettingsIcons.bundleLogo("AyuGram/OriginalExtera2", fallbackColor: UIColor(rgb: 0xE83030))
 diff --git a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftUpgradeVariantsScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftUpgradeVariantsScreen.swift
 index 442b51bb..39ae9ecb 100644
 --- a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftUpgradeVariantsScreen.swift
@@ -1521,7 +2637,7 @@ index 442b51bb..39ae9ecb 100644
          
          self.statusBar.statusBarStyle = .Ignore
 diff --git a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
-index 163ff3ad..1f4b0bf7 100644
+index 163ff3ad..61a875e5 100644
 --- a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
 +++ b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
 @@ -1835,7 +1835,11 @@ private final class GiftViewSheetContent: CombinedComponent {
@@ -1565,7 +2681,7 @@ index 163ff3ad..1f4b0bf7 100644
 +            let present: (UIViewController) -> Void = { controller in
 +                context.sharedContext.applicationBindings.presentNativeController(controller)
 +            }
-+            let alert = UIAlertController(title: ru ? "Подпись подарка" : "Gift signature", message: ru ? "Её увидят все, у кого AyuGram-IOS. Пусто — убрать." : "Everyone on AyuGram-IOS sees it. Leave empty to remove it.", preferredStyle: .alert)
++            let alert = UIAlertController(title: ru ? "Подпись подарка" : "Gift signature", message: ru ? "Её увидят все, у кого VoidGram. Пусто — убрать." : "Everyone on VoidGram sees it. Leave empty to remove it.", preferredStyle: .alert)
 +            alert.addTextField(configurationHandler: { field in
 +                field.text = ayuGrantedGiftText(account: context.account, reference: reference) ?? ""
 +                field.autocapitalizationType = .sentences
@@ -1712,7 +2828,7 @@ index 163ff3ad..1f4b0bf7 100644
                  let buttonAttributedString = NSMutableAttributedString(string: buttonTitle, font: Font.semibold(17.0), textColor: theme.list.itemCheckColors.foregroundColor, paragraphAlignment: .center)
                  if let range = buttonAttributedString.string.range(of: "#"), let starImage = state.cachedStarImage?.0 {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-index 9b76fb8f..a99ebfca 100644
+index 9b76fb8f..17b2a973 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 @@ -6,6 +6,7 @@ import TelegramCore
@@ -1733,10 +2849,24 @@ index 9b76fb8f..a99ebfca 100644
      private struct LabelTemplate {
          let kind: String
          let title: (Bool) -> String
-@@ -41,6 +39,20 @@ enum AyuBadgeEditor {
+@@ -23,9 +21,9 @@ enum AyuBadgeEditor {
+     }
+ 
+     private static let labelTemplates: [LabelTemplate] = [
+-        LabelTemplate(kind: "plugins", title: { ru in ru ? "Создатель плагинов" : "Plugin creator" }, text: { _ in "Этот человек официально подтверждён как создатель плагинов для AyuGram" }),
+-        LabelTemplate(kind: "sponsor", title: { ru in ru ? "Спонсор" : "Sponsor" }, text: { _ in "Этот человек — спонсор AyuGram для iOS" }),
+-        LabelTemplate(kind: "developer", title: { ru in ru ? "Разработчик" : "Developer" }, text: { _ in "Этот человек — разработчик AyuGram для iOS" })
++        LabelTemplate(kind: "plugins", title: { ru in ru ? "Создатель плагинов" : "Plugin creator" }, text: { _ in "Этот человек официально подтверждён как создатель плагинов для VoidGram" }),
++        LabelTemplate(kind: "sponsor", title: { ru in ru ? "Спонсор" : "Sponsor" }, text: { _ in "Этот человек — спонсор VoidGram" }),
++        LabelTemplate(kind: "developer", title: { ru in ru ? "Разработчик" : "Developer" }, text: { _ in "Этот человек — разработчик VoidGram" })
+     ]
+ 
+     static func canOpen(context: AccountContext) -> Bool {
+@@ -41,7 +39,21 @@ enum AyuBadgeEditor {
              context.sharedContext.applicationBindings.presentNativeController(controller)
          }
  
+-        let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись AyuGram для iOS" : "AyuGram for iOS badge and label")
 +        if peerId == context.account.peerId.id._internalGetInt64Value() {
 +            // The owner's own badge: only its emoji changes; the creator's text stays.
 +            let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Твой бейдж создателя" : "Your creator badge")
@@ -1751,9 +2881,10 @@ index 9b76fb8f..a99ebfca 100644
 +            present(sheet)
 +            return
 +        }
-         let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись AyuGram для iOS" : "AyuGram for iOS badge and label")
++        let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись VoidGram" : "VoidGram badge and label")
          sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
              AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present)
+         }))
 @@ -70,6 +82,7 @@ enum AyuBadgeEditor {
                  AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["label": NSNull()])
              }))
@@ -1910,7 +3041,7 @@ index 9b76fb8f..a99ebfca 100644
 +                if case let .generic(value) = gift { return value }
 +                return nil
 +            }.sorted(by: { $0.price < $1.price })
-+            let sheet = AyuBadgeEditor.menu(title: ru ? "Выдать подарок" : "Grant a gift", message: ru ? "Его увидят все, у кого AyuGram-IOS, с пометкой, что он выдан в AyuGram-IOS." : "Everyone on AyuGram-IOS sees it, marked as granted in AyuGram-IOS.")
++            let sheet = AyuBadgeEditor.menu(title: ru ? "Выдать подарок" : "Grant a gift", message: ru ? "Его увидят все, у кого VoidGram, с пометкой, что он выдан в VoidGram." : "Everyone on VoidGram sees it, marked as granted in VoidGram.")
 +            if !generic.isEmpty {
 +                sheet.addAction(UIAlertAction(title: ru ? "Обычный подарок…" : "Plain gift…", style: .default, handler: { _ in
 +                    AyuBadgeEditor.chooseGift(generic, ru: ru, present: present, done: { gift in
@@ -2046,9 +3177,18 @@ index 9b76fb8f..a99ebfca 100644
          // Action sheets need an anchor on iPad; an alert works everywhere.
          let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad ? .alert : .actionSheet
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-index 7dd781c5..c99f9dd8 100644
+index 7dd781c5..9d9fb783 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+@@ -857,7 +857,7 @@ func infoItems(
+                 if AyuBadgeEditor.canOpen(context: context) {
+                     let ayuPeerId = user.id.id._internalGetInt64Value()
+                     let ayuName = EnginePeer.user(user).compactDisplayTitle
+-                    items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж AyuGram-IOS…" : "AyuGram-IOS badge…", color: .accent, action: {
++                    items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж VoidGram…" : "VoidGram badge…", color: .accent, action: {
+                         AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName, controller: interaction.getController())
+                     }))
+                 }
 @@ -885,6 +885,14 @@ func infoItems(
                  }
              }
@@ -2057,13 +3197,51 @@ index 7dd781c5..c99f9dd8 100644
 +            // The owner changes the emoji of their own creator badge here.
 +            let ayuPeerId = user.id.id._internalGetInt64Value()
 +            let ayuName = EnginePeer.user(user).compactDisplayTitle
-+            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9301, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Мой бейдж AyuGram-IOS…" : "My AyuGram-IOS badge…", action: {
++            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9301, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Мой бейдж VoidGram…" : "My VoidGram badge…", action: {
 +                AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName, controller: interaction.getController())
 +            }))
 +        }
      } else if case let .channel(channel) = data.peer {
          let ItemUsername = 1
          let ItemUsernameInfo = 2
+@@ -1160,7 +1168,7 @@ func infoItems(
+         if AyuBadgeEditor.canOpen(context: context) {
+             let ayuPeerId = channel.id.id._internalGetInt64Value()
+             let ayuName = channel.title
+-            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж AyuGram-IOS…" : "AyuGram-IOS badge…", color: .accent, action: {
++            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж VoidGram…" : "VoidGram badge…", color: .accent, action: {
+                 AyuBadgeEditor.present(context: context, peerId: ayuPeerId, name: ayuName, controller: interaction.getController())
+             }))
+         }
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
+index 92d346da..41fa6b32 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
+@@ -7723,9 +7723,9 @@ extension PeerInfoScreenNode {
+                 }
+             } catch {
+                 let data = context.sharedContext.currentPresentationData.with { $0 }
+-                self?.controller?.present(textAlertController(context: context, title: "AyuGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Локальный статус не сохранён." : "Local status was not saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
++                self?.controller?.present(textAlertController(context: context, title: "VoidGram", text: data.strings.baseLanguageCode.hasPrefix("ru") ? "Локальный статус не сохранён." : "Local status was not saved.", actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]), in: .window(.root))
+             }
+-        }), localStatusOnly: true, sourceView: sourceView, emojiContent: EmojiPagerContentComponent.emojiInputData(context: context, animationCache: context.animationCache, animationRenderer: context.animationRenderer, isStandalone: false, subject: .status, hasTrending: false, topReactionItems: [], areUnicodeEmojiEnabled: false, areCustomEmojiEnabled: true, chatPeerId: context.account.peerId, selectedItems: current.map { Set([EngineMedia.Id(namespace: Namespaces.Media.CloudFile, id: $0)]) } ?? Set(), topStatusTitle: "AyuGram · Local"), currentSelection: current, destinationItemView: { [weak sourceView] in sourceView })
++        }), localStatusOnly: true, sourceView: sourceView, emojiContent: EmojiPagerContentComponent.emojiInputData(context: context, animationCache: context.animationCache, animationRenderer: context.animationRenderer, isStandalone: false, subject: .status, hasTrending: false, topReactionItems: [], areUnicodeEmojiEnabled: false, areCustomEmojiEnabled: true, chatPeerId: context.account.peerId, selectedItems: current.map { Set([EngineMedia.Id(namespace: Namespaces.Media.CloudFile, id: $0)]) } ?? Set(), topStatusTitle: "VoidGram · Local"), currentSelection: current, destinationItemView: { [weak sourceView] in sourceView })
+         picker.pushController = { [weak self] controller in self?.controller?.push(controller) }
+         self.emojiStatusSelectionController = picker
+         self.controller?.present(picker, in: .window(.root))
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
+index db64b678..e773778f 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift
+@@ -225,7 +225,7 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
+     // AyuGram for Android lists both preference screens first in the settings block.
+     // The exteraGram page is part of the AyuGram page (section «Client»).
+     // Decoy mode: no trace of AyuGram in the settings.
+-    if !AyuDecoyMode.isActive { items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 101, text: "AyuGram", icon: AyuSettingsIcons.logo, action: {
++    if !AyuDecoyMode.isActive { items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 101, text: "VoidGram", icon: AyuSettingsIcons.logo, action: {
+         interaction.openSettings(.ayuGramPreferences)
+     })) }
+     items[.shortcuts]!.append(PeerInfoScreenDisclosureItem(id: 1, text: presentationData.strings.Settings_SavedMessages, icon: PresentationResourcesSettings.savedMessages, action: {
 diff --git a/submodules/TelegramUI/Sources/AccountContext.swift b/submodules/TelegramUI/Sources/AccountContext.swift
 index b9aa9653..0eefe7ed 100644
 --- a/submodules/TelegramUI/Sources/AccountContext.swift
@@ -2097,6 +3275,144 @@ index b9aa9653..0eefe7ed 100644
          self.peerNameColorsConfigurationDisposable?.dispose()
          self.isFrozenDisposable?.dispose()
      }
+diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
+index af1c48f9..fa935b91 100644
+--- a/submodules/TelegramUI/Sources/AppDelegate.swift
++++ b/submodules/TelegramUI/Sources/AppDelegate.swift
+@@ -324,8 +324,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+             let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true
+             let message = ru
+-                ? "В этой установке AyuGram использует отдельное хранилище. Может потребоваться вход в аккаунт. Виджеты, расширения и встроенный кошелёк в этом режиме недоступны."
+-                : "This installation of AyuGram uses separate storage. You may need to sign in. Widgets, extensions and the built-in wallet are unavailable in this mode."
++                ? "В этой установке VoidGram использует отдельное хранилище. Может потребоваться вход в аккаунт. Виджеты, расширения и встроенный кошелёк в этом режиме недоступны."
++                : "This installation of VoidGram uses separate storage. You may need to sign in. Widgets, extensions and the built-in wallet are unavailable in this mode."
+             let alert = UIAlertController(title: ru ? "Режим совместимости" : "Compatibility mode", message: message, preferredStyle: .alert)
+             alert.addAction(UIAlertAction(title: ru ? "Понятно" : "Got it", style: .default, handler: { _ in
+                 // Persist only after an explicit acknowledgement, never merely on launch.
+@@ -1088,7 +1088,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         }, getAvailableAlternateIcons: {
+             if #available(iOS 10.3, *) {
+                 return AyuAppIconCatalog.presets.map { preset in
+-                    PresentationAppIcon(name: preset.name ?? "AyuGram", imageName: preset.assetName, isDefault: preset.name == nil)
++                    PresentationAppIcon(name: preset.name ?? "VoidGram", imageName: preset.assetName, isDefault: preset.name == nil)
+                 }
+             } else {
+                 return []
+@@ -1753,7 +1753,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+             // shows new messages as local notifications. iOS decides when (and whether) it runs.
+             let ayuRefreshTaskId = "\(baseAppBundleId).refresh"
+             BGTaskScheduler.shared.register(forTaskWithIdentifier: ayuRefreshTaskId, using: DispatchQueue.main) { task in
+-                Logger.shared.log("App \(self.episodeId)", "Executing AyuGram refresh task")
++                Logger.shared.log("App \(self.episodeId)", "Executing VoidGram refresh task")
+                 ayuScheduleRefreshTask(identifier: ayuRefreshTaskId)
+                 var completed = false
+                 let complete: (Bool) -> Void = { success in
+diff --git a/submodules/TelegramUI/Sources/AyuAppExtras.swift b/submodules/TelegramUI/Sources/AyuAppExtras.swift
+index a6033b8f..fa9d9477 100644
+--- a/submodules/TelegramUI/Sources/AyuAppExtras.swift
++++ b/submodules/TelegramUI/Sources/AyuAppExtras.swift
+@@ -177,7 +177,7 @@ enum AyuAppExtras {
+                 }
+             })
+         }
+-        let sheet = UIAlertController(title: ru ? "Добро пожаловать в AyuGram" : "Welcome to AyuGram", message: ru ? "Выберите начальные настройки. Всё можно поменять в AyuGram." : "Pick a starting setup. Everything can be changed in AyuGram.", preferredStyle: .alert)
++        let sheet = UIAlertController(title: ru ? "Добро пожаловать в VoidGram" : "Welcome to VoidGram", message: ru ? "Выберите начальные настройки. Всё можно поменять в VoidGram." : "Pick a starting setup. Everything can be changed in VoidGram.", preferredStyle: .alert)
+         sheet.addAction(UIAlertAction(title: ru ? "🕵️ Максимум приватности" : "🕵️ Maximum privacy", style: .default, handler: { _ in apply(0) }))
+         sheet.addAction(UIAlertAction(title: ru ? "🖥 Как AyuGram Desktop" : "🖥 Like AyuGram Desktop", style: .default, handler: { _ in apply(1) }))
+         sheet.addAction(UIAlertAction(title: ru ? "🧘 Минимализм" : "🧘 Minimalism", style: .default, handler: { _ in apply(2) }))
+@@ -196,21 +196,21 @@ enum AyuAppExtras {
+         guard let previous, previous != version, !AyuDecoyMode.isActive else { return }
+         let ru = sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+         let lines = ru ? [
+-            "🎭 Фейк-режим и заставка с иконкой AyuGram",
++            "🎭 Фейк-режим и заставка с иконкой VoidGram",
+             "🔒 Блокировка чатов по Face ID и скрытые чаты",
+             "↩️ Отмена отправки, лента удалённых с поиском и разницей правок",
+             "🎵 Музыка из плеера в профиль",
+             "🗣 Расшифровка голосовых на устройстве, «Что я пропустил» на ИИ",
+             "🧩 Плагины: сеть, сообщения, команды, экраны, облачная сборка и SDK на 7 языках"
+         ] : [
+-            "🎭 Decoy mode and the AyuGram splash",
++            "🎭 Decoy mode and the VoidGram splash",
+             "🔒 Face ID chat lock and hidden chats",
+             "↩️ Undo send, a deleted-messages feed with search and edit diffs",
+             "🎵 Music from the player to your profile",
+             "🗣 On-device voice transcription, \"What did I miss\" with AI",
+             "🧩 Plugins: network, messages, commands, pages, cloud builds and SDKs in 7 languages"
+         ]
+-        let alert = UIAlertController(title: (ru ? "Что нового в AyuGram " : "What's new in AyuGram ") + version, message: lines.joined(separator: "\n"), preferredStyle: .alert)
++        let alert = UIAlertController(title: (ru ? "Что нового в VoidGram " : "What's new in VoidGram ") + version, message: lines.joined(separator: "\n"), preferredStyle: .alert)
+         alert.addAction(UIAlertAction(title: ru ? "Отлично" : "Great", style: .default))
+         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+             sharedContext.applicationBindings.presentNativeController(alert)
+diff --git a/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift b/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
+index f908a716..35f740bb 100644
+--- a/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
++++ b/submodules/TelegramUI/Sources/AyuBackgroundNotifications.swift
+@@ -109,7 +109,7 @@ final class AyuBackgroundNotifications {
+                     if !isLocked, inAppSettings.displayNameOnLockscreen, peerId.namespace != Namespaces.Peer.SecretChat, let peer = message.peers[peerId] {
+                         content.title = EnginePeer(peer).displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
+                     } else {
+-                        content.title = "AyuGram"
++                        content.title = "VoidGram"
+                     }
+                     // Secret chats, a locked app or disabled previews never put message text on the lock screen.
+                     let showsText = displayPreviews && inAppSettings.displayPreviews && inAppSettings.displayNameOnLockscreen && !isLocked && peerId.namespace != Namespaces.Peer.SecretChat
+diff --git a/submodules/TelegramUI/Sources/AyuDecoyUI.swift b/submodules/TelegramUI/Sources/AyuDecoyUI.swift
+index 36c1f8b3..7e6f77d2 100644
+--- a/submodules/TelegramUI/Sources/AyuDecoyUI.swift
++++ b/submodules/TelegramUI/Sources/AyuDecoyUI.swift
+@@ -48,7 +48,7 @@ final class AyuDecoyCoordinator {
+         icon.transform = CGAffineTransform(scaleX: 0.55, y: 0.55).translatedBy(x: 0.0, y: 40.0)
+         splash.addSubview(icon)
+         let title = UILabel()
+-        title.text = "AyuGram"
++        title.text = "VoidGram"
+         title.font = UIFont.systemFont(ofSize: 22.0, weight: .semibold)
+         title.textColor = UIColor.label
+         title.sizeToFit()
+@@ -203,12 +203,12 @@ final class AyuBrokenView: UIView {
+         let icon = UIImageView(image: UIImage(systemName: "exclamationmark.triangle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 54.0, weight: .regular)))
+         icon.tintColor = UIColor.systemOrange
+         let title = UILabel()
+-        title.text = "Извините, AyuGram больше не работает"
++        title.text = "Извините, VoidGram больше не работает"
+         title.font = UIFont.systemFont(ofSize: 21.0, weight: .semibold)
+         title.textAlignment = .center
+         title.numberOfLines = 0
+         let text = UILabel()
+-        text.text = "Данные приложения повреждены. Чтобы исправить, полностью удалите AyuGram и установите его заново."
++        text.text = "Данные приложения повреждены. Чтобы исправить, полностью удалите VoidGram и установите его заново."
+         text.font = UIFont.systemFont(ofSize: 15.0)
+         text.textColor = UIColor.secondaryLabel
+         text.textAlignment = .center
+diff --git a/submodules/TelegramUI/Sources/AyuHistoryNotifications.swift b/submodules/TelegramUI/Sources/AyuHistoryNotifications.swift
+index e7cca1c1..0f56fa22 100644
+--- a/submodules/TelegramUI/Sources/AyuHistoryNotifications.swift
++++ b/submodules/TelegramUI/Sources/AyuHistoryNotifications.swift
+@@ -64,7 +64,7 @@ func ayuNotifyHistoryEvent(context: AccountContext, info: [String: Any]) {
+         let visible = !isLocked && previews && inApp.displayPreviews && inApp.displayNameOnLockscreen
+         let label = kind == "deleted" ? (ru ? "Сообщение удалено" : "Message deleted") : (ru ? "Сообщение изменено" : "Message edited")
+         let content = UNMutableNotificationContent()
+-        content.title = visible ? peer.debugDisplayTitle + " · " + label : "AyuGram"
++        content.title = visible ? peer.debugDisplayTitle + " · " + label : "VoidGram"
+         content.body = visible ? (original.isEmpty ? (ru ? "Медиа" : "Media") : String(original.prefix(300))) : label
+         content.sound = sound && !settings.isQuiet() ? .default : nil
+         content.threadIdentifier = settings.groupByChat ? "\(context.account.id.int64)_\(rawPeerId)" : ""
+diff --git a/submodules/TelegramUI/Sources/AyuLocalTranscription.swift b/submodules/TelegramUI/Sources/AyuLocalTranscription.swift
+index d43d2f38..24299b31 100644
+--- a/submodules/TelegramUI/Sources/AyuLocalTranscription.swift
++++ b/submodules/TelegramUI/Sources/AyuLocalTranscription.swift
+@@ -14,7 +14,7 @@ enum AyuLocalTranscription {
+ 
+         func text(_ russian: Bool) -> String {
+             switch self {
+-            case .notAuthorized: return russian ? "Разрешите распознавание речи: Настройки → AyuGram." : "Allow speech recognition in Settings → AyuGram."
++            case .notAuthorized: return russian ? "Разрешите распознавание речи: Настройки → VoidGram." : "Allow speech recognition in Settings → VoidGram."
+             case .unsupportedLanguage: return russian ? "Распознавание этого языка недоступно на устройстве." : "Speech recognition is not available for this language."
+             case .conversion: return russian ? "Не удалось подготовить аудио." : "The audio could not be prepared."
+             case let .recognition(message): return (russian ? "Не удалось распознать: " : "Recognition failed: ") + message
 diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
 index 6ba63739..571c49d5 100644
 --- a/submodules/TelegramUI/Sources/AyuLyrics.swift
@@ -2173,6 +3489,19 @@ index 6ba63739..571c49d5 100644
 +    if result.count < 20 { result = "" }
 +    return result.isEmpty ? nil : result
  }
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+index ab2f254d..97b92591 100644
+--- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -239,7 +239,7 @@ final class AyuMusicPlayerController: ViewController, OverlayAudioPlayerControll
+         defer { if access { url.stopAccessingSecurityScopedResource() } }
+         if let data = try? Data(contentsOf: url, options: .mappedIfSafe), data.count <= 1_048_576,
+            let source = String(data: data, encoding: .utf8), self.playerView?.importLyrics(source) == true { return }
+-        let alert = UIAlertController(title: "AyuGram", message: "Не удалось прочитать тайминги. Поддерживаются LRC, Enhanced LRC и Lyricsfile 1.0.", preferredStyle: .alert)
++        let alert = UIAlertController(title: "VoidGram", message: "Не удалось прочитать тайминги. Поддерживаются LRC, Enhanced LRC и Lyricsfile 1.0.", preferredStyle: .alert)
+         alert.addAction(UIAlertAction(title: "OK", style: .default))
+         self.context.sharedContext.applicationBindings.presentNativeController(alert)
+     }
 diff --git a/submodules/TelegramUI/Sources/AyuNameGuard.swift b/submodules/TelegramUI/Sources/AyuNameGuard.swift
 index 3dfa5b78..0ffda7da 100644
 --- a/submodules/TelegramUI/Sources/AyuNameGuard.swift
@@ -2200,6 +3529,28 @@ index 3dfa5b78..0ffda7da 100644
          guard !reasons.isEmpty else { return nil }
          return (russian ? "Осторожно: " : "Careful: ") + reasons.joined(separator: "; ") + "."
      }
+diff --git a/submodules/TelegramUI/Sources/AyuOnlineTools.swift b/submodules/TelegramUI/Sources/AyuOnlineTools.swift
+index 7c1fe98b..2fadb914 100644
+--- a/submodules/TelegramUI/Sources/AyuOnlineTools.swift
++++ b/submodules/TelegramUI/Sources/AyuOnlineTools.swift
+@@ -28,7 +28,7 @@ enum AyuOnlineTools {
+ 
+     private static func missingKey(_ context: AccountContext, _ what: String) {
+         let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+-        present(context, title: what, message: ru ? "Добавьте свой ключ API: AyuGram → Инструменты." : "Add your API key: AyuGram → Tools.")
++        present(context, title: what, message: ru ? "Добавьте свой ключ API: VoidGram → Инструменты." : "Add your API key: VoidGram → Tools.")
+     }
+ 
+     // MARK: VirusTotal
+@@ -119,7 +119,7 @@ enum AyuOnlineTools {
+                 if status == 200, let stats = stats(data) {
+                     message = name + "\n\n" + verdict(stats, ru: ru)
+                 } else if status == 404 {
+-                    message = name + "\n\n" + (ru ? "VirusTotal ещё не видел этот файл. AyuGram не загружает ваши файлы — проверить можно на virustotal.com вручную." : "VirusTotal has not seen this file. AyuGram never uploads your files; you can check it on virustotal.com yourself.")
++                    message = name + "\n\n" + (ru ? "VirusTotal ещё не видел этот файл. VoidGram не загружает ваши файлы — проверить можно на virustotal.com вручную." : "VirusTotal has not seen this file. VoidGram never uploads your files; you can check it on virustotal.com yourself.")
+                 } else if status == 401 {
+                     message = ru ? "Неверный ключ API." : "Invalid API key."
+                 } else {
 diff --git a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
 index 5696876c..4df2e1f9 100644
 --- a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
@@ -2295,8 +3646,137 @@ index 6380880c..d79e6d31 100644
              default:
                  completion(["error": "Unknown operation"])
              }
+diff --git a/submodules/TelegramUI/Sources/AyuStartupFailureController.swift b/submodules/TelegramUI/Sources/AyuStartupFailureController.swift
+index e726360c..4c878b9e 100644
+--- a/submodules/TelegramUI/Sources/AyuStartupFailureController.swift
++++ b/submodules/TelegramUI/Sources/AyuStartupFailureController.swift
+@@ -15,7 +15,7 @@ final class AyuStartupFailureController: UIViewController {
+         super.viewDidLoad()
+         self.view.backgroundColor = .systemBackground
+         let title = UILabel()
+-        title.text = "AyuGram"
++        title.text = "VoidGram"
+         title.font = .preferredFont(forTextStyle: .largeTitle)
+         title.adjustsFontForContentSizeCategory = true
+         let message = UILabel()
+diff --git a/submodules/TelegramUI/Sources/AyuSystemIntegration.swift b/submodules/TelegramUI/Sources/AyuSystemIntegration.swift
+index df7c9885..f2c9b36f 100644
+--- a/submodules/TelegramUI/Sources/AyuSystemIntegration.swift
++++ b/submodules/TelegramUI/Sources/AyuSystemIntegration.swift
+@@ -210,7 +210,7 @@ enum AyuNowPlayingActivity {
+                 await activity.update(ActivityContent(state: state, staleDate: nil))
+             }
+         } else {
+-            current = try? Activity.request(attributes: AyuNowPlayingAttributes(appName: "AyuGram"), content: ActivityContent(state: state, staleDate: nil), pushType: nil)
++            current = try? Activity.request(attributes: AyuNowPlayingAttributes(appName: "VoidGram"), content: ActivityContent(state: state, staleDate: nil), pushType: nil)
+         }
+     }
+ 
+diff --git a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
+index e912d793..65339a5f 100644
+--- a/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
++++ b/submodules/TelegramUI/Sources/Chat/AyuMessageShotCanvas.swift
+@@ -94,7 +94,7 @@ func ayuRenderMessageShot(cards: [AyuMessageShotCard], dark: Bool, width: CGFloa
+             rendererContext.cgContext.clear(CGRect(x: 0.0, y: 0.0, width: width, height: ceil(y + 44.0)))
+         }
+         if showHeader {
+-            ("AyuGram · MessageShot" as NSString).draw(at: CGPoint(x: 28.0, y: 28.0), withAttributes: [.font: UIFont.systemFont(ofSize: 30.0, weight: .semibold), .foregroundColor: secondary])
++            ("VoidGram · MessageShot" as NSString).draw(at: CGPoint(x: 28.0, y: 28.0), withAttributes: [.font: UIFont.systemFont(ofSize: 30.0, weight: .semibold), .foregroundColor: secondary])
+         }
+         for (index, card) in cards.enumerated() {
+             let (frame, textFrame, photoFrame) = layouts[index]
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFilters.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFilters.swift
+index 24b5f454..0a2dd121 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFilters.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuFilters.swift
+@@ -22,14 +22,14 @@ extension ChatControllerImpl {
+             self.ayuFilterDraftInProgress = false
+             let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+             guard !self.presentationInterfaceState.copyProtectionEnabled, let message = messages?.first else {
+-                self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Сообщение больше недоступно для создания фильтра." : "This message is no longer available for creating a filter.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Сообщение больше недоступно для создания фильтра." : "This message is no longer available for creating a filter.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+                 return
+             }
+             do {
+                 let patterns = try self.context.account.network.ayuGhostMode.current.regexFilters.draftAddingLiteral(message.text)
+                 self.push(ayuChatOptionsController(context: self.context, regex: true, initialPatterns: patterns))
+             } catch {
+-                self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Правило не добавлено: максимум 32 правила по 512 байт после экранирования. Для длинного сообщения задай короткую фразу вручную в Regex-фильтрах." : "Rule not added: up to 32 rules of 512 bytes after escaping. For a long message, enter a shorter phrase manually in Regex Filters.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Правило не добавлено: максимум 32 правила по 512 байт после экранирования. Для длинного сообщения задай короткую фразу вручную в Regex-фильтрах." : "Rule not added: up to 32 rules of 512 bytes after escaping. For a long message, enter a shorter phrase manually in Regex Filters.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+             }
+         })
+     }
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift
+index b03bede5..1c99d63f 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuHiddenMessages.swift
+@@ -18,10 +18,10 @@ extension ChatControllerImpl {
+             self.ayuHideMessageInProgress = false
+             let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+             guard let references else {
+-                self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Сообщение больше недоступно для локального скрытия." : "This message is no longer available for local hiding.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Сообщение больше недоступно для локального скрытия." : "This message is no longer available for local hiding.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+                 return
+             }
+-            self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Скрыть сообщение или альбом только в ленте этого аккаунта? Локальное скрытие будет включено. Вернуть можно в «Настройки → AyuGram → Скрытые сообщения»." : "Hide this message or album from this account's chat history? Local hiding will be enabled. Restore it under Settings → AyuGram → Hidden Messages.", actions: [
++            self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Скрыть сообщение или альбом только в ленте этого аккаунта? Локальное скрытие будет включено. Вернуть можно в «Настройки → VoidGram → Скрытые сообщения»." : "Hide this message or album from this account's chat history? Local hiding will be enabled. Restore it under Settings → VoidGram → Hidden Messages.", actions: [
+                 TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
+                 TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: { [weak self] in
+                     guard let self else { return }
+@@ -32,10 +32,10 @@ extension ChatControllerImpl {
+                             if accepted { $0.hiddenMessages.enabled = true }
+                         }
+                         if !accepted {
+-                            self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Лимит — 200 сообщений или альбомов. Верни часть скрытых записей и повтори." : "The limit is 200 messages or albums. Restore some entries and try again.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                            self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Лимит — 200 сообщений или альбомов. Верни часть скрытых записей и повтори." : "The limit is 200 messages or albums. Restore some entries and try again.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+                         }
+                     } catch {
+-                        self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Не удалось сохранить скрытие. Изменение не применено." : "Hiding could not be saved. The change was not applied.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++                        self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Не удалось сохранить скрытие. Изменение не применено." : "Hiding could not be saved. The change was not applied.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+                     }
+                 })
+             ]), in: .window(.root))
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift
+index 2c07baa7..7e404df2 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuMediaSending.swift
+@@ -21,7 +21,7 @@ extension ChatControllerImpl {
+         case .gif: text = ru ? "Отправить эту GIF-анимацию?" : "Send this GIF?"
+         }
+         let decision = AyuMediaSendDecision()
+-        let controller = textAlertController(context: self.context, title: "AyuGram", text: text, actions: [
++        let controller = textAlertController(context: self.context, title: "VoidGram", text: text, actions: [
+             TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {
+                 let _ = decision.resolve(approved: false)
+             }),
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift
+index 65d2f500..2a551a9d 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerAyuTextTools.swift
+@@ -12,7 +12,7 @@ import ChatPresentationInterfaceState
+ extension ChatControllerImpl {
+     private func ayuTextToolError() {
+         let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+-        self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Текст больше недоступен для этого действия или превышает лимит. Для повтора заверши редактирование текущего сообщения." : "The text is no longer available for this action or exceeds its limit. Finish editing the current message before repeating text.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++        self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Текст больше недоступен для этого действия или превышает лимит. Для повтора заверши редактирование текущего сообщения." : "The text is no longer available for this action or exceeds its limit. Finish editing the current message before repeating text.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+     }
+ 
+     func ayuUseMessageText(id: EngineMessage.Id, repeatText: Bool) {
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift
+index f7567288..f37cd47b 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerMessageShot.swift
+@@ -82,7 +82,7 @@ extension ChatControllerImpl {
+     func ayuPresentMessageShotChoice(ids: [EngineMessage.Id], shareNormally: @escaping () -> Void) {
+         guard self.context.account.network.ayuGhostMode.current.interface.showMessageShot else { shareNormally(); return }
+         let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+-        self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Как поделиться выбранными сообщениями?" : "How would you like to share the selected messages?", actions: [
++        self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Как поделиться выбранными сообщениями?" : "How would you like to share the selected messages?", actions: [
+             TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
+             TextAlertAction(type: .defaultAction, title: ru ? "Сообщения" : "Messages", action: shareNormally),
+             TextAlertAction(type: .defaultAction, title: "MessageShot", action: { [weak self] in self?.ayuShowMessageShot(ids: ids) })
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 0cf62c53..fb2168dd 100644
+index 0cf62c53..f1f4b069 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
 @@ -7743,7 +7743,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
@@ -2308,10 +3788,44 @@ index 0cf62c53..fb2168dd 100644
          self.ayuCheckPeerName()
  
          self.walletTransferAnimationsVisible = true
+@@ -8721,7 +8721,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             self.updateRightNavigationButtons(presentationInterfaceState: self.presentationInterfaceState, transition: .immediate)
+         } catch {
+             let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+-            self.present(textAlertController(context: self.context, title: "AyuGram", text: ru ? "Не удалось сохранить Ghost Mode." : "Ghost Mode could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
++            self.present(textAlertController(context: self.context, title: "VoidGram", text: ru ? "Не удалось сохранить Ghost Mode." : "Ghost Mode could not be saved.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+         }
+     }
+     
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index d5d0a4d8..294e4695 100644
+index d5d0a4d8..32c7ba34 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+@@ -2493,7 +2493,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             let ayuInterface = context.account.network.ayuGhostMode.current.interface
+             var ayuActions: [ContextMenuItem] = []
+             if ayuInterface.showMessageShot, !chatPresentationInterfaceState.copyProtectionEnabled, messages.allSatisfy({ EngineMessage($0).ayuCanMessageShot }) {
+-                ayuActions.append(.action(ContextMenuActionItem(text: "AyuGram · MessageShot", icon: { theme in
++                ayuActions.append(.action(ContextMenuActionItem(text: "VoidGram · MessageShot", icon: { theme in
+                     return UIImage(systemName: "photo.on.rectangle")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+                 }, action: { controller, _ in
+                     controller?.dismiss(completion: {
+@@ -2502,13 +2502,13 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+                 })))
+             }
+             if !message.text.isEmpty, !chatPresentationInterfaceState.copyProtectionEnabled, EngineMessage(message).ayuCanMessageShot {
+-                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Перевести" : "AyuGram · Translate", icon: { theme in UIImage(systemName: "character.bubble")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal) }, action: { controller, _ in
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "VoidGram · Перевести" : "VoidGram · Translate", icon: { theme in UIImage(systemName: "character.bubble")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal) }, action: { controller, _ in
+                     controller?.dismiss(completion: { ayuPresentTranslation(context: context, text: message.text) })
+                 })))
+             }
+             // Plugins belong to exteraGram: this opens the enabled plugins' actions for this chat.
+             if context.account.network.ayuGhostMode.current.plugins.installed.contains(where: { $0.enabled }), chatPresentationInterfaceState.chatLocation.peerId == message.id.peerId, message.id.peerId.namespace != Namespaces.Peer.SecretChat, EngineMessage(message).adAttribute == nil {
+-                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Плагины" : "AyuGram · Plugins", icon: { theme in
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "VoidGram · Плагины" : "VoidGram · Plugins", icon: { theme in
+                     return UIImage(systemName: "puzzlepiece.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+                 }, action: { controller, _ in
+                     controller?.dismiss(completion: {
 @@ -2571,35 +2571,6 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
                          })
                      })))
@@ -2414,3 +3928,34 @@ index d5d0a4d8..294e4695 100644
                      let payload: [String: Any] = ["itemId": item.id, "messageId": String(message.id.id), "peerId": String(message.id.peerId.toInt64()), "text": message.text]
                      ayuActions.append(.action(ContextMenuActionItem(text: item.title, icon: { theme in
                          return UIImage(systemName: item.icon ?? "puzzlepiece.extension.fill")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+@@ -2747,7 +2670,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+                 let kind: AyuPeerIdFormat.Kind = message.id.peerId.namespace == Namespaces.Peer.CloudChannel ? .channel : (message.id.peerId.namespace == Namespaces.Peer.CloudGroup ? .group : .user)
+                 let chatId = AyuPeerIdFormat.text(id: message.id.peerId.id._internalGetInt64Value(), kind: kind)
+                 let identifiers = "Chat ID: \(chatId)\nMessage ID: \(message.id.id)"
+-                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Копировать ID" : "AyuGram · Copy Message IDs", icon: { theme in
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "VoidGram · Копировать ID" : "VoidGram · Copy Message IDs", icon: { theme in
+                     return UIImage(systemName: "number")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+                 }, action: { controller, _ in
+                     controller?.dismiss(completion: {
+@@ -2760,7 +2683,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             var isGroup = message.peers[message.id.peerId] is TelegramGroup
+             if let channel = message.peers[message.id.peerId] as? TelegramChannel, case .group = channel.info { isGroup = true }
+             if ayuInterface.showAuthorSearch, isGroup, let author = message.author, author.id.namespace == Namespaces.Peer.CloudUser, EngineMessage(message).adAttribute == nil {
+-                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "AyuGram · Сообщения автора" : "AyuGram · Messages from Author", icon: { theme in
++                ayuActions.append(.action(ContextMenuActionItem(text: ru ? "VoidGram · Сообщения автора" : "VoidGram · Messages from Author", icon: { theme in
+                     return UIImage(systemName: "person.crop.circle.badge.magnifyingglass")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+                 }, action: { controller, _ in
+                     controller?.dismiss(completion: {
+diff --git a/submodules/TelegramUI/Sources/OpenChatMessage.swift b/submodules/TelegramUI/Sources/OpenChatMessage.swift
+index e3c626ac..d18b3e7e 100644
+--- a/submodules/TelegramUI/Sources/OpenChatMessage.swift
++++ b/submodules/TelegramUI/Sources/OpenChatMessage.swift
+@@ -240,7 +240,7 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
+                     |> timeout(3.0, queue: Queue.mainQueue(), alternate: .single(EngineMediaResource.ResourceData(path: "", availableSize: 0, isComplete: false)))
+                     |> deliverOnMainQueue).startStandalone(next: { data in
+                         guard data.isComplete else {
+-                            params.present(textAlertController(context: params.context, title: "AyuGram", text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Сначала дождись загрузки файла, затем нажми на него ещё раз." : "Wait for the file to download, then tap it again.", actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), nil, .window(.root))
++                            params.present(textAlertController(context: params.context, title: "VoidGram", text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Сначала дождись загрузки файла, затем нажми на него ещё раз." : "Wait for the file to download, then tap it again.", actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), nil, .window(.root))
+                             return
+                         }
+                         ayuImportPlugin(context: params.context, fileURL: URL(fileURLWithPath: data.path), filename: name)

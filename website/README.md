@@ -1,4 +1,4 @@
-# Страница установки AyuGram для iOS
+# Страница установки VoidGram
 
 Локальный макет сайта. Открой `dist/index.html` в браузере. Сборка и установка
 пакетов не нужны; шрифт, логотип, стили, скрипты и снимки владельца находятся
@@ -78,7 +78,7 @@ ipa: {
   src: 'assets/steps/02-download-ipa.webp',
   width: 629,
   height: 472,
-  alt: 'Главная страница AyuGram с кнопкой «Скачать IPA»',
+  alt: 'Главная страница VoidGram с кнопкой «Скачать IPA»',
   caption: 'Нажми «Скачать IPA» и дождись завершения загрузки.',
 },
 ```
@@ -105,7 +105,7 @@ ipa: {
 
 Проверено по первичным источникам 1 ноября 2026 года:
 
-- [Релизы AyuGram](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases):
+- [Релизы VoidGram](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases):
   в макете выбрана 27.0.2, build 88, файл `AyuGramm-IOS-27.0.2.ipa`.
   При новом релизе обновить `release` в `site-config.js`; ссылка «Все версии»
   всегда ведёт на список релизов.

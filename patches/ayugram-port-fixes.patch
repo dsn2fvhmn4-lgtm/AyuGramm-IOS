@@ -1002,6 +1002,131 @@ index a8cfe4dc..992c3d8b 100644
      /// Profile gifts drawn on glass backgrounds.
      public static var gifts: Bool {
          get { return !off && UserDefaults.standard.bool(forKey: key + "gifts") }
+diff --git a/submodules/Display/Source/AyuOverlayEffects.swift b/submodules/Display/Source/AyuOverlayEffects.swift
+index c26d9b92..a6b18470 100644
+--- a/submodules/Display/Source/AyuOverlayEffects.swift
++++ b/submodules/Display/Source/AyuOverlayEffects.swift
+@@ -75,6 +75,26 @@ public final class AyuOverlayEffects {
+         set { UserDefaults.standard.set(newValue.rawValue, forKey: key + "effect"); AyuOverlayEffects.shared.applySettings() }
+     }
+ 
++    /// What the snow is made of.
++    public enum SnowShape: String, CaseIterable {
++        case dots
++        case flakes
++        case voidgram
++
++        public func title(_ russian: Bool) -> String {
++            switch self {
++            case .dots: return russian ? "Точки" : "Dots"
++            case .flakes: return russian ? "Снежинки" : "Snowflakes"
++            case .voidgram: return russian ? "Знак VoidGram" : "VoidGram mark"
++            }
++        }
++    }
++
++    public static var snowShape: SnowShape {
++        get { return SnowShape(rawValue: UserDefaults.standard.string(forKey: key + "snowShape") ?? "") ?? .dots }
++        set { UserDefaults.standard.set(newValue.rawValue, forKey: key + "snowShape"); AyuOverlayEffects.shared.applySettings() }
++    }
++
+     public static var amount: Double {
+         get { let value = UserDefaults.standard.double(forKey: key + "amount"); return value > 0 ? value : 1.0 }
+         set { UserDefaults.standard.set(max(0.1, min(3.0, newValue)), forKey: key + "amount"); AyuOverlayEffects.shared.applySettings() }
+@@ -307,7 +327,7 @@ public final class AyuOverlayEffects {
+         cell.emissionRange = .pi / 8.0
+         switch value.effect {
+         case .snow:
+-            // Plain soft white dots of different sizes, drifting slowly.
++            // Soft white dots, snowflakes or VoidGram marks of different sizes, drifting slowly.
+             cell.birthRate = 10.0 * amount
+             cell.velocity = 35.0 * speed
+             cell.velocityRange = 18.0 * speed
+@@ -318,6 +338,14 @@ public final class AyuOverlayEffects {
+             cell.scaleRange = 0.35
+             cell.color = UIColor(white: 1.0, alpha: 0.85).cgColor
+             cell.alphaRange = 0.4
++            if AyuOverlayEffects.snowShape != .dots {
++                // Shapes are drawn at 3x, so they stay crisp at the larger sizes.
++                cell.birthRate = 6.0 * amount
++                cell.scale = 0.14
++                cell.scaleRange = 0.08
++                cell.spin = 0.4
++                cell.spinRange = 1.2
++            }
+         case .leaves:
+             cell.birthRate = 2.0 * amount
+             cell.velocity = 40.0 * speed
+@@ -370,6 +398,10 @@ public final class AyuOverlayEffects {
+         let symbol: String
+         let tint: UIColor
+         switch effect {
++        case .snow where AyuOverlayEffects.snowShape == .flakes:
++            return AyuOverlayEffects.snowflakeImage(color: color ?? .white)
++        case .snow where AyuOverlayEffects.snowShape == .voidgram:
++            return AyuOverlayEffects.voidGramMarkImage(color: color ?? .white)
+         case .snow:
+             let size = CGSize(width: 10.0, height: 10.0)
+             let dotColor = color ?? .white
+@@ -399,6 +431,58 @@ public final class AyuOverlayEffects {
+     }
+ }
+ 
++extension AyuOverlayEffects {
++    /// A six-armed snowflake with two pairs of branches on every arm, 60 × 60.
++    fileprivate static func snowflakeImage(color: UIColor) -> UIImage {
++        let size = CGSize(width: 60.0, height: 60.0)
++        return UIGraphicsImageRenderer(size: size).image { context in
++            let c = context.cgContext
++            c.translateBy(x: size.width / 2.0, y: size.height / 2.0)
++            c.setStrokeColor(color.cgColor)
++            c.setLineWidth(3.0)
++            c.setLineCap(.round)
++            for arm in 0 ..< 6 {
++                c.saveGState()
++                c.rotate(by: CGFloat(arm) * .pi / 3.0)
++                c.move(to: .zero)
++                c.addLine(to: CGPoint(x: 0.0, y: -27.0))
++                for (y, length) in [(-11.0, 7.0), (-19.0, 6.0)] as [(CGFloat, CGFloat)] {
++                    c.move(to: CGPoint(x: 0.0, y: y))
++                    c.addLine(to: CGPoint(x: -length * 0.87, y: y - length * 0.5))
++                    c.move(to: CGPoint(x: 0.0, y: y))
++                    c.addLine(to: CGPoint(x: length * 0.87, y: y - length * 0.5))
++                }
++                c.strokePath()
++                c.restoreGState()
++            }
++        }
++    }
++
++    /// The VoidGram mark (two blades and the core between them), 66 × 54.
++    fileprivate static func voidGramMarkImage(color: UIColor) -> UIImage {
++        let size = CGSize(width: 66.0, height: 54.0)
++        // The mark's outline in its drawing units (assets/branding/voidgram/mark.py), 646 × 519.
++        let left: [CGPoint] = [CGPoint(x: 296.6, y: 0.0), CGPoint(x: 296.6, y: 298.5), CGPoint(x: 171.1, y: 519.0), CGPoint(x: 0.0, y: 519.0)]
++        let right = left.map { CGPoint(x: 646.2 - $0.x, y: $0.y) }
++        let core: [CGPoint] = [CGPoint(x: 323.1, y: 341.0), CGPoint(x: 424.8, y: 519.0), CGPoint(x: 221.4, y: 519.0)]
++        return UIGraphicsImageRenderer(size: size).image { context in
++            let c = context.cgContext
++            let scale = (size.width - 4.0) / 646.2
++            c.translateBy(x: 2.0, y: (size.height - 519.0 * scale) / 2.0)
++            c.scaleBy(x: scale, y: scale)
++            c.setLineJoin(.round)
++            c.setLineWidth(14.0)
++            for (shape, alpha) in [(left, 1.0), (right, 1.0), (core, 0.72)] as [([CGPoint], CGFloat)] {
++                c.setFillColor(color.withAlphaComponent(alpha).cgColor)
++                c.setStrokeColor(color.withAlphaComponent(alpha).cgColor)
++                c.addLines(between: shape)
++                c.closePath()
++                c.drawPath(using: .fillStroke)
++            }
++        }
++    }
++}
++
+ /// Never takes touches, whatever is on it.
+ private final class AyuPassthroughView: UIView {
+     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
 diff --git a/submodules/Display/Source/AyuSettingsTransfer.swift b/submodules/Display/Source/AyuSettingsTransfer.swift
 index 68b9ba65..8b0cb194 100644
 --- a/submodules/Display/Source/AyuSettingsTransfer.swift
@@ -1076,6 +1201,53 @@ index c6bbae2e..734f3f8d 100644
      }
      return controller
  }
+diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+index e1860136..a69a82ae 100644
+--- a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
++++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+@@ -27,6 +27,7 @@ private enum AyuAppearancePlusRow: Int32 {
+     case effectAmount = 52
+     case effectSpeed = 53
+     case effectsInfo = 54
++    case snowShape = 55
+ }
+ 
+ private func ayuAppearancePlusSignal() -> Signal<Void, NoError> {
+@@ -58,6 +59,18 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+             context.sharedContext.applicationBindings.presentNativeController(sheet)
+             return
+         }
++        if id == AyuAppearancePlusRow.snowShape.rawValue {
++            let sheet = UIAlertController(title: russianNow ? "Вид снега" : "Snow look", message: nil, preferredStyle: .actionSheet)
++            for shape in AyuOverlayEffects.SnowShape.allCases {
++                sheet.addAction(UIAlertAction(title: shape.title(russianNow) + (shape == AyuOverlayEffects.snowShape ? " ✓" : ""), style: .default, handler: { _ in
++                    AyuOverlayEffects.snowShape = shape
++                    NotificationCenter.default.post(name: AyuAppearancePlus.didChangeNotification, object: nil)
++                }))
++            }
++            sheet.addAction(UIAlertAction(title: russianNow ? "Отмена" : "Cancel", style: .cancel))
++            context.sharedContext.applicationBindings.presentNativeController(sheet)
++            return
++        }
+         if id == AyuAppearancePlusRow.effectAmount.rawValue || id == AyuAppearancePlusRow.effectSpeed.rawValue {
+             let steps: [Double] = [0.25, 0.5, 1.0, 1.5, 2.0, 3.0]
+             let amount = id == AyuAppearancePlusRow.effectAmount.rawValue
+@@ -128,11 +141,14 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+         entries.append(.link(4, AyuAppearancePlusRow.reset.rawValue, symbol("arrow.counterclockwise", 0xFF3B30), ru ? "Сбросить оформление" : "Reset appearance", ""))
+         entries.append(.header(5, AyuAppearancePlusRow.effectsHeader.rawValue, ru ? "ЭФФЕКТЫ" : "EFFECTS"))
+         entries.append(.link(5, AyuAppearancePlusRow.effect.rawValue, symbol("snowflake", 0x5AC8FA), ru ? "Эффект поверх Telegram" : "Effect over Telegram", AyuOverlayEffects.effect.title(ru)))
++        if AyuOverlayEffects.effect == .snow {
++            entries.append(.link(5, AyuAppearancePlusRow.snowShape.rawValue, symbol("snowflake.circle.fill", 0x5AC8FA), ru ? "Вид снега" : "Snow look", AyuOverlayEffects.snowShape.title(ru)))
++        }
+         if AyuOverlayEffects.effect != .none {
+             entries.append(.link(5, AyuAppearancePlusRow.effectAmount.rawValue, symbol("circle.grid.3x3.fill", 0xAF52DE), ru ? "Количество" : "Amount", String(format: "%g×", AyuOverlayEffects.amount)))
+             entries.append(.link(5, AyuAppearancePlusRow.effectSpeed.rawValue, symbol("wind", 0x34C759), ru ? "Скорость" : "Speed", String(format: "%g×", AyuOverlayEffects.speed)))
+         }
+-        entries.append(.info(5, AyuAppearancePlusRow.effectsInfo.rawValue, ru ? "Снег — белые точки на фоне чата, под сообщениями. Листья и другие эффекты падают поверх приложения и не мешают нажатиям. При включённом «Уменьшении движения» в iOS эффекты не показываются." : "Snow is white dots in the chat background, under the messages. Leaves and other effects fall over the app and never block taps. With iOS Reduce Motion on, effects are hidden."))
++        entries.append(.info(5, AyuAppearancePlusRow.effectsInfo.rawValue, ru ? "Снег — точки, снежинки или знаки VoidGram на фоне чата, под сообщениями. Листья и другие эффекты падают поверх приложения и не мешают нажатиям. При включённом «Уменьшении движения» в iOS эффекты не показываются." : "Snow is dots, snowflakes or VoidGram marks in the chat background, under the messages. Leaves and other effects fall over the app and never block taps. With iOS Reduce Motion on, effects are hidden."))
+         let data = ItemListPresentationData(presentationData)
+         let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Панели, стекло и эффекты" : "Tabs, glass & effects"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+         return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: true), arguments))
 diff --git a/submodules/SettingsUI/Sources/AyuBackup.swift b/submodules/SettingsUI/Sources/AyuBackup.swift
 index 3c24b434..037d6aa0 100644
 --- a/submodules/SettingsUI/Sources/AyuBackup.swift
@@ -1480,7 +1652,7 @@ index 7f15252a..f2c80b77 100644
      return controller
  }
 diff --git a/submodules/SettingsUI/Sources/AyuGlassController.swift b/submodules/SettingsUI/Sources/AyuGlassController.swift
-index 60c8da29..5931b746 100644
+index 60c8da29..12b2f393 100644
 --- a/submodules/SettingsUI/Sources/AyuGlassController.swift
 +++ b/submodules/SettingsUI/Sources/AyuGlassController.swift
 @@ -39,6 +39,7 @@ private enum AyuGlassRow: Int32 {
@@ -1503,7 +1675,7 @@ index 60c8da29..5931b746 100644
          entries.append(.info(1, AyuGlassRow.messagesInfo.rawValue, ru ? "Стекло — Liquid Glass iOS 26 (на старых iOS — матовый материал). Холодное стекло — яркое матовое с холодным оттенком. Размытие фона — обои размываются под пузырём. Применяется к новым и прокрученным сообщениям." : "Glass is iOS 26 Liquid Glass (a frosted material on older iOS). Cold glass is a vivid frosted surface with a cold tint. Background blur blurs the wallpaper behind the bubble. Applies to messages as they are laid out."))
          entries.append(.header(2, AyuGlassRow.interfaceHeader.rawValue, ru ? "ИНТЕРФЕЙС" : "INTERFACE"))
          entries.append(.toggle(2, AyuGlassRow.lists.rawValue, symbol("list.bullet.rectangle.fill", 0x34C759), ru ? "Стеклянные настройки и профиль" : "Glass settings and profile", ru ? "Полупрозрачные панели на цветной подложке" : "Translucent panels on a tinted backdrop", AyuGlass.lists))
-+        entries.append(.toggle(2, AyuGlassRow.avatarBackdrop.rawValue, symbol("person.crop.circle.fill", 0x5856D6), ru ? "Аватарка в блюре под профилем" : "Blurred photo under the profile", ru ? "Фото человека размытым фоном за всем профилем" : "The person's photo, blurred, behind the whole profile", AyuGlass.profileAvatarBackdrop))
++        entries.append(.toggle(2, AyuGlassRow.avatarBackdrop.rawValue, symbol("person.crop.circle.fill", 0x5856D6), ru ? "Аватарка в блюре под профилем" : "Blurred photo under the profile", ru ? "Фото человека размытым фоном за профилем, а в «Настройках» — ваше" : "The person's photo, blurred, behind the profile; yours in Settings", AyuGlass.profileAvatarBackdrop))
          entries.append(.toggle(2, AyuGlassRow.gifts.rawValue, symbol("gift.fill", 0xFF9500), ru ? "Подарки на стекле" : "Glass gifts", ru ? "Подарки в профиле на стеклянном фоне" : "Profile gifts on glass backgrounds", AyuGlass.gifts))
          entries.append(.toggle(2, AyuGlassRow.blurGlass.rawValue, symbol("aqi.medium", 0x5AC8FA), ru ? "Размытие вместо стекла" : "Blur instead of glass", ru ? "Панели и кнопки — простое размытие. Не сочетается с «Без стекла»" : "Panels and buttons become a plain blur. Not combined with No glass", AyuAppearancePlus.blurGlass))
          entries.append(.info(2, AyuGlassRow.interfaceInfo.rawValue, ru ? "Стекло Telegram вместо системного и «Без стекла» — в «Внешний вид+». Настройки и профиль меняются после смены темы или перезапуска, размытие вместо стекла — после перезапуска." : "Telegram glass instead of the system one and No glass are in Appearance+. Settings and profile change after a theme change or relaunch; blur instead of glass after a relaunch."))
@@ -3829,7 +4001,7 @@ index 7dd781c5..9d9fb783 100644
              }))
          }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-index 92d346da..3c77b880 100644
+index 92d346da..8a11bf2a 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 @@ -1,5 +1,6 @@
@@ -3876,7 +4048,7 @@ index 92d346da..3c77b880 100644
          
          self.updateBackgroundColor()
      
-@@ -5646,6 +5656,9 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -5646,12 +5656,15 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
          self.ignoreScrolling = true
          
          transition.updateFrame(node: self.scrollNode, frame: CGRect(origin: CGPoint(), size: layout.size))
@@ -3886,6 +4058,13 @@ index 92d346da..3c77b880 100644
          
          if self.isSettings {
              let edgeEffectHeight: CGFloat = layout.intrinsicInsets.bottom
+             let edgeEffectFrame = CGRect(origin: CGPoint(x: 0.0, y: layout.size.height - edgeEffectHeight), size: CGSize(width: layout.size.width, height: edgeEffectHeight))
+             transition.updateFrame(view: self.edgeEffectView, frame: edgeEffectFrame)
+-            self.edgeEffectView.update(content: self.presentationData.theme.list.blocksBackgroundColor, rect: edgeEffectFrame, edge: .bottom, edgeSize: edgeEffectFrame.height, transition: ComponentTransition(transition))
++            self.edgeEffectView.update(content: self.ayuSectionPresentationData().theme.list.blocksBackgroundColor, rect: edgeEffectFrame, edge: .bottom, edgeSize: edgeEffectFrame.height, transition: ComponentTransition(transition))
+         }
+         
+         let sectionSpacing: CGFloat = 24.0
 @@ -5714,7 +5727,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
                          contentHeight -= 16.0
                      }
@@ -3904,14 +4083,15 @@ index 92d346da..3c77b880 100644
                  let sectionFrame = CGRect(origin: CGPoint(x: insets.left, y: contentHeight), size: CGSize(width: sectionWidth, height: sectionHeight))
                  
                  if wasAdded {
-@@ -6024,6 +6037,82 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -6024,6 +6037,83 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
          }
      }
      
-+    /// Shows the peer's current photo, blurred and dimmed for the theme, under everything on the
-+    /// screen, or removes it when the setting is off or the peer has no photo.
++    /// Shows the peer's current photo (the account's own one in Settings), blurred and dimmed for
++    /// the theme, under everything on the screen, or removes it when the setting is off or the peer
++    /// has no photo.
 +    private func ayuUpdateAvatarBackdrop() {
-+        let peer = self.isSettings ? nil : self.data?.peer
++        let peer = self.data?.peer
 +        guard AyuGlass.profileAvatarBackdrop, let peer, let representation = peer.profileImageRepresentations.last else {
 +            self.ayuAvatarBackdropKey = nil
 +            self.ayuAvatarBackdropDisposable.set(nil)
@@ -3987,15 +4167,17 @@ index 92d346da..3c77b880 100644
      private func updateBackgroundColor() {
          let color: UIColor
          if self.paneContainerNode.currentPaneKey == .gifts {
-@@ -6114,6 +6203,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+@@ -6114,7 +6204,8 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
              // iPhone Duo: the panes and tabs stay out of the side strip; the container stays full width.
              let paneSideInsets = peerInfoSideInsets(layout: layout)
              self.paneContainerNode.stripInsets = (paneSideInsets.stripLeft, paneSideInsets.stripRight)
+-            self.paneContainerNode.update(size: self.paneContainerNode.bounds.size, sideInset: paneSideInsets.paneSideInset, topInset: paneContainerTopInset, bottomInset: bottomInset, deviceMetrics: layout.deviceMetrics, visibleHeight: visibleHeight, expansionFraction: self.initialExpandPanes ? 1.0 : effectiveAreaExpansionFraction, presentationData: self.presentationData, data: self.data, areTabsHidden: self.headerNode.customNavigationContentNode != nil, disableTabSwitching: disableTabSwitching, navigationHeight: navigationHeight, transition: transition)
 +            self.paneContainerNode.ayuClearBackground = self.ayuAvatarBackdropView != nil
-             self.paneContainerNode.update(size: self.paneContainerNode.bounds.size, sideInset: paneSideInsets.paneSideInset, topInset: paneContainerTopInset, bottomInset: bottomInset, deviceMetrics: layout.deviceMetrics, visibleHeight: visibleHeight, expansionFraction: self.initialExpandPanes ? 1.0 : effectiveAreaExpansionFraction, presentationData: self.presentationData, data: self.data, areTabsHidden: self.headerNode.customNavigationContentNode != nil, disableTabSwitching: disableTabSwitching, navigationHeight: navigationHeight, transition: transition)
++            self.paneContainerNode.update(size: self.paneContainerNode.bounds.size, sideInset: paneSideInsets.paneSideInset, topInset: paneContainerTopInset, bottomInset: bottomInset, deviceMetrics: layout.deviceMetrics, visibleHeight: visibleHeight, expansionFraction: self.initialExpandPanes ? 1.0 : effectiveAreaExpansionFraction, presentationData: self.ayuSectionPresentationData(), data: self.data, areTabsHidden: self.headerNode.customNavigationContentNode != nil, disableTabSwitching: disableTabSwitching, navigationHeight: navigationHeight, transition: transition)
            
              // iPhone Duo unfolded portrait: the search field ends left of the status island.
-@@ -7723,11 +7813,27 @@ extension PeerInfoScreenNode {
+             let navigationButtonsWidth = layout.size.width - layout.safeInsets.left - layout.safeInsets.right - layout.navigationBarTrailingButtonsInset
+@@ -7723,11 +7814,27 @@ extension PeerInfoScreenNode {
                  }
              } catch {
                  let data = context.sharedContext.currentPresentationData.with { $0 }

@@ -92,10 +92,10 @@ class SupporterBadgeTests(unittest.TestCase):
         desktop_developers = set(json.loads((ROOT / "assets" / "ayu_supporters_seed.json").read_text())["developers"])
         ios_developers = {8276132300, 7556953433, 7864640050}
         self.assertTrue(ios_developers | {8202789099, 7754143736, 7591501540, 7856557891, 3965285630} <= set(ids))
-        self.assertEqual(next(badge for badge in badges if badge["id"] == 8202789099), {"id": 8202789099, "documentId": 5416138353655458286, "title": "Сам еблан"})
-        self.assertEqual(next(badge for badge in badges if badge["id"] == 7754143736), {"id": 7754143736, "documentId": 5203934945956879908, "title": "автостопом по фазе сна"})
-        self.assertEqual(next(badge for badge in badges if badge["id"] == 7591501540), {"id": 7591501540, "documentId": 5341375767739642248, "title": "фембой-парень @asuka4scape_developer"})
-        self.assertEqual(next(badge for badge in badges if badge["id"] == 7856557891), {"id": 7856557891, "documentId": 5384437509281324514, "title": "Основатель и главный разработчик Airis | Чат-менеджера"})
+        self.assertEqual(next({key: badge[key] for key in ("id", "documentId", "title") if key in badge} for badge in badges if badge["id"] == 8202789099), {"id": 8202789099, "documentId": 5416138353655458286, "title": "Сам еблан"})
+        self.assertEqual(next({key: badge[key] for key in ("id", "documentId", "title") if key in badge} for badge in badges if badge["id"] == 7754143736), {"id": 7754143736, "documentId": 5203934945956879908, "title": "автостопом по фазе сна"})
+        self.assertEqual(next({key: badge[key] for key in ("id", "documentId", "title") if key in badge} for badge in badges if badge["id"] == 7591501540), {"id": 7591501540, "documentId": 5341375767739642248, "title": "фембой-парень @asuka4scape_developer"})
+        self.assertEqual(next({key: badge[key] for key in ("id", "documentId", "title") if key in badge} for badge in badges if badge["id"] == 7856557891), {"id": 7856557891, "documentId": 5384437509281324514, "title": "Основатель и главный разработчик Airis | Чат-менеджера"})
         self.assertEqual(next(badge for badge in badges if badge["id"] == 3965285630)["title"], "Офиц тгк")
         self.assertFalse(set(ids) & desktop_developers)
         by_id = {badge["id"]: badge for badge in badges}

@@ -66,6 +66,35 @@ for name in ("GlassBlue", "GlassGraphite"):
         shutil.copy2(voidgram / f"{name}-{layer}.png", icons / f"Ayu{name}.icon" / "Assets" / f"{layer}.png")
     shutil.copy2(voidgram / f"{name}-Preview.png", source / "submodules/TelegramUI/Images.xcassets/AyuGram" / f"{name}.imageset" / "AyuGram.png")
 
+# The twelve classic styles, redrawn with the VoidGram mark (assets/branding/voidgram/styles.py).
+# Each is one full-bleed layer on its own background colour; the picker shows a 300 px preview.
+classic_fills = {
+    "Default": "#2B2242", "Alt": "#9C7CFF", "Discord": "#5865F2", "Spotify": "#121212",
+    "Extera": "#E53935", "Nothing": "#F4F4F4", "Bard": "#FFFFFF", "Yaplus": "#FBF4F8",
+    "Win95": "#008080", "Chibi": "#2B2242", "Chibi2": "#C9B8FF", "Extera2": "#E53935",
+}
+for name, fill in classic_fills.items():
+    bundle = icons / f"AyuOriginal{name}.icon"
+    for old in (bundle / "Assets").iterdir():
+        old.unlink()
+    shutil.copy2(voidgram / "classic" / f"{name}.png", bundle / "Assets" / "VoidGram.png")
+    icon = json.loads((bundle / "icon.json").read_text())
+    red, green, blue = (int(fill[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    icon["fill"] = {"solid": f"extended-srgb:{red:.5f},{green:.5f},{blue:.5f},1.00000"}
+    for group in icon["groups"]:
+        for layer in group["layers"]:
+            layer["image-name"] = "VoidGram.png"
+            layer["name"] = f"VoidGram {name}"
+            layer.pop("position", None)
+    (bundle / "icon.json").write_text(json.dumps(icon, indent=2) + "\n")
+
+    image_set = source / "submodules/TelegramUI/Images.xcassets/AyuGram" / f"Original{name}.imageset"
+    for old in image_set.iterdir():
+        old.unlink()
+    shutil.copy2(voidgram / "classic" / f"{name}-Preview.png", image_set / "VoidGram.png")
+    contents = {"images": [{"idiom": "universal", "filename": "VoidGram.png", "scale": "3x"}], "info": {"author": "xcode", "version": 1}}
+    (image_set / "Contents.json").write_text(json.dumps(contents, indent=2) + "\n")
+
 for badge_name in ("ExteraBadge", "ExteraDeveloperBadge"):
     badge_src = root / "assets" / "branding" / f"{badge_name}.imageset"
     if badge_src.is_dir():

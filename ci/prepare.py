@@ -100,6 +100,11 @@ for name, fill in classic_fills.items():
     contents = {"images": [{"idiom": "universal", "filename": "VoidGram.png", "scale": "3x"}], "info": {"author": "xcode", "version": 1}}
     (image_set / "Contents.json").write_text(json.dumps(contents, indent=2) + "\n")
 
+# iOS caches each alternate icon's flat rendering by its name, so MeiMei under the old
+# AyuOriginalChibi name kept showing the chibi outside the clear appearance. A new name
+# makes SpringBoard render it afresh.
+(icons / "AyuOriginalChibi.icon").rename(icons / "AyuMeiMei.icon")
+
 for badge_name in ("ExteraBadge", "ExteraDeveloperBadge"):
     badge_src = root / "assets" / "branding" / f"{badge_name}.imageset"
     if badge_src.is_dir():

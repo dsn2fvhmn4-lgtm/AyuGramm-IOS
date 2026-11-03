@@ -2284,6 +2284,25 @@ index 2212f0ad..dadd53ce 100644
                      arguments.openAyuGhost()
                  })
              case let .privacyHeader(_, text):
+diff --git a/submodules/SettingsUI/Sources/Themes/ThemeSettingsAppIconItem.swift b/submodules/SettingsUI/Sources/Themes/ThemeSettingsAppIconItem.swift
+index 711d7b3d..1c96be32 100644
+--- a/submodules/SettingsUI/Sources/Themes/ThemeSettingsAppIconItem.swift
++++ b/submodules/SettingsUI/Sources/Themes/ThemeSettingsAppIconItem.swift
+@@ -410,7 +410,13 @@ class ThemeSettingsAppIconItemNode: ListViewItemNode, ItemListItemNode {
+                                 case "PremiumTurbo":
+                                     name = item.strings.Appearance_AppIconTurbo
+                                 default:
+-                                    name = icon.name
++                                    // AyuGram: VoidGram's icons by their title, not the bundle's icon name.
++                                    let russian = item.strings.baseLanguageCode.hasPrefix("ru") || item.strings.baseLanguageCode.hasPrefix("uk")
++                                    if let preset = AyuAppIconCatalog.presets.first(where: { $0.name == icon.name || ($0.name == nil && icon.isDefault) }) {
++                                        name = russian ? preset.russianTitle : preset.title
++                                    } else {
++                                        name = icon.name
++                                    }
+                             }
+                         
+                             imageNode.setup(theme: item.theme, icon: image, title: NSAttributedString(string: name, font: selected ? selectedTextFont : textFont, textColor: selected  ? item.theme.list.itemAccentColor : item.theme.list.itemPrimaryTextColor, paragraphAlignment: .center), locked: !item.isPremium && icon.isPremium, color: item.theme.list.itemPrimaryTextColor, bordered: bordered, selected: selected, action: {
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuBadgeServer.swift b/submodules/TelegramCore/Sources/AyuGram/AyuBadgeServer.swift
 new file mode 100644
 index 00000000..01a251e6

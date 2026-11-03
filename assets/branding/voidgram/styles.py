@@ -8,23 +8,14 @@ SIZE = 1024
 LEFT, RIGHT = mark.paths["blades"].split(" M")
 RIGHT = "M" + RIGHT
 
-def icon(bg, left, right, core, defs="", extra="", scale=0.68, face=False):
+def icon(bg, left, right, core, defs="", extra="", scale=0.68):
     w = mark.bbox[2] - mark.bbox[0]; h = mark.bbox[3] - mark.bbox[1]
     k = SIZE * scale / w
     tx = SIZE / 2 - (mark.bbox[0] + w / 2) * k; ty = SIZE / 2 - (mark.bbox[1] + h / 2) * k
     body = '<rect width="%d" height="%d" fill="%s"/>' % (SIZE, SIZE, bg)
-    g = '<g transform="translate(%.2f %.2f) scale(%.5f)"><path d="%s" fill="%s"/><path d="%s" fill="%s"/><path d="%s" fill="%s"/>%s</g>' % (
-        tx, ty, k, LEFT, left, RIGHT, right, mark.paths["core"], core, face_marks() if face else "")
+    g = '<g transform="translate(%.2f %.2f) scale(%.5f)"><path d="%s" fill="%s"/><path d="%s" fill="%s"/><path d="%s" fill="%s"/></g>' % (
+        tx, ty, k, LEFT, left, RIGHT, right, mark.paths["core"], core)
     return '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"><defs>%s</defs>%s%s%s</svg>' % (SIZE, SIZE, defs, body, g, extra)
-
-def face_marks():
-    # Cat ears on the blades' tips and a small face on the core, in mark units.
-    ears = ('<path d="M492 330 L520 205 L542 300 Z" fill="#FFFFFF"/><path d="M645 330 L617 205 L595 300 Z" fill="#FFFFFF"/>'
-            '<path d="M508 300 L521 240 L532 290 Z" fill="#FF8FB8"/><path d="M629 300 L616 240 L605 290 Z" fill="#FF8FB8"/>')
-    eyes = '<circle cx="541" cy="688" r="15" fill="#2B2242"/><circle cx="596" cy="688" r="15" fill="#2B2242"/><circle cx="546" cy="683" r="5" fill="#FFFFFF"/><circle cx="601" cy="683" r="5" fill="#FFFFFF"/>'
-    blush = '<ellipse cx="519" cy="718" rx="14" ry="8" fill="#FF8FB8"/><ellipse cx="618" cy="718" rx="14" ry="8" fill="#FF8FB8"/>'
-    mouth = '<path d="M556 716 q6 8 12.5 0 q6.5 8 12.5 0" stroke="#2B2242" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
-    return ears + eyes + blush + mouth
 
 def grad(id, stops, x2=1, y2=1):
     # Across the whole mark, in its own units, so every blade shares one gradient.
@@ -46,8 +37,7 @@ STYLES = {
     "Yaplus": icon("#FBF4F8", "url(#ya)", "url(#ya)", "url(#ya)",
                    defs=grad("ya", (("0", "#FF5F45"), ("0.5", "#E0309A"), ("1", "#7B4BFF")))),
     "Win95": None,  # pixel art, drawn below
-    # Chibi is the owner's snow leopard artwork (classic/Chibi.png), not drawn here.
-    "Chibi2": icon("#C9B8FF", "#FFFFFF", "#FFFFFF", "#FFFFFF", face=True),
+    # The Chibi slot holds the MeiMei mascot (classic/MeiMei.png), not drawn here.
     "Extera2": icon("#E53935", "#FFFFFF", "#FFFFFF", "#FFC9C6"),
 }
 
@@ -79,5 +69,3 @@ for name, svg in STYLES.items():
         continue
     render(svg, "classic/%s.png" % name)
     Image.open("classic/%s.png" % name).convert("RGB").save("classic/%s.png" % name, optimize=True)
-for name in ("Chibi2",):
-    pixelate("classic/%s.png" % name, 128)

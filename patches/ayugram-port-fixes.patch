@@ -446,6 +446,23 @@ index 6326e07b..aa24bff4 100644
      /// Downloads, checks and installs a font, then makes it the app font. Returns its names.
      public func install(_ entry: Entry, completion: @escaping (Result<[String], Error>) -> Void) {
          guard let url = URL(string: entry.url) else { return completion(.failure(Failure.invalidCatalog)) }
+diff --git a/submodules/Display/Source/AyuGlass.swift b/submodules/Display/Source/AyuGlass.swift
+index a8cfe4dc..992c3d8b 100644
+--- a/submodules/Display/Source/AyuGlass.swift
++++ b/submodules/Display/Source/AyuGlass.swift
+@@ -61,6 +61,12 @@ public enum AyuGlass {
+         set { set(newValue, "lists") }
+     }
+ 
++    /// The profile's photo, blurred, fills the screen under the profile. On unless turned off.
++    public static var profileAvatarBackdrop: Bool {
++        get { return !off && (UserDefaults.standard.object(forKey: key + "avatarBackdrop") as? Bool ?? true) }
++        set { set(newValue, "avatarBackdrop") }
++    }
++
+     /// Profile gifts drawn on glass backgrounds.
+     public static var gifts: Bool {
+         get { return !off && UserDefaults.standard.bool(forKey: key + "gifts") }
 diff --git a/submodules/Display/Source/AyuSettingsTransfer.swift b/submodules/Display/Source/AyuSettingsTransfer.swift
 index 68b9ba65..8b0cb194 100644
 --- a/submodules/Display/Source/AyuSettingsTransfer.swift
@@ -923,6 +940,34 @@ index 7f15252a..f2c80b77 100644
      }
      return controller
  }
+diff --git a/submodules/SettingsUI/Sources/AyuGlassController.swift b/submodules/SettingsUI/Sources/AyuGlassController.swift
+index 60c8da29..5931b746 100644
+--- a/submodules/SettingsUI/Sources/AyuGlassController.swift
++++ b/submodules/SettingsUI/Sources/AyuGlassController.swift
+@@ -39,6 +39,7 @@ private enum AyuGlassRow: Int32 {
+     case gifts = 12
+     case blurGlass = 13
+     case interfaceInfo = 14
++    case avatarBackdrop = 15
+ }
+ 
+ func ayuGlassController(context: AccountContext) -> ViewController {
+@@ -60,6 +61,7 @@ func ayuGlassController(context: AccountContext) -> ViewController {
+         case .buttons?: AyuGlass.buttons = value
+         case .lists?: AyuGlass.lists = value
+         case .gifts?: AyuGlass.gifts = value
++        case .avatarBackdrop?: AyuGlass.profileAvatarBackdrop = value
+         case .blurGlass?:
+             AyuAppearancePlus.blurGlass = value
+             if value { AyuAppearancePlus.noGlass = false }
+@@ -86,6 +88,7 @@ func ayuGlassController(context: AccountContext) -> ViewController {
+         entries.append(.info(1, AyuGlassRow.messagesInfo.rawValue, ru ? "Стекло — Liquid Glass iOS 26 (на старых iOS — матовый материал). Холодное стекло — яркое матовое с холодным оттенком. Размытие фона — обои размываются под пузырём. Применяется к новым и прокрученным сообщениям." : "Glass is iOS 26 Liquid Glass (a frosted material on older iOS). Cold glass is a vivid frosted surface with a cold tint. Background blur blurs the wallpaper behind the bubble. Applies to messages as they are laid out."))
+         entries.append(.header(2, AyuGlassRow.interfaceHeader.rawValue, ru ? "ИНТЕРФЕЙС" : "INTERFACE"))
+         entries.append(.toggle(2, AyuGlassRow.lists.rawValue, symbol("list.bullet.rectangle.fill", 0x34C759), ru ? "Стеклянные настройки и профиль" : "Glass settings and profile", ru ? "Полупрозрачные панели на цветной подложке" : "Translucent panels on a tinted backdrop", AyuGlass.lists))
++        entries.append(.toggle(2, AyuGlassRow.avatarBackdrop.rawValue, symbol("person.crop.circle.fill", 0x5856D6), ru ? "Аватарка в блюре под профилем" : "Blurred photo under the profile", ru ? "Фото человека размытым фоном за всем профилем" : "The person's photo, blurred, behind the whole profile", AyuGlass.profileAvatarBackdrop))
+         entries.append(.toggle(2, AyuGlassRow.gifts.rawValue, symbol("gift.fill", 0xFF9500), ru ? "Подарки на стекле" : "Glass gifts", ru ? "Подарки в профиле на стеклянном фоне" : "Profile gifts on glass backgrounds", AyuGlass.gifts))
+         entries.append(.toggle(2, AyuGlassRow.blurGlass.rawValue, symbol("aqi.medium", 0x5AC8FA), ru ? "Размытие вместо стекла" : "Blur instead of glass", ru ? "Панели и кнопки — простое размытие. Не сочетается с «Без стекла»" : "Panels and buttons become a plain blur. Not combined with No glass", AyuAppearancePlus.blurGlass))
+         entries.append(.info(2, AyuGlassRow.interfaceInfo.rawValue, ru ? "Стекло Telegram вместо системного и «Без стекла» — в «Внешний вид+». Настройки и профиль меняются после смены темы или перезапуска, размытие вместо стекла — после перезапуска." : "Telegram glass instead of the system one and No glass are in Appearance+. Settings and profile change after a theme change or relaunch; blur instead of glass after a relaunch."))
 diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
 index 0f1cb145..268e7799 100644
 --- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
@@ -3222,10 +3267,124 @@ index 7dd781c5..9d9fb783 100644
              }))
          }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-index 92d346da..41fa6b32 100644
+index 92d346da..1ca44a71 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
-@@ -7723,9 +7723,9 @@ extension PeerInfoScreenNode {
+@@ -340,6 +340,11 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+         }
+     }
+     private(set) var data: PeerInfoScreenData?
++    /// AyuGlass "Blurred photo under the profile": the peer's photo behind the whole screen.
++    private var ayuAvatarBackdropView: UIImageView?
++    private var ayuAvatarBackdropDimView: UIView?
++    private var ayuAvatarBackdropKey: String?
++    private let ayuAvatarBackdropDisposable = MetaDisposable()
+     
+     var state = PeerInfoState(
+         isEditing: false,
+@@ -2700,6 +2705,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+     
+     deinit {
+         self.dataDisposable?.dispose()
++        self.ayuAvatarBackdropDisposable.dispose()
+         self.walletStickersPreloadDisposable.dispose()
+         self.hiddenMediaDisposable?.dispose()
+         self.activeActionDisposable.dispose()
+@@ -2818,6 +2824,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+             }
+         }
+         self.data = data
++        self.ayuUpdateAvatarBackdrop()
+         if previousData?.members?.membersContext !== data.members?.membersContext {
+             if let peer = data.peer, let _ = data.members {
+                 self.groupMembersSearchContext = GroupMembersSearchContext(context: self.context, peerId: peer.id)
+@@ -5577,6 +5584,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+ 
+     func updatePresentationData(_ presentationData: PresentationData) {
+         self.presentationData = presentationData
++        self.ayuUpdateAvatarBackdrop()
+         
+         self.updateBackgroundColor()
+     
+@@ -5646,6 +5654,9 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+         self.ignoreScrolling = true
+         
+         transition.updateFrame(node: self.scrollNode, frame: CGRect(origin: CGPoint(), size: layout.size))
++        if let backdropView = self.ayuAvatarBackdropView {
++            transition.updateFrame(view: backdropView, frame: CGRect(origin: CGPoint(), size: layout.size))
++        }
+         
+         if self.isSettings {
+             let edgeEffectHeight: CGFloat = layout.intrinsicInsets.bottom
+@@ -6024,6 +6035,67 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
+         }
+     }
+     
++    /// Shows the peer's current photo, blurred and dimmed for the theme, under everything on the
++    /// screen, or removes it when the setting is off or the peer has no photo.
++    private func ayuUpdateAvatarBackdrop() {
++        let peer = self.isSettings ? nil : self.data?.peer
++        guard AyuGlass.profileAvatarBackdrop, let peer, let representation = peer.profileImageRepresentations.last else {
++            self.ayuAvatarBackdropKey = nil
++            self.ayuAvatarBackdropDisposable.set(nil)
++            self.ayuAvatarBackdropView?.removeFromSuperview()
++            self.ayuAvatarBackdropView = nil
++            self.ayuAvatarBackdropDimView = nil
++            return
++        }
++        let dark = self.presentationData.theme.overallDarkAppearance
++        let key = "\(peer.id.toInt64())-\(representation.resource.id.stringRepresentation)-\(dark)"
++        guard key != self.ayuAvatarBackdropKey else {
++            return
++        }
++        self.ayuAvatarBackdropKey = key
++
++        let backdropView: UIImageView
++        if let current = self.ayuAvatarBackdropView {
++            backdropView = current
++        } else {
++            backdropView = UIImageView()
++            backdropView.contentMode = .scaleAspectFill
++            backdropView.clipsToBounds = true
++            backdropView.isUserInteractionEnabled = false
++            backdropView.alpha = 0.0
++            let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
++            blurView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++            backdropView.addSubview(blurView)
++            let dimView = UIView()
++            dimView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++            backdropView.addSubview(dimView)
++            self.ayuAvatarBackdropDimView = dimView
++            backdropView.frame = self.bounds
++            blurView.frame = backdropView.bounds
++            dimView.frame = backdropView.bounds
++            self.view.insertSubview(backdropView, at: 0)
++            self.ayuAvatarBackdropView = backdropView
++        }
++        if let blurView = backdropView.subviews.first as? UIVisualEffectView {
++            blurView.effect = UIBlurEffect(style: dark ? .dark : .light)
++        }
++        // Keeps the header text readable over a bright or a dark photo.
++        self.ayuAvatarBackdropDimView?.backgroundColor = dark ? UIColor(white: 0.0, alpha: 0.35) : UIColor(white: 1.0, alpha: 0.35)
++
++        self.ayuAvatarBackdropDisposable.set((peerAvatarCompleteImage(account: self.context.account, peer: peer, size: CGSize(width: 320.0, height: 320.0), round: false, drawLetters: false, fullSize: true)
++        |> deliverOnMainQueue).startStrict(next: { [weak backdropView] image in
++            guard let backdropView, let image else {
++                return
++            }
++            backdropView.image = image
++            if backdropView.alpha == 0.0 {
++                UIView.animate(withDuration: 0.25, animations: {
++                    backdropView.alpha = 1.0
++                })
++            }
++        }))
++    }
++
+     private func updateBackgroundColor() {
+         let color: UIColor
+         if self.paneContainerNode.currentPaneKey == .gifts {
+@@ -7723,9 +7795,9 @@ extension PeerInfoScreenNode {
                  }
              } catch {
                  let data = context.sharedContext.currentPresentationData.with { $0 }

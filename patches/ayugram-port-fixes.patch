@@ -186,6 +186,32 @@ index 6326e07b..aa24bff4 100644
      /// Downloads, checks and installs a font, then makes it the app font. Returns its names.
      public func install(_ entry: Entry, completion: @escaping (Result<[String], Error>) -> Void) {
          guard let url = URL(string: entry.url) else { return completion(.failure(Failure.invalidCatalog)) }
+diff --git a/submodules/Display/Source/AyuSpeechBleep.swift b/submodules/Display/Source/AyuSpeechBleep.swift
+index a23cb92a..13b4df1e 100644
+--- a/submodules/Display/Source/AyuSpeechBleep.swift
++++ b/submodules/Display/Source/AyuSpeechBleep.swift
+@@ -12,6 +12,10 @@ public enum AyuSpeechBleep {
+     ]
+ 
+     public static func isProfanity(_ word: String) -> Bool {
++        // Apple's recognizer masks the swear words it hears ("х**", "f***"), so a masked word is one.
++        if word.contains("*") {
++            return true
++        }
+         let lowered = word.lowercased().trimmingCharacters(in: .punctuationCharacters)
+         return roots.contains(where: { lowered.hasPrefix($0) || (lowered.count > 4 && $0.count >= 4 && lowered.contains($0)) })
+     }
+@@ -20,7 +24,9 @@ public enum AyuSpeechBleep {
+     public static func recognize(_ samples: [Int16], completion: @escaping ([Range<Double>]) -> Void) {
+         SFSpeechRecognizer.requestAuthorization { status in
+             guard status == .authorized, !samples.isEmpty else { return completion([]) }
+-            let localeId = Locale.preferredLanguages.first?.hasPrefix("ru") == true ? "ru-RU" : "en-US"
++            // Russian swearing is what Ukrainian, Belarusian and Kazakh speakers hear and say as well.
++            let cyrillic = ["ru", "uk", "be", "kk"]
++            let localeId = Locale.preferredLanguages.contains(where: { language in cyrillic.contains(where: { language.hasPrefix($0) }) }) ? "ru-RU" : "en-US"
+             guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId)), recognizer.isAvailable, recognizer.supportsOnDeviceRecognition,
+                   let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000.0, channels: 1, interleaved: false),
+                   let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)), let channel = buffer.floatChannelData?[0] else {
 diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
 index 150bfdef..1581cff7 100644
 --- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
@@ -427,6 +453,85 @@ index ef8c0145..ef728852 100644
          }
      }
  }
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuBadgeServer.swift b/submodules/TelegramCore/Sources/AyuGram/AyuBadgeServer.swift
+new file mode 100644
+index 00000000..01a251e6
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuBadgeServer.swift
+@@ -0,0 +1,73 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++/// The AyuGram badge server, which commits badge and gift changes to the registry. A request proves
++/// who sent it with Mini App data Telegram signs for the badge bot, so the phone keeps no keys.
++public enum AyuBadgeServer {
++    public static let url = "https://badge.vinx.best"
++    public static let botUsername = "AyuZayavka_bot"
++
++    /// Mini App data Telegram signs for the badge bot. Fails with Telegram's error code.
++    public static func signedInitData(account: Account) -> Signal<String, String> {
++        return TelegramEngine(account: account).peers.resolvePeerByName(name: AyuBadgeServer.botUsername, referrer: nil)
++        |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
++            guard case let .result(peer) = result else {
++                return .complete()
++            }
++            return .single(peer)
++        }
++        |> then(.single(nil))
++        |> take(1)
++        |> castError(String.self)
++        |> mapToSignal { peer -> Signal<String, String> in
++            guard let peer else {
++                return .fail("BOT_NOT_FOUND")
++            }
++            return ayuBotWebAppInitData(account: account, botId: peer.id, url: AyuBadgeServer.url + "/")
++        }
++    }
++
++    /// POSTs `body` to `/api/<route>` and returns the registry the server committed, or a message to show.
++    public static func post(account: Account, route: String, body: [String: Any], ru: Bool) -> Signal<Data, String> {
++        return AyuBadgeServer.signedInitData(account: account)
++        |> mapError { code -> String in
++            return ru ? "Telegram не выдал данные для входа на сервер бейджей (\(code)). Проверьте, что бот @\(AyuBadgeServer.botUsername) не заблокирован." : "Telegram gave no sign-in data for the badge server (\(code)). Make sure @\(AyuBadgeServer.botUsername) isn't blocked."
++        }
++        |> mapToSignal { initData -> Signal<Data, String> in
++            return Signal { subscriber in
++                guard let url = URL(string: AyuBadgeServer.url + "/api/" + route) else {
++                    subscriber.putError("bad route")
++                    return EmptyDisposable
++                }
++                var body = body
++                body["initData"] = initData
++                var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30.0)
++                request.httpMethod = "POST"
++                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
++                request.httpBody = try? JSONSerialization.data(withJSONObject: body)
++                let session = URLSession(configuration: .ephemeral)
++                let task = session.dataTask(with: request, completionHandler: { data, response, error in
++                    session.finishTasksAndInvalidate()
++                    guard let data, let http = response as? HTTPURLResponse else {
++                        subscriber.putError(error?.localizedDescription ?? "network")
++                        return
++                    }
++                    let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
++                    if http.statusCode == 200, let registry = json?["registry"] as? String {
++                        let registryData = Data(registry.utf8)
++                        AyuSupportersManager.shared.applyAyuRegistry(data: registryData)
++                        subscriber.putNext(registryData)
++                        subscriber.putCompletion()
++                    } else {
++                        subscriber.putError((json?["error"] as? String) ?? (ru ? "Сервер бейджей ответил \(http.statusCode)." : "The badge server answered \(http.statusCode)."))
++                    }
++                })
++                task.resume()
++                return ActionDisposable {
++                    task.cancel()
++                }
++            }
++        }
++    }
++}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuBotWebAppInitData.swift b/submodules/TelegramCore/Sources/AyuGram/AyuBotWebAppInitData.swift
 new file mode 100644
 index 00000000..fa0cc7d1
@@ -557,10 +662,10 @@ index 00000000..d08917fa
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
 new file mode 100644
-index 00000000..a20578d8
+index 00000000..4401c518
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,291 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -594,10 +699,33 @@ index 00000000..a20578d8
 +    return StarGift.UniqueGift(id: granted.giftId &+ Int64(granted.number), giftId: granted.giftId, title: granted.title ?? title, number: granted.number, slug: slug, owner: .peerId(ownerPeerId), attributes: [model, pattern, backdrop], availability: StarGift.UniqueGift.Availability(issued: granted.number, total: max(granted.number, 100000)), giftAddress: nil, resellAmounts: nil, resellForTonOnly: false, releasedBy: nil, valueAmount: nil, valueCurrency: nil, valueUsdAmount: nil, flags: [], themePeerId: nil, peerColor: nil, hostPeerId: nil, minOfferStars: nil, craftChancePermille: nil)
 +}
 +
-+/// The peer's granted gifts as profile gift rows, pinned above the gifts Telegram returns.
-+/// Emits an empty list at once, so the profile never waits for the attribute lookups.
-+public func ayuGrantedProfileGifts(account: Account, peerId: EnginePeer.Id) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
-+    let granted = AyuSupportersManager.shared.grantedGifts(peerId: peerId.id._internalGetInt64Value())
++private let ayuGrantReferencePrefix = "ayugram-grant-"
++
++/// The registry index of the account's own plain granted gift that a profile row stands for.
++/// Such a row offers Telegram's "Upgrade for free" in the gift screen; the upgrade goes to the badge server.
++public func ayuGrantedGiftIndex(_ reference: StarGiftReference?) -> Int? {
++    guard case let .slug(slug)? = reference, slug.hasPrefix(ayuGrantReferencePrefix) else {
++        return nil
++    }
++    return Int(slug.dropFirst(ayuGrantReferencePrefix.count))
++}
++
++/// Fires at once and after every registry read that changed granted gifts.
++private func ayuGrantedGiftsUpdates() -> Signal<Void, NoError> {
++    return Signal { subscriber in
++        subscriber.putNext(Void())
++        let observer = NotificationCenter.default.addObserver(forName: AyuSupportersManager.grantedGiftsDidChange, object: nil, queue: nil, using: { _ in
++            subscriber.putNext(Void())
++        })
++        return ActionDisposable {
++            NotificationCenter.default.removeObserver(observer)
++        }
++    }
++}
++
++/// Granted gifts as profile gift rows, in the order given. A gift whose base gift or attributes
++/// Telegram does not return is left out.
++private func ayuGrantedGiftRows(account: Account, peerId: EnginePeer.Id, granted: [AyuGrantedGift]) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
 +    guard !granted.isEmpty else {
 +        return .single([])
 +    }
@@ -610,7 +738,8 @@ index 00000000..a20578d8
 +        |> map { (giftId, $0 ?? []) }
 +    })
 +    let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true || Locale.preferredLanguages.first?.hasPrefix("uk") == true
-+    let loaded = combineLatest(catalog, attributes)
++    let isOwn = peerId == account.peerId
++    return combineLatest(catalog, attributes)
 +    |> map { catalog, attributes -> [ProfileGiftsContext.State.StarGift] in
 +        var generic: [Int64: StarGift.Gift] = [:]
 +        for gift in catalog?.items ?? [] {
@@ -621,22 +750,215 @@ index 00000000..a20578d8
 +        let attributesById = Dictionary(attributes, uniquingKeysWith: { first, _ in first })
 +        return granted.compactMap { item -> ProfileGiftsContext.State.StarGift? in
 +            let gift: StarGift
++            var reference: StarGiftReference?
++            var canUpgrade = false
++            var upgradeStars: Int64?
 +            switch item.kind {
 +            case .plain:
 +                guard let base = generic[item.giftId] else { return nil }
 +                gift = .generic(base)
++                // The owner of a plain gift upgrades it from the gift screen; the upgrade is prepaid, so it costs 0 stars.
++                if isOwn && base.upgradeStars != nil {
++                    reference = .slug(slug: ayuGrantReferencePrefix + "\(item.index)")
++                    canUpgrade = true
++                    upgradeStars = 1
++                }
 +            case .unique:
 +                guard let unique = ayuUniqueGift(item, title: generic[item.giftId]?.title ?? "Gift", attributes: attributesById[item.giftId] ?? [], ownerPeerId: peerId) else { return nil }
 +                gift = .unique(unique)
 +            }
-+            return ProfileGiftsContext.State.StarGift(gift: gift, reference: nil, fromPeer: nil, date: item.date, text: AyuGrantedGift.note(ru), entities: nil, nameHidden: false, savedToProfile: true, pinnedToTop: true, convertStars: nil, canUpgrade: false, canExportDate: nil, upgradeStars: nil, transferStars: nil, canTransferDate: nil, canResaleDate: nil, collectionIds: nil, prepaidUpgradeHash: nil, upgradeSeparate: false, dropOriginalDetailsStars: nil, number: item.kind == .unique ? item.number : nil, isRefunded: false, canCraftAt: nil)
++            return ProfileGiftsContext.State.StarGift(gift: gift, reference: reference, fromPeer: nil, date: item.date, text: AyuGrantedGift.note(ru), entities: nil, nameHidden: false, savedToProfile: true, pinnedToTop: true, convertStars: nil, canUpgrade: canUpgrade, canExportDate: nil, upgradeStars: upgradeStars, transferStars: nil, canTransferDate: nil, canResaleDate: nil, collectionIds: nil, prepaidUpgradeHash: nil, upgradeSeparate: false, dropOriginalDetailsStars: nil, number: item.kind == .unique ? item.number : nil, isRefunded: false, canCraftAt: nil)
 +        }
 +    }
++}
++
++/// The peer's granted gifts as profile gift rows, pinned above the gifts Telegram returns. Emits an
++/// empty list at once, so the profile never waits for the attribute lookups, then follows the registry.
++public func ayuGrantedProfileGifts(account: Account, peerId: EnginePeer.Id) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
++    let rows = ayuGrantedGiftsUpdates()
++    |> map { _ -> [AyuGrantedGift] in
++        return AyuSupportersManager.shared.grantedGifts(peerId: peerId.id._internalGetInt64Value())
++    }
++    |> distinctUntilChanged
++    |> mapToSignal { granted -> Signal<[ProfileGiftsContext.State.StarGift], NoError> in
++        return ayuGrantedGiftRows(account: account, peerId: peerId, granted: granted)
++    }
 +    return .single([])
-+    |> then(loaded)
++    |> then(rows)
++}
++
++/// A random attribute of one kind, weighted by Telegram's rarity as the real upgrade is.
++private func ayuRandomAttributeName(_ attributes: [StarGift.UniqueGift.Attribute], _ match: (StarGift.UniqueGift.Attribute) -> (String, Int32)?) -> String? {
++    let options = attributes.compactMap(match)
++    let total = options.reduce(Int64(0)) { $0 + Int64(max($1.1, 0)) }
++    guard total > 0 else {
++        return options.randomElement()?.0
++    }
++    var roll = Int64.random(in: 0 ..< total)
++    for (name, weight) in options {
++        roll -= Int64(max(weight, 0))
++        if roll < 0 {
++            return name
++        }
++    }
++    return options.last?.0
++}
++
++/// Upgrades the account's plain granted gift for free: draws a model, backdrop and pattern from
++/// `attributes`, has the badge server commit them and returns the new profile row for the reveal.
++public func ayuUpgradeGrantedGift(account: Account, reference: StarGiftReference, attributes: [StarGift.UniqueGift.Attribute]) -> Signal<ProfileGiftsContext.State.StarGift, UpgradeStarGiftError> {
++    let accountPeerId = account.peerId.id._internalGetInt64Value()
++    guard let index = ayuGrantedGiftIndex(reference), let granted = AyuSupportersManager.shared.grantedGifts(peerId: accountPeerId).first(where: { $0.index == index }) else {
++        return .fail(.generic)
++    }
++    guard granted.kind == .plain else {
++        return .fail(.alreadyUpgraded)
++    }
++    let attributesSignal: Signal<[StarGift.UniqueGift.Attribute], NoError>
++    if attributes.isEmpty {
++        attributesSignal = _internal_getStarGiftUpgradeAttributes(account: account, giftId: granted.giftId)
++        |> take(1)
++        |> map { $0 ?? [] }
++    } else {
++        attributesSignal = .single(attributes)
++    }
++    let ru = Locale.preferredLanguages.first?.hasPrefix("ru") == true || Locale.preferredLanguages.first?.hasPrefix("uk") == true
++    return attributesSignal
++    |> castError(UpgradeStarGiftError.self)
++    |> mapToSignal { attributes -> Signal<ProfileGiftsContext.State.StarGift, UpgradeStarGiftError> in
++        let model = ayuRandomAttributeName(attributes) { attribute in
++            if case let .model(name, _, rarity, _) = attribute { return (name, rarity.permilleValue) }
++            return nil
++        }
++        let pattern = ayuRandomAttributeName(attributes) { attribute in
++            if case let .pattern(name, _, rarity) = attribute { return (name, rarity.permilleValue) }
++            return nil
++        }
++        let backdrop = ayuRandomAttributeName(attributes) { attribute in
++            if case let .backdrop(name, _, _, _, _, _, rarity) = attribute { return (name, rarity.permilleValue) }
++            return nil
++        }
++        guard let model, let pattern, let backdrop else {
++            return .fail(.generic)
++        }
++        return AyuBadgeServer.post(account: account, route: "upgrade", body: ["index": granted.index, "model": model, "backdrop": backdrop, "pattern": pattern], ru: ru)
++        |> mapError { _ -> UpgradeStarGiftError in
++            return .generic
++        }
++        |> mapToSignal { _ -> Signal<ProfileGiftsContext.State.StarGift, UpgradeStarGiftError> in
++            guard let upgraded = AyuSupportersManager.shared.grantedGifts(peerId: accountPeerId).first(where: { $0.index == index && $0.kind == .unique }) else {
++                return .fail(.generic)
++            }
++            return ayuGrantedGiftRows(account: account, peerId: account.peerId, granted: [upgraded])
++            |> castError(UpgradeStarGiftError.self)
++            |> mapToSignal { rows -> Signal<ProfileGiftsContext.State.StarGift, UpgradeStarGiftError> in
++                guard let row = rows.first else {
++                    return .fail(.generic)
++                }
++                return .single(row)
++            }
++        }
++    }
++}
++
++private func ayuGrantedGiftNoticeKey(_ gift: AyuGrantedGift) -> String {
++    return "\(gift.giftId)-\(gift.date)-\(gift.kind.rawValue)"
++}
++
++/// Adds a gift service message for `row` to the chat with `chatPeerId`, as Telegram shows a real gift.
++/// Returns false when the chat's peer is unknown on this device.
++private func ayuAddGrantedGiftMessage(transaction: Transaction, accountPeerId: PeerId, chatPeerId: PeerId, incoming: Bool, row: ProfileGiftsContext.State.StarGift, isUpgrade: Bool, timestamp: Int32) -> Bool {
++    guard transaction.getPeer(chatPeerId) != nil else {
++        return false
++    }
++    let action: TelegramMediaActionType
++    switch row.gift {
++    case .generic:
++        action = .starGift(gift: row.gift, convertStars: nil, text: row.text, entities: nil, nameHidden: false, savedToProfile: true, converted: false, upgraded: false, canUpgrade: false, upgradeStars: nil, isRefunded: false, isPrepaidUpgrade: false, upgradeMessageId: nil, peerId: nil, senderId: nil, savedId: nil, prepaidUpgradeHash: nil, giftMessageId: nil, upgradeSeparate: false, isAuctionAcquired: false, toPeerId: nil, number: nil)
++    case .unique:
++        action = .starGiftUnique(gift: row.gift, isUpgrade: isUpgrade, isTransferred: false, savedToProfile: true, canExportDate: nil, transferStars: nil, isRefunded: false, isPrepaidUpgrade: false, peerId: nil, senderId: nil, savedId: nil, resaleAmount: nil, canTransferDate: nil, canResaleDate: nil, dropOriginalDetailsStars: nil, assigned: false, fromOffer: false, canCraftAt: nil, isCrafted: false, text: row.text, entities: nil, nameHidden: false)
++    }
++    let authorId = incoming ? chatPeerId : accountPeerId
++    let flags: StoreMessageFlags = incoming ? [.Incoming] : []
++    let message = StoreMessage(peerId: chatPeerId, namespace: Namespaces.Message.Local, customStableId: nil, globallyUniqueId: Int64.random(in: Int64.min ... Int64.max), groupingKey: nil, threadId: nil, timestamp: timestamp, flags: flags, tags: [], globalTags: [], localTags: [], forwardInfo: nil, authorId: authorId, text: "", attributes: [], media: [TelegramMediaAction(action: action)])
++    let _ = transaction.addMessages([message], location: .Random)
++    updatePeerChatInclusionWithMinTimestamp(transaction: transaction, id: chatPeerId, minTimestamp: timestamp, forceRootGroupIfNotExists: false)
++    return true
++}
++
++/// Runs for every account: a gift the owner granted to it shows up as a gift message in the chat
++/// with the owner, once per gift and once more when it is upgraded. Only AyuGram-IOS shows it.
++public func ayuGrantedGiftNotices(account: Account) -> Signal<Never, NoError> {
++    let accountPeerId = account.peerId.id._internalGetInt64Value()
++    let defaultsKey = "ayu.grantedGiftNotices.\(accountPeerId)"
++    return ayuGrantedGiftsUpdates()
++    |> map { _ -> [AyuGrantedGift] in
++        return AyuSupportersManager.shared.grantedGifts(peerId: accountPeerId)
++    }
++    |> distinctUntilChanged
++    |> mapToSignal { granted -> Signal<Never, NoError> in
++        guard let owner = AyuSupportersManager.shared.ownerPeerId, owner != accountPeerId else {
++            return .complete()
++        }
++        let seen = Set(UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [])
++        let fresh = granted.filter { !seen.contains(ayuGrantedGiftNoticeKey($0)) }.reversed().map { $0 }
++        guard !fresh.isEmpty else {
++            return .complete()
++        }
++        return ayuGrantedGiftRows(account: account, peerId: account.peerId, granted: fresh)
++        |> take(1)
++        |> mapToSignal { rows -> Signal<Never, NoError> in
++            let ownerPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(owner))
++            return account.postbox.transaction { transaction -> Void in
++                var announced = seen
++                let now = Int32(Date().timeIntervalSince1970)
++                for gift in fresh {
++                    guard let row = rows.first(where: { $0.date == gift.date && ayuGrantedGiftsMatch($0.gift, gift) }) else {
++                        continue
++                    }
++                    let isUpgrade = gift.kind == .unique && seen.contains("\(gift.giftId)-\(gift.date)-plain")
++                    let timestamp = isUpgrade || gift.date <= 0 ? now : gift.date
++                    if ayuAddGrantedGiftMessage(transaction: transaction, accountPeerId: account.peerId, chatPeerId: ownerPeerId, incoming: true, row: row, isUpgrade: isUpgrade, timestamp: timestamp) {
++                        announced.insert(ayuGrantedGiftNoticeKey(gift))
++                    }
++                }
++                UserDefaults.standard.set(Array(announced), forKey: defaultsKey)
++            }
++            |> ignoreValues
++        }
++    }
++}
++
++private func ayuGrantedGiftsMatch(_ gift: StarGift, _ granted: AyuGrantedGift) -> Bool {
++    switch gift {
++    case let .generic(value):
++        return granted.kind == .plain && value.id == granted.giftId
++    case let .unique(value):
++        return granted.kind == .unique && value.giftId == granted.giftId
++    }
++}
++
++/// On the owner's device: the gift just granted to `recipientId` as a sent gift in the chat with them.
++public func ayuAnnounceGrantedGift(account: Account, recipientId: Int64) -> Signal<Never, NoError> {
++    guard let gift = AyuSupportersManager.shared.grantedGifts(peerId: recipientId).max(by: { $0.index < $1.index }) else {
++        return .complete()
++    }
++    let recipientPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(recipientId))
++    return ayuGrantedGiftRows(account: account, peerId: recipientPeerId, granted: [gift])
++    |> take(1)
++    |> mapToSignal { rows -> Signal<Never, NoError> in
++        guard let row = rows.first else {
++            return .complete()
++        }
++        return account.postbox.transaction { transaction -> Void in
++            let timestamp = gift.date > 0 ? gift.date : Int32(Date().timeIntervalSince1970)
++            let _ = ayuAddGrantedGiftMessage(transaction: transaction, accountPeerId: account.peerId, chatPeerId: recipientPeerId, incoming: false, row: row, isUpgrade: false, timestamp: timestamp)
++        }
++        |> ignoreValues
++    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-index 9125da80..055b87a2 100644
+index 9125da80..4fbbe021 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 @@ -158,8 +158,11 @@ public final class AyuSupportersManager {
@@ -651,7 +973,22 @@ index 9125da80..055b87a2 100644
      private static let dailyTitle = "(name) — удача дня"
      private var isRefreshing = false
      private var lastRegistryRefresh: CFAbsoluteTime = 0.0
-@@ -201,6 +204,14 @@ public final class AyuSupportersManager {
+@@ -184,6 +187,14 @@ public final class AyuSupportersManager {
+         return AyuSupportersManager.layout?.peer == accountPeerId
+     }
+ 
++    /// The owner who grants badges and gifts; granted gifts arrive in the chat with them.
++    public var ownerPeerId: Int64? {
++        return AyuSupportersManager.layout?.peer
++    }
++
++    /// Posted after every registry read, so granted gifts on screen follow it.
++    public static let grantedGiftsDidChange = Notification.Name("AyuGrantedGiftsDidChange")
++
+     /// The label line ("sponsor", "developer", "plugins" or "custom") the registry gives a peer.
+     public func label(peerId: Int64) -> (kind: String, text: String)? {
+         self.refreshAyuRegistryIfStale()
+@@ -201,6 +212,14 @@ public final class AyuSupportersManager {
          }
      }
  
@@ -666,7 +1003,7 @@ index 9125da80..055b87a2 100644
      public func isSupporter(peerId: Int64) -> Bool {
          return self.badge(peerId: peerId) != nil
      }
-@@ -214,11 +225,12 @@ public final class AyuSupportersManager {
+@@ -214,11 +233,12 @@ public final class AyuSupportersManager {
          if peerId == layout.peer {
              self.lock.lock()
              let daily = self.ownerDaily
@@ -680,7 +1017,7 @@ index 9125da80..055b87a2 100644
          }
          self.lock.lock()
          defer { self.lock.unlock() }
-@@ -305,6 +317,8 @@ public final class AyuSupportersManager {
+@@ -305,6 +325,8 @@ public final class AyuSupportersManager {
          var labels: [Int64: (kind: String, text: String)] = [:]
          var expiry: [Int64: Double] = [:]
          var ownerDaily: (documentId: Int64, expiresAt: Double)?
@@ -689,7 +1026,7 @@ index 9125da80..055b87a2 100644
          let now = Date().timeIntervalSince1970
          for badge in badges {
              guard let id = (badge["id"] as? NSNumber)?.int64Value, let layout = AyuSupportersManager.layout else {
-@@ -313,6 +327,12 @@ public final class AyuSupportersManager {
+@@ -313,6 +335,12 @@ public final class AyuSupportersManager {
              if let label = badge["label"] as? [String: Any], let text = label["text"] as? String, !text.isEmpty {
                  labels[id] = ((label["kind"] as? String) ?? "custom", String(text.prefix(160)))
              }
@@ -702,7 +1039,7 @@ index 9125da80..055b87a2 100644
              let documentId = (badge["documentId"] as? NSNumber)?.int64Value
              let title = (badge["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
              let expiresAt = (badge["expiresAt"] as? NSNumber)?.doubleValue
-@@ -320,9 +340,12 @@ public final class AyuSupportersManager {
+@@ -320,9 +348,12 @@ public final class AyuSupportersManager {
                  continue
              }
              if id == layout.peer {
@@ -716,15 +1053,21 @@ index 9125da80..055b87a2 100644
                  }
                  continue
              }
-@@ -341,6 +364,8 @@ public final class AyuSupportersManager {
+@@ -341,8 +372,14 @@ public final class AyuSupportersManager {
          self.ayuIosBadges = parsed
          self.ayuIosExpiry = expiry
          self.ownerDaily = ownerDaily
 +        self.ownerDocumentId = ownerDocumentId
++        let giftsChanged = self.grantedGiftsByPeer != gifts
 +        self.grantedGiftsByPeer = gifts
          self.ayuIosLabels = labels
          self.lock.unlock()
++        if giftsChanged {
++            NotificationCenter.default.post(name: AyuSupportersManager.grantedGiftsDidChange, object: nil)
++        }
      }
+ 
+     private func refresh() {
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
 index 2dccce2c..93caa69e 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuLyricsProviderSettings.swift
@@ -803,11 +1146,158 @@ index 7a4f486f..64b01648 100644
          
          let queue = self.queue
          self.impl = QueueLocalObject(queue: queue, generate: {
+diff --git a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftUpgradeVariantsScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftUpgradeVariantsScreen.swift
+index 442b51bb..f5d69b90 100644
+--- a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftUpgradeVariantsScreen.swift
++++ b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftUpgradeVariantsScreen.swift
+@@ -33,6 +33,8 @@ private final class GiftUpgradeVariantsScreenComponent: Component {
+     let attributes: [StarGift.UniqueGift.Attribute]
+     let selectedAttributes: [StarGift.UniqueGift.Attribute]?
+     let focusedAttribute: StarGift.UniqueGift.Attribute?
++    let confirmTitle: String?
++    let confirm: (([StarGift.UniqueGift.Attribute]) -> Void)?
+     
+     init(
+         context: AccountContext,
+@@ -40,7 +42,9 @@ private final class GiftUpgradeVariantsScreenComponent: Component {
+         crafted: Bool,
+         attributes: [StarGift.UniqueGift.Attribute],
+         selectedAttributes: [StarGift.UniqueGift.Attribute]?,
+-        focusedAttribute: StarGift.UniqueGift.Attribute?
++        focusedAttribute: StarGift.UniqueGift.Attribute?,
++        confirmTitle: String? = nil,
++        confirm: (([StarGift.UniqueGift.Attribute]) -> Void)? = nil
+     ) {
+         self.context = context
+         self.gift = gift
+@@ -48,6 +52,8 @@ private final class GiftUpgradeVariantsScreenComponent: Component {
+         self.attributes = attributes
+         self.selectedAttributes = selectedAttributes
+         self.focusedAttribute = focusedAttribute
++        self.confirmTitle = confirmTitle
++        self.confirm = confirm
+     }
+     
+     static func ==(lhs: GiftUpgradeVariantsScreenComponent, rhs: GiftUpgradeVariantsScreenComponent) -> Bool {
+@@ -98,6 +104,7 @@ private final class GiftUpgradeVariantsScreenComponent: Component {
+         private let header = ComponentView<Empty>()
+         private let closeButton = ComponentView<Empty>()
+         private let playbackButton = ComponentView<Empty>()
++        private let confirmButton = ComponentView<Empty>()
+         
+         private let title = ComponentView<Empty>()
+         private let subtitle = ComponentView<Empty>()
+@@ -1208,6 +1215,45 @@ private final class GiftUpgradeVariantsScreenComponent: Component {
+                 transition.setFrame(view: playbackButtonView, frame: playbackButtonFrame)
+             }
+             
++            // AyuGram: the owner's gift desk picks the shown model, backdrop and symbol with this button.
++            if let confirm = component.confirm, let confirmTitle = component.confirmTitle {
++                contentHeight += 8.0
++                let confirmedAttributes = attributes
++                let confirmButtonSize = self.confirmButton.update(
++                    transition: transition,
++                    component: AnyComponent(ButtonComponent(
++                        background: ButtonComponent.Background(
++                            style: .glass,
++                            color: theme.list.itemCheckColors.fillColor,
++                            foreground: theme.list.itemCheckColors.foregroundColor,
++                            pressedColor: theme.list.itemCheckColors.fillColor.withMultipliedAlpha(0.9)
++                        ),
++                        content: AnyComponentWithIdentity(
++                            id: AnyHashable("confirm"),
++                            component: AnyComponent(MultilineTextComponent(text: .plain(NSAttributedString(string: confirmTitle, font: Font.semibold(17.0), textColor: theme.list.itemCheckColors.foregroundColor, paragraphAlignment: .center))))
++                        ),
++                        isEnabled: !confirmedAttributes.isEmpty,
++                        displaysProgress: false,
++                        action: { [weak self] in
++                            guard let self else {
++                                return
++                            }
++                            self.environment?.controller()?.dismiss()
++                            confirm(confirmedAttributes)
++                        }
++                    )),
++                    environment: {},
++                    containerSize: CGSize(width: availableSize.width - sideInset * 2.0, height: 52.0)
++                )
++                if let confirmButtonView = self.confirmButton.view {
++                    if confirmButtonView.superview == nil {
++                        self.scrollContentView.addSubview(confirmButtonView)
++                    }
++                    transition.setFrame(view: confirmButtonView, frame: CGRect(origin: CGPoint(x: sideInset, y: contentHeight), size: confirmButtonSize))
++                }
++                contentHeight += confirmButtonSize.height + 8.0
++            }
++            
+             let containerInset: CGFloat = environment.statusBarHeight + 10.0
+             contentHeight += environment.safeInsets.bottom
+             
+@@ -1301,7 +1347,9 @@ public class GiftUpgradeVariantsScreen: ViewControllerComponentContainer {
+         crafted: Bool = false,
+         attributes: [StarGift.UniqueGift.Attribute],
+         selectedAttributes: [StarGift.UniqueGift.Attribute]?,
+-        focusedAttribute: StarGift.UniqueGift.Attribute?
++        focusedAttribute: StarGift.UniqueGift.Attribute?,
++        confirmTitle: String? = nil,
++        confirm: (([StarGift.UniqueGift.Attribute]) -> Void)? = nil
+     ) {
+         self.context = context
+         
+@@ -1311,7 +1359,9 @@ public class GiftUpgradeVariantsScreen: ViewControllerComponentContainer {
+             crafted: crafted,
+             attributes: attributes,
+             selectedAttributes: selectedAttributes,
+-            focusedAttribute: focusedAttribute
++            focusedAttribute: focusedAttribute,
++            confirmTitle: confirmTitle,
++            confirm: confirm
+         ), navigationBarAppearance: .none, theme: .default)
+         
+         self.statusBar.statusBarStyle = .Ignore
+diff --git a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
+index 163ff3ad..09ee0d17 100644
+--- a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
++++ b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
+@@ -2671,7 +2671,14 @@ private final class GiftViewSheetContent: CombinedComponent {
+                 controller.showBalance = false
+                 
+                 let upgradeGiftImpl: ((Int64?, Bool) -> Signal<ProfileGiftsContext.State.StarGift, UpgradeStarGiftError>)
+-                if let upgradeGift = controller.upgradeGift {
++                if let reference = arguments.reference, let _ = ayuGrantedGiftIndex(reference) {
++                    // AyuGram: a gift granted through the badge registry is upgraded by the badge server, for free.
++                    let attributes = self.upgradePreview?.attributes ?? []
++                    let account = self.context.account
++                    upgradeGiftImpl = { _, _ in
++                        return ayuUpgradeGrantedGift(account: account, reference: reference, attributes: attributes)
++                    }
++                } else if let upgradeGift = controller.upgradeGift {
+                     guard let reference = arguments.reference else {
+                         return
+                     }
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-index 9b76fb8f..f2c88f91 100644
+index 9b76fb8f..13631501 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-@@ -41,6 +41,20 @@ enum AyuBadgeEditor {
+@@ -6,6 +6,7 @@ import TelegramCore
+ import AccountContext
+ import EntityKeyboard
+ import EmojiStatusSelectionComponent
++import GiftViewScreen
+ 
+ /// The repository owner's badge desk, opened from any profile: hands out an AyuGram for iOS
+ /// badge (custom emoji and text) and the label line under the name. The badge server commits the
+@@ -13,9 +14,6 @@ import EmojiStatusSelectionComponent
+ /// Telegram signs for the badge bot, so the phone keeps no keys. Everyone sees it the next time
+ /// they return to the app; the owner sees it at once.
+ enum AyuBadgeEditor {
+-    private static let server = "https://badge.vinx.best"
+-    private static let botUsername = "AyuZayavka_bot"
+-
+     private struct LabelTemplate {
+         let kind: String
+         let title: (Bool) -> String
+@@ -41,6 +39,20 @@ enum AyuBadgeEditor {
              context.sharedContext.applicationBindings.presentNativeController(controller)
          }
  
@@ -828,7 +1318,7 @@ index 9b76fb8f..f2c88f91 100644
          let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись AyuGram для iOS" : "AyuGram for iOS badge and label")
          sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
              AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present)
-@@ -70,6 +84,7 @@ enum AyuBadgeEditor {
+@@ -70,6 +82,7 @@ enum AyuBadgeEditor {
                  AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["label": NSNull()])
              }))
          }
@@ -836,7 +1326,7 @@ index 9b76fb8f..f2c88f91 100644
          sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
          present(sheet)
      }
-@@ -78,7 +93,7 @@ enum AyuBadgeEditor {
+@@ -78,7 +91,7 @@ enum AyuBadgeEditor {
  
      /// Picks the badge's emoji the way Telegram picks an emoji status: recent emoji and every
      /// saved custom emoji pack, with search. The text comes next.
@@ -845,7 +1335,7 @@ index 9b76fb8f..f2c88f91 100644
          let currentDocumentId: Int64?
          let currentText: String
          switch AyuSupportersManager.shared.badge(peerId: peerId) {
-@@ -93,6 +108,12 @@ enum AyuBadgeEditor {
+@@ -93,6 +106,12 @@ enum AyuBadgeEditor {
              currentText = ""
          }
          let next: (Int64?) -> Void = { documentId in
@@ -858,86 +1348,66 @@ index 9b76fb8f..f2c88f91 100644
              AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Показывается при нажатии на бейдж. (name) заменится именем." : "Shown when the badge is tapped. (name) becomes the name.", initial: currentText, ru: ru, present: present, done: { text in
                  // Sent as a string: the id does not fit a JavaScript number.
                  AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": documentId.map { String($0) as Any } ?? NSNull(), "title": text])
-@@ -161,7 +182,7 @@ enum AyuBadgeEditor {
+@@ -161,91 +180,165 @@ enum AyuBadgeEditor {
      /// Sends the change to the badge server and applies the registry it answers with. `change`
      /// sets documentId, title or label; NSNull clears one.
      private static func commit(context: AccountContext, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void, change: [String: Any]) {
 -        AyuBadgeEditor.upload(context: context, peerId: peerId, ru: ru, change: change, completion: { result in
-+        AyuBadgeEditor.upload(context: context, ru: ru, route: "admin", body: ["peerId": String(peerId), "change": change], completion: { result in
-             DispatchQueue.main.async {
-                 switch result {
-                 case let .success(data):
-@@ -182,13 +203,21 @@ enum AyuBadgeEditor {
-         case failure(String)
-     }
- 
--    private static func upload(context: AccountContext, peerId: Int64, ru: Bool, change: [String: Any], completion: @escaping (UploadResult) -> Void) {
-+    /// POSTs `body` with the signed Mini App data to the badge server's `route` and answers with
-+    /// the registry it returns.
-+    private static func upload(context: AccountContext, ru: Bool, route: String, body: [String: Any], completion: @escaping (UploadResult) -> Void) {
-+        let failure: (String) -> Void = { code in
-+            completion(.failure(ru ? "Telegram не выдал данные для входа на сервер бейджей (\(code)). Проверьте, что бот @\(AyuBadgeEditor.botUsername) не заблокирован." : "Telegram gave no sign-in data for the badge server (\(code)). Make sure @\(AyuBadgeEditor.botUsername) isn't blocked."))
-+        }
-+        var signedIn = false
-         let _ = (AyuBadgeEditor.signedInitData(context: context)
-         |> deliverOnMainQueue).startStandalone(next: { initData in
--            guard let initData, let url = URL(string: AyuBadgeEditor.server + "/api/admin") else {
--                return completion(.failure(ru ? "Telegram не выдал данные для входа на сервер бейджей. Проверьте, что бот @\(AyuBadgeEditor.botUsername) не заблокирован." : "Telegram gave no sign-in data for the badge server. Make sure @\(AyuBadgeEditor.botUsername) isn't blocked."))
-+            signedIn = true
-+            guard let url = URL(string: AyuBadgeEditor.server + "/api/" + route) else {
-+                return
+-            DispatchQueue.main.async {
+-                switch result {
+-                case let .success(data):
+-                    AyuSupportersManager.shared.applyAyuRegistry(data: data)
+-                    NotificationCenter.default.post(name: AyuVerifiedRegistry.didChangeNotification, object: nil)
+-                    AyuBadgeEditor.notify(ru ? "Готово. Остальные увидят после перезахода в приложение." : "Done. Others will see it when they return to the app.", ru: ru, present: present)
+-                case let .failure(message):
+-                    let alert = UIAlertController(title: ru ? "Не удалось сохранить" : "Couldn't save", message: message, preferredStyle: .alert)
+-                    alert.addAction(UIAlertAction(title: "OK", style: .cancel, handler: nil))
+-                    present(alert)
+-                }
++        let grantsGift = (change["gifts"] as? [String: Any])?["add"] != nil
++        let _ = (AyuBadgeServer.post(account: context.account, route: "admin", body: ["peerId": String(peerId), "change": change], ru: ru)
++        |> deliverOnMainQueue).startStandalone(next: { _ in
++            NotificationCenter.default.post(name: AyuVerifiedRegistry.didChangeNotification, object: nil)
++            if grantsGift {
++                // The owner sees the gift as sent in the chat with the recipient, as the recipient sees it arrive.
++                let _ = ayuAnnounceGrantedGift(account: context.account, recipientId: peerId).startStandalone()
              }
--            let body: [String: Any] = ["initData": initData, "peerId": String(peerId), "change": change]
-+            var body = body
-+            body["initData"] = initData
-             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30.0)
-             request.httpMethod = "POST"
-             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-@@ -206,12 +235,19 @@ enum AyuBadgeEditor {
-                     completion(.failure((json?["error"] as? String) ?? (ru ? "Сервер бейджей ответил \(http.statusCode)." : "The badge server answered \(http.statusCode).")))
-                 }
-             }).resume()
-+        }, error: { code in
-+            failure(code)
-+        }, completed: {
-+            // The bot's username resolved to nothing.
-+            if !signedIn {
-+                failure("BOT_NOT_FOUND")
-+            }
++            AyuBadgeEditor.notify(ru ? "Готово. Остальные увидят после перезахода в приложение." : "Done. Others will see it when they return to the app.", ru: ru, present: present)
++        }, error: { message in
++            let alert = UIAlertController(title: ru ? "Не удалось сохранить" : "Couldn't save", message: message, preferredStyle: .alert)
++            alert.addAction(UIAlertAction(title: "OK", style: .cancel, handler: nil))
++            present(alert)
          })
      }
  
-     /// Mini App data Telegram signs for the badge bot: the server checks
--    /// the signature and that the account is the owner's.
--    private static func signedInitData(context: AccountContext) -> Signal<String?, NoError> {
-+    /// the signature and that the account is the owner's. Fails with Telegram's error code.
-+    private static func signedInitData(context: AccountContext) -> Signal<String, String> {
-         return context.engine.peers.resolvePeerByName(name: AyuBadgeEditor.botUsername, referrer: nil)
-         |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
-             guard case let .result(peer) = result else {
-@@ -220,32 +256,237 @@ enum AyuBadgeEditor {
-             return .single(peer)
-         }
-         |> take(1)
--        |> mapToSignal { peer -> Signal<String?, NoError> in
-+        |> castError(String.self)
-+        |> mapToSignal { peer -> Signal<String, String> in
-             guard let peer else {
--                return .single(nil)
-+                return .fail("BOT_NOT_FOUND")
-             }
--            return context.engine.messages.requestSimpleWebView(botId: peer.id, url: AyuBadgeEditor.server + "/", source: .generic, themeParams: nil)
--            |> map { result -> String? in
--                return AyuBadgeEditor.initData(webAppUrl: result.url)
--            }
--            |> `catch` { _ -> Signal<String?, NoError> in
--                return .single(nil)
-+            return ayuBotWebAppInitData(account: context.account, botId: peer.id, url: AyuBadgeEditor.server + "/")
-+        }
-+    }
-+
+-    private enum UploadResult {
+-        case success(Data)
+-        case failure(String)
+-    }
 +    // MARK: Gifts
-+
+ 
+-    private static func upload(context: AccountContext, peerId: Int64, ru: Bool, change: [String: Any], completion: @escaping (UploadResult) -> Void) {
+-        let _ = (AyuBadgeEditor.signedInitData(context: context)
+-        |> deliverOnMainQueue).startStandalone(next: { initData in
+-            guard let initData, let url = URL(string: AyuBadgeEditor.server + "/api/admin") else {
+-                return completion(.failure(ru ? "Telegram не выдал данные для входа на сервер бейджей. Проверьте, что бот @\(AyuBadgeEditor.botUsername) не заблокирован." : "Telegram gave no sign-in data for the badge server. Make sure @\(AyuBadgeEditor.botUsername) isn't blocked."))
+-            }
+-            let body: [String: Any] = ["initData": initData, "peerId": String(peerId), "change": change]
+-            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30.0)
+-            request.httpMethod = "POST"
+-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+-            let session = URLSession(configuration: .ephemeral)
+-            session.dataTask(with: request, completionHandler: { data, response, error in
+-                session.finishTasksAndInvalidate()
+-                guard let data, let http = response as? HTTPURLResponse else {
+-                    return completion(.failure(error?.localizedDescription ?? "network"))
+-                }
+-                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+-                if http.statusCode == 200, let registry = json?["registry"] as? String {
+-                    completion(.success(Data(registry.utf8)))
+-                } else {
+-                    completion(.failure((json?["error"] as? String) ?? (ru ? "Сервер бейджей ответил \(http.statusCode)." : "The badge server answered \(http.statusCode).")))
 +    private static func addGiftActions(to sheet: UIAlertController, context: AccountContext, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void) {
 +        sheet.addAction(UIAlertAction(title: ru ? "Выдать подарок…" : "Grant a gift…", style: .default, handler: { _ in
 +            AyuBadgeEditor.grantGift(context: context, peerId: peerId, ru: ru, present: present)
@@ -950,7 +1420,9 @@ index 9b76fb8f..f2c88f91 100644
 +                    list.addAction(UIAlertAction(title: AyuBadgeEditor.describe(gift, ru: ru), style: .destructive, handler: { _ in
 +                        AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": ["remove": gift.index]])
 +                    }))
-+                }
+                 }
+-            }).resume()
+-        })
 +                list.addAction(UIAlertAction(title: ru ? "Убрать все" : "Remove all", style: .destructive, handler: { _ in
 +                    AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": NSNull()])
 +                }))
@@ -958,8 +1430,15 @@ index 9b76fb8f..f2c88f91 100644
 +                present(list)
 +            }))
 +        }
-+    }
-+
+     }
+ 
+-    /// Mini App data Telegram signs for the badge bot: the server checks
+-    /// the signature and that the account is the owner's.
+-    private static func signedInitData(context: AccountContext) -> Signal<String?, NoError> {
+-        return context.engine.peers.resolvePeerByName(name: AyuBadgeEditor.botUsername, referrer: nil)
+-        |> mapToSignal { result -> Signal<EnginePeer?, NoError> in
+-            guard case let .result(peer) = result else {
+-                return .complete()
 +    private static func describe(_ gift: AyuGrantedGift, ru: Bool) -> String {
 +        let name = gift.title ?? (ru ? "Подарок" : "Gift")
 +        switch gift.kind {
@@ -976,20 +1455,27 @@ index 9b76fb8f..f2c88f91 100644
 +            if case let .Sticker(displayText, _, _) = attribute {
 +                emoji = displayText
              }
+-            return .single(peer)
          }
 +        let name = gift.title ?? emoji
 +        return (name.isEmpty ? "🎁" : name) + " · \(gift.price) ⭐"
-     }
- 
--    /// The tgWebAppData parameter of the URL's fragment, which is a percent-encoded query string.
--    static func initData(webAppUrl: String) -> String? {
--        guard let hash = webAppUrl.firstIndex(of: "#") else {
--            return nil
++    }
++
 +    /// Grants a plain gift, a unique gift assembled from Telegram's models, backdrops and patterns,
 +    /// or a copy of an existing collectible from its t.me/nft link.
 +    private static func grantGift(context: AccountContext, peerId: Int64, ru: Bool, present: @escaping (UIViewController) -> Void) {
 +        let _ = (context.engine.payments.cachedStarGifts()
-+        |> take(1)
+         |> take(1)
+-        |> mapToSignal { peer -> Signal<String?, NoError> in
+-            guard let peer else {
+-                return .single(nil)
+-            }
+-            return context.engine.messages.requestSimpleWebView(botId: peer.id, url: AyuBadgeEditor.server + "/", source: .generic, themeParams: nil)
+-            |> map { result -> String? in
+-                return AyuBadgeEditor.initData(webAppUrl: result.url)
+-            }
+-            |> `catch` { _ -> Signal<String?, NoError> in
+-                return .single(nil)
 +        |> deliverOnMainQueue).startStandalone(next: { gifts in
 +            let generic: [StarGift.Gift] = (gifts ?? []).compactMap { gift in
 +                if case let .generic(value) = gift { return value }
@@ -1008,33 +1494,14 @@ index 9b76fb8f..f2c88f91 100644
 +                        AyuBadgeEditor.configureUnique(context: context, peerId: peerId, giftId: gift.id, title: gift.title, number: nil, preset: nil, ru: ru, present: present)
 +                    })
 +                }))
-+            }
+             }
+-        }
 +            sheet.addAction(UIAlertAction(title: ru ? "NFT по ссылке t.me/nft/…" : "NFT from a t.me/nft/… link", style: .default, handler: { _ in
 +                AyuBadgeEditor.askText(title: ru ? "Ссылка на NFT" : "NFT link", message: ru ? "Например t.me/nft/PlushPepe-1. Модель, фон, узор и номер возьмутся из него." : "For example t.me/nft/PlushPepe-1. Its model, backdrop, pattern and number are used.", initial: "", ru: ru, present: present, done: { text in
 +                    let slug = String(text.split(separator: "/").last ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 +                    let _ = (context.engine.payments.getUniqueStarGift(slug: slug)
 +                    |> deliverOnMainQueue).startStandalone(next: { unique in
-+                        var preset = (model: nil as String?, pattern: nil as String?, backdrop: nil as String?)
-+                        for attribute in unique.attributes {
-+                            switch attribute {
-+                            case let .model(name, _, _, _): preset.model = name
-+                            case let .pattern(name, _, _): preset.pattern = name
-+                            case let .backdrop(name, _, _, _, _, _, _): preset.backdrop = name
-+                            default: break
-+                            }
-+                        }
-+                        guard let model = preset.model, let pattern = preset.pattern, let backdrop = preset.backdrop else {
-+                            return AyuBadgeEditor.notify(ru ? "У этого NFT нет модели, фона или узора." : "This NFT has no model, backdrop or pattern.", ru: ru, present: present)
-+                        }
-+                        let choice = AyuBadgeEditor.menu(title: "\(unique.title) #\(unique.number)", message: "\(model) · \(backdrop) · \(pattern)")
-+                        choice.addAction(UIAlertAction(title: ru ? "Выдать как есть" : "Grant as it is", style: .default, handler: { _ in
-+                            AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": ["add": ["giftId": String(unique.giftId), "kind": "unique", "title": unique.title, "number": Int(unique.number), "model": model, "pattern": pattern, "backdrop": backdrop]]])
-+                        }))
-+                        choice.addAction(UIAlertAction(title: ru ? "Настроить модель, фон и узор…" : "Set model, backdrop and pattern…", style: .default, handler: { _ in
-+                            AyuBadgeEditor.configureUnique(context: context, peerId: peerId, giftId: unique.giftId, title: unique.title, number: unique.number, preset: (model, pattern, backdrop), ru: ru, present: present)
-+                        }))
-+                        choice.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
-+                        present(choice)
++                        AyuBadgeEditor.configureUnique(context: context, peerId: peerId, giftId: unique.giftId, title: unique.title, number: unique.number, preset: unique.attributes, ru: ru, present: present)
 +                    }, error: { _ in
 +                        AyuBadgeEditor.notify(ru ? "NFT по этой ссылке не найден." : "No NFT found at this link.", ru: ru, present: present)
 +                    })
@@ -1043,8 +1510,12 @@ index 9b76fb8f..f2c88f91 100644
 +            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
 +            present(sheet)
 +        })
-+    }
-+
+     }
+ 
+-    /// The tgWebAppData parameter of the URL's fragment, which is a percent-encoded query string.
+-    static func initData(webAppUrl: String) -> String? {
+-        guard let hash = webAppUrl.firstIndex(of: "#") else {
+-            return nil
 +    private static func chooseGift(_ gifts: [StarGift.Gift], ru: Bool, present: @escaping (UIViewController) -> Void, done: @escaping (StarGift.Gift) -> Void) {
 +        let sheet = AyuBadgeEditor.menu(title: ru ? "Какой подарок" : "Which gift", message: nil)
 +        for gift in gifts {
@@ -1058,132 +1529,68 @@ index 9b76fb8f..f2c88f91 100644
 +        present(sheet)
 +    }
 +
-+    /// Model, backdrop and pattern from Telegram's own list for this gift, then the number.
-+    private static func configureUnique(context: AccountContext, peerId: Int64, giftId: Int64, title: String?, number: Int32?, preset: (model: String, pattern: String, backdrop: String)?, ru: Bool, present: @escaping (UIViewController) -> Void) {
-+        let _ = (context.engine.payments.getStarGiftUpgradeAttributes(giftId: giftId)
-+        |> take(1)
-+        |> deliverOnMainQueue).startStandalone(next: { attributes in
-+            var models: [(String, Int32)] = []
-+            var backdrops: [(String, Int32)] = []
-+            var patterns: [(String, Int32)] = []
-+            for attribute in attributes ?? [] {
-+                switch attribute {
-+                case let .model(name, _, rarity, _): models.append((name, rarity.permilleValue))
-+                case let .backdrop(name, _, _, _, _, _, rarity): backdrops.append((name, rarity.permilleValue))
-+                case let .pattern(name, _, rarity): patterns.append((name, rarity.permilleValue))
-+                default: break
-+                }
-+            }
-+            guard !models.isEmpty, !backdrops.isEmpty, !patterns.isEmpty else {
++    /// Telegram's own variants sheet for this gift: it previews the gift with the model, backdrop and
++    /// symbol picked there, and its button grants that combination. The number is asked last.
++    private static func configureUnique(context: AccountContext, peerId: Int64, giftId: Int64, title: String?, number: Int32?, preset: [StarGift.UniqueGift.Attribute]?, ru: Bool, present: @escaping (UIViewController) -> Void) {
++        let _ = (combineLatest(
++            context.engine.payments.getStarGiftUpgradeAttributes(giftId: giftId) |> take(1),
++            context.engine.payments.cachedStarGifts() |> take(1)
++        )
++        |> deliverOnMainQueue).startStandalone(next: { attributes, gifts in
++            guard let attributes, !attributes.isEmpty else {
 +                return AyuBadgeEditor.notify(ru ? "Telegram не отдал модели, фоны и узоры этого подарка." : "Telegram returned no models, backdrops or patterns for this gift.", ru: ru, present: present)
              }
-+            AyuBadgeEditor.pickAttribute(title: ru ? "Модель" : "Model", options: models, preset: preset?.model, ru: ru, present: present, done: { model in
-+                AyuBadgeEditor.pickAttribute(title: ru ? "Фон" : "Backdrop", options: backdrops, preset: preset?.backdrop, ru: ru, present: present, done: { backdrop in
-+                    AyuBadgeEditor.pickAttribute(title: ru ? "Узор" : "Pattern", options: patterns, preset: preset?.pattern, ru: ru, present: present, done: { pattern in
-+                        let alert = UIAlertController(title: ru ? "Номер" : "Number", message: ru ? "Пусто — случайный." : "Empty for a random one.", preferredStyle: .alert)
-+                        alert.addTextField(configurationHandler: { field in
-+                            field.keyboardType = .numberPad
-+                            field.text = number.map { String($0) } ?? ""
-+                        })
-+                        alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
-+                        alert.addAction(UIAlertAction(title: ru ? "Выдать" : "Grant", style: .default, handler: { [weak alert] _ in
-+                            var gift: [String: Any] = ["giftId": String(giftId), "kind": "unique", "model": model, "pattern": pattern, "backdrop": backdrop]
-+                            if let title { gift["title"] = title }
-+                            if let value = Int(alert?.textFields?.first?.text ?? ""), value >= 1 { gift["number"] = value }
-+                            AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": ["add": gift]])
-+                        }))
-+                        present(alert)
-+                    })
-+                })
-+            })
-+        })
-+    }
-+
-+    private static func pickAttribute(title: String, options: [(String, Int32)], preset: String?, ru: Bool, present: @escaping (UIViewController) -> Void, done: @escaping (String) -> Void) {
-+        let sheet = AyuBadgeEditor.menu(title: title, message: nil)
-+        sheet.addAction(UIAlertAction(title: ru ? "🎲 Случайно" : "🎲 Random", style: .default, handler: { _ in
-+            if let random = options.randomElement() { done(random.0) }
-+        }))
-+        if let preset, options.contains(where: { $0.0 == preset }) {
-+            sheet.addAction(UIAlertAction(title: (ru ? "Как в оригинале: " : "As in the original: ") + preset, style: .default, handler: { _ in done(preset) }))
-+        }
-+        for (name, permille) in options {
-+            let rarity = permille > 0 ? String(format: " · %.1f%%", Double(permille) / 10.0) : ""
-+            sheet.addAction(UIAlertAction(title: name + rarity, style: .default, handler: { _ in done(name) }))
-         }
+-        }
 -        return nil
-+        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
-+        present(sheet)
-+    }
-+
-+    /// Whether the account has a plain gift from the registry it may upgrade for free.
-+    static func canUpgradeGrantedGift(context: AccountContext) -> Bool {
-+        return AyuSupportersManager.shared.grantedGifts(peerId: context.account.peerId.id._internalGetInt64Value()).contains(where: { $0.kind == .plain })
-+    }
-+
-+    /// Upgrades a plain granted gift for 0 stars: a random model, backdrop and pattern from Telegram.
-+    static func upgradeGrantedGift(context: AccountContext) {
-+        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
-+        let present: (UIViewController) -> Void = { controller in
-+            context.sharedContext.applicationBindings.presentNativeController(controller)
-+        }
-+        let plain = AyuSupportersManager.shared.grantedGifts(peerId: context.account.peerId.id._internalGetInt64Value()).filter { $0.kind == .plain }
-+        let upgrade: (AyuGrantedGift) -> Void = { gift in
-+            let _ = (context.engine.payments.getStarGiftUpgradeAttributes(giftId: gift.giftId)
-+            |> take(1)
-+            |> deliverOnMainQueue).startStandalone(next: { attributes in
-+                var models: [String] = [], backdrops: [String] = [], patterns: [String] = []
-+                for attribute in attributes ?? [] {
++            let base = (gifts ?? []).first(where: { gift in
++                if case let .generic(value) = gift { return value.id == giftId }
++                return false
++            })
++            guard let base, let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController else {
++                return AyuBadgeEditor.notify(ru ? "Этого подарка нет в каталоге Telegram." : "This gift isn't in Telegram's catalog.", ru: ru, present: present)
++            }
++            let screen = GiftUpgradeVariantsScreen(context: context, gift: base, attributes: attributes, selectedAttributes: preset, focusedAttribute: nil, confirmTitle: ru ? "Выдать этот вариант" : "Grant this one", confirm: { chosen in
++                var gift: [String: Any] = ["giftId": String(giftId), "kind": "unique"]
++                for attribute in chosen {
 +                    switch attribute {
-+                    case let .model(name, _, _, _): models.append(name)
-+                    case let .backdrop(name, _, _, _, _, _, _): backdrops.append(name)
-+                    case let .pattern(name, _, _): patterns.append(name)
++                    case let .model(name, _, _, _): gift["model"] = name
++                    case let .pattern(name, _, _): gift["pattern"] = name
++                    case let .backdrop(name, _, _, _, _, _, _): gift["backdrop"] = name
 +                    default: break
 +                    }
 +                }
-+                guard let model = models.randomElement(), let backdrop = backdrops.randomElement(), let pattern = patterns.randomElement() else {
-+                    return AyuBadgeEditor.notify(ru ? "Этот подарок Telegram не улучшает." : "Telegram does not upgrade this gift.", ru: ru, present: present)
++                guard gift["model"] != nil, gift["pattern"] != nil, gift["backdrop"] != nil else {
++                    return
 +                }
-+                AyuBadgeEditor.upload(context: context, ru: ru, route: "upgrade", body: ["index": gift.index, "model": model, "backdrop": backdrop, "pattern": pattern], completion: { result in
-+                    DispatchQueue.main.async {
-+                        switch result {
-+                        case let .success(data):
-+                            AyuSupportersManager.shared.applyAyuRegistry(data: data)
-+                            AyuBadgeEditor.notify(ru ? "Подарок улучшен: \(model), \(backdrop), \(pattern). Откройте профиль заново." : "Upgraded: \(model), \(backdrop), \(pattern). Reopen the profile.", ru: ru, present: present)
-+                        case let .failure(message):
-+                            AyuBadgeEditor.notify(message, ru: ru, present: present)
-+                        }
-+                    }
++                if let title { gift["title"] = title }
++                let alert = UIAlertController(title: ru ? "Номер" : "Number", message: ru ? "Пусто — случайный." : "Empty for a random one.", preferredStyle: .alert)
++                alert.addTextField(configurationHandler: { field in
++                    field.keyboardType = .numberPad
++                    field.text = number.map { String($0) } ?? ""
 +                })
++                alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
++                alert.addAction(UIAlertAction(title: ru ? "Выдать" : "Grant", style: .default, handler: { [weak alert] _ in
++                    if let value = Int(alert?.textFields?.first?.text ?? ""), value >= 1 { gift["number"] = value }
++                    AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["gifts": ["add": gift]])
++                }))
++                // After the sheet's dismissal animation, so the alert isn't hidden behind it.
++                Queue.mainQueue().after(0.4) {
++                    present(alert)
++                }
 +            })
-+        }
-+        if plain.count == 1, let gift = plain.first {
-+            upgrade(gift)
-+            return
-+        }
-+        let sheet = AyuBadgeEditor.menu(title: ru ? "Какой подарок улучшить" : "Which gift to upgrade", message: ru ? "Бесплатно, 0 ⭐" : "Free, 0 ⭐")
-+        for gift in plain {
-+            sheet.addAction(UIAlertAction(title: AyuBadgeEditor.describe(gift, ru: ru), style: .default, handler: { _ in upgrade(gift) }))
-+        }
-+        sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
-+        present(sheet)
++            navigationController.pushViewController(screen)
++        })
      }
  
      // MARK: UI helpers
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-index 7dd781c5..9bed847e 100644
+index 7dd781c5..c99f9dd8 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-@@ -885,6 +885,20 @@ func infoItems(
+@@ -885,6 +885,14 @@ func infoItems(
                  }
              }
          }
-+        if isMyProfile, AyuBadgeEditor.canUpgradeGrantedGift(context: context) {
-+            // A plain gift granted in AyuGram-IOS upgrades for free.
-+            items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9302, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Улучшить подарок AyuGram-IOS · 0 ⭐" : "Upgrade the AyuGram-IOS gift · 0 ⭐", action: {
-+                AyuBadgeEditor.upgradeGrantedGift(context: context)
-+            }))
-+        }
 +        if isMyProfile, AyuBadgeEditor.canOpen(context: context) {
 +            // The owner changes the emoji of their own creator badge here.
 +            let ayuPeerId = user.id.id._internalGetInt64Value()
@@ -1195,6 +1602,36 @@ index 7dd781c5..9bed847e 100644
      } else if case let .channel(channel) = data.peer {
          let ItemUsername = 1
          let ItemUsernameInfo = 2
+diff --git a/submodules/TelegramUI/Sources/AccountContext.swift b/submodules/TelegramUI/Sources/AccountContext.swift
+index b9aa9653..e7e1443b 100644
+--- a/submodules/TelegramUI/Sources/AccountContext.swift
++++ b/submodules/TelegramUI/Sources/AccountContext.swift
+@@ -300,6 +300,7 @@ public final class AccountContextImpl: AccountContext {
+     }
+     
+     private var userLimitsConfigurationDisposable: Disposable?
++    private var ayuGrantedGiftNoticesDisposable: Disposable?
+     public private(set) var userLimits: EngineConfiguration.UserLimits
+     
+     private var peerNameColorsConfigurationDisposable: Disposable?
+@@ -574,6 +575,9 @@ public final class AccountContextImpl: AccountContext {
+             strongSelf.tonGiftStickersPromise.set(.single(stickers))
+         })
+         
++        // AyuGram: gifts the owner granted this account arrive as gift messages in the chat with the owner.
++        self.ayuGrantedGiftNoticesDisposable = ayuGrantedGiftNotices(account: account).startStrict()
++        
+         // AyuGram local Premium changes what this client shows, never the limits the server enforces.
+         self.userLimitsConfigurationDisposable = (combineLatest(self.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.Peer(id: account.peerId)), account.network.ayuGhostMode.signal |> map { $0.advanced.localPremium } |> distinctUntilChanged)
+         |> mapToSignal { peer, localPremium -> Signal<(Bool, EngineConfiguration.UserLimits), NoError> in
+@@ -708,6 +712,7 @@ public final class AccountContextImpl: AccountContext {
+         self.premiumGiftStickersDisposable?.dispose()
+         self.tonGiftStickersDisposable?.dispose()
+         self.userLimitsConfigurationDisposable?.dispose()
++        self.ayuGrantedGiftNoticesDisposable?.dispose()
+         self.peerNameColorsConfigurationDisposable?.dispose()
+         self.isFrozenDisposable?.dispose()
+     }
 diff --git a/submodules/TelegramUI/Sources/AyuLyrics.swift b/submodules/TelegramUI/Sources/AyuLyrics.swift
 index 6ba63739..571c49d5 100644
 --- a/submodules/TelegramUI/Sources/AyuLyrics.swift

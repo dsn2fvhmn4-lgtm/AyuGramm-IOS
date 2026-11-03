@@ -672,10 +672,10 @@ index 00000000..a8222c72
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
 new file mode 100644
-index 00000000..f6ad2534
+index 00000000..31262d1c
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,494 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -985,6 +985,23 @@ index 00000000..f6ad2534
 +    }
 +}
 +
++private let ayuWornGiftStatusesLock = NSLock()
++private var ayuWornGiftStatusesByPeer: [Int64: PeerEmojiStatus] = [:]
++
++/// The emoji status of the granted NFT a peer wears; it takes the place of the Telegram one.
++/// Read for every peer drawn, so it only looks up what `ayuWornGiftStatuses` resolved.
++func ayuWornGiftStatus(peerId: Int64) -> PeerEmojiStatus? {
++    ayuWornGiftStatusesLock.lock()
++    defer { ayuWornGiftStatusesLock.unlock() }
++    return ayuWornGiftStatusesByPeer[peerId]
++}
++
++private func ayuSetWornGiftStatuses(_ statuses: [Int64: PeerEmojiStatus]) {
++    ayuWornGiftStatusesLock.lock()
++    ayuWornGiftStatusesByPeer = statuses
++    ayuWornGiftStatusesLock.unlock()
++}
++
 +private func ayuEmojiStatus(_ gift: StarGift.UniqueGift) -> (PeerEmojiStatus, [TelegramMediaFile])? {
 +    var file: TelegramMediaFile?
 +    var patternFile: TelegramMediaFile?
@@ -1024,7 +1041,7 @@ index 00000000..f6ad2534
 +    |> distinctUntilChanged
 +    |> mapToSignal { worn -> Signal<Never, NoError> in
 +        guard !worn.isEmpty else {
-+            AyuSupportersManager.shared.setWornGiftStatuses([:])
++            ayuSetWornGiftStatuses([:])
 +            return .complete()
 +        }
 +        let lookups = worn.map { peerId, gift -> Signal<(Int64, ProfileGiftsContext.State.StarGift?), NoError> in
@@ -1049,7 +1066,7 @@ index 00000000..f6ad2534
 +                for file in files {
 +                    transaction.storeMediaIfNotPresent(media: file)
 +                }
-+                AyuSupportersManager.shared.setWornGiftStatuses(statuses)
++                ayuSetWornGiftStatuses(statuses)
 +            }
 +            |> ignoreValues
 +        }
@@ -1154,15 +1171,14 @@ index 00000000..f6ad2534
 +    }
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-index 9125da80..9628db13 100644
+index 9125da80..89b996ba 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-@@ -158,8 +158,12 @@ public final class AyuSupportersManager {
+@@ -158,8 +158,11 @@ public final class AyuSupportersManager {
      ]
      private var ayuIosBadges: [Int64: (documentId: Int64?, text: String?)] = [:]
      private var ayuIosLabels: [Int64: (kind: String, text: String)] = [:]
 +    private var grantedGiftsByPeer: [Int64: [AyuGrantedGift]] = [:]
-+    private var wornGiftStatuses: [Int64: PeerEmojiStatus] = [:]
      private var ayuIosExpiry: [Int64: Double] = [:]
      private var ownerDaily: (documentId: Int64, expiresAt: Double)?
 +    /// The emoji the owner chose for their own badge; its text stays the creator's.
@@ -1170,7 +1186,7 @@ index 9125da80..9628db13 100644
      private static let dailyTitle = "(name) — удача дня"
      private var isRefreshing = false
      private var lastRegistryRefresh: CFAbsoluteTime = 0.0
-@@ -184,6 +188,14 @@ public final class AyuSupportersManager {
+@@ -184,6 +187,14 @@ public final class AyuSupportersManager {
          return AyuSupportersManager.layout?.peer == accountPeerId
      }
  
@@ -1185,7 +1201,7 @@ index 9125da80..9628db13 100644
      /// The label line ("sponsor", "developer", "plugins" or "custom") the registry gives a peer.
      public func label(peerId: Int64) -> (kind: String, text: String)? {
          self.refreshAyuRegistryIfStale()
-@@ -201,6 +213,35 @@ public final class AyuSupportersManager {
+@@ -201,6 +212,21 @@ public final class AyuSupportersManager {
          }
      }
  
@@ -1204,24 +1220,10 @@ index 9125da80..9628db13 100644
 +        return self.grantedGiftsByPeer
 +    }
 +
-+    /// The emoji status of the granted NFT a peer wears; it takes the place of the Telegram one.
-+    /// Read for every peer drawn, so it only looks up what `setWornGiftStatuses` resolved.
-+    public func wornGiftStatus(peerId: Int64) -> PeerEmojiStatus? {
-+        self.lock.lock()
-+        defer { self.lock.unlock() }
-+        return self.wornGiftStatuses[peerId]
-+    }
-+
-+    public func setWornGiftStatuses(_ statuses: [Int64: PeerEmojiStatus]) {
-+        self.lock.lock()
-+        self.wornGiftStatuses = statuses
-+        self.lock.unlock()
-+    }
-+
      public func isSupporter(peerId: Int64) -> Bool {
          return self.badge(peerId: peerId) != nil
      }
-@@ -214,11 +255,12 @@ public final class AyuSupportersManager {
+@@ -214,11 +240,12 @@ public final class AyuSupportersManager {
          if peerId == layout.peer {
              self.lock.lock()
              let daily = self.ownerDaily
@@ -1235,7 +1237,7 @@ index 9125da80..9628db13 100644
          }
          self.lock.lock()
          defer { self.lock.unlock() }
-@@ -305,6 +347,8 @@ public final class AyuSupportersManager {
+@@ -305,6 +332,8 @@ public final class AyuSupportersManager {
          var labels: [Int64: (kind: String, text: String)] = [:]
          var expiry: [Int64: Double] = [:]
          var ownerDaily: (documentId: Int64, expiresAt: Double)?
@@ -1244,7 +1246,7 @@ index 9125da80..9628db13 100644
          let now = Date().timeIntervalSince1970
          for badge in badges {
              guard let id = (badge["id"] as? NSNumber)?.int64Value, let layout = AyuSupportersManager.layout else {
-@@ -313,6 +357,12 @@ public final class AyuSupportersManager {
+@@ -313,6 +342,12 @@ public final class AyuSupportersManager {
              if let label = badge["label"] as? [String: Any], let text = label["text"] as? String, !text.isEmpty {
                  labels[id] = ((label["kind"] as? String) ?? "custom", String(text.prefix(160)))
              }
@@ -1257,7 +1259,7 @@ index 9125da80..9628db13 100644
              let documentId = (badge["documentId"] as? NSNumber)?.int64Value
              let title = (badge["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
              let expiresAt = (badge["expiresAt"] as? NSNumber)?.doubleValue
-@@ -320,9 +370,12 @@ public final class AyuSupportersManager {
+@@ -320,9 +355,12 @@ public final class AyuSupportersManager {
                  continue
              }
              if id == layout.peer {
@@ -1271,7 +1273,7 @@ index 9125da80..9628db13 100644
                  }
                  continue
              }
-@@ -341,8 +394,14 @@ public final class AyuSupportersManager {
+@@ -341,8 +379,14 @@ public final class AyuSupportersManager {
          self.ayuIosBadges = parsed
          self.ayuIosExpiry = expiry
          self.ownerDaily = ownerDaily
@@ -1376,7 +1378,7 @@ index 7a4f486f..29f596bb 100644
      |> mapError { error -> GetUniqueStarGiftError in
          if error.errorDescription == "STARGIFT_ALREADY_BURNED" {
 diff --git a/submodules/TelegramCore/Sources/Utils/PeerUtils.swift b/submodules/TelegramCore/Sources/Utils/PeerUtils.swift
-index d2e609dc..2d5abc8d 100644
+index d2e609dc..e6983226 100644
 --- a/submodules/TelegramCore/Sources/Utils/PeerUtils.swift
 +++ b/submodules/TelegramCore/Sources/Utils/PeerUtils.swift
 @@ -398,6 +398,10 @@ public extension Peer {
@@ -1384,7 +1386,7 @@ index d2e609dc..2d5abc8d 100644
          switch self {
          case let user as TelegramUser:
 +            // AyuGram: a granted NFT the user wears in AyuGram-IOS.
-+            if let worn = AyuSupportersManager.shared.wornGiftStatus(peerId: user.id.id._internalGetInt64Value()) {
++            if let worn = ayuWornGiftStatus(peerId: user.id.id._internalGetInt64Value()) {
 +                return worn
 +            }
              return user.emojiStatus

@@ -1,4 +1,4 @@
-# AyuGram plugins in Lua
+# VoidGram plugins in Lua
 
 Lua 5.4 with the base, coroutine, string, table, math and utf8 libraries (no `io`, `os`, `load`
 or files). A plugin is one `.lua` file with a `-- @key value` header, or a `.plugin` bundle.

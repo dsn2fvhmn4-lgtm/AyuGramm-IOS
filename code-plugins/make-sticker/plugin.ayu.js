@@ -1,7 +1,7 @@
 // ==AyuPlugin==
 // @id make-sticker
 // @name Сделать стикер
-// @author AyuGram-IOS
+// @author VoidGram
 // @version 1.0.0
 // @description Пункт «Сделать стикер» в меню сообщения с фото: вырезает объект с фото и отправляет его стикером в открытый чат. Нужна iOS 17.
 // @permissions menu, messages

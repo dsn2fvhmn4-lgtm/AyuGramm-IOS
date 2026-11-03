@@ -42,7 +42,7 @@ def generate(source: Path) -> None:
             "fill": {"automatic-gradient": "extended-srgb:0.04,0.08,0.18,1.00000"},
             "groups": [
                 {"layers": [{"image-name": "Background.png", "name": "Backdrop", "glass": False}], "shadow": {"kind": "neutral", "opacity": 0}, "specular": False},
-                {"layers": [{"image-name": "Logo.png", "name": "AyuGram glass", "glass": True}], "lighting": "combined", "shadow": {"kind": "neutral", "opacity": .35}, "specular": True, "translucency": {"enabled": True, "value": .85}},
+                {"layers": [{"image-name": "Logo.png", "name": "VoidGram glass", "glass": True}], "lighting": "combined", "shadow": {"kind": "neutral", "opacity": .35}, "specular": True, "translucency": {"enabled": True, "value": .85}},
             ],
             "supported-platforms": {"squares": "shared"},
         }

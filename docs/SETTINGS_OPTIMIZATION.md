@@ -14,7 +14,7 @@ The new final patch, `patches/ayugram-settings-optimization.patch`, applies afte
 - Editable palette swatches retain their colours in either mode.
 - The category row for Local Premium uses Telegram's `Item List/Icons/Premium`;
   local notifications use Telegram's notification glyph. Plugins, media archive
-  and filters reuse the existing AyuGram vector assets.
+  and filters reuse the existing VoidGram vector assets.
 - “Theme & background” now reads “Tabs, glass & effects”, matching its controls.
   “Customization” reads “Themes, colours & badges”, matching its palettes and
   colour controls. Category links, page titles and search labels agree in Russian

@@ -56,7 +56,7 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | message text tools (iOS) | Native phrase search and chat/message ID copying, with separate visibility switches in source after build 8 |
 | showHideMessageInContextMenu (Desktop) | Reversible local cloud-message/album hiding, per-account bounded references, temporary bypass and restore-one/all manager in source after build 8; no database/server deletion |
 | showPrivateChatReactions / showGroupReactions / showChannelReactions (Desktop) | Independent native chat reaction rendering controls with isolated reset in source after build 8; original message data and Saved Messages tags preserved |
-| disableStories (Desktop) | Settings → AyuGram → General → Interface → Hide stories: the chat list and archive receive no story subscriptions; applies when the chat list is next created |
+| disableStories (Desktop) | Settings → VoidGram → General → Interface → Hide stories: the chat list and archive receive no story subscriptions; applies when the chat list is next created |
 | hideSimilarChannels / collapseSimilarChannels (Desktop) | Hide similar channels: no channel recommendations are requested in channel chats |
 | hidePremiumStatuses (Desktop) | Hide Premium statuses in chat list rows (emoji status and Premium star); verification marks unchanged |
 | hideNotificationCounters (Desktop) | Hide unread counters: unread chats show a dot instead of a number, including the muted count |
@@ -69,7 +69,7 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 | streamerMode (Desktop) | Streamer mode: the app window is left out of screenshots, screen recordings and screen sharing through Telegram's secret-chat secure layer; the system keyboard stays visible |
 | hideAllChatsFolder (Desktop) | Hide All Chats folder: while at least one folder exists the tab is hidden and the first folder opens; the All Chats page stays last in the container |
 | semiTransparentDeletedMessages (Desktop) | Semi-transparent deleted messages: bubble messages kept after deletion are drawn at 50% opacity |
-| exteraGram General page | Same sections and order as Android (General, Profile, Archived Chats), rows with SF Symbol icons; AyuGram's own General pages listed under More |
+| exteraGram General page | Same sections and order as Android (General, Profile, Archived Chats), rows with SF Symbol icons; VoidGram's own General pages listed under More |
 | disableNumberRounding (exteraGram) | Counters show 1,234 instead of 1.2K (compactNumericCountString and countString) |
 | formatTimeWithSeconds (exteraGram) | Shares the existing seconds-in-timestamps setting |
 | hidePhoneNumber (exteraGram) | Own number hidden in the Settings header (username or placeholder instead), the Phone Number row and the own profile |
@@ -78,7 +78,7 @@ The published v0.1.0 IPA contains the initial Ghost Mode preview; v0.2.0-preview
 Additional Desktop-only scope (not implemented by these flags): shadow bans, additional UI-element visibility controls and other per-account ghost options. These require individual native integrations rather than empty settings switches. Message metadata, conditional/always silent-send modes, translation providers (Telegram/LibreTranslate/DeepL), chat export (HTML+JSON, forward to Saved Messages) and the media archive manager already have source implementations.
 
 Release gates: clean pinned-patch application, UI import/API-contract checks, parse all changed Swift sources, compile/run real Foundation models, full Telegram target type check/link/package, then device and recorded simulator checks. The 32-check result applies only to the earlier history revision; newly added regex/migration/metadata/media-archive tests have not yet run on a Mac.
-| exteraGram main screen | Logo header with name, version and description; Categories (General, Appearance, Chats, Other) and Links; separate exteraGram and AyuGram Preferences rows in Settings, as on Android |
+| exteraGram main screen | Logo header with name, version and description; Categories (General, Appearance, Chats, Other) and Links; separate exteraGram and VoidGram Preferences rows in Settings, as on Android |
 | exteraGram Other page | Reset Settings (interface, appearance, MessageShot, reactions) with confirmation; Delete Account opens Telegram's own deletion flow; Google analytics toggles omitted (no analytics in this build) |
 | Ghost icons | Ghost Mode uses AyuGram's own ghost (Solar ghost_solar.xml as an SVG asset); Ghost Mode+ is the ghost with a plus badge |
 | exteraGram Chats page | Stickers, Chats, Messages sections as on Android: hide time on stickers, disable jump to the next channel, hide keyboard on scroll (user drags only), comma after mention, hide share button, message menu; Hidden Messages and Chat Reactions under More |

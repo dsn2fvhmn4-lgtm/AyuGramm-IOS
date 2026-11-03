@@ -6,7 +6,7 @@ does not contain the embedded interpreter or API 6 evaluator.
 
 ## Import and activation
 
-Open a `.plugin` from a chat or choose it in Settings → AyuGram → Plugins.
+Open a `.plugin` from a chat or choose it in Settings → VoidGram → Plugins.
 The app reads the complete source on a worker queue. Known adapters retain
 priority. If the original literal template does not match, the embedded Python
 parser converts supported source into a native JSON text program. The app shows

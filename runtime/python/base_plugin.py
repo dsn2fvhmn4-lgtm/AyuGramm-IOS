@@ -1,4 +1,4 @@
-"""exteraGram `base_plugin` API on the AyuGram iOS runtime."""
+"""exteraGram `base_plugin` API on the VoidGram iOS runtime."""
 import enum
 import json
 import logging

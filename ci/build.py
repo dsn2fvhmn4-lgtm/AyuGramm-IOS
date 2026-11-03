@@ -115,7 +115,7 @@ with zipfile.ZipFile(ipa) as archive:
         alternate_icons = info.get("CFBundleIcons", {}).get("CFBundleAlternateIcons", {})
         expected_icons = {path.stem for path in (source / "Telegram/Telegram-iOS").glob("Ayu*.icon")}
         if not expected_icons.issubset(alternate_icons):
-            raise SystemExit("Built IPA is missing the declared AyuGram alternate icons")
+            raise SystemExit("Built IPA is missing the declared VoidGram alternate icons")
     binary = archive.read("Payload/Telegram.app/" + info["CFBundleExecutable"])
     if binary[:4] != b"\xcf\xfa\xed\xfe":
         raise SystemExit("Expected a 64-bit Mach-O executable")

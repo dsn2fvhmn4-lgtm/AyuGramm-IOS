@@ -1,6 +1,6 @@
-// Command ayu is the AyuGram for iOS plugin developer tool.
+// Command ayu is the VoidGram for iOS plugin developer tool.
 //
-//	ayu dev <plugin file> [-port 8765]       hot reload: AyuGram (Tools → Hot reload) reinstalls on save
+//	ayu dev <plugin file> [-port 8765]       hot reload: VoidGram (Tools → Hot reload) reinstalls on save
 //	ayu pack <in.wasm> <manifest.json> <out> add or replace the `ayu.manifest` section of a WebAssembly plugin
 //	ayu check <plugin file>                  validate the header, permissions, domains and WebAssembly exports
 //	ayu new <name> [-lang js|ts|py|rust|zig|as|go]   create a plugin from a template
@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-const usage = `ayu — AyuGram for iOS plugin tool
+const usage = `ayu — VoidGram for iOS plugin tool
 
   ayu dev <plugin file> [-port 8765]
   ayu pack <in.wasm> <manifest.json> <out.wasm>

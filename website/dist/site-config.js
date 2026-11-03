@@ -23,7 +23,7 @@ window.AYU_SITE = Object.freeze({
     ipa: {
       src: 'assets/steps/02-download-ipa.webp',
       width: 629, height: 472,
-      alt: 'Главная страница AyuGram с кнопкой «Скачать IPA»',
+      alt: 'Главная страница VoidGram с кнопкой «Скачать IPA»',
       caption: 'Нажми «Скачать IPA» на этой странице и дождись завершения загрузки.',
     },
     connection: {

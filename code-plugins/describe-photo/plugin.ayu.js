@@ -1,7 +1,7 @@
 // ==AyuPlugin==
 // @id describe-photo
 // @name Описать фото
-// @author AyuGram-IOS
+// @author VoidGram
 // @version 1.0.0
 // @description Пункт «Описать фото» в меню сообщения с фото: что на снимке и какой на нём текст. Распознаётся на устройстве, фото никуда не отправляется.
 // @permissions menu, ui, messages.read

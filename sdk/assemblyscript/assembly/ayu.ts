@@ -1,4 +1,4 @@
-// AyuGram plugin SDK for AssemblyScript.
+// VoidGram plugin SDK for AssemblyScript.
 //
 // Build:  npx asc plugin.ts -o plugin.wasm --runtime stub -O3z --noAssert --use abort=
 // Then:   ayu pack plugin.wasm manifest.json plugin.wasm

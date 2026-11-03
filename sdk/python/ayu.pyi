@@ -1,4 +1,4 @@
-# Type stubs for AyuGram for iOS Python plugins (PocketPy). Put next to your plugin for IDE
+# Type stubs for VoidGram for iOS Python plugins (PocketPy). Put next to your plugin for IDE
 # completion; the app provides `ayu` as a global at run time.
 from typing import Any, Callable, Dict, List, Optional
 

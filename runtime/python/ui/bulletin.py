@@ -1,4 +1,4 @@
-"""exteraGram `ui.bulletin` on the AyuGram iOS runtime: native toasts."""
+"""exteraGram `ui.bulletin` on the VoidGram iOS runtime: native toasts."""
 import _ayu_bridge
 import _ayu_java
 

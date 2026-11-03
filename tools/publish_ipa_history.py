@@ -63,7 +63,7 @@ def resolve(inventory):
         if target and target != commit:
             raise RuntimeError(f'Tag {tag} targets {target}, but IPA build {number} comes from {commit}.')
         commits = run('git', 'log', '--reverse', '--topo-order', '--no-merges', '--format=%H%x09%cI%x09%s', previous + '..' + commit)
-        lines = [f'AyuGram iOS — сборка {number}', '', f'Telegram {build["version"]}', '', 'Изменения по хронологии коммитов', '']
+        lines = [f'VoidGram iOS — сборка {number}', '', f'Telegram {build["version"]}', '', 'Изменения по хронологии коммитов', '']
         for line in commits.splitlines():
             sha, date, subject = line.split('\t', 2)
             lines.append(f'- {date}: {subject} ([{sha[:7]}](https://github.com/{repo}/commit/{sha}))')
@@ -92,7 +92,7 @@ def publish(repo, plan):
         assets = existing['assets'] if existing else []
         already_uploaded = any(a.get('digest') == 'sha256:' + build['sha256'] for a in assets)
         if not existing:
-            run('gh', 'release', 'create', tag, '--repo', repo, '--target', build['commit'], '--draft', '--prerelease', '--latest=false', '--title', f'AyuGram iOS — Build {build["build"]}', '--notes-file', build['notes'])
+            run('gh', 'release', 'create', tag, '--repo', repo, '--target', build['commit'], '--draft', '--prerelease', '--latest=false', '--title', f'VoidGram iOS — Build {build["build"]}', '--notes-file', build['notes'])
         with tempfile.TemporaryDirectory(prefix='ayu-release-') as directory:
             asset_path = Path(directory) / asset_name
             if not already_uploaded and any(a['name'] == asset_name for a in assets):

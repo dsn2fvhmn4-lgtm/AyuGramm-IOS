@@ -1,4 +1,4 @@
-"""exteraGram `ui.alert` on the AyuGram iOS runtime.
+"""exteraGram `ui.alert` on the VoidGram iOS runtime.
 
 The dialog is described to the host as data and shown as a native alert or
 action sheet. Button and item listeners are kept as Python callbacks the host

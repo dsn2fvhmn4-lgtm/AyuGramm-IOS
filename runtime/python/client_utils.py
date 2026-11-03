@@ -1,4 +1,4 @@
-"""exteraGram `client_utils` on the AyuGram iOS runtime.
+"""exteraGram `client_utils` on the VoidGram iOS runtime.
 
 Text sending and queues are implemented. Raw TL requests, media sending and
 the Android controllers have no iOS bridge yet; they raise

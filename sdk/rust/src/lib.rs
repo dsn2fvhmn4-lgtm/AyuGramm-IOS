@@ -1,4 +1,4 @@
-//! SDK for AyuGram plugins written in Rust.
+//! SDK for VoidGram plugins written in Rust.
 //!
 //! Build with `cargo build --release --target wasm32-unknown-unknown` (`crate-type = ["cdylib"]`)
 //! and install the `.wasm` file in AyuGram. The app runs it in a WebAssembly interpreter; the

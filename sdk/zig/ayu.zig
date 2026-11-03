@@ -1,4 +1,4 @@
-//! AyuGram plugin SDK for Zig.
+//! VoidGram plugin SDK for Zig.
 //!
 //! Build:  zig build-exe plugin.zig -target wasm32-freestanding -fno-entry -rdynamic -O ReleaseSmall
 //! Then:   ayu pack plugin.wasm manifest.json plugin.wasm   (adds the `ayu.manifest` section)

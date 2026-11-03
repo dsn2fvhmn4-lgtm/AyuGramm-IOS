@@ -1,4 +1,4 @@
-// Type declarations for AyuGram for iOS JavaScript and TypeScript plugins (27.5).
+// Type declarations for VoidGram for iOS JavaScript and TypeScript plugins (27.5).
 // Plugins run in JavaScriptCore with `ayu` as a global. Each API marked with a permission needs
 // `// @permissions name` in the plugin header; network access also needs `// @connect host`.
 
@@ -110,14 +110,25 @@ declare namespace Ayu {
       declare(items: { key: string; type: "toggle" | "text" | "slider" | "color" | "select" | "preview"; title: string; subtitle?: string; default?: Json; min?: number; max?: number; step?: number; options?: (string | { value: string; title: string })[] }[]): void;
       get(key: string): Json;
     };
-    storage: { get(key: string): string | null; set(key: string, value: string | null): void };
+    storage: { get(key: string): string | null; set(key: string, value: string | null): void; remove(key: string): void; has(key: string): boolean; getJSON<T = unknown>(key: string, fallback?: T): T | null; setJSON(key: string, value: unknown): void; increment(key: string, by?: number): number };
     /** Keychain-backed values, separate from storage (permission `secrets`). */
     secrets: { get(key: string): string | null; set(key: string, value: string | null): void };
     ui: Ui;
     registry: { developers: { isVerified(peerId: string): boolean; info(peerId: string): { verified: boolean; kind?: string; text?: string } } };
-    clipboard: { write(text: string): void };
-    device: { info(): { battery: number; charging: boolean; orientation: "portrait" | "landscape"; reduceMotion: boolean; lowPowerMode: boolean; locale: string } };
-    haptics: { play(style?: "light" | "medium" | "heavy" | "soft" | "rigid" | "success" | "warning" | "error" | "selection"): void };
+    /** write, hasText and clear need `clipboard`; read needs `clipboard.read` (iOS shows its paste notice). */
+    clipboard: { write(text: string): void; read(): Promise<string | null>; hasText(): Promise<boolean>; clear(): boolean };
+    /** Permission `device`. battery, isCharging, screen and darkMode come from a snapshot refreshed after every read. */
+    device: {
+      info(): { battery: number; charging: boolean; orientation: "portrait" | "landscape"; reduceMotion: boolean; lowPowerMode: boolean; locale: string };
+      battery(): number | null; isCharging(): boolean; screen(): { width: number; height: number; scale: number } | null; darkMode(): boolean;
+      model(): string; systemVersion(): string; timezone(): { id: string; offsetMinutes: number }; isLowPower(): boolean;
+      freeDisk(): number | null; memory(): number; uptime(): number; thermalState(): "nominal" | "fair" | "serious" | "critical";
+    };
+    haptics: {
+      play(style?: "light" | "medium" | "heavy" | "soft" | "rigid" | "success" | "warning" | "error" | "selection"): void;
+      /** Up to 16 taps, `interval` ms apart (30-1000, default 120). */
+      pattern(styles: HapticStyle[] | HapticStyle, interval?: number): boolean;
+    };
     /** HTTPS to the hosts in `@connect` only (permission `network`). */
     net: { fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<FetchResponse> };
     /** Permission `messages` (send/edit/react) and `messages.read` (get). */
@@ -192,9 +203,9 @@ declare namespace Ayu {
     /** Messages between plugins. */
     bus: { emit(topic: string, data?: Json): void; on(topic: string, fn: (data: Json, from: string) => void): void };
     i18n: { readonly language: string; t(strings: Record<string, string>): string };
-    /** The OpenAI-compatible service set in AyuGram → Tools (permission `ai`). */
+    /** The OpenAI-compatible service set in VoidGram → Tools (permission `ai`). */
     ai: { complete(prompt: string, options?: { system?: string; maxTokens?: number }): Promise<string> };
-    /** A full page drawn by AyuGram; taps arrive as the `screenAction` event { screenId, rowId, value }. */
+    /** A full page drawn by VoidGram; taps arrive as the `screenAction` event { screenId, rowId, value }. */
     screens: { show(screen: { id: string; title: string; sections: ScreenSection[] }): void };
     /** Buttons above the keyboard; taps arrive as `composerButton` { id, text } (permission `composer`). */
     /** Buttons above the keyboard; a tap sends the `composerButton` event { id, text, selection, selectionStart, selectionEnd }. */
@@ -203,7 +214,61 @@ declare namespace Ayu {
     scheduler: { daily(time: string, fn: () => void): number; at(date: Date | number, fn: () => void): number; cancel(id: number): void };
     files: { export(name: string, text: string): void };
     permissions: { has(name: string): boolean; request(names: string[], fn?: (granted: boolean) => void): void };
+
+    // 27.6
+    /** Hex digests of UTF-8 text; randomBytes is base64. No permission. */
+    crypto: { sha256(text: string): string; sha1(text: string): string; sha512(text: string): string; md5(text: string): string; hmac(key: string, text: string): string; randomBytes(count?: number): string; uuid(): string };
+    encoding: { base64Encode(text: string): string; base64Decode(base64: string): string | null; hexEncode(text: string): string; hexDecode(hex: string): string | null };
+    app: { version(): string | null; build(): string | null; name(): string; plugins(): { id: string; name: string; enabled: boolean }[] };
+    /** On-device speech (permission `ui`). */
+    speech: { speak(text: string, options?: { language?: string; rate?: number }): boolean; stop(): boolean; isSpeaking(): boolean; voices(): string[] };
+    /** Local reminders, each plugin only its own (permission `notifications`). Returns the reminder id. */
+    notify: { schedule(options: { id?: string; title: string; body?: string; seconds?: number }): string | null; cancel(id: string): boolean; cancelAll(): boolean };
+    text: {
+      capitalize(text: string): string; titleCase(text: string): string; reverse(text: string): string; truncate(text: string, length: number, ellipsis?: string): string;
+      slugify(text: string): string; wordCount(text: string): number; charCount(text: string): number; stripEmoji(text: string): string;
+      escapeHtml(text: string): string; unescapeHtml(text: string): string; translit(text: string): string;
+      /** ghbdtn ⇄ привет */
+      swapLayout(text: string): string; mock(text: string): string; between(text: string, start: string, end?: string): string | null;
+      template(text: string, vars: Record<string, unknown>): string;
+      normalizeSpaces(text: string): string; removeUrls(text: string): string; removeMentions(text: string): string;
+      detectScript(text: string): "cyrillic" | "latin" | "mixed" | "other"; wrap(text: string, width: number): string;
+      occurrences(text: string, part: string): number;
+      /** At most 10000 characters. */
+      randomString(length?: number, alphabet?: string): string; isEmojiOnly(text: string): boolean; firstLine(text: string): string;
+    };
+    date: {
+      format(date: Date | number | string, pattern?: string): string; relative(date: Date | number | string, language?: string): string;
+      addDays(date: Date | number | string, days: number): Date; diffDays(from: Date | number | string, to?: Date | number | string): number;
+      isToday(date: Date | number | string): boolean; startOfDay(date?: Date | number | string): Date;
+      /** "1h 30m" → 5400000 ms; units ms s m h d w. */
+      parseDuration(text: string): number | null; formatDuration(ms: number, language?: string): string;
+      weekday(date: Date | number | string, language?: string): string; monthName(date: Date | number | string, language?: string): string;
+      isWeekend(date: Date | number | string): boolean; daysInMonth(date: Date | number | string): number;
+      age(birth: Date | number | string, at?: Date | number | string): number; unix(date?: Date | number | string): number; fromUnix(seconds: number): Date;
+      countdown(target: Date | number | string): { days: number; hours: number; minutes: number; seconds: number };
+    };
+    color: { hexToRgb(hex: string): { r: number; g: number; b: number } | null; rgbToHex(r: number, g: number, b: number): string; lighten(hex: string, amount?: number): string | null; darken(hex: string, amount?: number): string | null; mix(a: string, b: string, amount?: number): string | null; contrastText(hex: string): "#000000" | "#FFFFFF"; random(): string;
+      toHsl(hex: string): { h: number; s: number; l: number } | null; fromHsl(h: number, s: number, l: number): string; invert(hex: string): string | null; grayscale(hex: string): string | null; rgba(hex: string, alpha?: number): string | null };
+    math: { clamp(value: number, min: number, max: number): number; lerp(a: number, b: number, t: number): number; random(min?: number, max?: number): number; randomInt(min: number, max: number): number; round(value: number, digits?: number): number; sum(list: number[]): number; average(list: number[]): number; median(list: number[]): number; percent(part: number, total: number): number;
+      factorial(n: number): number; gcd(a: number, b: number): number; lcm(a: number, b: number): number;
+      /** null above 1e12. */
+      isPrime(n: number): boolean | null; fibonacci(n: number): number; mod(a: number, b: number): number; roundTo(value: number, step: number): number;
+      /** At most 100000 numbers. */
+      range(start: number, end?: number, step?: number): number[] };
+    url: { parse(url: string): { protocol: string; host: string; port: number | null; path: string; query: Record<string, string>; hash: string } | null; build(base: string, params: Record<string, unknown>): string; param(url: string, name: string): string | null; isUrl(text: string): boolean; extract(text: string): string[]; domain(url: string): string | null };
+    array: { chunk<T>(list: T[], size: number): T[][]; unique<T>(list: T[], key?: keyof T | ((item: T) => unknown)): T[]; shuffle<T>(list: T[]): T[]; sample<T>(list: T[]): T | null; groupBy<T>(list: T[], key: keyof T | ((item: T) => unknown)): Record<string, T[]>; sortBy<T>(list: T[], key: keyof T | ((item: T) => unknown), descending?: boolean): T[];
+      flatten(list: unknown[], depth?: number): unknown[]; zip(...lists: unknown[][]): unknown[][]; countBy<T>(list: T[], key?: keyof T | ((item: T) => unknown)): Record<string, number>;
+      partition<T>(list: T[], fn: (item: T) => unknown): [T[], T[]]; last<T>(list: T[]): T | null;
+      /** Drops null, undefined, false, '' and NaN; keeps 0. */
+      compact<T>(list: T[]): T[]; intersect<T>(a: T[], b: T[]): T[]; difference<T>(a: T[], b: T[]): T[] };
+    object: { pick<T extends object>(value: T, keys: (keyof T)[]): Partial<T>; omit<T extends object>(value: T, keys: (keyof T)[]): Partial<T>; merge<A, B>(target: A, source: B): A & B; get(value: unknown, path: string, fallback?: unknown): unknown; set<T extends object>(value: T, path: string, item: unknown): T };
+    validate: { email(text: string): boolean; phone(text: string): boolean; username(text: string): boolean; hexColor(text: string): boolean };
+    async: { sleep(ms: number): Promise<void>; debounce<F extends (...args: any[]) => void>(fn: F, ms: number): F; throttle<F extends (...args: any[]) => unknown>(fn: F, ms: number): F; retry<T>(fn: () => T | Promise<T>, times?: number, delay?: number): Promise<T>; timeout<T>(promise: Promise<T>, ms: number): Promise<T> };
+    format: { bytes(value: number, digits?: number): string; number(value: number, digits?: number): string; plural(count: number, forms: [string, string, string] | [string, string]): string };
+    extract: { mentions(text: string): string[]; hashtags(text: string): string[]; emails(text: string): string[] };
   }
+  type HapticStyle = "light" | "medium" | "heavy" | "soft" | "rigid";
 }
 
 declare const ayu: Ayu.Ayu;

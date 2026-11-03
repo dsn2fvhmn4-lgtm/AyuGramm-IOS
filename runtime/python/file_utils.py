@@ -1,4 +1,4 @@
-"""exteraGram `file_utils` on the AyuGram iOS runtime.
+"""exteraGram `file_utils` on the VoidGram iOS runtime.
 
 Directories live in the app's sandbox, under the root the host passes at
 startup. Paths outside the sandbox fail like any other inaccessible path.

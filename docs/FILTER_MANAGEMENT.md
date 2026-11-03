@@ -2,7 +2,7 @@
 
 ## Add a rule from a message
 
-Long press an eligible ordinary cloud message → **AyuGram · Add Filter**. This opens **Regex Filters** with an additional draft rule. It does not save, enable filtering or expand the chat scope automatically. Review the editor and press **Save rules**; use the separate filtering/scope switches as needed. The resulting rule belongs to the account-wide rule list, not just the source conversation. The menu action can be hidden under **AyuGram → Message Menu → Add Filter from Message**.
+Long press an eligible ordinary cloud message → **VoidGram · Add Filter**. This opens **Regex Filters** with an additional draft rule. It does not save, enable filtering or expand the chat scope automatically. Review the editor and press **Save rules**; use the separate filtering/scope switches as needed. The resulting rule belongs to the account-wide rule list, not just the source conversation. The menu action can be hidden under **VoidGram → Message Menu → Add Filter from Message**.
 
 The phrase is escaped as literal text, so punctuation such as `.*`, `[x]` and backslashes is not interpreted as regex syntax. Newline/control characters use ICU hexadecimal escapes to keep a multiline phrase on one editor line. Limits apply after escaping: at most 32 rules, 512 UTF-8 bytes per rule. Blank phrases and oversize rules are rejected without truncation or changing stored settings. Exact duplicate patterns are reused, including at the 32-rule limit. Long messages can be handled by manually entering a shorter phrase in the editor.
 

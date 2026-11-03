@@ -20,7 +20,7 @@ def contract_errors(source, path=''):
     if 'stringWithAppliedEntities(' in source and 'import TextFormat' not in source and not path.startswith('submodules/TextFormat/'):
         errors.append('stringWithAppliedEntities requires TextFormat')
     if re.search(r'\.ayuVisibleMessageReactions(?:AndPeers)?\s*\(', source) and 'import AccountContext' not in source:
-        errors.append('AyuGram reaction display helpers require AccountContext')
+        errors.append('VoidGram reaction display helpers require AccountContext')
     if path.endswith('ChatListControllerNode.swift') and re.search(r'!\s*self\.isSearchDisplayControllerActive\b', source):
         errors.append('ChatListControllerNode.isSearchDisplayControllerActive is ActiveSearch?; compare it with nil')
     if path.rsplit('/', 1)[-1].startswith('Ayu') and re.search(r'\.(?:content|title|image)EdgeInsets\b', source):
@@ -38,9 +38,9 @@ def reaction_dependency_errors(source_file):
         build = parent / 'BUILD'
         if build.is_file():
             if '//submodules/AccountContext' not in build.read_text(encoding='utf-8'):
-                return ['AyuGram reaction display helpers require a direct AccountContext Bazel dependency']
+                return ['VoidGram reaction display helpers require a direct AccountContext Bazel dependency']
             return []
-    return ['No BUILD file found for AyuGram reaction display helpers']
+    return ['No BUILD file found for VoidGram reaction display helpers']
 
 
 def main():
@@ -175,7 +175,7 @@ def main():
                     compiled_icons = plistlib.loads((Path(directory) / 'icons.plist').read_bytes())
                     alternates = compiled_icons.get('CFBundleIcons', {}).get('CFBundleAlternateIcons', {})
                     if not set(icon_names[1:]).issubset(alternates):
-                        errors.append('Icon Composer metadata is missing declared AyuGram alternate icons before the full build')
+                        errors.append('Icon Composer metadata is missing declared VoidGram alternate icons before the full build')
                     else:
                         print(f'PASS: {len(icon_names)} Icon Composer bundles and their metadata compiled before the full build')
     if errors:

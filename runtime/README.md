@@ -1,4 +1,4 @@
-# AyuGram iOS Python plugin runtime
+# VoidGram iOS Python plugin runtime
 
 Embeds CPython to parse supported exteraGram `.plugin` sources into native text programs on iOS. See
 [../docs/PYTHON_RUNTIME.md](../docs/PYTHON_RUNTIME.md) for the full design and

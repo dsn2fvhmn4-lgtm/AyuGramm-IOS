@@ -1,4 +1,4 @@
-"""exteraGram `ui.settings` on the AyuGram iOS runtime.
+"""exteraGram `ui.settings` on the VoidGram iOS runtime.
 
 Each item serializes to a schema the native plugin page renders. Callbacks
 (`on_change`, `on_click`) stay in Python and run when the host reports a

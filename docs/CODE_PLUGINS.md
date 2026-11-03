@@ -76,7 +76,7 @@ A text hook returns the new text, or anything that is not a string to leave it u
 `stories`, `similarChannels`, `premiumStatuses`, `unreadCounters`, `greetingSticker`,
 `openLinkWarning`, `doubleTapToEdit`, `formattingToolbar`, `keyboardHideOnScroll`.
 
-Each maps onto the matching AyuGram interface setting, so every place that honours the setting
+Each maps onto the matching VoidGram interface setting, so every place that honours the setting
 honours the plugin. Overrides are never written to the user's settings and vanish when the
 plugin stops.
 
@@ -109,7 +109,7 @@ draw the plugin's own settings (tap the plugin in the list; lyrics plugins also 
 
 ### Interface API
 
-Every call is declarative: the plugin describes, AyuGram draws, and everything a plugin created
+Every call is declarative: the plugin describes, VoidGram draws, and everything a plugin created
 disappears when it stops. Each group needs a permission in the header, e.g.
 `// @permissions ui, menu, overlay` (`# @permissions …` in Python, `"permissions": ["ui"]` in a
 Rust manifest). The install confirmation lists them; a call without its permission fails with a
@@ -131,7 +131,7 @@ console error.
 | `ayu.tools.chatStats(peerId)` → Promise | `messages.read` | the app's chat statistics sheet for every message stored on the device |
 | `ayu.tools.yearInReview(peerId)` → Promise | `messages.read` | the app's year-in-review sheet for the chat |
 | `ayu.tools.downloadChatMedia(peerId)` → Promise | `messages.read` | saves the chat's photos, videos and files (up to 500) into one folder |
-| `ayu.registry.developers.isVerified(peerId)` / `info(peerId)` | — | AyuGram for iOS team label (Telegram user id) |
+| `ayu.registry.developers.isVerified(peerId)` / `info(peerId)` | — | VoidGram for iOS team label (Telegram user id) |
 | `ayu.ui.gifts.catalog.list(fn)` → Promise | — | Telegram's gift catalog, read-only: `[{ giftId, title, stars, fileId, limited, remains, total, soldOut }]` (Python: `ayu.ui.gifts.catalog.list(fn)`) |
 | `ayu.clipboard.write(text)` | `clipboard` | copy text |
 | `ayu.device.info()` | `device` | `{ battery, charging, orientation, lowPowerMode, reduceMotion, locale }` |
@@ -140,6 +140,45 @@ console error.
 `peerId` is the value plugins receive in events and hook contexts. Python has the same names
 (`ayu.ui.menu.add({...})`, `ayu.call('device.info')`); Rust has `ayugram_plugin::call(op, json)`
 and helpers in `ayugram_plugin::ui`.
+
+### Utility API (27.6)
+
+One hundred and fifty-two calls added in 27.6. Types are in `sdk/typescript/ayu.d.ts`; tests are in
+`tools/mock-runner/api276.test.ts` (`PRELUDE=…/AyuScriptRuntime.swift node --test api276.test.ts`).
+
+Answered by the app:
+
+- `ayu.crypto`: `sha256`, `sha1`, `sha512`, `md5`, `hmac(key, text)` (hex), `randomBytes(n)` (base64), `uuid()`. No permission.
+- `ayu.encoding`: `base64Encode`, `base64Decode`, `hexEncode`, `hexDecode`. No permission.
+- `ayu.app`: `version()`, `build()`, `name()`, `plugins()`. No permission.
+- `ayu.device` (`device`): `battery()`, `isCharging()`, `screen()`, `darkMode()`, `model()`, `systemVersion()`, `timezone()`, `isLowPower()`, `freeDisk()`, `memory()`, `uptime()`, `thermalState()`. Battery, charging, screen and dark mode come from a snapshot the main thread refreshes after each read, so the first read can return the defaults.
+- `ayu.clipboard`: `read()` (`clipboard.read`, a Promise; iOS shows its paste notice), `hasText()` (Promise), `clear()` (`clipboard`).
+- `ayu.speech` (`ui`): `speak(text, { language, rate })`, `stop()`, `isSpeaking()`, `voices()`.
+- `ayu.notify` (`notifications`): `schedule({ id, title, body, seconds })` returns the id; `cancel(id)`, `cancelAll()`. A plugin sees only its own reminders.
+- `ayu.haptics.pattern(styles, interval)`: up to 16 taps (`haptics`).
+
+Run inside the plugin, no permission:
+
+- `ayu.text`: `capitalize`, `titleCase`, `reverse`, `truncate`, `slugify`, `wordCount`, `charCount`, `stripEmoji`, `escapeHtml`, `unescapeHtml`, `translit`, `swapLayout` (ghbdtn ⇄ привет), `mock`, `between`, `template`.
+- `ayu.date`: `format(date, 'DD.MM.YYYY HH:mm')`, `relative`, `addDays`, `diffDays`, `isToday`, `startOfDay`, `parseDuration('1h 30m')`, `formatDuration`.
+- `ayu.color`: `hexToRgb`, `rgbToHex`, `lighten`, `darken`, `mix`, `contrastText`, `random`.
+- `ayu.math`: `clamp`, `lerp`, `random`, `randomInt`, `round`, `sum`, `average`, `median`, `percent`.
+- `ayu.url`: `parse`, `build`, `param`, `isUrl`, `extract`, `domain`.
+- `ayu.array`: `chunk`, `unique`, `shuffle`, `sample`, `groupBy`, `sortBy`.
+- `ayu.async`: `sleep`, `debounce`, `throttle`, `retry`, `timeout`.
+- `ayu.format`: `bytes`, `number`, `plural(n, ['яблоко', 'яблока', 'яблок'])`.
+- `ayu.extract`: `mentions`, `hashtags`, `emails`.
+
+The second batch (52 more, also in the prelude, no permission):
+
+- `ayu.text`: `normalizeSpaces`, `removeUrls`, `removeMentions`, `detectScript`, `wrap(text, width)`, `occurrences`, `randomString` (up to 10000), `isEmojiOnly`, `firstLine`.
+- `ayu.date`: `weekday`, `monthName`, `isWeekend`, `daysInMonth`, `age`, `unix`, `fromUnix`, `countdown`.
+- `ayu.math`: `factorial`, `gcd`, `lcm`, `isPrime` (null above 10¹²), `fibonacci`, `mod`, `roundTo`, `range` (up to 100000 numbers).
+- `ayu.color`: `toHsl`, `fromHsl`, `invert`, `grayscale`, `rgba`.
+- `ayu.array`: `flatten`, `zip`, `countBy`, `partition`, `last`, `compact` (keeps 0), `intersect`, `difference`.
+- `ayu.object`: `pick`, `omit`, `merge` (deep), `get('a.b.0')`, `set('a.b', value)`.
+- `ayu.validate`: `email`, `phone`, `username`, `hexColor`.
+- `ayu.storage`: `remove`, `has`, `getJSON`, `setJSON`, `increment`.
 
 ### Events
 
@@ -156,7 +195,7 @@ and helpers in `ayugram_plugin::ui`.
 
 - Ordinary plugins (outgoing text, switching features off, storage, toasts, settings) install
   from anywhere.
-- Injecting plugins install only when signed by AyuGram (Ed25519; the catalog's
+- Injecting plugins install only when signed by VoidGram (Ed25519; the catalog's
   `signatures.json`, shown as **✓ official**).
 - An unsigned injecting plugin is refused unless *Developer → Injecting plugins from unofficial
   sources* is on; then a disclaimer says the responsibility is entirely the user's.
@@ -212,7 +251,7 @@ module exports `ayu_alloc`, `ayu_free` and `ayu_dispatch` (from the SDK) and imp
 
 ## Debugging
 
-*Settings → AyuGram → Developer*: **Plugin console** shows `print`, errors and hook activity;
+*Settings → VoidGram → Developer*: **Plugin console** shows `print`, errors and hook activity;
 **Relaxed plugin limits** lengthens the hook timeout and turns script errors into toasts;
 **Verbose logging** writes them to a shareable log file.
 

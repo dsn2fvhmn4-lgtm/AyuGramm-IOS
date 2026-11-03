@@ -1,4 +1,4 @@
-"""Run the actual AyuGram models through the pinned Postbox codec before the app build.
+"""Run the actual VoidGram models through the pinned Postbox codec before the app build.
 
 Only the standalone codec, its native support files and MurMurHash32 are compiled. No database, SDK stubs,
 copied encoder implementations or TelegramCore module build is involved.

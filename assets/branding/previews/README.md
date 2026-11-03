@@ -6,7 +6,7 @@ dimensions and file sizes are in `manifest.json`.
 
 They were resized from 1254 × 1254 with Pillow's Lanczos resampler, keeping the
 embedded colour profile if present, and saved as optimized PNGs. `ci/prepare.py`
-installs them into the three AyuGram image sets with a `3x` scale.
+installs them into the three VoidGram image sets with a `3x` scale.
 
 The largest in-app use is the 100 pt settings header; the picker uses up to 72 pt,
 Telegram's theme picker uses 63 pt, and update information uses 62 pt. These previews

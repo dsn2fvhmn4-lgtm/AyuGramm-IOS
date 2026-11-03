@@ -1,23 +1,23 @@
 # Preferences panels and app icons - source after Release 3
 
-The Settings entry reads **AyuGram** and uses the mod's own logo as a 30 pt
+The Settings entry reads **VoidGram** and uses the mod's own logo as a 30 pt
 rounded Settings icon (the earlier outlined star rendered black and was replaced).
-The AyuGram page is a native Telegram item list in the iOS Settings style: a
-**Settings** section with colored category icons (**AyuGram** with the logo,
+The VoidGram page is a native Telegram item list in the iOS Settings style: a
+**Settings** section with colored category icons (**VoidGram** with the logo,
 **Filters**, **General**, **Appearance**, **Chats**, **Plugins**), a **Links**
 section (channel **@neosay1337**, source and documentation) and the project note.
 The previous UIKit hub inside a LegacyController and the separate **Other**
 category are gone.
 
 Category pages list their rows in display order with positional ids.
-ItemListController requires ascending stable ids; the earlier AyuGram, General and
+ItemListController requires ascending stable ids; the earlier VoidGram, General and
 Appearance pages used action ids out of order (for example 0, 50, 1, 53), which
 fails MergeLists' precondition and crashed on opening.
 Existing controls are grouped as follows:
 
 | Category | Pages |
 | --- | --- |
-| AyuGram | Ghost Mode, Message History |
+| VoidGram | Ghost Mode, Message History |
 | Filters | Regex Filters |
 | General | Sending Options, Interface, Message Menu |
 | Appearance | Chat Appearance, MessageShot Appearance, App Icon |
@@ -37,7 +37,7 @@ symbol proportions. It is shared by plugin rows, headers and action lists.
 
 ## Next appearance block: native app-icon selection
 
-Open **AyuGram Preferences -> Appearance -> App Icon**. Fifteen choices are supplied:
+Open **VoidGram Preferences -> Appearance -> App Icon**. Fifteen choices are supplied:
 the owner's existing purple logo, **Blue**, **Graphite**, and the twelve original
 AyuGram Desktop presets: Default, Alt, Discord, Spotify, Extera, Nothing, Bard,
 Yaplus, Win95, Chibi, Chibi2 and Extera2. Original SVG/PNG files are copied without

@@ -1,9 +1,9 @@
 // ==AyuPlugin==
 // @id bookmarks
 // @name Закладки
-// @author AyuGram-IOS
+// @author VoidGram
 // @version 1.0.0
-// @description Пункт «В закладки» в меню сообщения. Закладки с тегами открываются в Настройки → AyuGram → Инструменты → Закладки.
+// @description Пункт «В закладки» в меню сообщения. Закладки с тегами открываются в Настройки → VoidGram → Инструменты → Закладки.
 // @permissions menu, ui, messages
 // ==/AyuPlugin==
 

@@ -1,4 +1,4 @@
-"""exteraGram `android_utils` on the AyuGram iOS runtime."""
+"""exteraGram `android_utils` on the VoidGram iOS runtime."""
 import _ayu_bridge
 import _ayu_java
 

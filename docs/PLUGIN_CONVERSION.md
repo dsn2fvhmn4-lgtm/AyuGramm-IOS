@@ -12,7 +12,7 @@ A second source conversion path adds complete AST parsing and native text progra
   opening path directs it to plugin import rather than generic document preview.
   Missing/incomplete cache data produces a download prompt after a bounded wait.
 - Files can also use the app's registered `.plugin` document type, or be selected
-  through **AyuGram Preferences -> Plugins -> Import .plugin**.
+  through **VoidGram Preferences -> Plugins -> Import .plugin**.
 - Analysis reads a bounded file without executing it. The confirmation shows
   name, author, version, actions, permissions and conversion limitations.
 - **Import and enable** performs local compatibility checks and prepares typed

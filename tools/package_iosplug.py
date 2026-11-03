@@ -79,7 +79,7 @@ def package(source, destination, registry=None, catalog=None):
     report = {"format": "ayu-iosplug-batch-report-1", "unique_sources": len(rows),
               "package_count": sum("file" in row for row in rows), "device_verification": "not_performed", "plugins": rows}
     (destination / "compatibility.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    lines = ["# Плагины AyuGram iOS", "", "`.iosplug` включает встроенные iOS-функции; Python/Android-код не запускается.",
+    lines = ["# Плагины VoidGram iOS", "", "`.iosplug` включает встроенные iOS-функции; Python/Android-код не запускается.",
              "Для пакетов `ayu-iosplug-2`, Pill Labels и Mini Avatar нужна IPA с этим обновлением движка.",
              "Первые пять встроенных карточек v1 совместимы с прежней IPA, содержащей соответствующий плагин.",
              "Импорт: Плагины → + → файл .iosplug → подтвердить установку. Проверка на iPhone ещё не выполнена.",

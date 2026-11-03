@@ -103,7 +103,7 @@ Codemagic uses the same release configuration on the free Mac M2 tier. Import th
 
 - VoidGram branding: a two-blade mark with a grey core on a dark gradient, drawn as vector (`assets/branding/voidgram`). Blue, light and glass variants come from the same mark.
 - A direct **VoidGram · Ghost Mode** entry near the top of Settings, retaining the existing Privacy and Security entry.
-- A ghost button next to the chat header controls: solid ghost when any Ghost Mode option is active, crossed outline when all are off. Tapping toggles Ghost Mode; detailed switches remain in AyuGram settings. The indicator reflects local policy, not server-confirmed invisibility.
+- A ghost button next to the chat header controls: solid ghost when any Ghost Mode option is active, crossed outline when all are off. Tapping toggles Ghost Mode; detailed switches remain in VoidGram settings. The indicator reflects local policy, not server-confirmed invisibility.
 - After a successful cloud-message send, reassert offline status when Hide Online is enabled. A brief server-visible activity window remains possible; failures do not alter send results.
 
 The current source also fixes a Postbox raw-enum serialization trap and retains eligible deleted text inline with a Deleted label beside the message time. Clear Archive, expiry and eviction remove these local text tombstones. The app icon uses an edge-to-edge native background with a separate airplane foreground.

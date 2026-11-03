@@ -2,9 +2,9 @@ Local text history — development branch
 
 This feature is not included in the published v0.1.0 IPA or the separate branding release build at commit 99b82fd.
 
-Entry point: Settings → AyuGram → Message History. Capture of edits and deletions has separate opt-ins, both off by default. The existing Privacy and Security → AyuGram · Ghost Mode path remains available.
+Entry point: Settings → VoidGram → Message History. Capture of edits and deletions has separate opt-ins, both off by default. The existing Privacy and Security → VoidGram · Ghost Mode path remains available.
 
-Message context menus also provide AyuGram → Message Details, showing IDs, timestamp, author and thread when available, followed by a link to archive entries filtered to that message. This metadata screen does not copy or re-render message content. Clearing from the filtered screen still asks to clear the entire account archive explicitly.
+Message context menus also provide VoidGram → Message Details, showing IDs, timestamp, author and thread when available, followed by a link to archive entries filtered to that message. This metadata screen does not copy or re-render message content. Clearing from the filtered screen still asks to clear the entire account archive explicitly.
 
 The previous text is captured immediately before an EditMessage replay replaces it. Text is captured before DeleteMessages and DeleteMessagesWithGlobalIds remove a cached message. The bounded ledger is a PreferencesEntry in the same account's Postbox transaction; rollback also rolls back archive changes. Main chat deletion, read receipts and media removal retain upstream behavior.
 

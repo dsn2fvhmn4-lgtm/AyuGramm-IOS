@@ -1,7 +1,7 @@
 // ==AyuPlugin==
 // @id year-in-review
 // @name Итоги года
-// @author AyuGram-IOS
+// @author VoidGram
 // @version 1.0.0
 // @description Пункт «Итоги года» в меню сообщения: сколько вы переписывались в этом чате с 1 января, самые активные месяцы и дни.
 // @permissions menu, messages.read

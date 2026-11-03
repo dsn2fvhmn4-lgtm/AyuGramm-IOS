@@ -1,5 +1,5 @@
-// Runs AyuGram JavaScript plugins in Node, without a phone, on the app's real prelude.
-// The prelude (the `ayu` API) is read from AyuScriptRuntime.swift or from the AyuGram patch, and the
+// Runs VoidGram JavaScript plugins in Node, without a phone, on the app's real prelude.
+// The prelude (the `ayu` API) is read from AyuScriptRuntime.swift or from the VoidGram patch, and the
 // native bridge it talks to (`__ayuHost`) is mocked here, so plugin tests exercise the same code
 // paths the app does.
 import fs from "node:fs";
@@ -33,7 +33,7 @@ function unescapeSwift(body: string): string {
   return out;
 }
 
-/** The prelude from AyuScriptRuntime.swift, or from the AyuGram patch that adds it. */
+/** The prelude from AyuScriptRuntime.swift, or from the VoidGram patch that adds it. */
 export function loadPrelude(path: string): string {
   let swift = fs.readFileSync(path, "utf8");
   if (path.endsWith(".patch")) {

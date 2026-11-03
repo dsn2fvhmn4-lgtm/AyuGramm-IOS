@@ -1,4 +1,4 @@
-// Type declarations for AyuGram for iOS JavaScript and TypeScript plugins (27.5).
+// Type declarations for VoidGram for iOS JavaScript and TypeScript plugins (27.5).
 // Plugins run in JavaScriptCore with `ayu` as a global. Each API marked with a permission needs
 // `// @permissions name` in the plugin header; network access also needs `// @connect host`.
 
@@ -203,9 +203,9 @@ declare namespace Ayu {
     /** Messages between plugins. */
     bus: { emit(topic: string, data?: Json): void; on(topic: string, fn: (data: Json, from: string) => void): void };
     i18n: { readonly language: string; t(strings: Record<string, string>): string };
-    /** The OpenAI-compatible service set in AyuGram → Tools (permission `ai`). */
+    /** The OpenAI-compatible service set in VoidGram → Tools (permission `ai`). */
     ai: { complete(prompt: string, options?: { system?: string; maxTokens?: number }): Promise<string> };
-    /** A full page drawn by AyuGram; taps arrive as the `screenAction` event { screenId, rowId, value }. */
+    /** A full page drawn by VoidGram; taps arrive as the `screenAction` event { screenId, rowId, value }. */
     screens: { show(screen: { id: string; title: string; sections: ScreenSection[] }): void };
     /** Buttons above the keyboard; taps arrive as `composerButton` { id, text } (permission `composer`). */
     /** Buttons above the keyboard; a tap sends the `composerButton` event { id, text, selection, selectionStart, selectionEnd }. */

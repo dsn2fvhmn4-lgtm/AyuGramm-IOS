@@ -1,13 +1,13 @@
 MessageShot and interface controls — development source
 
-Settings → AyuGram → Interface:
+Settings → VoidGram → Interface:
 - Show IDs in profiles: a native Telegram ID row for users, groups and channels. Tap/hold copies the ID and shows the native copy toast. User IDs are raw; legacy groups use a minus prefix; channels/supergroups use the Bot API -100 prefix. Profile data refreshes when this option changes.
 - Hide bubble quick-share buttons: affects ordinary bubble arrows before their layout width is computed. Comment controls and sponsored-message actions retain native behavior. Other special message renderers keep their native controls.
 - Hide Chats tab unread badge: updates the native Chats tab reactively. Read counters, read receipts, list-row badges and the system app-icon badge are not modified.
 - MessageShot: shown by default; controls its context-menu and selection-share entry points. Interface preferences are per account and independent of Chat Appearance reset.
 
 MessageShot entry points:
-1. Long press an ordinary message/album → AyuGram · MessageShot.
+1. Long press an ordinary message/album → VoidGram · MessageShot.
 2. Select messages → Share → MessageShot. The Messages choice keeps the original native share flow. Disabling MessageShot restores direct native sharing.
 3. Review the generated card image, scroll/pinch to zoom, then use the Share button for the system image share/save sheet. Done closes the preview. The generated image is a composed card layout, not a pixel-identical snapshot of the chat window.
 
@@ -20,8 +20,8 @@ Content and bounds:
 - The image is 900 pixels wide, at most 8000 pixels high, scale 1; it is opaque by default. Image dimensions are checked before allocation. Thumbnail/cache reads have bounded waits. A loading indicator and in-progress guard prevent repeated render requests. No export file is written by this code; the native share sheet handles the owner's chosen destination.
 
 Appearance options — source added after build 8:
-- **Settings → AyuGram → MessageShot Appearance** (Russian: «Оформление MessageShot»). Tap Theme to cycle Follow app → Light → Dark. The selected theme controls card/text colors independently of the app theme; automatic follows the current app theme when rendering.
-- Independent switches show/hide the outer image background, author names, dates/times, AyuGram header and cached media previews. Disabling background produces alpha transparency around the opaque cards. The preview's system background or the receiving app can visually flatten that transparency; export behavior follows the selected format.
+- **Settings → VoidGram → MessageShot Appearance** (Russian: «Оформление MessageShot»). Tap Theme to cycle Follow app → Light → Dark. The selected theme controls card/text colors independently of the app theme; automatic follows the current app theme when rendering.
+- Independent switches show/hide the outer image background, author names, dates/times, VoidGram header and cached media previews. Disabling background produces alpha transparency around the opaque cards. The preview's system background or the receiving app can visually flatten that transparency; export behavior follows the selected format.
 - Hidden author/date/header areas are removed from the layout rather than leaving their former empty space. Hiding names only hides the author heading; message text, captions and attachments can still identify people.
 - With media previews off, the pipeline skips cache reads and image decoding entirely, while retaining textual attachment labels. Protected/expiry rules, spoiler masking and image/text bounds remain in effect.
 - Settings persist per account and are snapshotted when generation starts; an already open preview does not change. Reset MessageShot appearance affects this block only, preserving Ghost Mode, archives, filters, media-send settings and MessageShot menu visibility. Defaults preserve the previous rendering.

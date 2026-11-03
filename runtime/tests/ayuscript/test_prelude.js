@@ -1,4 +1,4 @@
-// Exercises the AyuGram code-plugin prelude (AyuScriptRuntime.prelude) against a fake host.
+// Exercises the VoidGram code-plugin prelude (AyuScriptRuntime.prelude) against a fake host.
 // It does not run JavaScriptCore or the app; it checks the JavaScript API contract.
 //   node runtime/tests/ayuscript/test_prelude.js /path/to/prepared/telegram
 'use strict';

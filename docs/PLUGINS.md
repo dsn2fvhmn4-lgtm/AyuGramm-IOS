@@ -8,12 +8,12 @@ Release 3's already uploaded IPA is unchanged.
 ## Installation and use
 
 1. Tap a downloaded `.plugin` in an ordinary cloud chat, open one from Files, or
-   use **Settings -> AyuGram Preferences -> Plugins -> Import .plugin**.
+   use **Settings -> VoidGram Preferences -> Plugins -> Import .plugin**.
 2. Review its author, version, capabilities and conversion limitations, then choose
    **Import and enable**. Preparation and activation commit together after success.
 3. Tap an installed plugin to open its details page with name, version, author,
    description and an enable switch.
-4. Open an ordinary cloud message's menu -> **AyuGram -> Plugins**, then choose
+4. Open an ordinary cloud message's menu -> **VoidGram -> Plugins**, then choose
    an action. Manual actions take explicitly entered input. Automatic outgoing
    rules instead process eligible outgoing text in the native enqueue path. The
    manager also supports disable, removal and .plugin export.

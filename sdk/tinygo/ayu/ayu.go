@@ -1,4 +1,4 @@
-// Package ayu is the AyuGram plugin SDK for TinyGo.
+// Package ayu is the VoidGram plugin SDK for TinyGo.
 //
 // Build:  tinygo build -o plugin.wasm -target wasm-unknown -opt z -no-debug ./
 // Then:   ayu pack plugin.wasm manifest.json plugin.wasm

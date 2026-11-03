@@ -1,6 +1,6 @@
 # Reaction display — development source after build 8
 
-Path: **Settings → AyuGram → Chat Reactions** (Russian: «Реакции в чатах»).
+Path: **Settings → VoidGram → Chat Reactions** (Russian: «Реакции в чатах»).
 
 Independent per-account switches show/hide reactions beneath messages in private chats, groups (including supergroups) and broadcast channels. All default on. **Reset reaction display** restores only this feature's defaults. Saved Messages/tags, ads, non-cloud messages and unknown peer types retain native behavior.
 

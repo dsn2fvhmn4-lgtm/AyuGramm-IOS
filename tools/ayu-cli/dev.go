@@ -221,6 +221,6 @@ func serveDev(path string, port int) error {
 		}
 	}()
 
-	fmt.Printf("ayu dev: serving %s on ws://0.0.0.0:%d\nIn AyuGram: Tools → Hot reload computer → this computer's IP, then turn Hot reload on.\n", path, port)
+	fmt.Printf("ayu dev: serving %s on ws://0.0.0.0:%d\nIn VoidGram: Tools → Hot reload computer → this computer's IP, then turn Hot reload on.\n", path, port)
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }

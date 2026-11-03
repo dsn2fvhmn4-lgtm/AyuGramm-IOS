@@ -1,4 +1,4 @@
-"""exteraGram `extera_utils.text_formatting` on the AyuGram iOS runtime.
+"""exteraGram `extera_utils.text_formatting` on the VoidGram iOS runtime.
 
 The text is passed through with its markup intact and the parse mode is
 forwarded to the host, which parses HTML/Markdown with the app's own entity

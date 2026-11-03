@@ -1,4 +1,4 @@
-"""exteraGram `hook_utils` on the AyuGram iOS runtime.
+"""exteraGram `hook_utils` on the VoidGram iOS runtime.
 
 There are no Java objects on iOS, so reflection reads and writes only work on
 the Python fields of stub objects. Reads of anything else return None, as the

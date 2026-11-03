@@ -1,5 +1,5 @@
 // Tests of the app's JavaScript prelude (27.5 APIs), run with: node --test tools/mock-runner/prelude.test.ts
-// PRELUDE points at AyuScriptRuntime.swift or at the AyuGram patch (default: the patch in this repo).
+// PRELUDE points at AyuScriptRuntime.swift or at the VoidGram patch (default: the patch in this repo).
 import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";

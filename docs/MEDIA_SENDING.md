@@ -1,6 +1,6 @@
 Media sending — development source
 
-Path: Settings → AyuGram → Sending Options. This block adapts Desktop's stickerConfirmation, gifConfirmation, voiceConfirmation and roundConfirmation preferences to native iOS flows. All four switches default off and persist independently per account.
+Path: Settings → VoidGram → Sending Options. This block adapts Desktop's stickerConfirmation, gifConfirmation, voiceConfirmation and roundConfirmation preferences to native iOS flows. All four switches default off and persist independently per account.
 
 Sticker/GIF confirmation
 - Applies to the chat controller's sticker send, saved GIF send and inline-result-as-GIF handlers.

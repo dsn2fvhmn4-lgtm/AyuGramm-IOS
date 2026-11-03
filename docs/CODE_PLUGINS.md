@@ -76,7 +76,7 @@ A text hook returns the new text, or anything that is not a string to leave it u
 `stories`, `similarChannels`, `premiumStatuses`, `unreadCounters`, `greetingSticker`,
 `openLinkWarning`, `doubleTapToEdit`, `formattingToolbar`, `keyboardHideOnScroll`.
 
-Each maps onto the matching AyuGram interface setting, so every place that honours the setting
+Each maps onto the matching VoidGram interface setting, so every place that honours the setting
 honours the plugin. Overrides are never written to the user's settings and vanish when the
 plugin stops.
 
@@ -109,7 +109,7 @@ draw the plugin's own settings (tap the plugin in the list; lyrics plugins also 
 
 ### Interface API
 
-Every call is declarative: the plugin describes, AyuGram draws, and everything a plugin created
+Every call is declarative: the plugin describes, VoidGram draws, and everything a plugin created
 disappears when it stops. Each group needs a permission in the header, e.g.
 `// @permissions ui, menu, overlay` (`# @permissions …` in Python, `"permissions": ["ui"]` in a
 Rust manifest). The install confirmation lists them; a call without its permission fails with a
@@ -131,7 +131,7 @@ console error.
 | `ayu.tools.chatStats(peerId)` → Promise | `messages.read` | the app's chat statistics sheet for every message stored on the device |
 | `ayu.tools.yearInReview(peerId)` → Promise | `messages.read` | the app's year-in-review sheet for the chat |
 | `ayu.tools.downloadChatMedia(peerId)` → Promise | `messages.read` | saves the chat's photos, videos and files (up to 500) into one folder |
-| `ayu.registry.developers.isVerified(peerId)` / `info(peerId)` | — | AyuGram for iOS team label (Telegram user id) |
+| `ayu.registry.developers.isVerified(peerId)` / `info(peerId)` | — | VoidGram for iOS team label (Telegram user id) |
 | `ayu.ui.gifts.catalog.list(fn)` → Promise | — | Telegram's gift catalog, read-only: `[{ giftId, title, stars, fileId, limited, remains, total, soldOut }]` (Python: `ayu.ui.gifts.catalog.list(fn)`) |
 | `ayu.clipboard.write(text)` | `clipboard` | copy text |
 | `ayu.device.info()` | `device` | `{ battery, charging, orientation, lowPowerMode, reduceMotion, locale }` |
@@ -195,7 +195,7 @@ The second batch (52 more, also in the prelude, no permission):
 
 - Ordinary plugins (outgoing text, switching features off, storage, toasts, settings) install
   from anywhere.
-- Injecting plugins install only when signed by AyuGram (Ed25519; the catalog's
+- Injecting plugins install only when signed by VoidGram (Ed25519; the catalog's
   `signatures.json`, shown as **✓ official**).
 - An unsigned injecting plugin is refused unless *Developer → Injecting plugins from unofficial
   sources* is on; then a disclaimer says the responsibility is entirely the user's.
@@ -251,7 +251,7 @@ module exports `ayu_alloc`, `ayu_free` and `ayu_dispatch` (from the SDK) and imp
 
 ## Debugging
 
-*Settings → AyuGram → Developer*: **Plugin console** shows `print`, errors and hook activity;
+*Settings → VoidGram → Developer*: **Plugin console** shows `print`, errors and hook activity;
 **Relaxed plugin limits** lengthens the hook timeout and turns script errors into toasts;
 **Verbose logging** writes them to a shareable log file.
 

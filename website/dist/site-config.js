@@ -20,12 +20,7 @@ window.AYU_SITE = Object.freeze({
       macos: null,
       linux: null,
     },
-    ipa: {
-      src: 'assets/steps/02-download-ipa.webp',
-      width: 629, height: 472,
-      alt: 'Главная страница VoidGram с кнопкой «Скачать IPA»',
-      caption: 'Нажми «Скачать IPA» на этой странице и дождись завершения загрузки.',
-    },
+    ipa: null,
     connection: {
       src: 'https://cdsassets.apple.com/live/7WUAS350/images/ios/ios-16-iphone-14-pro-trust-this-computer-prompt.png',
       layout: 'phone',

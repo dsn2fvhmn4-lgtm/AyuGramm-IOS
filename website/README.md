@@ -13,7 +13,7 @@ python3 -m http.server 4173 --bind 127.0.0.1 --directory dist
 
 Затем открой `http://127.0.0.1:4173`. Для размещения на статическом хостинге
 достаточно содержимого `dist/`. Сайт опубликован на GitHub Pages:
-https://dsn2fvhmn4-lgtm.github.io/AyuGramm-IOS/ — workflow `.github/workflows/pages.yml`
+https://dsn2fvhmn4-lgtm.github.io/VoidGram/ — workflow `.github/workflows/pages.yml`
 выкладывает `dist/` при каждом пуше в `website/`.
 
 ## Что работает
@@ -105,7 +105,7 @@ ipa: {
 
 Проверено по первичным источникам 1 ноября 2026 года:
 
-- [Релизы VoidGram](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases):
+- [Релизы VoidGram](https://github.com/dsn2fvhmn4-lgtm/VoidGram/releases):
   в макете выбрана 27.0.2, build 88, файл `AyuGramm-IOS-27.0.2.ipa`.
   При новом релизе обновить `release` в `site-config.js`; ссылка «Все версии»
   всегда ведёт на список релизов.

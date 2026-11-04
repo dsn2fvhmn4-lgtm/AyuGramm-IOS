@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { loadPrelude, Sandbox } from "./mock.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const prelude = loadPrelude(process.env.PRELUDE ?? path.join(root, "patches/ayugram-big-update.patch"));
+const prelude = loadPrelude(process.env.PRELUDE ?? path.join(root, "patches/voidgram-big-update.patch"));
 const iterations = Number(process.env.FUZZ_ITERATIONS ?? 3000);
 
 // A small deterministic PRNG so failures can be replayed with FUZZ_SEED.

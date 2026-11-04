@@ -4,7 +4,7 @@
 window.AYU_SITE = Object.freeze({
   release: {
     label: '27.0.2 · 149 МБ',
-    ipa: 'https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/download/build-88-branch/AyuGramm-IOS-27.0.2.ipa',
+    ipa: 'https://github.com/dsn2fvhmn4-lgtm/VoidGram/releases/download/build-88-branch/AyuGramm-IOS-27.0.2.ipa',
     checkedOn: '2026-11-01',
   },
   // A step accepts one screenshot or an array with labels for the image picker.

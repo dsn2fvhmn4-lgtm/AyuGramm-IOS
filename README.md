@@ -6,7 +6,7 @@ VoidGram (formerly AyuGramm-IOS) is an unofficial Telegram client for iOS.
 
 The maintainer reports testing the app on an iPhone.
 
-An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. [Release 3](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases/tag/v0.3.0-preview) is available as **AyuGramm-IOS.ipa**. See the [complete Release 3 changelog](docs/releases/v0.3.0.md) for additions, fixes, installation and verification status. [Previous releases](https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/releases) remain available.
+An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. [Release 3](https://github.com/dsn2fvhmn4-lgtm/VoidGram/releases/tag/v0.3.0-preview) is available as **AyuGramm-IOS.ipa**. See the [complete Release 3 changelog](docs/releases/v0.3.0.md) for additions, fixes, installation and verification status. [Previous releases](https://github.com/dsn2fvhmn4-lgtm/VoidGram/releases) remain available.
 
 Release 3 source changes add message-menu controls, author search, filter management, MessageShot appearance, text-to-draft/search/ID tools, reversible local message hiding, reaction-display settings and updated app artwork. Reliability changes cover filter scope, image bounds, missing App Group access, startup diagnostics and database-key persistence. See the detailed changelog for source changes.
 
@@ -35,6 +35,20 @@ Experimental Ghost Mode adds per-account persistent controls for cloud chat/disc
 Ghost Mode conflicts with [Telegram API Terms section 1.4](https://core.telegram.org/api/terms). Server Premium features are not unlocked. The complete AyuGram feature set is still being ported.
 
 The development sources add a local edit/deletion ledger, formatting and reaction snapshots, a bot-capture preference, message metadata, silent-send modes, local regex filtering and opt-in local media archiving. The build 8 preview is now published. See [history verification](docs/LOCAL_HISTORY.md) and the [complete parity checklist](docs/PARITY_CHECKLIST.md).
+
+## Badges on the server (development source)
+
+Badges, labels and NFTs now live only on the VoidGram badge server (`badge.vinx.best`, bot
+@AyuZayavka_bot); nothing is committed to this repository any more. The app accepts a badge list
+only when the server's Ed25519 signature matches the key built into the app and the copy is not
+older than the one it already has. Changes need Telegram's own signature of the Mini App data, so
+a leaked bot token is not enough; each change is logged and can be undone. The owner manages
+badges from any profile (**VoidGram badge…**) or with `/help` in the bot.
+`assets/ayugram_ios_badges.json` is the snapshot imported on 2026-11-04 and is no longer read.
+
+An NFT granted in VoidGram and worn shows only to VoidGram users; everyone else keeps seeing the
+Telegram status. Picking a Telegram status (an emoji from a pack, a real collectible or none)
+changes it for everyone and takes the VoidGram NFT off.
 
 ## Big update (development source)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ayu-mock — run a JavaScript plugin against the app's prelude without a phone.
 //
-//   node tools/mock-runner/cli.ts --prelude patches/ayugram-big-update.patch plugin.js \
+//   node tools/mock-runner/cli.ts --prelude patches/voidgram-big-update.patch plugin.js \
 //        [--send "text"]... [--event name '{"json":1}']... [--link https://x.com/a]
 import fs from "node:fs";
 import { loadPrelude, Sandbox } from "./mock.ts";
@@ -19,7 +19,7 @@ for (let i = 0; i < args.length; i++) {
   else pluginPath = arg;
 }
 if (!preludePath || !pluginPath) {
-  console.error("usage: cli.ts --prelude <AyuScriptRuntime.swift | ayugram-big-update.patch> <plugin.js> [--send text] [--event name json] [--link url]");
+  console.error("usage: cli.ts --prelude <AyuScriptRuntime.swift | voidgram-big-update.patch> <plugin.js> [--send text] [--event name json] [--link url]");
   process.exit(2);
 }
 

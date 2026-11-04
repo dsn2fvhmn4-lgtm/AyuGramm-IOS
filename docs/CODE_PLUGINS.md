@@ -21,7 +21,7 @@ Python plugins run in [PocketPy](https://github.com/pocketpy/pocketpy) 2.1.8, bu
 `os`/`io` layer (no files, sockets, `system()` or `dlopen`) and with a watchdog that stops a
 call running past its time limit. Rust plugins are WebAssembly modules run by WAMR's interpreter
 (no JIT); their only import is `ayu.host`. Both engines live in `submodules/AyuPluginEngines` of
-the port (see `patches/ayugram-big-update.patch`).
+the port (see `patches/voidgram-big-update.patch`).
 
 ## Install
 

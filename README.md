@@ -6,7 +6,7 @@ VoidGram (formerly AyuGramm-IOS) is an unofficial Telegram client for iOS.
 
 The maintainer reports testing the app on an iPhone.
 
-An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. [Release 3](https://github.com/dsn2fvhmn4-lgtm/VoidGram/releases/tag/v0.3.0-preview) is available as **AyuGramm-IOS.ipa**. See the [complete Release 3 changelog](docs/releases/v0.3.0.md) for additions, fixes, installation and verification status. [Previous releases](https://github.com/dsn2fvhmn4-lgtm/VoidGram/releases) remain available.
+An unofficial native Telegram-iOS adaptation with AyuGram-inspired features. [Release 3](https://github.com/neosay-dev/VoidGram/releases/tag/v0.3.0-preview) is available as **AyuGramm-IOS.ipa**. See the [complete Release 3 changelog](docs/releases/v0.3.0.md) for additions, fixes, installation and verification status. [Previous releases](https://github.com/neosay-dev/VoidGram/releases) remain available.
 
 Release 3 source changes add message-menu controls, author search, filter management, MessageShot appearance, text-to-draft/search/ID tools, reversible local message hiding, reaction-display settings and updated app artwork. Reliability changes cover filter scope, image bounds, missing App Group access, startup diagnostics and database-key persistence. See the detailed changelog for source changes.
 
@@ -28,7 +28,7 @@ If you would like to support the repository authors, you can send a contribution
 
 murk-sus: only TRC20: TCPD7jzSMtQ4zkoSxSbUZi6RFoVdKqv78w
 
-dsn2fvhmn4-lgtm (only mono): mono: 4874070019870151
+neosay-dev (only mono): mono: 4874070019870151
 
 Experimental Ghost Mode adds per-account persistent controls for cloud chat/discussion read receipts, explicit online status, typing/recording and upload progress. Open **Settings → Privacy and Security → VoidGram · Ghost Mode**. All options default off. Secret-chat read handling, media consumption/expiration and story-view receipts retain upstream behavior. This is not an absolute-invisibility guarantee. New reads after disabling the mode can acknowledge earlier messages. Already transmitted requests cannot be retracted.
 

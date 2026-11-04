@@ -2,7 +2,7 @@
 
 use ayugram_plugin::{hooks, log, manifest, storage};
 
-manifest!(br#"{"id":"emoji-shortcuts-rs","name":"Emoji shortcuts (Rust)","author":"murk-sus & dsn2fvhmn4-lgtm","version":"1.0","description":"Rust plugin: :fire:, :heart:, :ok:, :lol:, :100: and other shortcuts become emoji in messages you send.","tags":["text","emoji","rust"]}"#);
+manifest!(br#"{"id":"emoji-shortcuts-rs","name":"Emoji shortcuts (Rust)","author":"murk-sus & neosay-dev","version":"1.0","description":"Rust plugin: :fire:, :heart:, :ok:, :lol:, :100: and other shortcuts become emoji in messages you send.","tags":["text","emoji","rust"]}"#);
 
 const SHORTCUTS: &[(&str, &str)] = &[
     (":fire:", "🔥"),

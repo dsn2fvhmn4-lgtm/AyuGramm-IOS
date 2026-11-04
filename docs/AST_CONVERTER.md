@@ -81,7 +81,7 @@ Upstream references: [Python Apple support](https://github.com/beeware/Python-Ap
 
 ## Compiler verification
 
-[macOS check 40318109369](https://github.com/dsn2fvhmn4-lgtm/VoidGram/actions/runs/40318109369)
+[macOS check 40318109369](https://github.com/neosay-dev/VoidGram/actions/runs/40318109369)
 passed the real CPython Objective-C header check, Swift SDK checks, packaging and
 signing of 68 extension frameworks, 48 Python tests and 586 native model checks.
 The model checks include API 6 import, activation, execution, persistence,

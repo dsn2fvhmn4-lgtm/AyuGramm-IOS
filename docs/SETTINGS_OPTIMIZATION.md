@@ -1,7 +1,7 @@
 # Settings icons and resource optimization
 
-The new final patch, `patches/ayugram-settings-optimization.patch`, applies after
-`ayugram-big-update.patch` through `ci/prepare.py`.
+The new final patch, `patches/voidgram-settings-optimization.patch`, applies after
+`voidgram-big-update.patch` through `ci/prepare.py`.
 
 ## Behaviour
 

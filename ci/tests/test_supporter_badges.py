@@ -17,7 +17,7 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertIn(5800413909, data["developers"])
 
     def test_port_preserves_badge_types_and_premium_slot(self):
-        patch = (ROOT / "patches" / "ayugram-custom-features.patch").read_text()
+        patch = (ROOT / "patches" / "voidgram-custom-features.patch").read_text()
 
         self.assertIn('json["customBadges"]', patch)
         self.assertIn('json["supporterChannels"]', patch)
@@ -51,7 +51,7 @@ class SupporterBadgeTests(unittest.TestCase):
             self.assertIn(data[25], (4, 6), "developer badge PNG must retain an alpha channel")
 
     def test_developer_and_supporter_badges_use_distinct_assets(self):
-        patch = (ROOT / "patches" / "ayugram-custom-features.patch").read_text()
+        patch = (ROOT / "patches" / "voidgram-custom-features.patch").read_text()
 
         self.assertIn("case exteraDeveloper", patch)
         self.assertIn('case .developer:', patch)
@@ -62,7 +62,7 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertNotIn('case let .developer(text), let .supporter(text):', patch)
 
     def test_remote_badge_roles_replace_stale_cached_roles(self):
-        patch = (ROOT / "patches" / "ayugram-custom-features.patch").read_text()
+        patch = (ROOT / "patches" / "voidgram-custom-features.patch").read_text()
 
         self.assertIn("self.developers = developers", patch)
         self.assertIn("self.supporters = supporters", patch)
@@ -71,8 +71,8 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertNotIn("self.supporters.formUnion", patch)
 
     def test_badge_tooltips_name_the_peer_and_preserve_verification(self):
-        base_patch = (ROOT / "patches" / "ayugram-custom-features.patch").read_text()
-        ios_patch = (ROOT / "patches" / "ayugram-developer-badges.patch").read_text()
+        base_patch = (ROOT / "patches" / "voidgram-custom-features.patch").read_text()
+        ios_patch = (ROOT / "patches" / "voidgram-developer-badges.patch").read_text()
 
         self.assertIn('(name) является членом команды разработчиков exteraGram.', base_patch)
         self.assertIn('(name) поддержал(а) разработку exteraGram или AyuGram', base_patch)
@@ -100,7 +100,7 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertFalse(set(ids) & desktop_developers)
         by_id = {badge["id"]: badge for badge in badges}
         self.assertEqual(by_id[8276132300]["documentId"], 5341356487631448969)
-        self.assertEqual(by_id[7556953433]["documentId"], 5208467231670812677)
+        self.assertEqual(by_id[7556953433]["documentId"], 5427142467889702968)
         # The owner picks their own badge emoji in the app.
         self.assertIsInstance(by_id[7864640050]["documentId"], int)
         self.assertTrue(all("(name)" in by_id[user_id]["title"] for user_id in (8276132300, 7556953433, 7864640050)))
@@ -115,7 +115,7 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertTrue(all("(name)" in item["title"] for item in badges if item["id"] in {8276132300, 7556953433, 7864640050}))
 
     def test_leading_badge_path_covers_chat_list_titles_and_profile(self):
-        patch = (ROOT / "patches" / "ayugram-developer-badges.patch").read_text()
+        patch = (ROOT / "patches" / "voidgram-developer-badges.patch").read_text()
 
         expected_files = (
             "submodules/ChatListUI/Sources/Node/ChatListItem.swift",
@@ -139,7 +139,7 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertFalse(any("ayugram-ios" in badge.get("title", "").lower() for badge in badges))
 
     def test_position_setting_is_removed_and_ios_badges_always_lead(self):
-        patch = (ROOT / "patches" / "ayugram-fixed-leading-badges.patch").read_text()
+        patch = (ROOT / "patches" / "voidgram-fixed-leading-badges.patch").read_text()
         additions = "\n".join(line[1:] for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
         self.assertNotIn("supporterBadgesOnLeft", additions)
         self.assertIn("-    public var supporterBadgesOnLeft", patch)
@@ -150,7 +150,7 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertEqual(additions.count("verifiedIcon = .ayuDeveloper"), 1)
 
     def test_followup_patch_has_conditional_opacity_slider(self):
-        patch = (ROOT / "patches" / "ayugram-followup-features.patch").read_text()
+        patch = (ROOT / "patches" / "voidgram-followup-features.patch").read_text()
 
         self.assertIn("deletedMessageTransparency", patch)
         self.assertIn("entries.append(.slider(0, 6", patch)
@@ -167,7 +167,7 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertIn("raw.githubusercontent.com/dsn2fvhmn4-lgtm/AyuGramm-IOS/main/assets/ayugram_ios_badges.json", patch)
 
     def test_ios_developer_badges_use_the_leading_name_slot(self):
-        patch = (ROOT / "patches" / "ayugram-developer-badges.patch").read_text()
+        patch = (ROOT / "patches" / "voidgram-developer-badges.patch").read_text()
 
         self.assertIn("case ayuDeveloper(documentId: Int64, text: String?)", patch)
         self.assertIn("verifiedIcon = .ayuDeveloper", patch)

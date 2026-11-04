@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { loadPrelude, Sandbox } from "./mock.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const prelude = loadPrelude(process.env.PRELUDE ?? path.join(root, "patches/ayugram-port-fixes.patch"));
+const prelude = loadPrelude(process.env.PRELUDE ?? path.join(root, "patches/voidgram-port-fixes.patch"));
 
 function run(source: string, responders = {}) {
   const sandbox = new Sandbox({ prelude, responders });

@@ -4,11 +4,11 @@ Local host is Windows 10.0.26100. Git and the downloaded/checksum-verified GitHu
 
 ## Configured GitHub pipeline
 
-Repository: https://github.com/dsn2fvhmn4-lgtm/AyuGramm-IOS . The pipeline uses the xcode-27 ARM runner and explicitly selects Xcode_27.1.app. The runner-images manifest lists macOS 27 and Xcode 27.1; the actual job independently checks these versions.
+Repository: https://github.com/dsn2fvhmn4-lgtm/VoidGram . The pipeline uses the xcode-27 ARM runner and explicitly selects Xcode_27.1.app. The runner-images manifest lists macOS 27 and Xcode 27.1; the actual job independently checks these versions.
 
 Run `Native iOS port` from Actions. It tests the actual settings-store source, parses changed Swift, then builds baseline app sources and the patched app. Device debug_arm64 is the default; debug_sim_arm64 is available manually. The user's own TELEGRAM_API_ID and TELEGRAM_API_HASH are stored in Actions Secrets. Signing certificates/profiles have not been configured. Outputs are unsigned native compilation artifacts, not verified installable releases.
 
-The repository contains upstream.json plus patches/ayugram-ghost-mode.patch; ci/prepare.py checks the pinned commit before applying it. The baseline uses only a build-level no-provisioning Bazel flag. Port Make.py additionally exposes that existing flag through --disableProvisioningProfiles.
+The repository contains upstream.json plus patches/voidgram-ghost-mode.patch; ci/prepare.py checks the pinned commit before applying it. The baseline uses only a build-level no-provisioning Bazel flag. Port Make.py additionally exposes that existing flag through --disableProvisioningProfiles.
 
 For unsigned device compilation, ci/build.py applies unsigned-build-rules.patch to the exact pinned rules_apple submodule. An explicit `ayu_unsigned_compilation` feature skips profile embedding, paired with rules_apple's existing `disable_legacy_signing` feature. Normal signed builds do not enable these features. App sources remain unchanged in the baseline, but its packaging is deliberately unsigned. No fabricated provisioning profile is generated. iOS still requires legitimate signing for installation.
 

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { loadPrelude, Sandbox } from "./mock.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const prelude = loadPrelude(process.env.PRELUDE ?? path.join(root, "patches/ayugram-big-update.patch"));
+const prelude = loadPrelude(process.env.PRELUDE ?? path.join(root, "patches/voidgram-big-update.patch"));
 
 test("dot commands replace or cancel the outgoing text", () => {
   const sandbox = new Sandbox({ prelude });

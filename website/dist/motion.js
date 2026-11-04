@@ -36,7 +36,7 @@
   });
   document.addEventListener('voidgram:stepchange', event => {
     const revision = stepRevision;
-    const panel = document.querySelector(`[data-panel="${event.detail.to}"]`);
+    const panel = event.detail.panel || document.querySelector(`[data-panel="${event.detail.to}"]`);
     const height = card.getBoundingClientRect().height;
     panelAnimation = animate(panel, [
       { opacity: 0, transform: `translateX(${event.detail.to > event.detail.from ? 10 : -10}px)` },

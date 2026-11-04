@@ -40,6 +40,24 @@ window.AYU_SITE = Object.freeze({
       alt: 'Файл AyuGramm-IOS-27.0.2(1).ipa в папке загрузок',
       caption: 'После Import IPA выбери скачанный файл с расширением .ipa.',
     },
+    certDevice: {
+      src: 'assets/cert/01-device.webp',
+      width: 461, height: 247, layout: 'phone',
+      alt: 'Бот: описание сертификата и кнопки iPhone, iPad, Назад',
+      caption: 'После «Товары» → «Сертификат» бот спросит устройство.',
+    },
+    certTariff: {
+      src: 'assets/cert/02-tariff.webp',
+      width: 434, height: 209, layout: 'phone',
+      alt: 'Бот: тарифы Обычный, Мгновенный и Экспресс',
+      caption: 'Три тарифа, отличаются сроком изготовления.',
+    },
+    certPayment: {
+      src: 'assets/cert/03-payment.webp',
+      width: 444, height: 653, layout: 'phone',
+      alt: 'Бот: тариф Обычный за 950 RUB, срок около 80 часов и способы оплаты',
+      caption: 'Страница тарифа: цена, срок и способы оплаты. CryptoBot — первая кнопка.',
+    },
     launch: [
       {
         label: '1. Настройки',

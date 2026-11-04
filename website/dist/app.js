@@ -2,10 +2,21 @@
 
 (() => {
   const config = window.AYU_SITE || { screenshots: {} };
-  const panels = [...document.querySelectorAll('[data-panel]')];
-  const stepLinks = [...document.querySelectorAll('[data-step]')];
+  const allPanels = [...document.querySelectorAll('[data-panel]')];
+  const allStepLinks = [...document.querySelectorAll('[data-step]')];
+  const methodButtons = [...document.querySelectorAll('[data-method-choice]')];
+  // "pc" is the iLoader guide; "cert" is the developer-certificate guide. Unmarked elements belong to "pc".
+  const methodOf = element => element.dataset.method || 'pc';
+  const methods = {
+    pc: { hash: 'step', done: 'Не забудь про обновление подписи ниже.' },
+    cert: { hash: 'cert', done: 'Сертификат действует год.' },
+  };
+  let method = 'pc';
+  let panels = [];
+  let stepLinks = [];
   const osButtons = [...document.querySelectorAll('[data-os]')];
-  const completed = new Set();
+  const progress = { pc: new Set(), cert: new Set() };
+  let completed = progress.pc;
   const storageKey = 'ayugram-install-guide-v1';
   const previous = document.getElementById('previous-step');
   const next = document.getElementById('next-step');
@@ -23,18 +34,25 @@
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) || '{}');
     if (Object.prototype.hasOwnProperty.call(osOptions, saved.os)) os = saved.os;
-    if (Array.isArray(saved.completed)) saved.completed.forEach(value => {
-      if (Number.isInteger(value) && value >= 1 && value <= panels.length) completed.add(value);
+    if (Object.prototype.hasOwnProperty.call(methods, saved.method)) method = saved.method;
+    // Version 1 stored the iLoader steps as a plain array.
+    const stored = Array.isArray(saved.completed) ? { pc: saved.completed } : (saved.completed || {});
+    Object.keys(progress).forEach(key => {
+      const count = allPanels.filter(panel => methodOf(panel) === key).length;
+      if (Array.isArray(stored[key])) stored[key].forEach(value => {
+        if (Number.isInteger(value) && value >= 1 && value <= count) progress[key].add(value);
+      });
     });
   } catch { /* The guide remains usable if local storage is unavailable. */ }
 
   function save() {
-    try { localStorage.setItem(storageKey, JSON.stringify({ os, completed: [...completed] })); } catch { /* Optional persistence. */ }
+    try { localStorage.setItem(storageKey, JSON.stringify({ os, method, completed: { pc: [...progress.pc], cert: [...progress.cert] } })); } catch { /* Optional persistence. */ }
   }
 
   function updateProgress() {
     stepLinks.forEach(link => link.classList.toggle('is-complete', completed.has(Number(link.dataset.step))));
     document.getElementById('progress-label').textContent = `Пройдено ${completed.size} из ${panels.length}`;
+    document.getElementById('progress-bar').max = panels.length;
     document.getElementById('progress-bar').value = completed.size;
     document.getElementById('reset-progress').hidden = completed.size === 0;
     complete.setAttribute('aria-pressed', String(completed.has(current)));
@@ -47,7 +65,7 @@
     const from = current;
     if (step !== from) document.dispatchEvent(new CustomEvent('voidgram:beforestepchange'));
     current = step;
-    panels.forEach(panel => { panel.hidden = Number(panel.dataset.panel) !== current; });
+    panels.forEach((panel, index) => { panel.hidden = index + 1 !== current; });
     stepLinks.forEach(link => {
       const active = Number(link.dataset.step) === current;
       link.classList.toggle('is-active', active);
@@ -57,10 +75,10 @@
     next.querySelector('span').textContent = current === panels.length ? 'Готово' : 'Дальше';
     next.querySelector('use').setAttribute('href', current === panels.length ? '#check' : '#arrow');
     updateProgress();
-    if (step !== from) document.dispatchEvent(new CustomEvent('voidgram:stepchange', { detail: { from, to: step } }));
+    if (step !== from) document.dispatchEvent(new CustomEvent('voidgram:stepchange', { detail: { from, to: step, panel: panels[current - 1] } }));
     if (focus) {
-      document.getElementById(`title-${current}`).focus({ preventScroll: true });
-      try { history.replaceState(null, '', `#step-${current}`); } catch { /* file:// previews can restrict history. */ }
+      panels[current - 1].querySelector('h3').focus({ preventScroll: true });
+      try { history.replaceState(null, '', `#${methods[method].hash}-${current}`); } catch { /* file:// previews can restrict history. */ }
     }
     if (scroll) {
       const target = matchMedia('(max-width: 760px)').matches ? document.querySelector('.guide-sidebar') : document.querySelector('.guide-content');
@@ -196,25 +214,53 @@
     save();
   }
 
+  function selectMethod(value, { scroll = false } = {}) {
+    if (!Object.prototype.hasOwnProperty.call(methods, value)) return;
+    const changed = method !== value;
+    method = value;
+    completed = progress[method];
+    panels = allPanels.filter(panel => methodOf(panel) === method);
+    stepLinks = allStepLinks.filter(link => methodOf(link) === method);
+    allStepLinks.forEach(link => { link.hidden = methodOf(link) !== method; });
+    allPanels.forEach(panel => { if (methodOf(panel) !== method) panel.hidden = true; });
+    document.querySelectorAll('.renewal-note[data-method]').forEach(note => { note.hidden = methodOf(note) !== method; });
+    methodButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.methodChoice === method)));
+    document.getElementById('completion-note').textContent = methods[method].done;
+    current = 0;
+    selectStep(1, { scroll });
+    if (changed) save();
+  }
+
   function followStepHash({ scroll = false } = {}) {
-    const match = location.hash.match(/^#step-([1-6])$/);
-    if (match) selectStep(Number(match[1]), { scroll });
+    const match = location.hash.match(/^#(step|cert)-(\d)$/);
+    if (!match) return;
+    const target = match[1] === 'cert' ? 'cert' : 'pc';
+    if (target !== method) selectMethod(target);
+    selectStep(Number(match[2]), { scroll });
   }
 
   document.documentElement.classList.add('js-ready');
   document.querySelector('.step-controls').hidden = false;
+  document.querySelector('.method-picker').hidden = false;
+  // The 11.11 sale ends at the end of 11 November, Moscow time; regular prices come back on their own.
+  if (Date.now() >= Date.parse('2026-11-12T00:00:00+03:00')) {
+    document.querySelectorAll('[data-sale]').forEach(element => { element.hidden = true; });
+    document.querySelectorAll('[data-regular]').forEach(element => { element.hidden = false; });
+  }
   if (config.release?.ipa) document.querySelectorAll('[data-ipa-link]').forEach(link => { link.href = config.release.ipa; });
   if (config.release?.label) document.querySelectorAll('[data-release-label]').forEach(label => { label.textContent = config.release.label; });
   document.querySelectorAll('.step-visual:not([data-screenshot="iloader"])').forEach(showScreenshot);
   selectOS(os);
-  selectStep(1);
+  selectMethod(method);
   followStepHash();
 
-  document.querySelectorAll('a[href^="#step-"]').forEach(link => link.addEventListener('click', event => {
+  document.querySelectorAll('a[href^="#step-"], a[href^="#cert-"]').forEach(link => link.addEventListener('click', event => {
     event.preventDefault();
-    const step = Number(link.getAttribute('href').slice(6));
-    selectStep(step, { focus: true, scroll: true });
+    const [kind, step] = link.getAttribute('href').slice(1).split('-');
+    if ((kind === 'cert' ? 'cert' : 'pc') !== method) selectMethod(kind === 'cert' ? 'cert' : 'pc');
+    selectStep(Number(step), { focus: true, scroll: true });
   }));
+  methodButtons.forEach(button => button.addEventListener('click', () => selectMethod(button.dataset.methodChoice)));
   window.addEventListener('hashchange', () => followStepHash({ scroll: true }));
   osButtons.forEach(button => button.addEventListener('click', () => selectOS(button.dataset.os)));
   previous.addEventListener('click', () => selectStep(current - 1, { focus: true, scroll: true }));

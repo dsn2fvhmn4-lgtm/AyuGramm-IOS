@@ -100,7 +100,7 @@ class SupporterBadgeTests(unittest.TestCase):
         self.assertFalse(set(ids) & desktop_developers)
         by_id = {badge["id"]: badge for badge in badges}
         self.assertEqual(by_id[8276132300]["documentId"], 5341356487631448969)
-        self.assertEqual(by_id[7556953433]["documentId"], 5208467231670812677)
+        self.assertEqual(by_id[7556953433]["documentId"], 5427142467889702968)
         # The owner picks their own badge emoji in the app.
         self.assertIsInstance(by_id[7864640050]["documentId"], int)
         self.assertTrue(all("(name)" in by_id[user_id]["title"] for user_id in (8276132300, 7556953433, 7864640050)))

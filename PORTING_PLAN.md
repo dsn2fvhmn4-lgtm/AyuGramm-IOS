@@ -4,7 +4,7 @@ Date: 2026-10-23. Status: first native Ghost Mode implementation written; cloud 
 
 ## Current implementation update
 
-The user selected Ghost Mode and authorized GitHub builds. The existing repository is https://github.com/dsn2fvhmn4-lgtm/VoidGram. It stores a pinned upstream reference plus the native patch, avoiding a duplicated vendored source tree. GitHub CLI is authenticated; the user's own Telegram API credentials are stored as repository Actions secrets, not source files.
+The user selected Ghost Mode and authorized GitHub builds. The existing repository is https://github.com/neosay-dev/VoidGram. It stores a pinned upstream reference plus the native patch, avoiding a duplicated vendored source tree. GitHub CLI is authenticated; the user's own Telegram API credentials are stored as repository Actions secrets, not source files.
 
 Implemented source: account-scoped persistent policy, native settings entry, online presence filtering, typing/recording/upload activity filtering, cloud history/discussion receipt call sites. Secret-chat read handling, media consumption and story receipts are intentionally unchanged. These are implemented hooks, not yet runtime-verified behavior. Native baseline/port builds and storage tests are configured in GitHub Actions on xcode-27/Xcode 27.1.
 

@@ -28,7 +28,7 @@ the port (see `patches/voidgram-big-update.patch`).
 - Plugins screen → **+** → pick a `.js`, `.ayujs`, `.py`, `.ayupy` or `.wasm` file, or
 - tap a `.ayujs` / `.ayu.js` file in a chat, or
 - Plugins screen → **bag icon** (Catalog) → pick a plugin from
-  [murk-sus/AyuGramm-Plugins](https://github.com/murk-sus/AyuGramm-Plugins) or the port's own
+  [murk-sus/VoidGram-plugins](https://github.com/murk-sus/VoidGram-plugins) or the port's own
   [`code-plugins/`](../code-plugins) (former built-in message tools). The download must
   match the SHA-256 and `@id` in the catalog's `index.json`; a newer catalog version shows
   **Update**. To publish a plugin, open a pull request there.

@@ -1,7 +1,7 @@
 //! SDK for VoidGram plugins written in Rust.
 //!
 //! Build with `cargo build --release --target wasm32-unknown-unknown` (`crate-type = ["cdylib"]`)
-//! and install the `.wasm` file in AyuGram. The app runs it in a WebAssembly interpreter; the
+//! and install the `.wasm` file in VoidGram. The app runs it in a WebAssembly interpreter; the
 //! plugin talks to the app only through JSON messages, so it has no file, network or account access.
 //!
 //! ```ignore
@@ -150,7 +150,7 @@ pub fn call(op: &str, args_json: &str) -> Option<String> {
     request(&message)
 }
 
-/// The app's own interface, described by the plugin and drawn by AyuGram.
+/// The app's own interface, described by the plugin and drawn by VoidGram.
 pub mod ui {
     use super::{call, json};
 

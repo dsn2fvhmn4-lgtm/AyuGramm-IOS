@@ -39,10 +39,13 @@
     document.getElementById('reset-progress').hidden = completed.size === 0;
     complete.setAttribute('aria-pressed', String(completed.has(current)));
     document.getElementById('completion-message').hidden = completed.size !== panels.length;
+    document.dispatchEvent(new CustomEvent('voidgram:progresschange'));
   }
 
   function selectStep(step, { focus = false, scroll = false } = {}) {
     if (!Number.isInteger(step) || step < 1 || step > panels.length) return;
+    const from = current;
+    if (step !== from) document.dispatchEvent(new CustomEvent('voidgram:beforestepchange'));
     current = step;
     panels.forEach(panel => { panel.hidden = Number(panel.dataset.panel) !== current; });
     stepLinks.forEach(link => {
@@ -54,12 +57,13 @@
     next.querySelector('span').textContent = current === panels.length ? 'Готово' : 'Дальше';
     next.querySelector('use').setAttribute('href', current === panels.length ? '#check' : '#arrow');
     updateProgress();
+    if (step !== from) document.dispatchEvent(new CustomEvent('voidgram:stepchange', { detail: { from, to: step } }));
     if (focus) {
       document.getElementById(`title-${current}`).focus({ preventScroll: true });
       try { history.replaceState(null, '', `#step-${current}`); } catch { /* file:// previews can restrict history. */ }
     }
     if (scroll) {
-      const target = matchMedia('(max-width: 650px)').matches ? document.querySelector('.guide-sidebar') : document.querySelector('.guide-content');
+      const target = matchMedia('(max-width: 760px)').matches ? document.querySelector('.guide-sidebar') : document.querySelector('.guide-content');
       target.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
     }
   }
@@ -178,6 +182,7 @@
 
   function selectOS(value) {
     if (!Object.prototype.hasOwnProperty.call(osOptions, value)) return;
+    const changed = os !== value;
     os = value;
     osButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.os === os)));
     document.querySelectorAll('[data-os-panel]').forEach(panel => { panel.hidden = panel.dataset.osPanel !== os; });
@@ -187,6 +192,7 @@
     link.querySelector('span').textContent = os === 'linux' ? 'Выбрать сборку Linux' : `Скачать для ${option.title}`;
     document.getElementById('illustration-platform').textContent = `${option.title} · ${option.format}`;
     showScreenshot(document.querySelector('[data-screenshot="iloader"]'));
+    if (changed) document.dispatchEvent(new CustomEvent('voidgram:oschange'));
     save();
   }
 

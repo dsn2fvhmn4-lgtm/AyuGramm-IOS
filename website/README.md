@@ -13,7 +13,7 @@ python3 -m http.server 4173 --bind 127.0.0.1 --directory dist
 
 Затем открой `http://127.0.0.1:4173`. Для размещения на статическом хостинге
 достаточно содержимого `dist/`. Сайт опубликован на GitHub Pages:
-https://neosay-dev.github.io/VoidGram/ — workflow `.github/workflows/pages.yml`
+https://voidgram.vinx.best/ (GitHub Pages; neosay-dev.github.io/VoidGram redirects there) — workflow `.github/workflows/pages.yml`
 выкладывает `dist/` при каждом пуше в `website/`.
 
 ## Что работает

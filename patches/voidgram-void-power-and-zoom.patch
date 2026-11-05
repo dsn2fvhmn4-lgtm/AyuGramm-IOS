@@ -1,0 +1,251 @@
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
+index a65701ab..7c10119b 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
+@@ -73,6 +73,17 @@ public struct AyuGhostModeSettings: Codable, Equatable {
+         return self.hideReadReceipts && self.hideOnline && self.hideTyping && self.hideUploadProgress
+     }
+ 
++    /// The first-run policy: every Ghost Mode switch is on. The chat button stores only that
++    /// chat's exception, so turning it off in one chat leaves the rest on.
++    static var defaultOn: AyuGhostModeSettings {
++        var value = AyuGhostModeSettings()
++        value.hideReadReceipts = true
++        value.hideOnline = true
++        value.hideTyping = true
++        value.hideUploadProgress = true
++        return value
++    }
++
+     public var isActive: Bool {
+         return self.hideReadReceipts || self.hideOnline || self.hideTyping || self.hideUploadProgress
+     }
+@@ -168,13 +179,19 @@ public final class AyuGhostModeStore {
+     private let lock = NSRecursiveLock()
+     private let fileURL: URL
+     private var value: AyuGhostModeSettings
++    /// False until the account writes its own policy. Used for the first-run Ghost Mode
++    /// defaults: they apply to real accounts (one with an `accountPeerId`), never to the bare
++    /// settings object, so explicit `false` choices and unit tests keep their meaning.
++    private var hasStoredSettings: Bool
+     private var observers: [UUID: (AyuGhostModeSettings) -> Void] = [:]
+     private let observationQueue = DispatchQueue(label: "AyuGram.SettingsNotifications")
+     public let hadLoadError: Bool
+ 
+     public init(accountPath: String) {
+         self.fileURL = URL(fileURLWithPath: accountPath).appendingPathComponent("ayu-ghost-mode.json")
+-        if FileManager.default.fileExists(atPath: self.fileURL.path) {
++        let hasFile = FileManager.default.fileExists(atPath: self.fileURL.path)
++        self.hasStoredSettings = hasFile
++        if hasFile {
+             do {
+                 self.value = try JSONDecoder().decode(AyuGhostModeSettings.self, from: Data(contentsOf: self.fileURL))
+                 self.hadLoadError = false
+@@ -186,27 +203,6 @@ public final class AyuGhostModeStore {
+             self.value = AyuGhostModeSettings()
+             self.hadLoadError = false
+         }
+-        // Ghost Mode is on everywhere for everyone from this version on. The chat button then
+-        // writes only this chat's override (`exceptionPeerIds` / `enabledPeerIds`), so switching
+-        // it off in one chat never touches the others.
+-        let migrationKey = "ayu.ghost.defaultsOn.v1"
+-        if !UserDefaults.standard.bool(forKey: migrationKey) {
+-            UserDefaults.standard.set(true, forKey: migrationKey)
+-            self.value.hideReadReceipts = true
+-            self.value.hideOnline = true
+-            self.value.hideTyping = true
+-            self.value.hideUploadProgress = true
+-            do {
+-                let data = try JSONEncoder().encode(self.value)
+-                #if os(iOS)
+-                try data.write(to: self.fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+-                #else
+-                try data.write(to: self.fileURL, options: .atomic)
+-                #endif
+-            } catch {
+-                NSLog("VoidGram: could not save the Ghost Mode defaults: %@", error.localizedDescription)
+-            }
+-        }
+     }
+ 
+     /// The committed policy with code-plugin feature overrides applied on top. Writes go
+@@ -220,7 +216,7 @@ public final class AyuGhostModeStore {
+             return AyuGhostModeSettings()
+         }
+         self.lock.lock()
+-        let value = self.value
++        let value = (!self.hasStoredSettings && self.accountPeerId != nil) ? AyuGhostModeSettings.defaultOn : self.value
+         self.lock.unlock()
+         return AyuHooks.shared.applyingOverrides(to: value)
+     }
+@@ -228,7 +224,7 @@ public final class AyuGhostModeStore {
+     public func update(_ transform: (inout AyuGhostModeSettings) throws -> Void) throws {
+         self.lock.lock()
+         defer { self.lock.unlock() }
+-        var updated = self.value
++        var updated = (!self.hasStoredSettings && self.accountPeerId != nil) ? AyuGhostModeSettings.defaultOn : self.value
+         try transform(&updated)
+         updated.appearance.normalize()
+         try updated.appearance.validate()
+@@ -243,6 +239,7 @@ public final class AyuGhostModeStore {
+         try data.write(to: self.fileURL, options: .atomic)
+         #endif
+         self.value = updated
++        self.hasStoredSettings = true
+         // Enqueue under the lock to preserve commit order, but never execute subscriber
+         // code while holding the persistence lock (UI/network disposal can re-enter it).
+         let observers = Array(self.observers.values)
+@@ -257,7 +254,7 @@ public final class AyuGhostModeStore {
+         defer { self.lock.unlock() }
+         let id = UUID()
+         self.observers[id] = observer
+-        let initial = self.value
++        let initial = (!self.hasStoredSettings && self.accountPeerId != nil) ? AyuGhostModeSettings.defaultOn : self.value
+         self.observationQueue.async { observer(initial) }
+         return id
+     }
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+index 781f9159..81547911 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -185,7 +185,7 @@ public final class AyuSupportersManager {
+         // Re-read when the app returns after a while; a 10-second window hit the network on
+         // every app switch. Fifteen minutes matches the in-app refresh.
+         NotificationCenter.default.addObserver(forName: NSNotification.Name("UIApplicationDidBecomeActiveNotification"), object: nil, queue: nil) { [weak self] _ in
+-            self?.refreshAyuRegistryIfStale(interval: 15.0 * 60.0)
++            self?.refreshAyuRegistryIfStale(interval: 60.0 * 60.0)
+         }
+     }
+ 
+@@ -355,7 +355,7 @@ public final class AyuSupportersManager {
+ 
+     /// The registry is re-read every 15 minutes while the app runs, so new badges appear
+     /// without a relaunch.
+-    private func refreshAyuRegistryIfStale(interval: Double = 15.0 * 60.0) {
++    private func refreshAyuRegistryIfStale(interval: Double = 60.0 * 60.0) {
+         let now = CFAbsoluteTimeGetCurrent()
+         self.lock.lock()
+         let stale = now - self.lastRegistryRefresh > interval
+@@ -454,6 +454,12 @@ public final class AyuSupportersManager {
+ 
+     private func refresh() {
+         guard !self.isRefreshing else { return }
++        // The supporter list changes rarely; one fetch per six hours is enough and keeps the
++        // radio quiet at launch.
++        let lastRefreshKey = "ayu.supporters.lastRefresh"
++        if let last = UserDefaults.standard.object(forKey: lastRefreshKey) as? Double, Date().timeIntervalSince1970 - last < 6.0 * 60.0 * 60.0 {
++            return
++        }
+         self.isRefreshing = true
+         let endpoints = [
+             "https://update.ayugram.one/rc/current/desktop2",
+@@ -473,6 +479,7 @@ public final class AyuSupportersManager {
+             guard let self else { return }
+             if let http = response as? HTTPURLResponse, http.statusCode == 200, let data {
+                 self.parse(data: data)
++                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "ayu.supporters.lastRefresh")
+                 if let cacheUrl = self.cacheUrl {
+                     try? FileManager.default.createDirectory(at: cacheUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
+                     try? data.write(to: cacheUrl, options: .atomic)
+diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
+index ac8c379a..47ebf121 100644
+--- a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
++++ b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
+@@ -889,6 +889,9 @@ public class VideoMessageCameraScreen: ViewController {
+         private let cameraImpl: CameraImpl
+         fileprivate var camera: CameraProtocol?
+         private var pinchStartTimestamp: Double?
++        /// AyuGram: the zoom chosen with a pinch stays put and follows both cameras. It is
++        /// saved as `ayu.media.zoom`, so the next circle opens at the same magnification.
++        private var ayuLockedZoom: CGFloat = 1.0
+         private let updateState: ActionSlot<CameraState>
+         
+         fileprivate var liveUploadInterface: LegacyLiveUploadInterface?
+@@ -1190,6 +1193,13 @@ public class VideoMessageCameraScreen: ViewController {
+                 if !self.cameraState.isDualCameraEnabled {
+                     self.animatePositionChange()
+                 }
++                // Keep the chosen zoom on the camera that just became active (front or back).
++                if self.ayuLockedZoom > 1.0 {
++                    Queue.mainQueue().after(0.2, { [weak self] in
++                        guard let self, self.cameraState.position == position else { return }
++                        self.camera?.setZoomLevel(self.ayuLockedZoom - 1.0)
++                    })
++                }
+                 
+                 self.requestUpdateLayout(transition: .easeInOut(duration: 0.2))
+             })
+@@ -1197,10 +1207,11 @@ public class VideoMessageCameraScreen: ViewController {
+             camera.focus(at: CGPoint(x: 0.5, y: 0.5), autoFocus: true)
+             self.ayuStartHorizonLockIfEnabled()
+             camera.startCapture()
+-            // AyuGram starting zoom (1×–5×).
++            // AyuGram starting zoom (1×–5×), remembered from the last circle.
+             let ayuZoom = UserDefaults.standard.double(forKey: "ayu.media.zoom")
+-            if ayuZoom > 1.0 {
+-                camera.setZoomDelta(CGFloat(min(5.0, ayuZoom)))
++            self.ayuLockedZoom = CGFloat(max(1.0, min(5.0, ayuZoom > 1.0 ? ayuZoom : 1.0)))
++            if self.ayuLockedZoom > 1.0 {
++                camera.setZoomLevel(self.ayuLockedZoom - 1.0)
+             }
+ 
+             self.camera = camera
+@@ -1219,18 +1230,16 @@ public class VideoMessageCameraScreen: ViewController {
+                     return
+                 }
+                 let scale = gestureRecognizer.scale
+-                camera.setZoomDelta(scale)
++                self.ayuLockedZoom = max(1.0, min(5.0, self.ayuLockedZoom * scale))
++                camera.setZoomLevel(self.ayuLockedZoom - 1.0)
+                 gestureRecognizer.scale = 1.0
+             case .ended:
+-                let pinchStartTimestamp = self.pinchStartTimestamp
+                 self.pinchStartTimestamp = nil
+-                if let pinchStartTimestamp, CACurrentMediaTime() - pinchStartTimestamp <= 0.5 {
+-                    return
+-                }
+-                self.camera?.rampZoom(1.0, rate: 8.0)
++                // Fixed zoom: it stays where the fingers left it instead of snapping to 1×.
++                UserDefaults.standard.set(Double(self.ayuLockedZoom), forKey: "ayu.media.zoom")
+             case .cancelled:
+                 self.pinchStartTimestamp = nil
+-                self.camera?.rampZoom(1.0, rate: 8.0)
++                UserDefaults.standard.set(Double(self.ayuLockedZoom), forKey: "ayu.media.zoom")
+             case .failed:
+                 self.pinchStartTimestamp = nil
+             default:
+diff --git a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
+index 4df2e1f9..fb109a6a 100644
+--- a/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
++++ b/submodules/TelegramUI/Sources/AyuPlayerVisuals.swift
+@@ -89,7 +89,7 @@ final class AyuPlayerVisualizerView: UIView {
+             self.listening = true
+             let link = CADisplayLink(target: AyuDisplayLinkTarget(self), selector: #selector(AyuDisplayLinkTarget.tick))
+             if #available(iOS 15.0, *) {
+-                link.preferredFrameRateRange = CAFrameRateRange(minimum: 30.0, maximum: 60.0, preferred: 60.0)
++                link.preferredFrameRateRange = AyuPower.isThrottled ? CAFrameRateRange(minimum: 20.0, maximum: 30.0, preferred: 30.0) : CAFrameRateRange(minimum: 30.0, maximum: 60.0, preferred: 60.0)
+             }
+             link.add(to: .main, forMode: .common)
+             self.link = link
+diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
+index ea5e6e6b..3047f42a 100644
+--- a/tools/ayu-tests/main.swift
++++ b/tools/ayu-tests/main.swift
+@@ -1133,6 +1133,17 @@ var boundedGhost = AyuGhostModeSettings()
+ for id in 1...2001 { boundedGhost.setChatEnabled(true, peerId: Int64(id)) }
+ check(boundedGhost.enabledPeerIds.count == 2000 && boundedGhost.enabledPeerIds.contains(2001), "New chat overrides remain effective at the capacity bound")
+ 
++// A real account starts with Ghost Mode on, and the chat button writes only that chat.
++let defaultAccount = root.appendingPathComponent("account-default")
++try FileManager.default.createDirectory(at: defaultAccount, withIntermediateDirectories: true)
++let defaultStore = AyuGhostModeStore(accountPath: defaultAccount.path)
++defaultStore.accountPeerId = 777
++check(defaultStore.current.allEnabled, "A new account starts with Ghost Mode on")
++try defaultStore.update { $0.setChatEnabled(false, peerId: 111) }
++check(!defaultStore.current.isActive(inPeer: 111), "Turning Ghost Mode off in one chat is local")
++check(defaultStore.current.isActive(inPeer: 222), "Other chats keep Ghost Mode on")
++check(AyuGhostModeStore(accountPath: defaultAccount.path).current.allEnabled, "The written policy keeps the other flags on")
++
+ var comparisonHistory = AyuMessageHistoryState()
+ comparisonHistory.saveEdits = true
+ comparisonHistory.saveDeleted = true

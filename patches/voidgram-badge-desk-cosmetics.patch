@@ -71,7 +71,7 @@ index c05572fe..adaa8153 100644
 +    return true
 +}
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-index 9b300d15..739c576b 100644
+index 9b300d15..a90ad357 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 @@ -146,6 +146,65 @@ public enum AyuSupporterBadge: Equatable {
@@ -140,15 +140,32 @@ index 9b300d15..739c576b 100644
  public final class AyuSupportersManager {
      public static let shared = AyuSupportersManager()
      private let lock = NSLock()
-@@ -164,6 +223,7 @@ public final class AyuSupportersManager {
+@@ -163,7 +222,9 @@ public final class AyuSupportersManager {
+     private var ayuIosLabels: [Int64: (kind: String, text: String)] = [:]
      private var grantedGiftsByPeer: [Int64: [AyuGrantedGift]] = [:]
      private var giftGranters = Set<Int64>()
++    private var selfEditors = Set<Int64>()
      private var ayuIosExpiry: [Int64: Double] = [:]
 +    private var profileCosmetics: [Int64: AyuProfileCosmetics] = [:]
      private var ownerDaily: (documentId: Int64, expiresAt: Double)?
      /// The emoji the owner chose for their own badge; its text stays the creator's.
      private var ownerDocumentId: Int64?
-@@ -211,6 +271,8 @@ public final class AyuSupportersManager {
+@@ -204,6 +265,14 @@ public final class AyuSupportersManager {
+         return self.giftGranters.contains(accountPeerId)
+     }
+ 
++    /// Whether the owner let this account change its own badge, label, usernames, number, TON and
++    /// gifts ("selfEdit": true in its registry entry). It changes nobody else's.
++    public func canEditOwnProfile(accountPeerId: Int64) -> Bool {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.selfEditors.contains(accountPeerId)
++    }
++
+     /// The owner who grants badges and gifts; granted gifts arrive in the chat with them.
+     public var ownerPeerId: Int64? {
+         return AyuSupportersManager.layout?.peer
+@@ -211,6 +280,8 @@ public final class AyuSupportersManager {
  
      /// Posted after every registry read, so granted gifts on screen follow it.
      public static let grantedGiftsDidChange = Notification.Name("AyuGrantedGiftsDidChange")
@@ -157,7 +174,7 @@ index 9b300d15..739c576b 100644
  
      /// The label line ("sponsor", "developer", "plugins" or "custom") the registry gives a peer.
      public func label(peerId: Int64) -> (kind: String, text: String)? {
-@@ -220,6 +282,71 @@ public final class AyuSupportersManager {
+@@ -220,6 +291,71 @@ public final class AyuSupportersManager {
          return self.ayuIosLabels[peerId]
      }
  
@@ -229,10 +246,11 @@ index 9b300d15..739c576b 100644
      /// Applies the registry the badge server answered a change with. False when its signature
      /// does not match or it is older than the registry in use.
      @discardableResult
-@@ -392,11 +519,15 @@ public final class AyuSupportersManager {
+@@ -392,17 +528,25 @@ public final class AyuSupportersManager {
          var ownerDocumentId: Int64?
          var gifts: [Int64: [AyuGrantedGift]] = [:]
          var granters = Set<Int64>()
++        var selfEditors = Set<Int64>()
 +        var cosmetics: [Int64: AyuProfileCosmetics] = [:]
          let now = Date().timeIntervalSince1970
          for badge in badges {
@@ -245,9 +263,20 @@ index 9b300d15..739c576b 100644
              if let label = badge["label"] as? [String: Any], let text = label["text"] as? String, !text.isEmpty {
                  labels[id] = ((label["kind"] as? String) ?? "custom", String(text.prefix(160)))
              }
-@@ -445,7 +576,12 @@ public final class AyuSupportersManager {
+             if (badge["grantsGifts"] as? Bool) == true {
+                 granters.insert(id)
+             }
++            if (badge["selfEdit"] as? Bool) == true {
++                selfEditors.insert(id)
++            }
+             if let list = badge["gifts"] as? [[String: Any]] {
+                 let parsedGifts = list.enumerated().compactMap { AyuGrantedGift(json: $0.element, index: $0.offset) }
+                 if !parsedGifts.isEmpty {
+@@ -444,8 +588,14 @@ public final class AyuSupportersManager {
+         let giftsChanged = self.grantedGiftsByPeer != gifts
          self.grantedGiftsByPeer = gifts
          self.giftGranters = granters
++        self.selfEditors = selfEditors
          self.ayuIosLabels = labels
 +        let cosmeticsChanged = self.profileCosmetics != cosmetics
 +        self.profileCosmetics = cosmetics
@@ -391,10 +420,10 @@ index 0ca07f27..23135310 100644
          "//submodules/TelegramUI/Components/Chat/ChatAvatarNavigationNode",
          "//submodules/TelegramUI/Components/ChatControllerInteraction",
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-index bcc75de7..3d5b1aaa 100644
+index bcc75de7..b37f88a3 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-@@ -1,140 +1,738 @@
+@@ -1,140 +1,754 @@
  import Foundation
  import UIKit
  import Display
@@ -426,45 +455,40 @@ index bcc75de7..3d5b1aaa 100644
 +/// settings do, one row a page; every page shows the draft in a preview at the top, and Done on any
 +/// of them sends the whole draft to the badge server. The app proves it is the owner with Mini
 +/// App data Telegram signs for the badge bot, so the phone keeps no keys. Everyone sees the change the
-+/// next time they return to the app; the owner sees it at once.
++/// next time they return to the app; the owner sees it at once. An account the owner let edit its own
++/// profile gets the same desk, on its own profile only.
  enum AyuBadgeEditor {
 -    private struct LabelTemplate {
 -        let kind: String
 -        let title: (Bool) -> String
 -        let text: (Bool) -> String
--    }
--
++    static func canOpen(context: AccountContext, peerId: Int64) -> Bool {
++        let accountPeerId = context.account.peerId.id._internalGetInt64Value()
++        let manager = AyuSupportersManager.shared
++        return manager.canGrantGifts(accountPeerId: accountPeerId) || (peerId == accountPeerId && manager.canEditOwnProfile(accountPeerId: accountPeerId))
+     }
+ 
 -    private static let labelTemplates: [LabelTemplate] = [
 -        LabelTemplate(kind: "plugins", title: { ru in ru ? "Создатель плагинов" : "Plugin creator" }, text: { _ in "Этот человек официально подтверждён как создатель плагинов для VoidGram" }),
 -        LabelTemplate(kind: "sponsor", title: { ru in ru ? "Спонсор" : "Sponsor" }, text: { _ in "Этот человек — спонсор VoidGram" }),
 -        LabelTemplate(kind: "developer", title: { ru in ru ? "Разработчик" : "Developer" }, text: { _ in "Этот человек — разработчик VoidGram" })
 -    ]
--
-     static func canOpen(context: AccountContext) -> Bool {
-         return AyuSupportersManager.shared.canGrantGifts(accountPeerId: context.account.peerId.id._internalGetInt64Value())
-     }
- 
-     static func present(context: AccountContext, peerId: Int64, name: String, controller: ViewController?) {
--        guard AyuBadgeEditor.canOpen(context: context) else {
-+        guard AyuBadgeEditor.canOpen(context: context), let controller else {
-             return
-         }
--        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
--        let present: (UIViewController) -> Void = { controller in
--            context.sharedContext.applicationBindings.presentNativeController(controller)
-+        if AyuSupportersManager.shared.canManageBadges(accountPeerId: context.account.peerId.id._internalGetInt64Value()) {
-+            controller.push(ayuBadgeDeskController(context: context, peerId: peerId))
++    static func present(context: AccountContext, peerId: Int64, name: String, controller: ViewController?) {
++        guard AyuBadgeEditor.canOpen(context: context, peerId: peerId), let controller else {
++            return
++        }
++        let accountPeerId = context.account.peerId.id._internalGetInt64Value()
++        if AyuSupportersManager.shared.canManageBadges(accountPeerId: accountPeerId) {
++            controller.push(ayuBadgeDeskController(context: context, peerId: peerId, selfEdit: false))
++        } else if peerId == accountPeerId, AyuSupportersManager.shared.canEditOwnProfile(accountPeerId: accountPeerId) {
++            controller.push(ayuBadgeDeskController(context: context, peerId: peerId, selfEdit: true))
 +        } else {
 +            // A gift granter the owner named: NFTs only, nothing to edit.
 +            controller.push(ayuGiftDeskController(context: context, peerId: peerId, nftOnly: true))
-         }
++        }
 +    }
 +}
- 
--        guard AyuSupportersManager.shared.canManageBadges(accountPeerId: context.account.peerId.id._internalGetInt64Value()) else {
--            // A gift granter the owner named: NFTs only, nothing to edit.
--            AyuBadgeEditor.grantGift(context: context, peerId: peerId, ru: ru, present: present, nftOnly: true)
--            return
++
 +// MARK: - Draft
 +
 +private struct AyuLabelTemplate {
@@ -473,7 +497,9 @@ index bcc75de7..3d5b1aaa 100644
 +    let titleEn: String
 +    let text: String
 +}
-+
+ 
+-    static func canOpen(context: AccountContext) -> Bool {
+-        return AyuSupportersManager.shared.canGrantGifts(accountPeerId: context.account.peerId.id._internalGetInt64Value())
 +private let ayuLabelTemplates: [AyuLabelTemplate] = [
 +    AyuLabelTemplate(kind: "plugins", titleRu: "Создатель плагинов", titleEn: "Plugin creator", text: "Этот человек официально подтверждён как создатель плагинов для VoidGram"),
 +    AyuLabelTemplate(kind: "sponsor", titleRu: "Спонсор", titleEn: "Sponsor", text: "Этот человек — спонсор VoidGram"),
@@ -495,44 +521,22 @@ index bcc75de7..3d5b1aaa 100644
 +    var phone = ""
 +    var ton = ""
 +    var grantsGifts = false
++    var editsSelf = false
 +
 +    var labelCaptionText: String? {
 +        guard let labelKind else {
 +            return nil
-         }
--        if peerId == context.account.peerId.id._internalGetInt64Value() {
--            // The owner's own badge: only its emoji changes; the creator's text stays.
--            let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Твой бейдж создателя" : "Your creator badge")
--            sheet.addAction(UIAlertAction(title: ru ? "Сменить эмодзи бейджа…" : "Change the badge emoji…", style: .default, handler: { _ in
--                AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present, ownBadge: true)
--            }))
--            sheet.addAction(UIAlertAction(title: ru ? "Вернуть стандартный" : "Restore the default", style: .destructive, handler: { _ in
--                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": NSNull()])
--            }))
--            AyuBadgeEditor.addGiftActions(to: sheet, context: context, peerId: peerId, ru: ru, present: present)
--            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
--            present(sheet)
--            return
++        }
 +        if let template = ayuLabelTemplates.first(where: { $0.kind == labelKind }) {
 +            return template.text
-         }
--        let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись VoidGram" : "VoidGram badge and label")
--        sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
--            AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present)
--        }))
--        sheet.addAction(UIAlertAction(title: ru ? "Бейдж без эмодзи…" : "Badge without emoji…", style: .default, handler: { _ in
--            AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Покажется стандартный значок разработчика." : "The standard developer mark is shown.", initial: "", ru: ru, present: present, done: { text in
--                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": NSNull(), "title": text])
--            })
--        }))
--        for template in AyuBadgeEditor.labelTemplates {
--            sheet.addAction(UIAlertAction(title: (ru ? "Надпись: " : "Label: ") + template.title(ru), style: .default, handler: { _ in
--                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["label": ["kind": template.kind, "text": template.text(ru)]])
--            }))
++        }
 +        let text = self.labelText.trimmingCharacters(in: .whitespacesAndNewlines)
 +        return text.isEmpty ? nil : text
-+    }
-+
+     }
+ 
+-    static func present(context: AccountContext, peerId: Int64, name: String, controller: ViewController?) {
+-        guard AyuBadgeEditor.canOpen(context: context) else {
+-            return
 +    var cleanUsernames: [String] {
 +        var seen = Set<String>()
 +        var result: [String] = []
@@ -544,7 +548,10 @@ index bcc75de7..3d5b1aaa 100644
 +            if !name.isEmpty, seen.insert(name.lowercased()).inserted {
 +                result.append(name)
 +            }
-+        }
+         }
+-        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+-        let present: (UIViewController) -> Void = { controller in
+-            context.sharedContext.applicationBindings.presentNativeController(controller)
 +        return result
 +    }
 +
@@ -629,13 +636,18 @@ index bcc75de7..3d5b1aaa 100644
 +        if let phone = cosmetics.phone {
 +            draft.hasPhone = true
 +            draft.phone = "+" + phone
-+        }
+         }
 +        draft.ton = cosmetics.tonNano.map(ayuTonText) ?? ""
 +    }
 +    draft.grantsGifts = !isOwnBadge && manager.canGrantGifts(accountPeerId: peerId)
++    draft.editsSelf = !isOwnBadge && manager.canEditOwnProfile(accountPeerId: peerId)
 +    return draft
 +}
-+
+ 
+-        guard AyuSupportersManager.shared.canManageBadges(accountPeerId: context.account.peerId.id._internalGetInt64Value()) else {
+-            // A gift granter the owner named: NFTs only, nothing to edit.
+-            AyuBadgeEditor.grantGift(context: context, peerId: peerId, ru: ru, present: present, nftOnly: true)
+-            return
 +// MARK: - Entries
 +
 +private final class AyuDeskArguments {
@@ -679,7 +691,20 @@ index bcc75de7..3d5b1aaa 100644
 +            return PresentationResourcesSettings.changePhoneNumber
 +        case .ton:
 +            return PresentationResourcesSettings.ton
-+        }
+         }
+-        if peerId == context.account.peerId.id._internalGetInt64Value() {
+-            // The owner's own badge: only its emoji changes; the creator's text stays.
+-            let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Твой бейдж создателя" : "Your creator badge")
+-            sheet.addAction(UIAlertAction(title: ru ? "Сменить эмодзи бейджа…" : "Change the badge emoji…", style: .default, handler: { _ in
+-                AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present, ownBadge: true)
+-            }))
+-            sheet.addAction(UIAlertAction(title: ru ? "Вернуть стандартный" : "Restore the default", style: .destructive, handler: { _ in
+-                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": NSNull()])
+-            }))
+-            AyuBadgeEditor.addGiftActions(to: sheet, context: context, peerId: peerId, ru: ru, present: present)
+-            sheet.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel, handler: nil))
+-            present(sheet)
+-            return
 +    }
 +}
 +
@@ -732,6 +757,7 @@ index bcc75de7..3d5b1aaa 100644
 +    case giftsHeader(String)
 +    case giftsOpen(String, String)
 +    case grantsGifts(String, Bool)
++    case editsSelf(String, Bool)
 +
 +    var section: ItemListSectionId {
 +        switch self {
@@ -749,9 +775,22 @@ index bcc75de7..3d5b1aaa 100644
 +            return AyuDeskSection.phone.rawValue
 +        case .tonHeader, .tonEntry, .tonInfo:
 +            return AyuDeskSection.ton.rawValue
-+        case .giftsHeader, .giftsOpen, .grantsGifts:
++        case .giftsHeader, .giftsOpen, .grantsGifts, .editsSelf:
 +            return AyuDeskSection.gifts.rawValue
-+        }
+         }
+-        let sheet = AyuBadgeEditor.menu(title: name, message: ru ? "Бейдж и надпись VoidGram" : "VoidGram badge and label")
+-        sheet.addAction(UIAlertAction(title: ru ? "Выдать бейдж…" : "Give a badge…", style: .default, handler: { _ in
+-            AyuBadgeEditor.chooseEmoji(context: context, controller: controller, peerId: peerId, ru: ru, present: present)
+-        }))
+-        sheet.addAction(UIAlertAction(title: ru ? "Бейдж без эмодзи…" : "Badge without emoji…", style: .default, handler: { _ in
+-            AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Покажется стандартный значок разработчика." : "The standard developer mark is shown.", initial: "", ru: ru, present: present, done: { text in
+-                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": NSNull(), "title": text])
+-            })
+-        }))
+-        for template in AyuBadgeEditor.labelTemplates {
+-            sheet.addAction(UIAlertAction(title: (ru ? "Надпись: " : "Label: ") + template.title(ru), style: .default, handler: { _ in
+-                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["label": ["kind": template.kind, "text": template.text(ru)]])
+-            }))
 +    }
 +
 +    var stableId: Int32 {
@@ -786,6 +825,7 @@ index bcc75de7..3d5b1aaa 100644
 +        case .giftsHeader: return 600
 +        case .giftsOpen: return 601
 +        case .grantsGifts: return 602
++        case .editsSelf: return 603
 +        }
 +    }
 +
@@ -821,6 +861,7 @@ index bcc75de7..3d5b1aaa 100644
 +        case let (.giftsHeader(a), .giftsHeader(b)): return a == b
 +        case let (.giftsOpen(a, x), .giftsOpen(b, y)): return a == b && x == y
 +        case let (.grantsGifts(a, x), .grantsGifts(b, y)): return a == b && x == y
++        case let (.editsSelf(a, x), .editsSelf(b, y)): return a == b && x == y
 +        default: return false
          }
 -        sheet.addAction(UIAlertAction(title: ru ? "Своя надпись…" : "Custom label…", style: .default, handler: { _ in
@@ -930,6 +971,10 @@ index bcc75de7..3d5b1aaa 100644
 +        case let .grantsGifts(title, value):
 +            return ItemListSwitchItem(presentationData: presentationData, title: title, value: value, sectionId: self.section, style: .blocks, updated: { value in
 +                arguments.updateDraft { $0.grantsGifts = value }
++            })
++        case let .editsSelf(title, value):
++            return ItemListSwitchItem(presentationData: presentationData, title: title, value: value, sectionId: self.section, style: .blocks, updated: { value in
++                arguments.updateDraft { $0.editsSelf = value }
              })
 -        }))
 -        if AyuSupportersManager.shared.badge(peerId: peerId) != nil {
@@ -944,7 +989,7 @@ index bcc75de7..3d5b1aaa 100644
 +    }
 +}
 +
-+private func ayuDeskEntries(context: AccountContext, presentationData: PresentationData, peer: EnginePeer?, peerId: Int64, isOwnBadge: Bool, state: AyuDeskState, page: AyuDeskPage) -> [AyuDeskEntry] {
++private func ayuDeskEntries(context: AccountContext, presentationData: PresentationData, peer: EnginePeer?, peerId: Int64, isOwnBadge: Bool, selfEdit: Bool, state: AyuDeskState, page: AyuDeskPage) -> [AyuDeskEntry] {
 +    let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
 +    let draft = state.draft
 +    var entries: [AyuDeskEntry] = []
@@ -1037,8 +1082,9 @@ index bcc75de7..3d5b1aaa 100644
 +        entries.append(.hubRow(.ton, ru ? "Баланс TON" : "TON balance", draft.tonNano.map { formatTonAmountText($0, dateTimeFormat: presentationData.dateTimeFormat) } ?? none))
 +        let granted = AyuSupportersManager.shared.grantedGifts(peerId: peerId).count
 +        entries.append(.giftsRow(ru ? "Подарки и NFT" : "Gifts and NFTs", granted == 0 ? "" : "\(granted)"))
-+        if !isOwnBadge {
++        if !isOwnBadge && !selfEdit {
 +            entries.append(.grantsGifts(ru ? "Может выдавать NFT" : "Can grant NFTs", draft.grantsGifts))
++            entries.append(.editsSelf(ru ? "Может менять это в своём профиле" : "Can change this on their profile", draft.editsSelf))
 +        }
 +        return entries
 +    }
@@ -1058,16 +1104,16 @@ index bcc75de7..3d5b1aaa 100644
 +            entries.append(.badgeEmoji(ru ? "Эмодзи" : "Emoji", emojiLabel))
 +            if draft.badgeDocumentId != nil {
 +                entries.append(.badgeEmojiReset(isOwnBadge ? (ru ? "Вернуть стандартное эмодзи" : "Restore the default emoji") : (ru ? "Без эмодзи — значок разработчика" : "No emoji: the developer mark")))
-             }
--            AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Показывается при нажатии на бейдж. (name) заменится именем." : "Shown when the badge is tapped. (name) becomes the name.", initial: currentText, ru: ru, present: present, done: { text in
--                // Sent as a string: the id does not fit a JavaScript number.
--                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": documentId.map { String($0) as Any } ?? NSNull(), "title": text])
++            }
 +            if !isOwnBadge {
 +                entries.append(.badgeText(ru ? "Текст при нажатии на бейдж" : "Text shown when the badge is tapped", draft.badgeText))
 +                entries.append(.badgeInfo(ru ? "(name) в тексте заменится именем." : "(name) in the text becomes the name."))
 +            } else {
 +                entries.append(.badgeInfo(ru ? "Текст бейджа создателя не меняется." : "The creator badge's text stays the same."))
-+            }
+             }
+-            AyuBadgeEditor.askText(title: ru ? "Текст бейджа" : "Badge text", message: ru ? "Показывается при нажатии на бейдж. (name) заменится именем." : "Shown when the badge is tapped. (name) becomes the name.", initial: currentText, ru: ru, present: present, done: { text in
+-                // Sent as a string: the id does not fit a JavaScript number.
+-                AyuBadgeEditor.commit(context: context, peerId: peerId, ru: ru, present: present, change: ["documentId": documentId.map { String($0) as Any } ?? NSNull(), "title": text])
 +        }
 +    }
 +
@@ -1113,7 +1159,7 @@ index bcc75de7..3d5b1aaa 100644
 +
 +// MARK: - Desk
 +
-+private func ayuBadgeDeskController(context: AccountContext, peerId: Int64) -> ViewController {
++private func ayuBadgeDeskController(context: AccountContext, peerId: Int64, selfEdit: Bool) -> ViewController {
 +    let isOwnBadge = peerId == context.account.peerId.id._internalGetInt64Value()
 +    let original = ayuDeskOriginal(peerId: peerId, isOwnBadge: isOwnBadge)
 +    let initialState = AyuDeskState(original: original, draft: original)
@@ -1188,7 +1234,7 @@ index bcc75de7..3d5b1aaa 100644
 +            let title: String
 +            switch page {
 +            case .hub:
-+                title = peer.map { $0.compactDisplayTitle } ?? (ru ? "Бейдж VoidGram" : "VoidGram badge")
++                title = selfEdit ? (ru ? "Мой профиль VoidGram" : "My VoidGram profile") : (peer.map { $0.compactDisplayTitle } ?? (ru ? "Бейдж VoidGram" : "VoidGram badge"))
 +            case .badge:
 +                title = ru ? "Бейдж" : "Badge"
 +            case .label:
@@ -1201,7 +1247,7 @@ index bcc75de7..3d5b1aaa 100644
 +                title = ru ? "Баланс TON" : "TON Balance"
 +            }
 +            let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: rightButton, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
-+            let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: ayuDeskEntries(context: context, presentationData: presentationData, peer: peer, peerId: peerId, isOwnBadge: isOwnBadge, state: state, page: page), style: .blocks, animateChanges: true)
++            let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: ayuDeskEntries(context: context, presentationData: presentationData, peer: peer, peerId: peerId, isOwnBadge: isOwnBadge, selfEdit: selfEdit, state: state, page: page), style: .blocks, animateChanges: true)
 +            return (controllerState, (listState, arguments))
 +        }
 +        let controller = ItemListController(context: context, state: signal)
@@ -1237,7 +1283,7 @@ index bcc75de7..3d5b1aaa 100644
          // The picker pops out of a point under the navigation bar and flies the pick back to it.
          let anchor = UIView(frame: CGRect(x: controller.view.bounds.midX - 1.0, y: controller.view.safeAreaInsets.top + 56.0, width: 2.0, height: 2.0))
          anchor.isUserInteractionEnabled = false
-@@ -146,7 +744,7 @@ enum AyuBadgeEditor {
+@@ -146,7 +760,7 @@ enum AyuBadgeEditor {
                  guard let file, file.fileId.id != 0 else {
                      return
                  }
@@ -1246,7 +1292,7 @@ index bcc75de7..3d5b1aaa 100644
              }),
              sourceView: anchor,
              emojiContent: EmojiPagerContentComponent.emojiInputData(
-@@ -162,234 +760,682 @@ enum AyuBadgeEditor {
+@@ -162,234 +776,685 @@ enum AyuBadgeEditor {
                  chatPeerId: context.account.peerId,
                  selectedItems: Set()
              ),
@@ -1438,6 +1484,9 @@ index bcc75de7..3d5b1aaa 100644
 +
 +    if !isOwnBadge, draft.grantsGifts != original.grantsGifts {
 +        change["grantsGifts"] = draft.grantsGifts ? true as Any : NSNull() as Any
++    }
++    if !isOwnBadge, draft.editsSelf != original.editsSelf {
++        change["selfEdit"] = draft.editsSelf ? true as Any : NSNull() as Any
 +    }
 +    return .success(change)
 +}
@@ -2138,7 +2187,7 @@ index b24d60ff..89bdf502 100644
                  if self.context.account.network.ayuGhostMode.current.interface.hidePhoneNumber {
                      // exteraGram "Hide phone number": the header shows the username, or a placeholder.
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
-index a88cee4d..a02bddb0 100644
+index a88cee4d..94c5a636 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
 @@ -383,7 +383,9 @@ func infoItems(
@@ -2168,6 +2217,36 @@ index a88cee4d..a02bddb0 100644
              }
  
              items[currentPeerInfoSection]!.append(
+@@ -854,7 +857,7 @@ func infoItems(
+                     items[currentPeerInfoSection]!.append(PeerInfoScreenCommentItem(id: 9050, text: "🛡 " + AyuVerifiedRegistry.caption(teamEntry, russian: ru)))
+                 }
+                 // The repository owner hands out AyuGram for iOS badges and labels from here.
+-                if AyuBadgeEditor.canOpen(context: context) {
++                if AyuBadgeEditor.canOpen(context: context, peerId: user.id.id._internalGetInt64Value()) {
+                     let ayuPeerId = user.id.id._internalGetInt64Value()
+                     let ayuName = EnginePeer.user(user).compactDisplayTitle
+                     items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж VoidGram…" : "VoidGram badge…", color: .accent, action: {
+@@ -885,8 +888,9 @@ func infoItems(
+                 }
+             }
+         }
+-        if isMyProfile, AyuBadgeEditor.canOpen(context: context) {
+-            // The owner changes the emoji of their own creator badge here.
++        if isMyProfile, AyuBadgeEditor.canOpen(context: context, peerId: user.id.id._internalGetInt64Value()) {
++            // The owner changes the emoji of their own creator badge here; an account the owner let
++            // edit its own profile changes all of it.
+             let ayuPeerId = user.id.id._internalGetInt64Value()
+             let ayuName = EnginePeer.user(user).compactDisplayTitle
+             items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9301, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Мой бейдж VoidGram…" : "My VoidGram badge…", action: {
+@@ -1165,7 +1169,7 @@ func infoItems(
+                 }
+             }
+         }
+-        if AyuBadgeEditor.canOpen(context: context) {
++        if AyuBadgeEditor.canOpen(context: context, peerId: channel.id.id._internalGetInt64Value()) {
+             let ayuPeerId = channel.id.id._internalGetInt64Value()
+             let ayuName = channel.title
+             items[currentPeerInfoSection]!.append(PeerInfoScreenActionItem(id: 9300, text: presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Бейдж VoidGram…" : "VoidGram badge…", color: .accent, action: {
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift
 index 8a11bf2a..79709ce8 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift

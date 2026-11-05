@@ -11,7 +11,7 @@ index afd784d1..a039e00e 100644
      visibility = [
          "//visibility:public",
 diff --git a/submodules/ChatListFilterSettingsHeaderItem/Sources/ChatListFilterSettingsHeaderItem.swift b/submodules/ChatListFilterSettingsHeaderItem/Sources/ChatListFilterSettingsHeaderItem.swift
-index e53f8f85..8951ba40 100644
+index e53f8f85..4df1d658 100644
 --- a/submodules/ChatListFilterSettingsHeaderItem/Sources/ChatListFilterSettingsHeaderItem.swift
 +++ b/submodules/ChatListFilterSettingsHeaderItem/Sources/ChatListFilterSettingsHeaderItem.swift
 @@ -11,12 +11,15 @@ import PresentationDataUtils
@@ -70,7 +70,7 @@ index e53f8f85..8951ba40 100644
 +        self.headlineNode = TextNode()
 +        self.headlineNode.isUserInteractionEnabled = false
 +        self.headlineNode.contentsScale = UIScreen.main.scale
-+        
++
          self.animationNode = DefaultAnimatedStickerNodeImpl(lottieSettings: lottieSettings)
          
          super.init(layerBacked: false)
@@ -138,7 +138,7 @@ index e53f8f85..8951ba40 100644
 -            let contentSize = CGSize(width: params.width, height: topInset + titleLayout.size.height)
 +            let (headlineLayout, headlineApply) = makeHeadlineLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.headline ?? "", font: Font.bold(26.0), textColor: item.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 2, truncationType: .end, constrainedSize: CGSize(width: params.width - params.leftInset - params.rightInset - 48.0, height: CGFloat.greatestFiniteMagnitude), alignment: .center, cutout: nil, insets: UIEdgeInsets()))
 +            let headlineSpace: CGFloat = item.headline == nil ? 0.0 : headlineLayout.size.height + 8.0
-+            
++
 +            let contentSize = CGSize(width: params.width, height: topInset + headlineSpace + nameSpace + titleLayout.size.height)
              var insets = itemListNeighborsGroupedInsets(neighbors, params)
              
@@ -493,7 +493,7 @@ index 00000000..2428a28c
 +public var conceptsDemoWindowHeightReduction: CGFloat = 0.0
 +public var conceptsDemoAnchorBottomOnUpdate = false
 diff --git a/submodules/ItemListUI/Sources/ItemListController.swift b/submodules/ItemListUI/Sources/ItemListController.swift
-index e11075f7..4e063fd1 100644
+index e11075f7..c8c27056 100644
 --- a/submodules/ItemListUI/Sources/ItemListController.swift
 +++ b/submodules/ItemListUI/Sources/ItemListController.swift
 @@ -112,6 +112,8 @@ public struct ItemListControllerState {
@@ -517,7 +517,7 @@ index e11075f7..4e063fd1 100644
 +        self.conceptsScrollDriver = driver
 +        driver.start()
 +    }
-+    
++
 +    /// Локальные концепты (демо-ролик): удерживает нижнюю ячейку списка на месте, пока соседняя раскрывается (замкнутый цикл по кадрам):
 +    /// секция плавно подъезжает вверх, а последняя ячейка не двигается.
 +    public func conceptsPinLastItem(duration: Double) {
@@ -535,7 +535,7 @@ index e11075f7..4e063fd1 100644
 +        self.conceptsPinDriver = driver
 +        driver.start()
 +    }
-+    
++
      public func ensureItemNodeVisible(_ itemNode: ListViewItemNode, animated: Bool = true, overflow: CGFloat = 0.0, atTop: Bool = false, curve: ListViewAnimationCurve = .Default(duration: 0.25)) {
          self.controllerNode.listNode.ensureItemNodeVisible(itemNode, animated: animated, overflow: overflow, atTop: atTop, curve: curve)
      }
@@ -553,7 +553,7 @@ index e11075f7..4e063fd1 100644
 +    private let completion: () -> Void
 +    private var begin: CFTimeInterval = 0.0
 +    private var link: CADisplayLink?
-+    
++
 +    init(scroller: UIScrollView, delta: CGFloat, duration: Double, completion: @escaping () -> Void) {
 +        self.scroller = scroller
 +        self.startOffset = scroller.contentOffset.y
@@ -562,14 +562,14 @@ index e11075f7..4e063fd1 100644
 +        self.completion = completion
 +        super.init()
 +    }
-+    
++
 +    func start() {
 +        self.begin = CACurrentMediaTime()
 +        let link = CADisplayLink(target: self, selector: #selector(self.tick))
 +        link.add(to: .main, forMode: .common)
 +        self.link = link
 +    }
-+    
++
 +    // Плавный ease-in-out с мягким стартом: cubic-bezier(0.3, 0, 0.1, 1) (изинг (0, 0.4, 0, 1) на прокрутке слишком резкий на старте)
 +    private func ease(_ u: Double) -> Double {
 +        var lo = 0.0, hi = 1.0
@@ -581,7 +581,7 @@ index e11075f7..4e063fd1 100644
 +        let m = (lo + hi) / 2.0
 +        return 3.0 * (1.0 - m) * (1.0 - m) * m * 0.0 + 3.0 * (1.0 - m) * m * m * 1.0 + m * m * m
 +    }
-+    
++
 +    @objc private func tick() {
 +        let u = min(1.0, (CACurrentMediaTime() - self.begin) / self.duration)
 +        let p = CGFloat(self.ease(u))
@@ -602,7 +602,7 @@ index e11075f7..4e063fd1 100644
 +    private let targetMaxY: CGFloat
 +    private var begin: CFTimeInterval = 0.0
 +    private var link: CADisplayLink?
-+    
++
 +    init(scroller: UIScrollView, node: ListViewItemNode, duration: Double) {
 +        self.scroller = scroller
 +        self.node = node
@@ -610,14 +610,14 @@ index e11075f7..4e063fd1 100644
 +        self.targetMaxY = node.apparentFrame.maxY
 +        super.init()
 +    }
-+    
++
 +    func start() {
 +        self.begin = CACurrentMediaTime()
 +        let link = CADisplayLink(target: self, selector: #selector(self.tick))
 +        link.add(to: .main, forMode: .common)
 +        self.link = link
 +    }
-+    
++
 +    @objc private func tick() {
 +        let delta = self.node.apparentFrame.maxY - self.targetMaxY
 +        if abs(delta) > 0.01 {
@@ -1056,14 +1056,14 @@ index 00000000..e9c7c152
 +    return indices.filter { !readCounters.isIncomingMessageIndexRead($0) }.sorted()
 +}
 diff --git a/submodules/TelegramCore/Sources/State/AccountStateManager.swift b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
-index 3439bd7b..b81f5216 100644
+index 3439bd7b..ff256007 100644
 --- a/submodules/TelegramCore/Sources/State/AccountStateManager.swift
 +++ b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
 @@ -1920,6 +1920,23 @@ public final class AccountStateManager {
          func addStarRefBotConnectionEvent(event: StarRefBotConnectionEvent) {
              self.starRefBotConnectionEventsPipe.putNext(event)
          }
-+        
++
 +        func conceptsDeliverIncomingMessages(ids: [MessageId]) {
 +            let signal = self.postbox.transaction { transaction -> [([Message], PeerGroupId, Bool, MessageHistoryThreadData?)] in
 +                var messageList: [([Message], PeerGroupId, Bool, MessageHistoryThreadData?)] = []
@@ -1087,7 +1087,7 @@ index 3439bd7b..b81f5216 100644
              impl.addStarRefBotConnectionEvent(event: event)
          }
      }
-+    
++
 +    /// Локальные концепты: посты, записанные в Postbox офлайн-демо, проходят тот же путь
 +    /// уведомлений, что и пришедшие с сервера.
 +    public func conceptsDeliverIncomingMessages(ids: [MessageId]) {
@@ -1179,7 +1179,7 @@ index 00000000..79552498
 +}
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsFooterItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsFooterItem.swift
 new file mode 100644
-index 00000000..0e05cb18
+index 00000000..dee3e676
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsFooterItem.swift
 @@ -0,0 +1,105 @@
@@ -1197,13 +1197,13 @@ index 00000000..0e05cb18
 +    let theme: PresentationTheme
 +    let title: String
 +    let action: () -> Void
-+    
++
 +    init(theme: PresentationTheme, title: String, action: @escaping () -> Void) {
 +        self.theme = theme
 +        self.title = title
 +        self.action = action
 +    }
-+    
++
 +    func isEqual(to: ItemListControllerFooterItem) -> Bool {
 +        if let item = to as? PeerInfoMuteExceptionsFooterItem {
 +            return self.theme === item.theme && self.title == item.title
@@ -1211,7 +1211,7 @@ index 00000000..0e05cb18
 +            return false
 +        }
 +    }
-+    
++
 +    func node(current: ItemListControllerFooterItemNode?) -> ItemListControllerFooterItemNode {
 +        if let current = current as? PeerInfoMuteExceptionsFooterItemNode {
 +            current.item = self
@@ -1227,7 +1227,7 @@ index 00000000..0e05cb18
 +    private let titleNode = ImmediateTextNode()
 +    private let buttonNode = HighlightableButtonNode()
 +    private var validLayout: ContainerViewLayout?
-+    
++
 +    var item: PeerInfoMuteExceptionsFooterItem {
 +        didSet {
 +            self.updateItem()
@@ -1236,7 +1236,7 @@ index 00000000..0e05cb18
 +            }
 +        }
 +    }
-+    
++
 +    init(item: PeerInfoMuteExceptionsFooterItem) {
 +        self.item = item
 +        super.init()
@@ -1254,16 +1254,16 @@ index 00000000..0e05cb18
 +        }
 +        self.updateItem()
 +    }
-+    
++
 +    @objc private func pressed() {
 +        self.item.action()
 +    }
-+    
++
 +    private func updateItem() {
 +        self.backgroundNode.backgroundColor = self.item.theme.list.itemBlocksBackgroundColor
 +        self.titleNode.attributedText = NSAttributedString(string: self.item.title, font: Font.regular(17.0), textColor: self.item.theme.list.itemDestructiveColor)
 +    }
-+    
++
 +    override func updateLayout(layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) -> CGFloat {
 +        self.validLayout = layout
 +        let sideInset: CGFloat = 16.0 + layout.safeInsets.left
@@ -1279,7 +1279,7 @@ index 00000000..0e05cb18
 +        self.titleNode.frame = CGRect(origin: CGPoint(x: buttonFrame.minX + floor((buttonFrame.width - titleSize.width) / 2.0), y: buttonFrame.minY + floor((buttonFrame.height - titleSize.height) / 2.0)), size: titleSize)
 +        return panelHeight
 +    }
-+    
++
 +    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
 +        if self.backgroundNode.frame.contains(point) {
 +            return true
@@ -1290,7 +1290,7 @@ index 00000000..0e05cb18
 +}
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsKeywordsItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsKeywordsItem.swift
 new file mode 100644
-index 00000000..d0e813ec
+index 00000000..9f92c042
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsKeywordsItem.swift
 @@ -0,0 +1,630 @@
@@ -1440,7 +1440,7 @@ index 00000000..d0e813ec
 +    let word: String
 +    private let borderLayer = CAShapeLayer()
 +    private let titleNode = ImmediateTextNode()
-+    
++
 +    init(word: String) {
 +        self.word = word
 +        super.init()
@@ -1451,7 +1451,7 @@ index 00000000..d0e813ec
 +        self.layer.addSublayer(self.borderLayer)
 +        self.addSubnode(self.titleNode)
 +    }
-+    
++
 +    func update(theme: PresentationTheme, font: UIFont, size: CGSize) {
 +        self.borderLayer.strokeColor = theme.list.itemSecondaryTextColor.withAlphaComponent(0.6).cgColor
 +        let borderRect = CGRect(origin: CGPoint(), size: size).insetBy(dx: 0.5, dy: 0.5)
@@ -1737,7 +1737,7 @@ index 00000000..d0e813ec
 +                    chipNode.layer.animateScale(from: 1.0, to: 0.2, duration: 0.15, removeOnCompletion: false)
 +                }
 +                strongSelf.chipNodes = updatedChipNodes
-+                
++
 +                var updatedSuggestionNodes: [OutlineChipNode] = []
 +                for (index, word) in suggestionWords.enumerated() {
 +                    let node: OutlineChipNode
@@ -1926,7 +1926,7 @@ index 00000000..d0e813ec
 +}
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsScreen.swift
 new file mode 100644
-index 00000000..4522e28b
+index 00000000..3d0a56ff
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsScreen.swift
 @@ -0,0 +1,468 @@
@@ -2217,7 +2217,7 @@ index 00000000..4522e28b
 +private func muteExceptionsEntries(strings: PresentationStrings, peer: EnginePeer, title: String, exception: ConceptsMuteException, suggestions: [String], isMediaExpanded: Bool, isOtherExpanded: Bool) -> [MuteExceptionsEntry] {
 +    var entries: [MuteExceptionsEntry] = []
 +    entries.append(.header(conceptsMuteExceptionsString(strings, "«\(title)» stays muted. You’ll get sound only for posts with these words or of these types.", "«\(title)» остаётся без звука. Звук будет только у постов с этими словами или такого типа."), peer))
-+    
++
 +    entries.append(.keywordsHeader(conceptsMuteExceptionsString(strings, "KEYWORDS", "КЛЮЧЕВЫЕ СЛОВА")))
 +    let isInputEnabled = exception.keywords.count < maxKeywordCount
 +    let placeholder = exception.keywords.isEmpty ? conceptsMuteExceptionsString(strings, "Add a word, e.g. TON", "Добавить слово, например «тон»") : conceptsMuteExceptionsString(strings, "Add a word", "Добавить слово")
@@ -2234,7 +2234,7 @@ index 00000000..4522e28b
 +    } else {
 +        entries.append(.keywordsFooter(conceptsMuteExceptionsString(strings, "Tap a word twice to remove it.", "Чтобы удалить слово, нажмите на него дважды.")))
 +    }
-+    
++
 +    entries.append(.typesHeader(conceptsMuteExceptionsString(strings, "ALSO NOTIFY ABOUT", "ТАКЖЕ УВЕДОМЛЯТЬ О")))
 +    entries.append(.text(muteExceptionContentTitle(strings, .text), exception.contentTypes.contains(.text)))
 +    entries.append(.media(conceptsMuteExceptionsString(strings, "Media", "Медиа"), mediaContentTypes.map { content in
@@ -2246,7 +2246,7 @@ index 00000000..4522e28b
 +        return MuteExceptionsMediaItem(content: content, title: muteExceptionContentTitle(strings, content), isSelected: exception.contentTypes.contains(content))
 +    }, isOtherExpanded))
 +    entries.append(.typesFooter(conceptsMuteExceptionsString(strings, "Posts of these types notify you even without keywords.", "Посты этих типов уведомляют, даже если в них нет ключевых слов.")))
-+    
++
 +    if !exception.isEmpty {
 +        entries.append(.reset(conceptsMuteExceptionsString(strings, "Remove All Exceptions", "Удалить все исключения")))
 +    }
@@ -2847,7 +2847,7 @@ index dd9d428b..e755131d 100644
              }
              //self.historyNode.didScrollWithOffset?(listBottomInset - previousListBottomInset, transition, nil)
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
-index 26809c39..40fa141d 100644
+index 26809c39..e8f4b180 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
 @@ -3939,6 +3939,24 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
@@ -2871,12 +2871,12 @@ index 26809c39..40fa141d 100644
 +        }
 +        self.listView.chatHistoryTransaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [], scrollToItem: ListViewScrollToItem(index: listIndex, position: position, animated: true, curve: spring.map { ListViewAnimationCurve.CustomSpring(duration: duration, mass: $0.mass, stiffness: $0.stiffness, damping: $0.damping, initialVelocity: $0.velocity) } ?? .Custom(duration: duration, curve.0, curve.1, curve.2, curve.3), directionHint: .Up), additionalScrollDistance: 0.0, updateSizeAndInsets: nil, stationaryItemRange: nil, customAnimationTransition: nil, maintainsUnreadItemAlignment: false, updateOpaqueState: nil, completion: { _ in })
 +    }
-+    
++
      public func anchorMessageInCurrentHistoryView() -> EngineMessage? {
          if let historyView = self.historyView {
              if let visibleRange = self.listView.displayedItemRange.visibleRange {
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryNavigationButtonNode.swift b/submodules/TelegramUI/Sources/ChatHistoryNavigationButtonNode.swift
-index 53e1f936..d4557813 100644
+index 53e1f936..df04cbfe 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryNavigationButtonNode.swift
 +++ b/submodules/TelegramUI/Sources/ChatHistoryNavigationButtonNode.swift
 @@ -8,6 +8,7 @@ import AnimatedCountLabelNode
@@ -2909,7 +2909,7 @@ index 53e1f936..d4557813 100644
      private var preferClearGlass: Bool
      private let type: ChatHistoryNavigationButtonType
      
-+    
++
      init(theme: PresentationTheme, preferClearGlass: Bool, backgroundNode: WallpaperBackgroundNode, type: ChatHistoryNavigationButtonType) {
          self.theme = theme
          self.preferClearGlass = preferClearGlass
@@ -2932,7 +2932,7 @@ index 53e1f936..d4557813 100644
              
              self.badgeBackgroundView.update(size: self.badgeBackgroundView.bounds.size, cornerRadius: self.badgeBackgroundView.bounds.height * 0.5, isDark: theme.overallDarkAppearance, tintColor: .init(kind: .custom(style: .default, color: theme.chat.inputPanel.actionControlFillColor)), transition: .immediate)
 diff --git a/submodules/TelegramUI/Sources/ChatHistoryNavigationButtons.swift b/submodules/TelegramUI/Sources/ChatHistoryNavigationButtons.swift
-index de472c88..ebda4091 100644
+index de472c88..a0baff9a 100644
 --- a/submodules/TelegramUI/Sources/ChatHistoryNavigationButtons.swift
 +++ b/submodules/TelegramUI/Sources/ChatHistoryNavigationButtons.swift
 @@ -6,6 +6,9 @@ import AsyncDisplayKit
@@ -2973,13 +2973,13 @@ index de472c88..ebda4091 100644
 +            } else {
 +                self.conceptsMuteExceptionsButton.badge = ""
 +            }
-+            
++
 +            if (oldValue != 0) != (self.conceptsMuteExceptionsCount != 0) {
 +                let _ = self.updateLayout(transition: .animated(duration: 0.3, curve: .spring))
 +            }
 +        }
 +    }
-+    
++
      init(theme: PresentationTheme, preferClearGlass: Bool, dateTimeFormat: PresentationDateTimeFormat, backgroundNode: WallpaperBackgroundNode, isChatRotated: Bool) {
          self.isChatRotated = isChatRotated
          self.theme = theme
@@ -2990,7 +2990,7 @@ index de472c88..ebda4091 100644
 +        self.conceptsMuteExceptionsButton = ChatHistoryNavigationButtonNode(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode, type: .conceptsMuteExceptions)
 +        self.conceptsMuteExceptionsButton.alpha = 0.0
 +        self.conceptsMuteExceptionsButton.isHidden = true
-+        
++
          self.downButton = ChatHistoryNavigationButtonNode(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode, type: isChatRotated ? .down : .up)
          self.downButton.alpha = 0.0
          self.downButton.isHidden = true
@@ -3009,7 +3009,7 @@ index de472c88..ebda4091 100644
 +        self.conceptsMuteExceptionsButton.tapped = { [weak self] in
 +            self?.conceptsMuteExceptionsPressed?()
 +        }
-+        
++
          self.mentionsButton.tapped = { [weak self] in
              self?.mentionsPressed?()
          }
@@ -3029,7 +3029,7 @@ index de472c88..ebda4091 100644
 +        conceptsMuteExceptionsFrame.origin.x += rect.minX
 +        conceptsMuteExceptionsFrame.origin.y += rect.minY
 +        self.conceptsMuteExceptionsButton.update(rect: conceptsMuteExceptionsFrame, within: containerSize, transition: transition)
-+        
++
          var mentionsFrame = self.mentionsButton.frame
          mentionsFrame.origin.x += rect.minX
          mentionsFrame.origin.y += rect.minY
@@ -3070,7 +3070,7 @@ index de472c88..ebda4091 100644
 +            })
 +            transition.updateTransformScale(node: self.conceptsMuteExceptionsButton, scale: 0.2)
 +        }
-+        
++
          if self.isChatRotated {
              transition.updatePosition(node: self.downButton, position: CGRect(origin: CGPoint(x: 0.0, y: completeSize.height - buttonSize.height), size: buttonSize).center)
              transition.updatePosition(node: self.upButton, position: CGRect(origin: CGPoint(x: 0.0, y: completeSize.height - buttonSize.height - upOffset), size: buttonSize).center)

@@ -48,14 +48,14 @@ index 9147cd48..ef5604ac 100644
      func makeChannelAdminController(context: AccountContext, peerId: EnginePeer.Id, adminId: EnginePeer.Id, initialParticipant: ChannelParticipant) -> ViewController?
      func makeDeviceContactInfoController(context: ShareControllerAccountContext, environment: ShareControllerEnvironment, subject: DeviceContactInfoSubject, completed: (() -> Void)?, cancelled: (() -> Void)?) -> ViewController
 diff --git a/submodules/AccountContext/Sources/ChatController.swift b/submodules/AccountContext/Sources/ChatController.swift
-index 1fca36ca..8abea8bc 100644
+index 1fca36ca..f23ba842 100644
 --- a/submodules/AccountContext/Sources/ChatController.swift
 +++ b/submodules/AccountContext/Sources/ChatController.swift
 @@ -1239,6 +1239,10 @@ public protocol ChatController: ViewController {
      func removeAd(opaqueId: Data)
      
      func restrictedSendingContentsText() -> String
-+    
++
 +    /// Puts a reply to the message in the input panel and focuses the input, as the Reply action of the message's menu does.
 +    /// Returns false, and does nothing, when the message is not in the part of the history that is loaded.
 +    func setupReply(toMessageId messageId: EngineMessage.Id) -> Bool
@@ -76,7 +76,7 @@ index aa1c752f..9785dd33 100644
  public enum SharedMediaPlaylistControlAction {
 diff --git a/submodules/AccountContext/Sources/VoiceReplyFragment.swift b/submodules/AccountContext/Sources/VoiceReplyFragment.swift
 new file mode 100644
-index 00000000..b3e8b990
+index 00000000..57ec1e1e
 --- /dev/null
 +++ b/submodules/AccountContext/Sources/VoiceReplyFragment.swift
 @@ -0,0 +1,45 @@
@@ -89,7 +89,7 @@ index 00000000..b3e8b990
 +public struct VoiceReplyFragment: Codable, Equatable {
 +    public var timeText: String
 +    public var text: String
-+    
++
 +    public init(timeText: String, text: String) {
 +        self.timeText = timeText
 +        self.text = text
@@ -101,16 +101,16 @@ index 00000000..b3e8b990
 +/// once, and goes stale after a few seconds. Main thread only.
 +public final class VoiceReplyFragmentStore {
 +    public static let shared = VoiceReplyFragmentStore()
-+    
++
 +    private var pending: (id: EngineMessage.Id, fragment: VoiceReplyFragment, date: Double)?
-+    
++
 +    private init() {
 +    }
-+    
++
 +    public func set(_ fragment: VoiceReplyFragment, for id: EngineMessage.Id) {
 +        self.pending = (id, fragment, CFAbsoluteTimeGetCurrent())
 +    }
-+    
++
 +    public func take(for id: EngineMessage.Id) -> VoiceReplyFragment? {
 +        guard let pending = self.pending else {
 +            return nil
@@ -147,7 +147,7 @@ index 88ed5562..9e4c0c11 100644
          
          public var subjectModel: EngineMessageReplySubject {
 diff --git a/submodules/Media/LocalAudioTranscription/Sources/LocalAudioTranscription.swift b/submodules/Media/LocalAudioTranscription/Sources/LocalAudioTranscription.swift
-index 243b6220..e27d7a84 100644
+index 243b6220..8f8f2540 100644
 --- a/submodules/Media/LocalAudioTranscription/Sources/LocalAudioTranscription.swift
 +++ b/submodules/Media/LocalAudioTranscription/Sources/LocalAudioTranscription.swift
 @@ -4,10 +4,24 @@ import Speech
@@ -159,7 +159,7 @@ index 243b6220..e27d7a84 100644
 +    public var text: String
 +    public var start: Double
 +    public var end: Double
-+    
++
 +    public init(text: String, start: Double, end: Double) {
 +        self.text = text
 +        self.start = start
@@ -227,7 +227,7 @@ index 243b6220..e27d7a84 100644
 +    if locales.isEmpty {
 +        locales.append("en-US")
 +    }
-+    
++
 +    return bestTranscription(path: path, locales: locales)
 +    |> map { result -> LocallyTranscribedAudio? in
 +        return result.flatMap { result -> LocallyTranscribedAudio in
@@ -356,7 +356,7 @@ index 5124d37e..ef154d07 100644
          "//submodules/TelegramUI/Components/TranslateHeaderPanelComponent",
          "//submodules/TelegramUI/Components/AdPanelHeaderPanelComponent",
 diff --git a/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/Sources/ChatInputMessageAccessoryPanel.swift b/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/Sources/ChatInputMessageAccessoryPanel.swift
-index 436098b6..20883e12 100644
+index 3a290b4f..84ddcb51 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/Sources/ChatInputMessageAccessoryPanel.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/Sources/ChatInputMessageAccessoryPanel.swift
 @@ -100,6 +100,46 @@ private func textStringForForwardedMessage(_ message: EngineMessage, strings: Pr
@@ -372,7 +372,7 @@ index 436098b6..20883e12 100644
 +    let iconSize: CGFloat = 12.0
 +    let gap: CGFloat = 2.0
 +    let lineHeight: CGFloat = 16.0
-+    
++
 +    let paragraph = NSMutableParagraphStyle()
 +    paragraph.minimumLineHeight = lineHeight
 +    paragraph.maximumLineHeight = lineHeight
@@ -385,13 +385,13 @@ index 436098b6..20883e12 100644
 +    ])
 +    let textWidth = ceil(attributedText.boundingRect(with: CGSize(width: 1000.0, height: lineHeight), options: [.usesLineFragmentOrigin], context: nil).width)
 +    let size = CGSize(width: padding + iconSize + gap + textWidth + padding, height: height)
-+    
++
 +    return generateImage(size, rotatedContext: { size, context in
 +        context.clear(CGRect(origin: CGPoint(), size: size))
 +        context.setFillColor(color.withAlphaComponent(0.1).cgColor)
 +        context.addPath(UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: size.height / 2.0).cgPath)
 +        context.fillPath()
-+        
++
 +        UIGraphicsPushContext(context)
 +        if let symbol = UIImage(systemName: "play.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 40.0, weight: .regular))?.withTintColor(color, renderingMode: .alwaysOriginal) {
 +            let scale = min(iconSize / symbol.size.width, iconSize / symbol.size.height)
@@ -582,7 +582,7 @@ index 00000000..c08ffdfb
 +)
 diff --git a/submodules/TelegramUI/Components/VoiceTranscriptScreen/Sources/ServerVoiceTranscript.swift b/submodules/TelegramUI/Components/VoiceTranscriptScreen/Sources/ServerVoiceTranscript.swift
 new file mode 100644
-index 00000000..797d25e3
+index 00000000..4bc3737d
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/VoiceTranscriptScreen/Sources/ServerVoiceTranscript.swift
 @@ -0,0 +1,581 @@
@@ -600,12 +600,12 @@ index 00000000..797d25e3
 +    if rawWords.isEmpty {
 +        return VoiceTranscript(segments: [])
 +    }
-+    
++
 +    // Speech fills the voice message, leaving a short silence at both ends.
 +    let margin = min(0.3, duration * 0.05)
 +    let speechStart = margin
 +    let speechEnd = max(speechStart + 0.5, duration - margin)
-+    
++
 +    let sentenceEnd: Set<Character> = [".", "!", "?", "…"]
 +    let pauseWeight = 3.0
 +    var weights: [Double] = []
@@ -617,7 +617,7 @@ index 00000000..797d25e3
 +    }
 +    let totalWeight = weights.reduce(0.0, +) + pauses.reduce(0.0, +)
 +    let secondsPerWeight = (speechEnd - speechStart) / max(1.0, totalWeight)
-+    
++
 +    var words: [VoiceTranscriptWord] = []
 +    var position = speechStart
 +    for (index, word) in rawWords.enumerated() {
@@ -636,14 +636,14 @@ index 00000000..797d25e3
 +/// voice message that is too long, an error), or when it takes too long.
 +public final class ServerVoiceTranscriptProvider: VoiceTranscriptProvider {
 +    private let summaryProvider = MockVoiceTranscriptProvider()
-+    
++
 +    public init() {
 +    }
-+    
++
 +    public func summary() -> VoiceSummary {
 +        return self.summaryProvider.summary()
 +    }
-+    
++
 +    public func summary(context: AccountContext, messageId: EngineMessage.Id, transcript: VoiceTranscript) -> Signal<VoiceSummaryState, NoError> {
 +        if voiceSummaryUsesAI {
 +            return self.makeSummary(context: context, messageId: messageId, transcript: transcript)
@@ -651,11 +651,11 @@ index 00000000..797d25e3
 +            return self.makeFixedSummary(messageId: messageId, transcript: transcript)
 +        }
 +    }
-+    
++
 +    public func transcript(context: AccountContext, messageId: EngineMessage.Id, duration: Double) -> Signal<VoiceTranscriptState, NoError> {
 +        return Signal { subscriber in
 +            subscriber.putNext(.loading)
-+            
++
 +            var isFinished = false
 +            let finish: (VoiceTranscriptState) -> Void = { state in
 +                if isFinished {
@@ -665,7 +665,7 @@ index 00000000..797d25e3
 +                subscriber.putNext(state)
 +                subscriber.putCompletion()
 +            }
-+            
++
 +            let requestDisposable = MetaDisposable()
 +            var didRequest = false
 +            let messageDisposable = (context.engine.data.subscribe(TelegramEngine.EngineData.Item.Messages.Message(id: messageId))
@@ -692,7 +692,7 @@ index 00000000..797d25e3
 +                    }
 +                    return
 +                }
-+                
++
 +                if !didRequest {
 +                    didRequest = true
 +                    requestDisposable.set((context.engine.messages.transcribeAudio(messageId: messageId)
@@ -704,13 +704,13 @@ index 00000000..797d25e3
 +                    }))
 +                }
 +            })
-+            
++
 +            // A voice message that never gets its text must not leave the sheet on the skeleton forever.
 +            let timer = SwiftSignalKit.Timer(timeout: 90.0, repeat: false, completion: {
 +                finish(.unavailable)
 +            }, queue: Queue.mainQueue())
 +            timer.start()
-+            
++
 +            return ActionDisposable {
 +                messageDisposable.dispose()
 +                requestDisposable.dispose()
@@ -854,11 +854,11 @@ index 00000000..797d25e3
 +    let finalTasks = Array(tasks.prefix(5))
 +    let finalQuestions = Array(questions.prefix(3))
 +    let headlines = summaries.map { $0.headline }.filter { !$0.isEmpty }
-+    
++
 +    if headlines.count <= 1 {
 +        return .single(VoiceSummary(headline: headlines.first ?? "", keyPoints: finalKeyPoints, tasks: finalTasks, questions: finalQuestions))
 +    }
-+    
++
 +    // One headline for the whole message, from the headlines of the parts.
 +    let language = languageName ?? "the language of the notes"
 +    let prompt = String(("Write one short sentence in \(language) that sums up these notes about one voice message. Reply with: SUMMARY: the sentence.\n\n" + headlines.joined(separator: "\n")).prefix(voiceSummaryPromptLimit))
@@ -924,11 +924,11 @@ index 00000000..797d25e3
 +    private var values: [EngineMessage.Id: VoiceSummary] = [:]
 +    /// The voice messages whose placeholder was already shown, so its skeleton is not shown a second time.
 +    private var placeholdersShown = Set<EngineMessage.Id>()
-+    
++
 +    private func key(_ id: EngineMessage.Id) -> String {
 +        return "voiceSummary_\(id.peerId.toInt64())_\(id.namespace)_\(id.id)"
 +    }
-+    
++
 +    func value(for id: EngineMessage.Id) -> VoiceSummary? {
 +        if let value = self.values[id] {
 +            return value
@@ -939,18 +939,18 @@ index 00000000..797d25e3
 +        }
 +        return nil
 +    }
-+    
++
 +    func set(_ summary: VoiceSummary, for id: EngineMessage.Id) {
 +        self.values[id] = summary
 +        if let data = try? JSONEncoder().encode(summary) {
 +            UserDefaults.standard.set(data, forKey: self.key(id))
 +        }
 +    }
-+    
++
 +    func hasShownPlaceholder(for id: EngineMessage.Id) -> Bool {
 +        return self.placeholdersShown.contains(id)
 +    }
-+    
++
 +    func markPlaceholderShown(for id: EngineMessage.Id) {
 +        self.placeholdersShown.insert(id)
 +    }
@@ -1000,7 +1000,7 @@ index 00000000..797d25e3
 +    var keyPoints: [VoiceSummary.KeyPoint] = []
 +    var tasks: [VoiceSummary.Task] = []
 +    var questions: [VoiceSummary.Question] = []
-+    
++
 +    // A model sometimes puts several items on one line; each label starts an item of its own.
 +    let separated = text.replacingOccurrences(of: "\\s+(?=(?:SUMMARY|KEY|TASK|QUESTION):)", with: "\n", options: .regularExpression)
 +    for rawLine in separated.components(separatedBy: .newlines) {
@@ -1009,7 +1009,7 @@ index 00000000..797d25e3
 +            line.removeFirst()
 +            line = line.trimmingCharacters(in: .whitespaces)
 +        }
-+        
++
 +        func value(after prefix: String) -> String? {
 +            guard line.uppercased().hasPrefix(prefix) else {
 +                return nil
@@ -1017,7 +1017,7 @@ index 00000000..797d25e3
 +            let result = String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
 +            return result.isEmpty ? nil : result
 +        }
-+        
++
 +        if let value = value(after: "SUMMARY:") {
 +            headline = value
 +        } else if let value = value(after: "KEY:") {
@@ -1049,7 +1049,7 @@ index 00000000..797d25e3
 +            }
 +        }
 +    }
-+    
++
 +    if headline.isEmpty && keyPoints.isEmpty && tasks.isEmpty && questions.isEmpty {
 +        return nil
 +    }
@@ -1060,7 +1060,7 @@ index 00000000..797d25e3
 +    private func summarySeed(messageId: EngineMessage.Id) -> UInt64 {
 +        return UInt64(bitPattern: Int64(messageId.id)) &* 0x2545F4914F6CDD1D &+ UInt64(bitPattern: messageId.peerId.toInt64())
 +    }
-+    
++
 +    /// The placeholder summary, as if it were being made: the skeleton for two seconds the first time this voice message is
 +    /// opened, the summary at once afterwards.
 +    func makeFixedSummary(messageId: EngineMessage.Id, transcript: VoiceTranscript) -> Signal<VoiceSummaryState, NoError> {
@@ -1077,7 +1077,7 @@ index 00000000..797d25e3
 +            }
 +        )
 +    }
-+    
++
 +    func makeSummary(context: AccountContext, messageId: EngineMessage.Id, transcript: VoiceTranscript) -> Signal<VoiceSummaryState, NoError> {
 +        if let cached = VoiceSummaryCache.shared.value(for: messageId) {
 +            return .single(.ready(cached))
@@ -1096,14 +1096,14 @@ index 00000000..797d25e3
 +        #if DEBUG
 +        voiceSummaryDebugReason = nil
 +        #endif
-+        
++
 +        let seed = self.summarySeed(messageId: messageId)
 +        let languageName = voiceSummaryLanguageName(of: lines.joined(separator: " "))
 +        let prompts = voiceSummaryPrompts(lines: lines, languageName: languageName)
 +        #if DEBUG
 +        print("[VoiceSummary] \(lines.count) lines of transcript in \(prompts.count) part(s), language: \(languageName ?? "unknown")")
 +        #endif
-+        
++
 +        // Every part is summarised on its own (each prompt stays under the limit), then the results are put together. Parts the
 +        // server refused are left out; the summary is made of the others.
 +        let partRequests: [Signal<VoiceSummary?, NoError>] = prompts.map { prompt in
@@ -1112,7 +1112,7 @@ index 00000000..797d25e3
 +                return text.map { voiceSummaryFromAnswer($0) }
 +            }
 +        }
-+        
++
 +        // When no part gets through, the old way is tried once: the transcript as the text, the instruction as the tone.
 +        func rewriteFallback() -> Signal<VoiceSummaryState, NoError> {
 +            let input = lines.joined(separator: "\n")
@@ -1129,7 +1129,7 @@ index 00000000..797d25e3
 +                return .single(.unavailable)
 +            }
 +        }
-+        
++
 +        let request: Signal<VoiceSummaryState, NoError> = combineLatest(partRequests)
 +        |> take(1)
 +        |> mapToSignal { results -> Signal<VoiceSummaryState, NoError> in
@@ -1162,7 +1162,7 @@ index 00000000..797d25e3
 +            }
 +            return state
 +        }
-+        
++
 +        return Signal<VoiceSummaryState, NoError>.single(.loading)
 +        |> then(request)
 +    }
@@ -1574,7 +1574,7 @@ index 00000000..e8a10b3b
 +}
 diff --git a/submodules/TelegramUI/Components/VoiceTranscriptScreen/Sources/VoiceTranscriptRecognition.swift b/submodules/TelegramUI/Components/VoiceTranscriptScreen/Sources/VoiceTranscriptRecognition.swift
 new file mode 100644
-index 00000000..72a5b20f
+index 00000000..921df02f
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/VoiceTranscriptScreen/Sources/VoiceTranscriptRecognition.swift
 @@ -0,0 +1,156 @@
@@ -1590,12 +1590,12 @@ index 00000000..72a5b20f
 +    let maxWordsInLine = 14
 +    let pause = 0.7
 +    let sentenceEnd: Set<Character> = [".", "!", "?", "…"]
-+    
++
 +    var segments: [VoiceTranscriptSegment] = []
 +    var current: [VoiceTranscriptWord] = []
 +    for (index, word) in words.enumerated() {
 +        current.append(word)
-+        
++
 +        var endsLine = false
 +        if let last = word.text.last, sentenceEnd.contains(last) {
 +            endsLine = true
@@ -1624,16 +1624,16 @@ index 00000000..72a5b20f
 +        var starts: [Double]
 +        var ends: [Double]
 +    }
-+    
++
 +    private static var directory: String {
 +        let base = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true).first ?? NSTemporaryDirectory()
 +        return base + "/voice-transcripts"
 +    }
-+    
++
 +    private static func path(key: String) -> String {
 +        return self.directory + "/" + key + ".json"
 +    }
-+    
++
 +    static func load(key: String) -> [VoiceTranscriptWord]? {
 +        guard let data = try? Data(contentsOf: URL(fileURLWithPath: self.path(key: key))), let entry = try? JSONDecoder().decode(Entry.self, from: data) else {
 +            return nil
@@ -1647,7 +1647,7 @@ index 00000000..72a5b20f
 +        }
 +        return words
 +    }
-+    
++
 +    static func store(key: String, words: [VoiceTranscriptWord]) {
 +        let entry = Entry(texts: words.map(\.text), starts: words.map(\.start), ends: words.map(\.end))
 +        guard let data = try? JSONEncoder().encode(entry) else {
@@ -1661,14 +1661,14 @@ index 00000000..72a5b20f
 +/// The real transcript: the voice message is recognised on the device and every word keeps the time it is spoken at.
 +public final class RecognizedVoiceTranscriptProvider: VoiceTranscriptProvider {
 +    private let summaryProvider = MockVoiceTranscriptProvider()
-+    
++
 +    public init() {
 +    }
-+    
++
 +    public func summary() -> VoiceSummary {
 +        return self.summaryProvider.summary()
 +    }
-+    
++
 +    public func transcript(context: AccountContext, messageId: EngineMessage.Id, duration: Double) -> Signal<VoiceTranscriptState, NoError> {
 +        let recognition = context.engine.data.get(TelegramEngine.EngineData.Item.Messages.Message(id: messageId))
 +        |> take(1)
@@ -1680,7 +1680,7 @@ index 00000000..72a5b20f
 +            if let cached = VoiceTranscriptCache.load(key: key) {
 +                return .single(.ready(VoiceTranscript(segments: voiceTranscriptSegments(words: cached))))
 +            }
-+            
++
 +            return context.engine.resources.data(id: EngineMediaResource.Id(file.resource.id))
 +            |> filter { data -> Bool in
 +                return data.isComplete
@@ -1729,7 +1729,7 @@ index 00000000..72a5b20f
 +                return .ready(VoiceTranscript(segments: voiceTranscriptSegments(words: words)))
 +            }
 +        }
-+        
++
 +        return Signal<VoiceTranscriptState, NoError>.single(.loading)
 +        |> then(recognition)
 +    }
@@ -6007,7 +6007,7 @@ index 2837af34..06ad2700 100644
                      
                      completion(.immediate, {
 diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
-index 32f6bbfe..5390f225 100644
+index c8ca60b5..98bc2167 100644
 --- a/submodules/TelegramUI/Sources/ChatController.swift
 +++ b/submodules/TelegramUI/Sources/ChatController.swift
 @@ -11312,6 +11312,14 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
@@ -6021,7 +6021,7 @@ index 32f6bbfe..5390f225 100644
 +        self.interfaceInteraction?.setupReplyMessage(messageId, nil, { _, f in f() })
 +        return true
 +    }
-+    
++
      public func restrictedSendingContentsText() -> String {
          guard let peer = self.presentationInterfaceState.renderedPeer?.peer else {
              return self.presentationData.strings.Chat_SendNotAllowedText
@@ -6041,7 +6041,7 @@ index f2e1014b..d6f658a8 100644
                  chatPeerId: chatPeerId,
                  action: { sourceView in
 diff --git a/submodules/TelegramUI/Sources/SharedAccountContext.swift b/submodules/TelegramUI/Sources/SharedAccountContext.swift
-index 0f54c907..806eb91c 100644
+index 0f54c907..b5b46866 100644
 --- a/submodules/TelegramUI/Sources/SharedAccountContext.swift
 +++ b/submodules/TelegramUI/Sources/SharedAccountContext.swift
 @@ -2,6 +2,7 @@ import Foundation
@@ -6059,7 +6059,7 @@ index 0f54c907..806eb91c 100644
 +    public func makeVoiceTranscriptScreen(context: AccountContext, messageId: EngineMessage.Id, peerTitle: String) -> ViewController {
 +        return VoiceTranscriptScreen(context: context, messageId: messageId, peerTitle: peerTitle)
 +    }
-+    
++
      public func makeOverlayAudioPlayerController(context: AccountContext, chatLocation: ChatLocation, type: MediaManagerPlayerType, initialMessageId: EngineMessage.Id, initialOrder: MusicPlaybackSettingsOrder, playlistLocation: SharedMediaPlaylistLocation?, parentNavigationController: NavigationController?) -> ViewController & OverlayAudioPlayerController {
          if case .voice = type, context.account.network.ayuGhostMode.current.interface.voiceMemosPlayer {
              // AyuGram: optional Voice Memos style player for voice messages.

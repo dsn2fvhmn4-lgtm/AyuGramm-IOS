@@ -585,3 +585,30 @@ index e9323567..378c01ed 100644
                  account.shouldKeepOnlinePresence.set(.single(primary && (self.inForeground || ayuAlwaysOnline)))
                  account.shouldKeepBackgroundDownloadConnections.set(.single(tasks.backgroundDownloads))
              }
+diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
+index ea5e6e6b..eb7fe3f0 100644
+--- a/tools/ayu-tests/main.swift
++++ b/tools/ayu-tests/main.swift
+@@ -19,8 +19,22 @@ let second = root.appendingPathComponent("account-2")
+ try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+ try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+ 
++// The policies below are the unlocked ones; the gate itself is checked right after.
++UserDefaults.standard.set(true, forKey: AyuFeatureGate.unlockedKey)
+ let store = AyuGhostModeStore(accountPath: first.path)
+ check(store.current == AyuGhostModeSettings(), "Fresh account must use upstream behavior")
++do {
++    let gatePath = root.appendingPathComponent("gate")
++    try FileManager.default.createDirectory(at: gatePath, withIntermediateDirectories: true)
++    let gateStore = AyuGhostModeStore(accountPath: gatePath.path)
++    try gateStore.update { $0.setAllEnabled(true); $0.advanced.localPremium = true }
++    UserDefaults.standard.set(false, forKey: AyuFeatureGate.unlockedKey)
++    check(!gateStore.current.isActive && !gateStore.current.advanced.localPremium && !gateStore.current.appearance.showGhostButton, "Locked gate turns Ghost Mode and Local Premium off")
++    check(!AyuFeatureGate.unlock(code: "0000000") && !AyuFeatureGate.isUnlocked, "A wrong code keeps the gate locked")
++    check(AyuFeatureGate.handle(url: URL(string: "https://example.com/unlock?k=0000000")!) == nil && AyuFeatureGate.handle(url: URL(string: "voidgram://unlock?k=0000000")!) == false && !AyuFeatureGate.isUnlocked, "Only a right voidgram:// link unlocks")
++    UserDefaults.standard.set(true, forKey: AyuFeatureGate.unlockedKey)
++    check(gateStore.current.allEnabled && gateStore.current.advanced.localPremium, "Unlocking restores the stored settings")
++}
+ check(!store.hadLoadError, "Missing settings are not corruption")
+ var observed: [AyuGhostModeSettings] = []
+ let observationEvents = DispatchSemaphore(value: 0)

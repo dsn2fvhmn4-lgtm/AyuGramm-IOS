@@ -137,6 +137,7 @@ with zipfile.ZipFile(ipa) as archive:
         raise SystemExit(f"Wrong Mach-O platform: expected {expected_platform}, found {platform_id}")
     if any(name.endswith("embedded.mobileprovision") for name in archive.namelist()):
         raise SystemExit("Unsigned compilation artifact unexpectedly contains provisioning material")
+ipa = ipa.rename(artifacts / "VoidGram.ipa")
 manifest = dict(phase=args.phase, configuration=args.configuration, xcode=actual_xcode, macos=macos,
                 ipa_bytes=ipa.stat().st_size, bundle_bytes=bundle_bytes, asset_catalog_bytes=asset_catalog_bytes,
                 native_arm64=True, macho_platform=platform_id,

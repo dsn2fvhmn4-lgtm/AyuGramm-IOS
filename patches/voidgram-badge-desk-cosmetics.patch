@@ -420,10 +420,10 @@ index 0ca07f27..23135310 100644
          "//submodules/TelegramUI/Components/Chat/ChatAvatarNavigationNode",
          "//submodules/TelegramUI/Components/ChatControllerInteraction",
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-index bcc75de7..b37f88a3 100644
+index bcc75de7..87f145db 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-@@ -1,140 +1,754 @@
+@@ -1,140 +1,753 @@
  import Foundation
  import UIKit
  import Display
@@ -1259,7 +1259,6 @@ index bcc75de7..b37f88a3 100644
 +    }
 +
 +    let controller = makePage(.hub)
-+    weak var hubController: ItemListController? = controller
 +    openPageImpl = { page in
 +        pushImpl?(makePage(page))
 +    }
@@ -1283,7 +1282,7 @@ index bcc75de7..b37f88a3 100644
          // The picker pops out of a point under the navigation bar and flies the pick back to it.
          let anchor = UIView(frame: CGRect(x: controller.view.bounds.midX - 1.0, y: controller.view.safeAreaInsets.top + 56.0, width: 2.0, height: 2.0))
          anchor.isUserInteractionEnabled = false
-@@ -146,7 +760,7 @@ enum AyuBadgeEditor {
+@@ -146,7 +759,7 @@ enum AyuBadgeEditor {
                  guard let file, file.fileId.id != 0 else {
                      return
                  }
@@ -1292,7 +1291,7 @@ index bcc75de7..b37f88a3 100644
              }),
              sourceView: anchor,
              emojiContent: EmojiPagerContentComponent.emojiInputData(
-@@ -162,234 +776,685 @@ enum AyuBadgeEditor {
+@@ -162,234 +775,685 @@ enum AyuBadgeEditor {
                  chatPeerId: context.account.peerId,
                  selectedItems: Set()
              ),
@@ -1315,7 +1314,7 @@ index bcc75de7..b37f88a3 100644
 -        alert.addTextField(configurationHandler: { field in
 -            field.text = initial
 -            field.autocapitalizationType = .sentences
-+    saveImpl = {
++    saveImpl = { [weak controller] in
 +        topController?.view.endEditing(true)
 +        let state = stateValue.with { $0 }
 +        let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
@@ -1345,8 +1344,8 @@ index bcc75de7..b37f88a3 100644
 +                if success {
 +                    updateState { $0.original = $0.draft }
 +                    // Back to the profile the desk was opened from.
-+                    if let hub = hubController, let navigationController = hub.navigationController as? NavigationController, let index = navigationController.viewControllers.firstIndex(where: { $0 === hub }), index > 0 {
-+                        navigationController.popToViewController(navigationController.viewControllers[index - 1], animated: true)
++                    if let hub = controller, let navigationController = hub.navigationController as? NavigationController, let index = navigationController.viewControllers.firstIndex(where: { $0 === hub }), index > 0 {
++                        let _ = navigationController.popToViewController(navigationController.viewControllers[index - 1], animated: true)
 +                    }
 +                    let presentationData = context.sharedContext.currentPresentationData.with { $0 }
 +                    context.sharedContext.presentGlobalController(UndoOverlayController(presentationData: presentationData, content: .info(title: nil, text: ru ? "Сохранено. Остальные увидят после перезахода в приложение." : "Saved. Others will see it when they return to the app.", timeout: nil, customUndoText: nil), action: { _ in return false }), nil)

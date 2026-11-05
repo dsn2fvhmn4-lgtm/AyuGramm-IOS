@@ -1,0 +1,3211 @@
+diff --git a/submodules/ChatListFilterSettingsHeaderItem/BUILD b/submodules/ChatListFilterSettingsHeaderItem/BUILD
+index afd784d1..a039e00e 100644
+--- a/submodules/ChatListFilterSettingsHeaderItem/BUILD
++++ b/submodules/ChatListFilterSettingsHeaderItem/BUILD
+@@ -20,6 +20,7 @@ swift_library(
+         "//submodules/PresentationDataUtils:PresentationDataUtils",
+         "//submodules/AnimatedStickerNode:AnimatedStickerNode",
+         "//submodules/TelegramAnimatedStickerNode:TelegramAnimatedStickerNode",
++        "//submodules/AvatarNode:AvatarNode",
+     ],
+     visibility = [
+         "//visibility:public",
+diff --git a/submodules/ChatListFilterSettingsHeaderItem/Sources/ChatListFilterSettingsHeaderItem.swift b/submodules/ChatListFilterSettingsHeaderItem/Sources/ChatListFilterSettingsHeaderItem.swift
+index e53f8f85..8951ba40 100644
+--- a/submodules/ChatListFilterSettingsHeaderItem/Sources/ChatListFilterSettingsHeaderItem.swift
++++ b/submodules/ChatListFilterSettingsHeaderItem/Sources/ChatListFilterSettingsHeaderItem.swift
+@@ -11,12 +11,15 @@ import PresentationDataUtils
+ import AnimatedStickerNode
+ import TelegramAnimatedStickerNode
+ import AccountContext
++import AvatarNode
+ 
+ public enum ChatListFilterSettingsHeaderAnimation {
+     case folders
+     case newFolder
+     case discussionGroupSetup
+     case autoRemove
++    // Локальные концепты: исключения для канала без звука.
++    case notifications
+ }
+ 
+ public class ChatListFilterSettingsHeaderItem: ListViewItem, ItemListItem {
+@@ -24,13 +27,19 @@ public class ChatListFilterSettingsHeaderItem: ListViewItem, ItemListItem {
+     let theme: PresentationTheme
+     let text: String
+     let animation: ChatListFilterSettingsHeaderAnimation
++    // Локальные концепты: чат, к которому относится экран, — маленькая аватарка в углу анимации.
++    let cornerPeer: EnginePeer?
++    // Локальные концепты: крупный заголовок под анимацией (как на экранах Telegram); при прокрутке уходит в навбар.
++    let headline: String?
+     public let sectionId: ItemListSectionId
+     
+-    public init(context: AccountContext, theme: PresentationTheme, text: String, animation: ChatListFilterSettingsHeaderAnimation, sectionId: ItemListSectionId) {
++    public init(context: AccountContext, theme: PresentationTheme, text: String, animation: ChatListFilterSettingsHeaderAnimation, cornerPeer: EnginePeer? = nil, headline: String? = nil, sectionId: ItemListSectionId) {
++        self.headline = headline
+         self.context = context
+         self.theme = theme
+         self.text = text
+         self.animation = animation
++        self.cornerPeer = cornerPeer
+         self.sectionId = sectionId
+     }
+     
+@@ -75,7 +84,11 @@ private let titleFont = Font.regular(13.0)
+ 
+ class ChatListFilterSettingsHeaderItemNode: ListViewItemNode {
+     private let titleNode: TextNode
++    private let headlineNode: TextNode
++    private let nameNode = TextNode()
+     private var animationNode: AnimatedStickerNode
++    private var avatarRingNode: ASDisplayNode?
++    private var avatarNode: AvatarNode?
+     
+     private var item: ChatListFilterSettingsHeaderItem?
+     
+@@ -88,10 +101,18 @@ class ChatListFilterSettingsHeaderItemNode: ListViewItemNode {
+         self.titleNode.contentMode = .left
+         self.titleNode.contentsScale = UIScreen.main.scale
+         
++        self.headlineNode = TextNode()
++        self.headlineNode.isUserInteractionEnabled = false
++        self.headlineNode.contentsScale = UIScreen.main.scale
++        
+         self.animationNode = DefaultAnimatedStickerNodeImpl(lottieSettings: lottieSettings)
+         
+         super.init(layerBacked: false)
+         
++        self.addSubnode(self.headlineNode)
++        self.nameNode.isUserInteractionEnabled = false
++        self.nameNode.contentsScale = UIScreen.main.scale
++        self.addSubnode(self.nameNode)
+         self.addSubnode(self.titleNode)
+         self.addSubnode(self.animationNode)
+     }
+@@ -112,6 +133,8 @@ class ChatListFilterSettingsHeaderItemNode: ListViewItemNode {
+     
+     func asyncLayout() -> (_ item: ChatListFilterSettingsHeaderItem, _ params: ListViewItemLayoutParams, _ neighbors: ItemListNeighbors) -> (ListViewItemNodeLayout, () -> Void) {
+         let makeTitleLayout = TextNode.asyncLayout(self.titleNode)
++        let makeHeadlineLayout = TextNode.asyncLayout(self.headlineNode)
++        let makeNameLayout = TextNode.asyncLayout(self.nameNode)
+         
+         return { [weak self] item, params, neighbors in
+             let isHidden = params.width > params.availableHeight && params.availableHeight < 400.0
+@@ -135,14 +158,49 @@ class ChatListFilterSettingsHeaderItemNode: ListViewItemNode {
+                 insetDifference = 120
+                 playbackMode = .once
+                 additionalBottomInset = isHidden ? 8.0 : 16.0
++            case .notifications:
++                // Локальные концепты: стикер из официального пака — колокольчик, без анимации (первый кадр).
++                animationName = "ConceptsBellRing"
++                playbackMode = .still(.start)
+             }
+             
+             let topInset: CGFloat = CGFloat(size - insetDifference)
+             
+-            let attributedText = NSAttributedString(string: item.text, font: titleFont, textColor: item.theme.list.freeTextColor)
++            // Локальные концепты: маленькая аватарка канала стоит в начале описания (перед названием), название — основным цветом.
++            let attributedMutable: NSMutableAttributedString
++            var channelName: String?
++            var nameTail: String?
++            if case let .channel(channel)? = item.cornerPeer {
++                // Название канала и аватарка — отдельная центрированная строка над остальным текстом.
++                channelName = channel.title
++                var rest = item.text
++                if let range = item.text.range(of: "«" + channel.title + "»") {
++                    rest = String(item.text[range.upperBound...]).trimmingCharacters(in: .whitespaces)
++                }
++                // Первая фраза («stays muted.») идёт в одну строку с названием канала, остальное — ниже.
++                if let dot = rest.range(of: ". ") {
++                    nameTail = String(rest[..<dot.lowerBound])
++                    rest = String(rest[dot.upperBound...])
++                }
++                attributedMutable = NSMutableAttributedString(string: rest, font: titleFont, textColor: item.theme.list.freeTextColor)
++            } else {
++                attributedMutable = NSMutableAttributedString(string: item.text, font: titleFont, textColor: item.theme.list.freeTextColor)
++            }
++            let avatarSide: CGFloat = 14.0
++            let avatarGap: CGFloat = 4.0
++            let nameAttributed = NSMutableAttributedString(string: channelName ?? "", font: Font.semibold(14.0), textColor: item.theme.list.itemPrimaryTextColor)
++            if let nameTail {
++                nameAttributed.append(NSAttributedString(string: " " + nameTail, font: Font.regular(14.0), textColor: item.theme.list.itemPrimaryTextColor))
++            }
++            let (nameLayout, nameApply) = makeNameLayout(TextNodeLayoutArguments(attributedString: nameAttributed, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: params.width - params.leftInset - params.rightInset - 96.0, height: 40.0), alignment: .left, cutout: nil, insets: UIEdgeInsets()))
++            let nameSpace: CGFloat = channelName == nil ? 0.0 : 22.0
++            let attributedText: NSAttributedString = attributedMutable
+             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: attributedText, backgroundColor: nil, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: params.width - params.leftInset - params.rightInset - min(params.leftInset, params.rightInset) - 64.0, height: CGFloat.greatestFiniteMagnitude), alignment: .center, cutout: nil, insets: UIEdgeInsets()))
+             
+-            let contentSize = CGSize(width: params.width, height: topInset + titleLayout.size.height)
++            let (headlineLayout, headlineApply) = makeHeadlineLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.headline ?? "", font: Font.bold(26.0), textColor: item.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 2, truncationType: .end, constrainedSize: CGSize(width: params.width - params.leftInset - params.rightInset - 48.0, height: CGFloat.greatestFiniteMagnitude), alignment: .center, cutout: nil, insets: UIEdgeInsets()))
++            let headlineSpace: CGFloat = item.headline == nil ? 0.0 : headlineLayout.size.height + 8.0
++            
++            let contentSize = CGSize(width: params.width, height: topInset + headlineSpace + nameSpace + titleLayout.size.height)
+             var insets = itemListNeighborsGroupedInsets(neighbors, params)
+             
+             if isHidden {
+@@ -156,7 +214,12 @@ class ChatListFilterSettingsHeaderItemNode: ListViewItemNode {
+                 if let strongSelf = self {
+                     if strongSelf.item == nil {
+                         strongSelf.animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: animationName), width: size, height: size, playbackMode: playbackMode, mode: .direct(cachePathPrefix: nil))
+-                        strongSelf.animationNode.visibility = true
++                        if case .notifications = item.animation {
++                            // Колокольчик на экране исключений — статичный первый кадр, без воспроизведения.
++                        } else {
++                            strongSelf.animationNode.visibility = true
++                        }
++
+                     }
+                     
+                     strongSelf.item = item
+@@ -167,7 +230,32 @@ class ChatListFilterSettingsHeaderItemNode: ListViewItemNode {
+                     strongSelf.animationNode.updateLayout(size: iconSize)
+                     
+                     let _ = titleApply()
+-                    strongSelf.titleNode.frame = CGRect(origin: CGPoint(x: params.leftInset + floor((layout.size.width - params.leftInset - params.rightInset - titleLayout.size.width) / 2.0), y: topInset + 8.0), size: titleLayout.size)
++                    let _ = headlineApply()
++                    strongSelf.headlineNode.frame = CGRect(origin: CGPoint(x: params.leftInset + floor((layout.size.width - params.leftInset - params.rightInset - headlineLayout.size.width) / 2.0), y: topInset + 8.0), size: headlineLayout.size)
++                    strongSelf.headlineNode.alpha = isHidden || item.headline == nil ? 0.0 : 1.0
++                    strongSelf.titleNode.frame = CGRect(origin: CGPoint(x: params.leftInset + floor((layout.size.width - params.leftInset - params.rightInset - titleLayout.size.width) / 2.0), y: topInset + 8.0 + headlineSpace + nameSpace), size: titleLayout.size)
++                    if let cornerPeer = item.cornerPeer {
++                        let avatarNode: AvatarNode
++                        if let current = strongSelf.avatarNode {
++                            avatarNode = current
++                        } else {
++                            avatarNode = AvatarNode(font: avatarPlaceholderFont(size: 8.0))
++                            strongSelf.addSubnode(avatarNode)
++                            strongSelf.avatarNode = avatarNode
++                        }
++                        avatarNode.setPeer(context: item.context, theme: item.theme, peer: cornerPeer, displayDimensions: CGSize(width: avatarSide, height: avatarSide))
++                        let _ = nameApply()
++                        let groupWidth = avatarSide + avatarGap + nameLayout.size.width
++                        let areaWidth = layout.size.width - params.leftInset - params.rightInset
++                        let groupX = params.leftInset + floor((areaWidth - groupWidth) / 2.0)
++                        let rowY = topInset + 8.0 + headlineSpace
++                        let nameFrame = CGRect(origin: CGPoint(x: groupX + avatarSide + avatarGap, y: rowY + floor((nameSpace - 4.0 - nameLayout.size.height) / 2.0)), size: nameLayout.size)
++                        strongSelf.nameNode.frame = nameFrame
++                        // Аватарка по центру высоты строки названия.
++                        avatarNode.frame = CGRect(origin: CGPoint(x: groupX, y: floorToScreenPixels(nameFrame.midY - avatarSide / 2.0)), size: CGSize(width: avatarSide, height: avatarSide))
++                        strongSelf.nameNode.alpha = isHidden ? 0.0 : 1.0
++                        avatarNode.alpha = isHidden ? 0.0 : 1.0
++                    }
+                     
+                     strongSelf.animationNode.alpha = isHidden ? 0.0 : 1.0
+                     strongSelf.titleNode.alpha = isHidden ? 0.0 : 1.0
+diff --git a/submodules/ChatListUI/Sources/Node/ChatListItem.swift b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
+index b386f555..3c7a897c 100644
+--- a/submodules/ChatListUI/Sources/Node/ChatListItem.swift
++++ b/submodules/ChatListUI/Sources/Node/ChatListItem.swift
+@@ -147,6 +147,8 @@ public enum ChatListItemContent {
+         public var hasUnseenMentions: Bool
+         public var hasUnseenReactions: Bool
+         public var hasUnseenPollVotes: Bool
++        // Локальные концепты: непрочитанные посты из исключений канала без звука.
++        public var conceptsMuteExceptionCount: Int = 0
+         public var draftState: DraftState?
+         public var mediaDraftContentType: EngineChatList.MediaDraftContentType?
+         public var inputActivities: [(EnginePeer, PeerInputActivity)]?
+@@ -188,8 +190,10 @@ public enum ChatListItemContent {
+             requiresPremiumForMessaging: Bool,
+             displayAsTopicList: Bool,
+             tags: [Tag],
+-            customMessageListData: CustomMessageListData? = nil
++            customMessageListData: CustomMessageListData? = nil,
++            conceptsMuteExceptionCount: Int = 0
+         ) {
++            self.conceptsMuteExceptionCount = conceptsMuteExceptionCount
+             self.messages = messages
+             self.peer = peer
+             self.avatarPeer = avatarPeer
+@@ -1459,6 +1463,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+     let statusNode: ChatListStatusNode
+     let badgeNode: ChatListBadgeNode
+     let mentionBadgeNode: ChatListBadgeNode
++    var conceptsBellVisible = false
++    var conceptsBellLayer: CALayer?
+     var avatarBadgeNode: ChatListBadgeNode?
+     var avatarBadgeBackground: ASImageNode?
+     let onlineNode: PeerOnlineMarkerNode
+@@ -2375,9 +2381,10 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+             var itemTags: [ChatListItemContent.Tag] = []
+             var isCommunity = false
+             var displayCommunityAvatarBadge = false
+-            
++            var conceptsMuteExceptionCount = 0
++
+             var groupHiddenByDefault = false
+-            
++
+             switch item.content {
+                 case .loading:
+                     messages = []
+@@ -2411,6 +2418,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                     let hasUnseenMentionsValue = peerData.hasUnseenMentions
+                     let hasUnseenReactionsValue = peerData.hasUnseenReactions
+                     let hasUnseenPollVotesValue = peerData.hasUnseenPollVotes
++                    conceptsMuteExceptionCount = peerData.conceptsMuteExceptionCount
+                     let draftStateValue = peerData.draftState
+                     let inputActivitiesValue = peerData.inputActivities
+                     let promoInfoValue = peerData.promoInfo
+@@ -3500,6 +3508,15 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                     currentMentionBadgeImage = PresentationResourcesChatList.badgeBackgroundInactive(item.presentationData.theme, diameter: badgeDiameter)
+                     mentionBadgeContent = .text(NSAttributedString(string: mutedUnreadCountText, font: badgeFont, textColor: theme.unreadBadgeInactiveTextColor))
+                 }
++
++                // Локальные концепты: среди непрочитанных есть посты из исключений — счётчик активный, как у чата со звуком.
++                if conceptsMuteExceptionCount > 0 {
++                    currentBadgeBackgroundImage = PresentationResourcesChatList.badgeBackgroundActive(item.presentationData.theme, diameter: badgeDiameter)
++                    currentAvatarBadgeBackgroundImage = PresentationResourcesChatList.badgeBackgroundActive(item.presentationData.theme, diameter: avatarBadgeDiameter)
++                    if unreadCount.count > 0 {
++                        badgeContent = .text(NSAttributedString(string: unreadCountText, font: badgeFont, textColor: theme.unreadBadgeActiveTextColor))
++                    }
++                }
+             }
+ 
+             if !isPeerGroup {
+@@ -3543,6 +3560,9 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                         currentMentionBadgeImage = PresentationResourcesChatList.badgeBackgroundPollVotes(item.presentationData.theme, diameter: badgeDiameter)
+                     }
+                     mentionBadgeContent = .mention
++                } else if conceptsMuteExceptionCount > 0 {
++                    currentMentionBadgeImage = conceptsMuteExceptionBadgeIcon(theme: item.presentationData.theme, diameter: badgeDiameter)
++                    mentionBadgeContent = .mention
+                 } else if item.isPinned, promoInfo == nil, currentBadgeBackgroundImage == nil {
+                     currentPinnedIconImage = PresentationResourcesChatList.badgeBackgroundPinned(item.presentationData.theme, diameter: badgeDiameter)
+                 }
+@@ -4738,6 +4758,60 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
+                         
+                         transition.updateFrame(node: strongSelf.mentionBadgeNode, frame: badgeFrame)
+                         nextBadgeX -= mentionBadgeLayout.width + 6.0
++                        // Демо-ролик: колокольчик исключения появляется со скейлом, прозрачностью и отскоком, затем качается.
++                        let bellNow = conceptsMuteExceptionCount > 0
++                        if bellNow && !strongSelf.conceptsBellVisible && conceptsMuteExceptionsEnabled {
++                            let node = strongSelf.mentionBadgeNode
++                            let appear = CASpringAnimation(keyPath: "transform.scale")
++                            appear.fromValue = 0.1
++                            appear.toValue = 1.0
++                            appear.mass = 1.0
++                            appear.stiffness = 325.0
++                            appear.damping = 12.0
++                            appear.duration = appear.settlingDuration
++                            node.layer.add(appear, forKey: "demoBellAppear")
++                            let fade = CABasicAnimation(keyPath: "opacity")
++                            fade.fromValue = 0.0
++                            fade.toValue = 1.0
++                            fade.duration = 0.18
++                            node.layer.add(fade, forKey: "demoBellFade")
++                            let ring = CAKeyframeAnimation(keyPath: "transform.rotation.z")
++                            ring.values = [0.0, 0.42, -0.36, 0.26, -0.16, 0.08, 0.0]
++                            ring.keyTimes = [0.0, 0.16, 0.34, 0.52, 0.7, 0.86, 1.0]
++                            ring.duration = 0.8
++                            ring.beginTime = CACurrentMediaTime() + 0.28
++                            ring.fillMode = .backwards
++                            node.layer.add(ring, forKey: "demoBellRing")
++                        }
++                        strongSelf.conceptsBellVisible = bellNow
++                        if bellNow {
++                            let bellLayer: CALayer
++                            if let current = strongSelf.conceptsBellLayer {
++                                bellLayer = current
++                            } else {
++                                bellLayer = CALayer()
++                                strongSelf.conceptsBellLayer = bellLayer
++                                strongSelf.mentionBadgeNode.layer.addSublayer(bellLayer)
++                            }
++                            // Колокольчик SF Symbol (как у иконок Apple) в нужном размере и масштабе экрана: всегда чёткий.
++                            let diameter = badgeFrame.size.height
++                            let configuration = UIImage.SymbolConfiguration(pointSize: diameter * 0.92, weight: .medium)
++                            if let symbol = UIImage(systemName: "bell", withConfiguration: configuration) {
++                                let color = item.presentationData.theme.chatList.unreadBadgeActiveBackgroundColor
++                                let format = UIGraphicsImageRendererFormat()
++                                format.scale = UIScreenScale
++                                format.opaque = false
++                                let image = UIGraphicsImageRenderer(size: symbol.size, format: format).image { _ in
++                                    symbol.withTintColor(color, renderingMode: .alwaysOriginal).draw(in: CGRect(origin: CGPoint(), size: symbol.size))
++                                }
++                                bellLayer.contents = image.cgImage
++                                bellLayer.contentsScale = UIScreenScale
++                                bellLayer.frame = CGRect(x: (badgeFrame.size.width - symbol.size.width) / 2.0, y: (badgeFrame.size.height - symbol.size.height) / 2.0, width: symbol.size.width, height: symbol.size.height)
++                            }
++                            bellLayer.isHidden = false
++                        } else {
++                            strongSelf.conceptsBellLayer?.isHidden = true
++                        }
+                         
+                         if item.useCommunityViewLayout {
+                             strongSelf.mentionBadgeNode.layer.rasterizationScale = UIScreenScale
+diff --git a/submodules/ChatListUI/Sources/Node/ChatListNode.swift b/submodules/ChatListUI/Sources/Node/ChatListNode.swift
+index 05e86107..8988a99e 100644
+--- a/submodules/ChatListUI/Sources/Node/ChatListNode.swift
++++ b/submodules/ChatListUI/Sources/Node/ChatListNode.swift
+@@ -497,7 +497,8 @@ private func mappedInsertEntries(context: AccountContext, nodeInteraction: ChatL
+                             },
+                             requiresPremiumForMessaging: peerEntry.requiresPremiumForMessaging,
+                             displayAsTopicList: peerEntry.displayAsTopicList,
+-                            tags: chatListItemTags(location: location, accountPeerId: context.account.peerId, isPremium: isPremium, peer: peer.chatMainPeer, isUnread: combinedReadState?.isUnread ?? false, isMuted: isRemovedFromTotalUnreadCount, isContact: isContact, hasUnseenMentions: hasUnseenMentions, chatListFilters: chatListFilters)
++                            tags: chatListItemTags(location: location, accountPeerId: context.account.peerId, isPremium: isPremium, peer: peer.chatMainPeer, isUnread: combinedReadState?.isUnread ?? false, isMuted: isRemovedFromTotalUnreadCount, isContact: isContact, hasUnseenMentions: hasUnseenMentions, chatListFilters: chatListFilters),
++                            conceptsMuteExceptionCount: peerEntry.conceptsMuteExceptionCount
+                         )),
+                         editing: editing,
+                         hasActiveRevealControls: hasActiveRevealControls,
+@@ -869,7 +870,8 @@ private func mappedUpdateEntries(context: AccountContext, nodeInteraction: ChatL
+                                 },
+                                 requiresPremiumForMessaging: peerEntry.requiresPremiumForMessaging,
+                                 displayAsTopicList: peerEntry.displayAsTopicList,
+-                                tags: chatListItemTags(location: location, accountPeerId: context.account.peerId, isPremium: isPremium, peer: peer.chatMainPeer, isUnread: combinedReadState?.isUnread ?? false, isMuted: isRemovedFromTotalUnreadCount, isContact: isContact, hasUnseenMentions: hasUnseenMentions, chatListFilters: chatListFilters)
++                                tags: chatListItemTags(location: location, accountPeerId: context.account.peerId, isPremium: isPremium, peer: peer.chatMainPeer, isUnread: combinedReadState?.isUnread ?? false, isMuted: isRemovedFromTotalUnreadCount, isContact: isContact, hasUnseenMentions: hasUnseenMentions, chatListFilters: chatListFilters),
++                                conceptsMuteExceptionCount: peerEntry.conceptsMuteExceptionCount
+                             )),
+                             editing: editing,
+                             hasActiveRevealControls: hasActiveRevealControls,
+@@ -2203,16 +2205,18 @@ public final class ChatListNode: ListViewImpl {
+             self.statePromise.get(),
+             contacts,
+             chatListFilters,
+-            accountIsPremium
++            accountIsPremium,
++            conceptsMuteExceptionUnseen(postbox: context.account.postbox)
+         )
+-        |> mapToQueue { (hideArchivedFolderByDefault, displayArchiveIntro, storageInfo, savedMessagesPeer, updateAndFilter, state, contacts, chatListFilters, accountIsPremium) -> Signal<ChatListNodeListViewTransition, NoError> in
++        |> mapToQueue { (hideArchivedFolderByDefault, displayArchiveIntro, storageInfo, savedMessagesPeer, updateAndFilter, state, contacts, chatListFilters, accountIsPremium, conceptsMuteExceptionUnseen) -> Signal<ChatListNodeListViewTransition, NoError> in
+             let (update, filter) = updateAndFilter
+-            
++
+             let previousHideArchivedFolderByDefaultValue = previousHideArchivedFolderByDefault.swap(hideArchivedFolderByDefault)
+-            
++
+             let innerIsMainTab = location == .chatList(groupId: .root) && chatListFilter == nil
+-            
+-            let (rawEntries, isLoading) = chatListNodeEntriesForView(view: update.list, state: state, savedMessagesPeer: savedMessagesPeer, foundPeers: state.foundPeers, hideArchivedFolderByDefault: hideArchivedFolderByDefault, displayArchiveIntro: displayArchiveIntro, mode: mode, chatListLocation: location, contacts: contacts, accountPeerId: accountPeerId, isMainTab: innerIsMainTab)
++
++            let (rawEntriesValue, isLoading) = chatListNodeEntriesForView(view: update.list, state: state, savedMessagesPeer: savedMessagesPeer, foundPeers: state.foundPeers, hideArchivedFolderByDefault: hideArchivedFolderByDefault, displayArchiveIntro: displayArchiveIntro, mode: mode, chatListLocation: location, contacts: contacts, accountPeerId: accountPeerId, isMainTab: innerIsMainTab)
++            let rawEntries = conceptsMuteExceptionApplyCounts(entries: rawEntriesValue, unseen: conceptsMuteExceptionUnseen)
+             var isEmpty = true
+             var entries = rawEntries.filter { entry in
+                 switch entry {
+diff --git a/submodules/ChatListUI/Sources/Node/ChatListNodeEntries.swift b/submodules/ChatListUI/Sources/Node/ChatListNodeEntries.swift
+index 6f7d620f..08d88822 100644
+--- a/submodules/ChatListUI/Sources/Node/ChatListNodeEntries.swift
++++ b/submodules/ChatListUI/Sources/Node/ChatListNodeEntries.swift
+@@ -110,6 +110,8 @@ enum ChatListNodeEntry: Comparable, Identifiable {
+         var hasUnseenMentions: Bool
+         var hasUnseenReactions: Bool
+         var hasUnseenPollVotes: Bool
++        // Локальные концепты: непрочитанные посты из исключений канала без звука.
++        var conceptsMuteExceptionCount: Int = 0
+         var editing: Bool
+         var hasActiveRevealControls: Bool
+         var selected: Bool
+@@ -265,6 +267,9 @@ enum ChatListNodeEntry: Comparable, Identifiable {
+             if lhs.hasUnseenPollVotes != rhs.hasUnseenPollVotes {
+                 return false
+             }
++            if lhs.conceptsMuteExceptionCount != rhs.conceptsMuteExceptionCount {
++                return false
++            }
+             if let lhsInputActivities = lhs.inputActivities, let rhsInputActivities = rhs.inputActivities {
+                 if lhsInputActivities.count != rhsInputActivities.count {
+                     return false
+diff --git a/submodules/ChatListUI/Sources/Node/ConceptsMuteExceptionBadge.swift b/submodules/ChatListUI/Sources/Node/ConceptsMuteExceptionBadge.swift
+new file mode 100644
+index 00000000..d46234e0
+--- /dev/null
++++ b/submodules/ChatListUI/Sources/Node/ConceptsMuteExceptionBadge.swift
+@@ -0,0 +1,69 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AppBundle
++import TelegramPresentationData
++
++// Локальные концепты: посты из исключений канала без звука в списке чатов. Счётчик
++// непрочитанных — активный, как у чата со звуком, рядом — отдельная иконка колокольчика
++// в цвет бейджей, как у упоминаний и реакций (Chat List/MentionBadgeIcon и т. п.).
++
++private let conceptsMuteExceptionImages = Atomic<[String: UIImage]>(value: [:])
++
++func conceptsMuteExceptionBadgeIcon(theme: PresentationTheme, diameter: CGFloat) -> UIImage? {
++    let color = theme.chatList.unreadBadgeActiveBackgroundColor
++    let key = "bell-\(diameter)-\(color.description)"
++    if let image = conceptsMuteExceptionImages.with({ $0[key] }) {
++        return image
++    }
++    // Картинка бейджа прозрачная и нужна только для размера: сам колокольчик рисует векторный слой CAShapeLayer (conceptsBellPath),
++    // чтобы он оставался чётким во время скейла и качания.
++    let size = CGSize(width: diameter, height: diameter)
++    let format = UIGraphicsImageRendererFormat()
++    format.scale = UIScreen.main.scale
++    format.opaque = false
++    let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in }
++    let _ = conceptsMuteExceptionImages.modify { images in
++        var images = images
++        images[key] = image
++        return images
++    }
++    return image
++}
++
++func conceptsMuteExceptionApplyCounts(entries: [ChatListNodeEntry], unseen: [EnginePeer.Id: [EngineMessage.Index]]) -> [ChatListNodeEntry] {
++    if unseen.isEmpty {
++        return entries
++    }
++    return entries.map { entry in
++        guard case var .PeerEntry(peerEntry) = entry, let indices = unseen[peerEntry.peer.peerId] else {
++            return entry
++        }
++        peerEntry.conceptsMuteExceptionCount = conceptsMuteExceptionUnreadIndices(indices, readCounters: peerEntry.readState).count
++        return .PeerEntry(peerEntry)
++    }
++}
++
++
++/// Контур колокольчика в квадрате diameter × diameter (линия lineWidth(diameter) со скруглёнными концами).
++func conceptsBellPath(diameter: CGFloat) -> CGPath {
++    let factor = diameter * 0.9 / 16.0
++    var transform = CGAffineTransform(translationX: (diameter - 16.0 * factor) / 2.0, y: (diameter - 14.6 * factor) / 2.0).scaledBy(x: factor, y: factor)
++    let path = CGMutablePath()
++    path.move(to: CGPoint(x: 1.3, y: 11.2))
++    path.addCurve(to: CGPoint(x: 4.1, y: 5.2), control1: CGPoint(x: 3.1, y: 9.6), control2: CGPoint(x: 3.7, y: 7.4))
++    path.addCurve(to: CGPoint(x: 11.9, y: 5.2), control1: CGPoint(x: 4.5, y: 1.4), control2: CGPoint(x: 11.5, y: 1.4))
++    path.addCurve(to: CGPoint(x: 14.7, y: 11.2), control1: CGPoint(x: 12.3, y: 7.4), control2: CGPoint(x: 12.9, y: 9.6))
++    path.closeSubpath()
++    path.move(to: CGPoint(x: 8.0, y: 1.0))
++    path.addLine(to: CGPoint(x: 8.0, y: 2.0))
++    path.move(to: CGPoint(x: 6.0, y: 12.7))
++    path.addArc(center: CGPoint(x: 8.0, y: 12.7), radius: 2.0, startAngle: CGFloat.pi, endAngle: 0.0, clockwise: true)
++    return path.copy(using: &transform) ?? path
++}
++
++func conceptsBellLineWidth(diameter: CGFloat) -> CGFloat {
++    return 1.55 * diameter * 0.9 / 16.0
++}
+diff --git a/submodules/Display/Source/ConceptsDemoLayout.swift b/submodules/Display/Source/ConceptsDemoLayout.swift
+new file mode 100644
+index 00000000..2428a28c
+--- /dev/null
++++ b/submodules/Display/Source/ConceptsDemoLayout.swift
+@@ -0,0 +1,6 @@
++import Foundation
++import UIKit
++
++/// VoidGram: layout switches the mute-exceptions concept's demo recording used; they stay off.
++public var conceptsDemoWindowHeightReduction: CGFloat = 0.0
++public var conceptsDemoAnchorBottomOnUpdate = false
+diff --git a/submodules/ItemListUI/Sources/ItemListController.swift b/submodules/ItemListUI/Sources/ItemListController.swift
+index e11075f7..4e063fd1 100644
+--- a/submodules/ItemListUI/Sources/ItemListController.swift
++++ b/submodules/ItemListUI/Sources/ItemListController.swift
+@@ -112,6 +112,8 @@ public struct ItemListControllerState {
+ }
+ 
+ open class ItemListController: ViewController, KeyShortcutResponder, PresentableController {
++    private var conceptsScrollDriver: ConceptsScrollDriver?
++    private var conceptsPinDriver: ConceptsPinDriver?
+     var controllerNode: ItemListControllerNode {
+         return (self.displayNode as! ItemListControllerNode)
+     }
+@@ -726,6 +728,33 @@ open class ItemListController: ViewController, KeyShortcutResponder, Presentable
+         return result
+     }
+ 
++    /// Локальные концепты (демо-ролик): прокрутка списка на заданную высоту с изингом пользователя cubic-bezier(0, 0.4, 0, 1)
++    /// (без жеста: нет порога распознавания, инерции и отката).
++    public func conceptsScroll(by delta: CGFloat, duration: Double, completion: @escaping () -> Void = {}) {
++        let scroller = self.controllerNode.listNode.scroller
++        let driver = ConceptsScrollDriver(scroller: scroller, delta: delta, duration: duration, completion: completion)
++        self.conceptsScrollDriver = driver
++        driver.start()
++    }
++    
++    /// Локальные концепты (демо-ролик): удерживает нижнюю ячейку списка на месте, пока соседняя раскрывается (замкнутый цикл по кадрам):
++    /// секция плавно подъезжает вверх, а последняя ячейка не двигается.
++    public func conceptsPinLastItem(duration: Double) {
++        let listNode = self.controllerNode.listNode
++        var last: ListViewItemNode?
++        listNode.forEachItemNode { node in
++            if let node = node as? ListViewItemNode, let index = node.index, index >= (last?.index ?? -1) {
++                last = node
++            }
++        }
++        guard let last else {
++            return
++        }
++        let driver = ConceptsPinDriver(scroller: listNode.scroller, node: last, duration: duration)
++        self.conceptsPinDriver = driver
++        driver.start()
++    }
++    
+     public func ensureItemNodeVisible(_ itemNode: ListViewItemNode, animated: Bool = true, overflow: CGFloat = 0.0, atTop: Bool = false, curve: ListViewAnimationCurve = .Default(duration: 0.25)) {
+         self.controllerNode.listNode.ensureItemNodeVisible(itemNode, animated: animated, overflow: overflow, atTop: atTop, curve: curve)
+     }
+@@ -816,3 +845,89 @@ private final class ItemListTextWithSubtitleTitleView: UIView, NavigationBarTitl
+     func animateLayoutTransition() {
+     }
+ }
++
++
++private final class ConceptsScrollDriver: NSObject {
++    private let scroller: UIScrollView
++    private let startOffset: CGFloat
++    private let delta: CGFloat
++    private let duration: Double
++    private let completion: () -> Void
++    private var begin: CFTimeInterval = 0.0
++    private var link: CADisplayLink?
++    
++    init(scroller: UIScrollView, delta: CGFloat, duration: Double, completion: @escaping () -> Void) {
++        self.scroller = scroller
++        self.startOffset = scroller.contentOffset.y
++        self.delta = delta
++        self.duration = duration
++        self.completion = completion
++        super.init()
++    }
++    
++    func start() {
++        self.begin = CACurrentMediaTime()
++        let link = CADisplayLink(target: self, selector: #selector(self.tick))
++        link.add(to: .main, forMode: .common)
++        self.link = link
++    }
++    
++    // Плавный ease-in-out с мягким стартом: cubic-bezier(0.3, 0, 0.1, 1) (изинг (0, 0.4, 0, 1) на прокрутке слишком резкий на старте)
++    private func ease(_ u: Double) -> Double {
++        var lo = 0.0, hi = 1.0
++        for _ in 0 ..< 30 {
++            let m = (lo + hi) / 2.0
++            let x = 3.0 * (1.0 - m) * (1.0 - m) * m * 0.3 + 3.0 * (1.0 - m) * m * m * 0.1 + m * m * m
++            if x < u { lo = m } else { hi = m }
++        }
++        let m = (lo + hi) / 2.0
++        return 3.0 * (1.0 - m) * (1.0 - m) * m * 0.0 + 3.0 * (1.0 - m) * m * m * 1.0 + m * m * m
++    }
++    
++    @objc private func tick() {
++        let u = min(1.0, (CACurrentMediaTime() - self.begin) / self.duration)
++        let p = CGFloat(self.ease(u))
++        self.scroller.setContentOffset(CGPoint(x: 0.0, y: self.startOffset + self.delta * p), animated: false)
++        if u >= 1.0 {
++            self.link?.invalidate()
++            self.link = nil
++            self.completion()
++        }
++    }
++}
++
++
++private final class ConceptsPinDriver: NSObject {
++    private let scroller: UIScrollView
++    private let node: ListViewItemNode
++    private let duration: Double
++    private let targetMaxY: CGFloat
++    private var begin: CFTimeInterval = 0.0
++    private var link: CADisplayLink?
++    
++    init(scroller: UIScrollView, node: ListViewItemNode, duration: Double) {
++        self.scroller = scroller
++        self.node = node
++        self.duration = duration
++        self.targetMaxY = node.apparentFrame.maxY
++        super.init()
++    }
++    
++    func start() {
++        self.begin = CACurrentMediaTime()
++        let link = CADisplayLink(target: self, selector: #selector(self.tick))
++        link.add(to: .main, forMode: .common)
++        self.link = link
++    }
++    
++    @objc private func tick() {
++        let delta = self.node.apparentFrame.maxY - self.targetMaxY
++        if abs(delta) > 0.01 {
++            self.scroller.setContentOffset(CGPoint(x: 0.0, y: self.scroller.contentOffset.y + delta), animated: false)
++        }
++        if CACurrentMediaTime() - self.begin > self.duration {
++            self.link?.invalidate()
++            self.link = nil
++        }
++    }
++}
+diff --git a/submodules/ItemListUI/Sources/ItemListControllerNode.swift b/submodules/ItemListUI/Sources/ItemListControllerNode.swift
+index a4cd933f..2a54e645 100644
+--- a/submodules/ItemListUI/Sources/ItemListControllerNode.swift
++++ b/submodules/ItemListUI/Sources/ItemListControllerNode.swift
+@@ -707,6 +707,10 @@ open class ItemListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+         var insets = layout.insets(options: [.input])
+         insets.top += navigationBarHeight
+         insets.bottom = max(insets.bottom, additionalInsets.bottom)
++        if conceptsDemoWindowHeightReduction > 0.0 {
++            // Демо-ролик: нижний отступ списка как на других экранах ролика (кнопка в конце списка ближе к нижнему краю).
++            insets.bottom = max(0.0, insets.bottom - 20.0)
++        }
+         
+         let margins = self.listSideMargins(layout: layout)
+         insets.left += margins.left
+diff --git a/submodules/ItemListUI/Sources/Items/ItemListExpandableSwitchItem.swift b/submodules/ItemListUI/Sources/Items/ItemListExpandableSwitchItem.swift
+index 12210c94..3765607e 100644
+--- a/submodules/ItemListUI/Sources/Items/ItemListExpandableSwitchItem.swift
++++ b/submodules/ItemListUI/Sources/Items/ItemListExpandableSwitchItem.swift
+@@ -124,6 +124,7 @@ public class ItemListExpandableSwitchItem: ListViewItem, ItemListItem {
+ private final class SubItemNode: HighlightTrackingButtonNode {
+     private let textNode: ImmediateTextNode
+     private var checkNode: CheckNode?
++    private var wasSelected = false
+     private let separatorNode: ASDisplayNode
+     
+     private var theme: PresentationTheme?
+@@ -151,11 +152,13 @@ private final class SubItemNode: HighlightTrackingButtonNode {
+         action(item)
+     }
+     
+-    func update(presentationData: ItemListPresentationData, item: ItemListExpandableSwitchItem.SubItem, action: @escaping (ItemListExpandableSwitchItem.SubItem) -> Void, size: CGSize, transition: ContainedViewLayoutTransition) {
++    func update(presentationData: ItemListPresentationData, item: ItemListExpandableSwitchItem.SubItem, isLast: Bool = false, action: @escaping (ItemListExpandableSwitchItem.SubItem) -> Void, size: CGSize, transition: ContainedViewLayoutTransition) {
+         let themeUpdated = self.theme !== presentationData.theme
+         
+         self.item = item
+         self.action = action
++        // У последней строки своего разделителя нет: границу группы рисует сама ячейка.
++        self.separatorNode.isHidden = isLast
+         
+         let leftInset: CGFloat = 60.0
+         let separatorRightInset: CGFloat = 16.0
+@@ -181,6 +184,18 @@ private final class SubItemNode: HighlightTrackingButtonNode {
+         checkNode.frame = CGRect(origin: CGPoint(x: floor((leftInset - checkSize.width) / 2.0), y: floor((size.height - checkSize.height) / 2.0)), size: checkSize)
+         
+         checkNode.setSelected(item.isSelected, animated: transition.isAnimated)
++        if item.isSelected && !self.wasSelected && conceptsDemoWindowHeightReduction > 0.0 {
++            // Демо-ролик: галочка появляется со скейлом и мягким отскоком.
++            let bounce = CASpringAnimation(keyPath: "transform.scale")
++            bounce.fromValue = 0.4
++            bounce.toValue = 1.0
++            bounce.mass = 1.0
++            bounce.stiffness = 300.0
++            bounce.damping = 18.0
++            bounce.duration = bounce.settlingDuration
++            checkNode.layer.add(bounce, forKey: "demoCheckBounce")
++        }
++        self.wasSelected = item.isSelected
+         
+         transition.updateFrame(node: self.separatorNode, frame: CGRect(origin: CGPoint(x: leftInset, y: size.height - UIScreenPixel), size: CGSize(width: size.width - leftInset - separatorRightInset, height: UIScreenPixel)))
+         
+@@ -204,6 +219,10 @@ public class ItemListExpandableSwitchItemNode: ListViewItemNode, ItemListItemNod
+     private let titleNode: TextNode
+     private let titleValueNode: TextNode
+     private let expandArrowNode: ASImageNode
++    /// Локальные концепты: центр шеврона в координатах узла (автопилот тапает прямо в него).
++    public var demoExpandArrowCenter: CGPoint {
++        return self.expandArrowNode.position
++    }
+     private var switchNode: ASDisplayNode & ItemListSwitchNodeImpl
+     private let switchGestureNode: ASDisplayNode
+     private var disabledOverlayNode: ASDisplayNode?
+@@ -504,7 +523,8 @@ public class ItemListExpandableSwitchItemNode: ListViewItemNode, ItemListItemNod
+                                     bottomStripeInset = 0.0
+                                     hasBottomCorners = true
+                                     strongSelf.bottomStripeNode.isHidden = hasCorners
+-                                    strongSelf.bottomTopStripeNode.isHidden = false
++                                    // Последняя строка группы: разделитель между ней и вложенными строками нужен только в раскрытом виде.
++                                    strongSelf.bottomTopStripeNode.isHidden = !item.isExpanded
+                             }
+                             
+                             strongSelf.maskNode.image = hasCorners ? PresentationResourcesItemList.cornersImage(item.presentationData.theme, top: hasTopCorners, bottom: hasBottomCorners, glass: item.systemStyle == .glass) : nil
+@@ -584,7 +604,7 @@ public class ItemListExpandableSwitchItemNode: ListViewItemNode, ItemListItemNod
+                     var validIds: [AnyHashable] = []
+                     let subItemSize = CGSize(width: params.width - params.leftInset - params.rightInset, height: item.systemStyle == .glass ? 52.0 : 44.0)
+                     var nextSubItemPosition = CGPoint(x: params.leftInset, y: 0.0)
+-                    for subItem in item.subItems {
++                    for (subItemIndex, subItem) in item.subItems.enumerated() {
+                         validIds.append(subItem.id)
+                         
+                         let subItemNode: SubItemNode
+@@ -598,11 +618,53 @@ public class ItemListExpandableSwitchItemNode: ListViewItemNode, ItemListItemNod
+                             strongSelf.subItemContainer.addSubnode(subItemNode)
+                         }
+                         let subItemFrame = CGRect(origin: nextSubItemPosition, size: subItemSize)
+-                        subItemNode.update(presentationData: item.presentationData, item: subItem, action: item.subAction, size: subItemSize, transition: subItemNodeTransition)
++                        subItemNode.update(presentationData: item.presentationData, item: subItem, isLast: subItemIndex == item.subItems.count - 1, action: item.subAction, size: subItemSize, transition: subItemNodeTransition)
+                         subItemNodeTransition.updateFrame(node: subItemNode, frame: subItemFrame)
+                         
+                         nextSubItemPosition.y += subItemSize.height
+                     }
++                    if conceptsDemoWindowHeightReduction > 0.0, item.isExpanded, currentItem?.isExpanded == false {
++                        // Демо-ролик: при раскрытии ячейки появляются по очереди: скейл + прозрачность + размытие, с отскоком.
++                        let width = params.width - params.leftInset - params.rightInset
++                        for (index, subItem) in item.subItems.enumerated() {
++                            guard let subItemNode = strongSelf.subItemNodes[subItem.id] else {
++                                continue
++                            }
++                            let begin = CACurrentMediaTime() + 0.06 + Double(index) * 0.055
++                            let bounce = CASpringAnimation(keyPath: "transform.scale")
++                            bounce.fromValue = 0.82
++                            bounce.toValue = 1.0
++                            bounce.mass = 1.0
++                            bounce.stiffness = 325.0
++                            bounce.damping = 15.0
++                            bounce.duration = bounce.settlingDuration
++                            bounce.beginTime = begin
++                            bounce.fillMode = .backwards
++                            subItemNode.layer.add(bounce, forKey: "demoBounce")
++                            let fade = CABasicAnimation(keyPath: "opacity")
++                            fade.fromValue = 0.0
++                            fade.toValue = 1.0
++                            fade.duration = 0.26
++                            fade.beginTime = begin
++                            fade.fillMode = .backwards
++                            subItemNode.layer.add(fade, forKey: "demoFade")
++                            let veil = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
++                            veil.isUserInteractionEnabled = false
++                            veil.frame = CGRect(x: 0.0, y: 0.0, width: width, height: item.systemStyle == .glass ? 52.0 : 44.0)
++                            subItemNode.view.addSubview(veil)
++                            let veilFade = CABasicAnimation(keyPath: "opacity")
++                            veilFade.fromValue = 1.0
++                            veilFade.toValue = 0.0
++                            veilFade.duration = 0.34
++                            veilFade.beginTime = begin
++                            veilFade.fillMode = .both
++                            veilFade.isRemovedOnCompletion = false
++                            veil.layer.add(veilFade, forKey: "veil")
++                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06 + Double(index) * 0.055 + 0.4, execute: { [weak veil] in
++                                veil?.removeFromSuperview()
++                            })
++                        }
++                    }
+                     var removeIds: [AnyHashable] = []
+                     for (id, itemNode) in strongSelf.subItemNodes {
+                         if !validIds.contains(id) {
+diff --git a/submodules/TelegramCore/Sources/Concepts/ConceptsFlags.swift b/submodules/TelegramCore/Sources/Concepts/ConceptsFlags.swift
+new file mode 100644
+index 00000000..f7f6fbb8
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/Concepts/ConceptsFlags.swift
+@@ -0,0 +1,7 @@
++import Foundation
++
++/// VoidGram: the offline demo the mute-exceptions concept was recorded with is not part of the
++/// app; its code paths stay off.
++public var conceptsOfflineDemoEnabled = false
++/// VoidGram: exceptions for muted channels ("Unmute Similar") are on for every account.
++public var conceptsMuteExceptionsEnabled = true
+diff --git a/submodules/TelegramCore/Sources/Concepts/ConceptsMuteExceptions.swift b/submodules/TelegramCore/Sources/Concepts/ConceptsMuteExceptions.swift
+new file mode 100644
+index 00000000..e9c7c152
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/Concepts/ConceptsMuteExceptions.swift
+@@ -0,0 +1,261 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++// Локальные концепты: исключения для канала без звука. Канал замьючен, но о выбранных типах
++// постов и о постах с ключевыми словами всё равно приходит уведомление. Настройки хранятся
++// только на устройстве; на сервере такой фильтрации нет.
++
++public enum ConceptsMuteExceptionContent: String, Codable, CaseIterable {
++    case text
++    case photo
++    case video
++    case sticker
++    case gif
++    case audio
++    case voice
++    case roundVideo
++    case file
++    case link
++    case poll
++    case giveaway
++    case location
++    case contact
++    case story
++    case paid
++}
++
++public struct ConceptsMuteException: Codable, Equatable {
++    public var contentTypes: Set<ConceptsMuteExceptionContent>
++    public var keywords: [String]
++
++    public init(contentTypes: Set<ConceptsMuteExceptionContent> = Set(), keywords: [String] = []) {
++        self.contentTypes = contentTypes
++        self.keywords = keywords
++    }
++
++    public var isEmpty: Bool {
++        return self.contentTypes.isEmpty && self.keywords.isEmpty
++    }
++}
++
++public struct ConceptsMuteExceptionsSettings: Codable, Equatable {
++    public var peers: [Int64: ConceptsMuteException]
++
++    public init(peers: [Int64: ConceptsMuteException] = [:]) {
++        self.peers = peers
++    }
++}
++
++private let conceptsMuteExceptionsKey: ValueBoxKey = {
++    let key = ValueBoxKey(length: 4)
++    key.setInt32(0, value: 10001)
++    return key
++}()
++
++// Настройки лежат в PreferencesEntry сырым JSON, без Postbox-кодировщика.
++private func decodeConceptsMuteExceptions(_ entry: PreferencesEntry?) -> ConceptsMuteExceptionsSettings {
++    guard let data = entry?.data, let settings = try? JSONDecoder().decode(ConceptsMuteExceptionsSettings.self, from: data) else {
++        return ConceptsMuteExceptionsSettings()
++    }
++    return settings
++}
++
++public func conceptsMuteException(postbox: Postbox, peerId: PeerId) -> Signal<ConceptsMuteException, NoError> {
++    return postbox.preferencesView(keys: [conceptsMuteExceptionsKey])
++    |> map { view -> ConceptsMuteException in
++        let settings = decodeConceptsMuteExceptions(view.values[conceptsMuteExceptionsKey])
++        return settings.peers[peerId.toInt64()] ?? ConceptsMuteException()
++    }
++    |> distinctUntilChanged
++}
++
++public func conceptsMuteException(transaction: Transaction, peerId: PeerId) -> ConceptsMuteException {
++    return decodeConceptsMuteExceptions(transaction.getPreferencesEntry(key: conceptsMuteExceptionsKey)).peers[peerId.toInt64()] ?? ConceptsMuteException()
++}
++
++public func updateConceptsMuteException(postbox: Postbox, peerId: PeerId, _ f: @escaping (ConceptsMuteException) -> ConceptsMuteException) -> Signal<Void, NoError> {
++    return postbox.transaction { transaction -> Void in
++        transaction.updatePreferencesEntry(key: conceptsMuteExceptionsKey, { entry in
++            var settings = decodeConceptsMuteExceptions(entry)
++            let updated = f(settings.peers[peerId.toInt64()] ?? ConceptsMuteException())
++            if updated.isEmpty {
++                settings.peers.removeValue(forKey: peerId.toInt64())
++            } else {
++                settings.peers[peerId.toInt64()] = updated
++            }
++            guard let json = try? JSONEncoder().encode(settings) else {
++                return entry
++            }
++            return PreferencesEntry(data: json)
++        })
++    }
++}
++
++/// Пост может относиться к нескольким типам сразу: текст со ссылкой — это и «текст», и «ссылка»,
++/// фото с подписью-ссылкой — «фото» и «ссылка». «Текст» — пост без медиа (превью ссылки не считается).
++/// Служебные сообщения (смена фото канала, закрепление) ни к одному типу не относятся.
++public func conceptsMuteExceptionContents(message: Message) -> Set<ConceptsMuteExceptionContent> {
++    var result = Set<ConceptsMuteExceptionContent>()
++    var hasContentMedia = false
++    for media in message.media {
++        if media is TelegramMediaAction {
++            return Set()
++        } else if media is TelegramMediaImage {
++            result.insert(.photo)
++            hasContentMedia = true
++        } else if let file = media as? TelegramMediaFile {
++            hasContentMedia = true
++            if file.isSticker || file.isAnimatedSticker || file.isVideoSticker {
++                result.insert(.sticker)
++            } else if file.isInstantVideo {
++                result.insert(.roundVideo)
++            } else if file.isAnimated {
++                result.insert(.gif)
++            } else if file.isVideo {
++                result.insert(.video)
++            } else if file.isVoice {
++                result.insert(.voice)
++            } else if file.isMusic {
++                result.insert(.audio)
++            } else {
++                result.insert(.file)
++            }
++        } else if media is TelegramMediaPoll {
++            result.insert(.poll)
++            hasContentMedia = true
++        } else if media is TelegramMediaGiveaway || media is TelegramMediaGiveawayResults {
++            result.insert(.giveaway)
++            hasContentMedia = true
++        } else if media is TelegramMediaWebpage {
++            result.insert(.link)
++        } else {
++            hasContentMedia = true
++            if media is TelegramMediaMap {
++                result.insert(.location)
++            } else if media is TelegramMediaContact {
++                result.insert(.contact)
++            } else if media is TelegramMediaStory {
++                result.insert(.story)
++            } else if media is TelegramMediaPaidContent {
++                result.insert(.paid)
++            }
++            // Кубики, игры, счета, чек-листы, трансляции и прочее — не текст и не отдельный тип:
++            // такие посты подходят только под ключевые слова.
++        }
++    }
++    for attribute in message.attributes {
++        if let attribute = attribute as? TextEntitiesMessageAttribute, attribute.entities.contains(where: { entity in
++            switch entity.type {
++            case .Url, .TextUrl:
++                return true
++            default:
++                return false
++            }
++        }) {
++            result.insert(.link)
++            break
++        }
++    }
++    if !hasContentMedia {
++        result.insert(.text)
++    }
++    return result
++}
++
++/// Слова сравниваются целиком и без учёта регистра: «тон» совпадает с «Тон,», но не с «тонна».
++public func conceptsMuteExceptionKeywordMatch(text: String, keywords: [String]) -> String? {
++    let normalize: (String) -> String = { value in
++        let words = value.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
++        return " " + words.joined(separator: " ") + " "
++    }
++    let normalizedText = normalize(text)
++    for keyword in keywords {
++        let normalizedKeyword = normalize(keyword)
++        if normalizedKeyword.count > 2 && normalizedText.contains(normalizedKeyword) {
++            return keyword
++        }
++    }
++    return nil
++}
++
++/// Ключевые слова действуют для любого поста (текст или подпись к медиа), независимо от типов.
++/// Включённый тип пропускает все посты этого типа; `.text` — все текстовые посты без медиа.
++public func conceptsMuteExceptionMatches(exception: ConceptsMuteException, message: Message) -> Bool {
++    if conceptsMuteExceptionKeywordMatch(text: message.text, keywords: exception.keywords) != nil {
++        return true
++    }
++    return !exception.contentTypes.isDisjoint(with: conceptsMuteExceptionContents(message: message))
++}
++
++func conceptsMuteExceptionMatches(transaction: Transaction, message: Message) -> Bool {
++    guard let exception = decodeConceptsMuteExceptions(transaction.getPreferencesEntry(key: conceptsMuteExceptionsKey)).peers[message.id.peerId.toInt64()] else {
++        return false
++    }
++    return conceptsMuteExceptionMatches(exception: exception, message: message)
++}
++
++// Посты, которые прошли через исключение, помечаются как «непросмотренные» — по аналогии
++// с упоминаниями и реакциями. Непросмотренным считается такой пост, пока канал не прочитан
++// дальше него, поэтому отдельная отметка «просмотрено» не нужна.
++
++private struct ConceptsMuteExceptionUnseenEntry: Codable, Equatable {
++    var id: Int32
++    var timestamp: Int32
++}
++
++private let conceptsMuteExceptionUnseenKey: ValueBoxKey = {
++    let key = ValueBoxKey(length: 4)
++    key.setInt32(0, value: 10002)
++    return key
++}()
++
++private func decodeConceptsMuteExceptionUnseen(_ entry: PreferencesEntry?) -> [Int64: [ConceptsMuteExceptionUnseenEntry]] {
++    guard let data = entry?.data, let value = try? JSONDecoder().decode([Int64: [ConceptsMuteExceptionUnseenEntry]].self, from: data) else {
++        return [:]
++    }
++    return value
++}
++
++func conceptsMuteExceptionMarkUnseen(transaction: Transaction, message: Message) {
++    let peerId = message.id.peerId
++    let readState = transaction.getCombinedPeerReadState(peerId)
++    transaction.updatePreferencesEntry(key: conceptsMuteExceptionUnseenKey, { entry in
++        var all = decodeConceptsMuteExceptionUnseen(entry)
++        var list = all[peerId.toInt64()] ?? []
++        if list.contains(where: { $0.id == message.id.id }) {
++            return entry
++        }
++        list.removeAll(where: { item in
++            return readState?.isIncomingMessageIndexRead(MessageIndex(id: MessageId(peerId: peerId, namespace: message.id.namespace, id: item.id), timestamp: item.timestamp)) ?? false
++        })
++        list.append(ConceptsMuteExceptionUnseenEntry(id: message.id.id, timestamp: message.timestamp))
++        all[peerId.toInt64()] = list
++        guard let json = try? JSONEncoder().encode(all) else {
++            return entry
++        }
++        return PreferencesEntry(data: json)
++    })
++}
++
++/// Все помеченные посты по каналам. Прочитанные отфильтровывает потребитель по состоянию прочтения.
++public func conceptsMuteExceptionUnseen(postbox: Postbox) -> Signal<[PeerId: [MessageIndex]], NoError> {
++    return postbox.preferencesView(keys: [conceptsMuteExceptionUnseenKey])
++    |> map { view -> [PeerId: [MessageIndex]] in
++        var result: [PeerId: [MessageIndex]] = [:]
++        for (peerIdValue, list) in decodeConceptsMuteExceptionUnseen(view.values[conceptsMuteExceptionUnseenKey]) {
++            let peerId = PeerId(peerIdValue)
++            result[peerId] = list.map { MessageIndex(id: MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: $0.id), timestamp: $0.timestamp) }
++        }
++        return result
++    }
++    |> distinctUntilChanged
++}
++
++/// Непрочитанные посты из исключений одного канала, по возрастанию.
++public func conceptsMuteExceptionUnreadIndices(_ indices: [MessageIndex], readCounters: EnginePeerReadCounters?) -> [MessageIndex] {
++    guard let readCounters, readCounters.isUnread else {
++        return []
++    }
++    return indices.filter { !readCounters.isIncomingMessageIndexRead($0) }.sorted()
++}
+diff --git a/submodules/TelegramCore/Sources/State/AccountStateManager.swift b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
+index 3439bd7b..b81f5216 100644
+--- a/submodules/TelegramCore/Sources/State/AccountStateManager.swift
++++ b/submodules/TelegramCore/Sources/State/AccountStateManager.swift
+@@ -1920,6 +1920,23 @@ public final class AccountStateManager {
+         func addStarRefBotConnectionEvent(event: StarRefBotConnectionEvent) {
+             self.starRefBotConnectionEventsPipe.putNext(event)
+         }
++        
++        func conceptsDeliverIncomingMessages(ids: [MessageId]) {
++            let signal = self.postbox.transaction { transaction -> [([Message], PeerGroupId, Bool, MessageHistoryThreadData?)] in
++                var messageList: [([Message], PeerGroupId, Bool, MessageHistoryThreadData?)] = []
++                for id in ids {
++                    let (messages, notify, _, _, threadData) = messagesForNotification(transaction: transaction, id: id, alwaysReturnMessage: false)
++                    if !messages.isEmpty {
++                        messageList.append((messages, .root, notify, threadData))
++                    }
++                }
++                return messageList
++            }
++            let _ = (signal
++            |> deliverOn(self.queue)).start(next: { [weak self] messages in
++                self?.notificationMessagesPipe.putNext(messages)
++            })
++        }
+     }
+     
+     private let impl: QueueLocalObject<Impl>
+@@ -2391,6 +2408,14 @@ public final class AccountStateManager {
+             impl.addStarRefBotConnectionEvent(event: event)
+         }
+     }
++    
++    /// Локальные концепты: посты, записанные в Postbox офлайн-демо, проходят тот же путь
++    /// уведомлений, что и пришедшие с сервера.
++    public func conceptsDeliverIncomingMessages(ids: [MessageId]) {
++        self.impl.with { impl in
++            impl.conceptsDeliverIncomingMessages(ids: ids)
++        }
++    }
+ }
+ 
+ func resolveNotificationSettings(list: [TelegramPeerNotificationSettings], defaultSettings: MessageNotificationSettings) -> (sound: PeerMessageSound, notify: Bool, displayContents: Bool) {
+@@ -2517,6 +2542,11 @@ public func messagesForNotification(transaction: Transaction, id: MessageId, alw
+     var sound = resolvedSound
+     if !resolvedNotify {
+         notify = false
++        // Локальные концепты: исключение для канала без звука возвращает уведомление.
++        if conceptsMuteExceptionsEnabled && conceptsMuteExceptionMatches(transaction: transaction, message: message) {
++            notify = true
++            conceptsMuteExceptionMarkUnseen(transaction: transaction, message: message)
++        }
+     }
+     if !resolvedDisplayContents {
+         displayContents = false
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
+index 23135310..451cae7b 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
+@@ -61,6 +61,7 @@ swift_library(
+         "//submodules/ItemListPeerActionItem",
+         "//submodules/ItemListPeerItem",
+         "//submodules/ItemListUI",
++        "//submodules/ChatListFilterSettingsHeaderItem",
+         "//submodules/LegacyComponents",
+         "//submodules/LegacyMediaPickerUI",
+         "//submodules/LegacyUI",
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionSuggestions.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionSuggestions.swift
+new file mode 100644
+index 00000000..79552498
+--- /dev/null
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionSuggestions.swift
+@@ -0,0 +1,49 @@
++import Foundation
++import TelegramCore
++
++// Локальные концепты: подсказки слов из поста для экрана исключений. Редактор один
++// (PeerInfoMuteExceptionsScreen.swift); при открытии из меню поста слова этого поста показываются
++// в ячейке ключевых слов серыми контурными фишками — нажатие добавляет слово.
++
++private let stopWords: Set<String> = [
++    "the", "and", "for", "with", "that", "this", "are", "was", "has", "have", "from", "into", "will", "after",
++    "about", "over", "than", "then", "what", "when", "where", "which", "their", "them", "they", "you", "your",
++    "our", "its", "not", "but", "can", "new", "all", "out", "one", "now", "just", "more", "also", "been",
++    "что", "это", "как", "для", "при", "его", "она", "они", "все", "так", "или", "уже", "был", "была", "были",
++    "будет", "если", "только", "также", "после", "этом", "этого", "между", "более", "около", "про", "над", "под"
++]
++
++/// Слова из текста поста, которые стоит предложить: сначала тикеры (ЗАГЛАВНЫМИ) и имена с большой
++/// буквы, затем остальные; без служебных слов и повторов.
++func muteExceptionSuggestedWords(from text: String, limit: Int = 8) -> [String] {
++    var seen = Set<String>()
++    var candidates: [(word: String, score: Int, position: Int)] = []
++    let parts = text.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
++    for (position, part) in parts.enumerated() {
++        let key = part.lowercased()
++        if part.count < 2 || part.count > 24 || stopWords.contains(key) || seen.contains(key) || Int(part) != nil {
++            continue
++        }
++        seen.insert(key)
++        let isUpper = part.count >= 2 && part == part.uppercased() && part != part.lowercased()
++        let isCapitalized = part.first.map { String($0) == String($0).uppercased() && String($0) != String($0).lowercased() } ?? false
++        let score: Int
++        if isUpper {
++            score = 3
++        } else if isCapitalized && position != 0 {
++            score = 2
++        } else if part.count >= 4 {
++            score = 1
++        } else {
++            continue
++        }
++        candidates.append((part, score, position))
++    }
++    candidates.sort { lhs, rhs in
++        if lhs.score != rhs.score {
++            return lhs.score > rhs.score
++        }
++        return lhs.position < rhs.position
++    }
++    return Array(candidates.prefix(limit).map { $0.word })
++}
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsFooterItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsFooterItem.swift
+new file mode 100644
+index 00000000..0e05cb18
+--- /dev/null
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsFooterItem.swift
+@@ -0,0 +1,105 @@
++import Foundation
++import UIKit
++import AsyncDisplayKit
++import Display
++import TelegramPresentationData
++import ItemListUI
++
++// Локальные концепты: кнопка «Remove All Exceptions» закреплена внизу экрана исключений с отступом снизу
++// и не уезжает со скроллом списка.
++
++final class PeerInfoMuteExceptionsFooterItem: ItemListControllerFooterItem {
++    let theme: PresentationTheme
++    let title: String
++    let action: () -> Void
++    
++    init(theme: PresentationTheme, title: String, action: @escaping () -> Void) {
++        self.theme = theme
++        self.title = title
++        self.action = action
++    }
++    
++    func isEqual(to: ItemListControllerFooterItem) -> Bool {
++        if let item = to as? PeerInfoMuteExceptionsFooterItem {
++            return self.theme === item.theme && self.title == item.title
++        } else {
++            return false
++        }
++    }
++    
++    func node(current: ItemListControllerFooterItemNode?) -> ItemListControllerFooterItemNode {
++        if let current = current as? PeerInfoMuteExceptionsFooterItemNode {
++            current.item = self
++            return current
++        } else {
++            return PeerInfoMuteExceptionsFooterItemNode(item: self)
++        }
++    }
++}
++
++final class PeerInfoMuteExceptionsFooterItemNode: ItemListControllerFooterItemNode {
++    private let backgroundNode = ASDisplayNode()
++    private let titleNode = ImmediateTextNode()
++    private let buttonNode = HighlightableButtonNode()
++    private var validLayout: ContainerViewLayout?
++    
++    var item: PeerInfoMuteExceptionsFooterItem {
++        didSet {
++            self.updateItem()
++            if let layout = self.validLayout {
++                let _ = self.updateLayout(layout: layout, transition: .immediate)
++            }
++        }
++    }
++    
++    init(item: PeerInfoMuteExceptionsFooterItem) {
++        self.item = item
++        super.init()
++        self.backgroundNode.cornerRadius = 26.0
++        self.backgroundNode.clipsToBounds = true
++        self.addSubnode(self.backgroundNode)
++        self.addSubnode(self.titleNode)
++        self.addSubnode(self.buttonNode)
++        self.buttonNode.addTarget(self, action: #selector(self.pressed), forControlEvents: .touchUpInside)
++        self.buttonNode.highligthedChanged = { [weak self] highlighted in
++            guard let self else {
++                return
++            }
++            self.backgroundNode.alpha = highlighted ? 0.6 : 1.0
++        }
++        self.updateItem()
++    }
++    
++    @objc private func pressed() {
++        self.item.action()
++    }
++    
++    private func updateItem() {
++        self.backgroundNode.backgroundColor = self.item.theme.list.itemBlocksBackgroundColor
++        self.titleNode.attributedText = NSAttributedString(string: self.item.title, font: Font.regular(17.0), textColor: self.item.theme.list.itemDestructiveColor)
++    }
++    
++    override func updateLayout(layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) -> CGFloat {
++        self.validLayout = layout
++        let sideInset: CGFloat = 16.0 + layout.safeInsets.left
++        let buttonHeight: CGFloat = 52.0
++        let topInset: CGFloat = 8.0
++        let bottomInset: CGFloat = max(layout.intrinsicInsets.bottom, 12.0) + 6.0
++        let width = layout.size.width - sideInset * 2.0
++        let titleSize = self.titleNode.updateLayout(CGSize(width: width - 24.0, height: buttonHeight))
++        let panelHeight = topInset + buttonHeight + bottomInset
++        let buttonFrame = CGRect(x: sideInset, y: layout.size.height - panelHeight + topInset, width: width, height: buttonHeight)
++        transition.updateFrame(node: self.backgroundNode, frame: buttonFrame)
++        transition.updateFrame(node: self.buttonNode, frame: buttonFrame)
++        self.titleNode.frame = CGRect(origin: CGPoint(x: buttonFrame.minX + floor((buttonFrame.width - titleSize.width) / 2.0), y: buttonFrame.minY + floor((buttonFrame.height - titleSize.height) / 2.0)), size: titleSize)
++        return panelHeight
++    }
++    
++    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
++        if self.backgroundNode.frame.contains(point) {
++            return true
++        } else {
++            return false
++        }
++    }
++}
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsKeywordsItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsKeywordsItem.swift
+new file mode 100644
+index 00000000..d0e813ec
+--- /dev/null
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsKeywordsItem.swift
+@@ -0,0 +1,630 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++import SwiftSignalKit
++import TelegramPresentationData
++import ItemListUI
++
++/// Демо-ролик: плейсхолдер поля скрыт, пока идёт набор слов.
++private var conceptsDemoHidePlaceholder = false
++
++// Локальные концепты: ячейка ключевых слов на экране исключений. Слова — фишки в одном поле,
++// как получатели в поле «Кому»: ввод и Return (или запятая) добавляют слово, курсор остаётся
++// в поле. Нажатие на фишку выделяет её, повторное нажатие или Backspace удаляют.
++
++/// Плавный сдвиг узла на новое место пружиной (класс «вставка/сдвиг» из роликов Telegram: stiffness 325, damping 30).
++private func demoSpringMove(_ node: ASDisplayNode, from oldFrame: CGRect, to newFrame: CGRect) {
++    if oldFrame.origin == newFrame.origin || oldFrame.isEmpty {
++        return
++    }
++    let animation = CASpringAnimation(keyPath: "position")
++    animation.fromValue = NSValue(cgPoint: CGPoint(x: oldFrame.midX, y: oldFrame.midY))
++    animation.toValue = NSValue(cgPoint: CGPoint(x: newFrame.midX, y: newFrame.midY))
++    animation.mass = 1.0
++    animation.stiffness = 325.0
++    animation.damping = 30.0
++    animation.duration = animation.settlingDuration
++    node.layer.add(animation, forKey: "demoMove")
++}
++
++private let chipHeight: CGFloat = 28.0
++private let chipSpacing: CGFloat = 6.0
++private let chipHorizontalPadding: CGFloat = 10.0
++private let minimumInputWidth: CGFloat = 90.0
++
++final class PeerInfoMuteExceptionsKeywordsItem: ListViewItem, ItemListItem {
++    let presentationData: ItemListPresentationData
++    let keywords: [String]
++    // Слова из поста, с которого открыт редактор: серые контурные фишки под полем ввода, нажатие добавляет слово.
++    let suggestions: [String]
++    let placeholder: String
++    let isInputEnabled: Bool
++    let sectionId: ItemListSectionId
++    let add: (String) -> Bool
++    let remove: (String) -> Void
++    let addSuggestion: (String) -> Void
++
++    init(presentationData: ItemListPresentationData, keywords: [String], suggestions: [String], placeholder: String, isInputEnabled: Bool, sectionId: ItemListSectionId, add: @escaping (String) -> Bool, remove: @escaping (String) -> Void, addSuggestion: @escaping (String) -> Void) {
++        self.presentationData = presentationData
++        self.suggestions = suggestions
++        self.addSuggestion = addSuggestion
++        self.keywords = keywords
++        self.placeholder = placeholder
++        self.isInputEnabled = isInputEnabled
++        self.sectionId = sectionId
++        self.add = add
++        self.remove = remove
++    }
++
++    func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
++        async {
++            let node = PeerInfoMuteExceptionsKeywordsItemNode()
++            let (layout, apply) = node.asyncLayout()(self, params, itemListNeighbors(item: self, topFacet: neighbors.previous?.base(ItemListNeighborFacet.self), bottomFacet: neighbors.next?.base(ItemListNeighborFacet.self)))
++
++            node.contentSize = layout.contentSize
++            node.insets = layout.insets
++
++            Queue.mainQueue().async {
++                completion(node, {
++                    return (nil, { _ in apply() })
++                })
++            }
++        }
++    }
++
++    func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, neighbors: ListViewItemNeighbors, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {
++        Queue.mainQueue().async {
++            if let nodeValue = node() as? PeerInfoMuteExceptionsKeywordsItemNode {
++                let makeLayout = nodeValue.asyncLayout()
++                async {
++                    let (layout, apply) = makeLayout(self, params, itemListNeighbors(item: self, topFacet: neighbors.previous?.base(ItemListNeighborFacet.self), bottomFacet: neighbors.next?.base(ItemListNeighborFacet.self)))
++                    Queue.mainQueue().async {
++                        completion(layout, { _ in
++                            apply()
++                        })
++                    }
++                }
++            }
++        }
++    }
++}
++
++private final class KeywordChipNode: ASDisplayNode {
++    let keyword: String
++    private let backgroundNode = ASImageNode()
++    private let selectedBackgroundNode = ASImageNode()
++    private let titleNode = ImmediateTextNode()
++    private let selectedTitleNode = ImmediateTextNode()
++    private(set) var isSelected = false
++
++    init(keyword: String) {
++        self.keyword = keyword
++        super.init()
++
++        self.backgroundNode.displaysAsynchronously = false
++        self.selectedBackgroundNode.displaysAsynchronously = false
++        self.selectedBackgroundNode.alpha = 0.0
++        self.selectedTitleNode.alpha = 0.0
++        self.addSubnode(self.backgroundNode)
++        self.addSubnode(self.selectedBackgroundNode)
++        self.addSubnode(self.titleNode)
++        self.addSubnode(self.selectedTitleNode)
++    }
++
++    func update(theme: PresentationTheme, font: UIFont, size: CGSize) {
++        self.backgroundNode.image = generateStretchableFilledCircleImage(diameter: chipHeight, color: theme.list.itemAccentColor.withAlphaComponent(0.12))
++        self.selectedBackgroundNode.image = generateStretchableFilledCircleImage(diameter: chipHeight, color: theme.list.itemAccentColor)
++        self.titleNode.attributedText = NSAttributedString(string: self.keyword, font: font, textColor: theme.list.itemAccentColor)
++        self.selectedTitleNode.attributedText = NSAttributedString(string: self.keyword, font: font, textColor: theme.list.itemCheckColors.foregroundColor)
++
++        let bounds = CGRect(origin: CGPoint(), size: size)
++        self.backgroundNode.frame = bounds
++        self.selectedBackgroundNode.frame = bounds
++        for titleNode in [self.titleNode, self.selectedTitleNode] {
++            let titleSize = titleNode.updateLayout(CGSize(width: size.width - chipHorizontalPadding * 2.0, height: size.height))
++            titleNode.frame = CGRect(origin: CGPoint(x: floor((size.width - titleSize.width) / 2.0), y: floor((size.height - titleSize.height) / 2.0)), size: titleSize)
++        }
++    }
++
++    func setSelected(_ isSelected: Bool, animated: Bool) {
++        guard self.isSelected != isSelected else {
++            return
++        }
++        self.isSelected = isSelected
++        let transition: ContainedViewLayoutTransition = animated ? .animated(duration: 0.2, curve: .easeInOut) : .immediate
++        transition.updateAlpha(node: self.selectedBackgroundNode, alpha: isSelected ? 1.0 : 0.0)
++        transition.updateAlpha(node: self.selectedTitleNode, alpha: isSelected ? 1.0 : 0.0)
++        transition.updateAlpha(node: self.titleNode, alpha: isSelected ? 0.0 : 1.0)
++    }
++}
++
++/// Подсказка слова из поста: серый текст и серая контурная обводка.
++private final class OutlineChipNode: ASDisplayNode {
++    let word: String
++    private let borderLayer = CAShapeLayer()
++    private let titleNode = ImmediateTextNode()
++    
++    init(word: String) {
++        self.word = word
++        super.init()
++        self.borderLayer.fillColor = nil
++        self.borderLayer.lineWidth = 1.0
++        self.borderLayer.lineDashPattern = [3.5, 2.5]
++        self.borderLayer.lineCap = .round
++        self.layer.addSublayer(self.borderLayer)
++        self.addSubnode(self.titleNode)
++    }
++    
++    func update(theme: PresentationTheme, font: UIFont, size: CGSize) {
++        self.borderLayer.strokeColor = theme.list.itemSecondaryTextColor.withAlphaComponent(0.6).cgColor
++        let borderRect = CGRect(origin: CGPoint(), size: size).insetBy(dx: 0.5, dy: 0.5)
++        self.borderLayer.frame = CGRect(origin: CGPoint(), size: size)
++        self.borderLayer.path = UIBezierPath(roundedRect: borderRect, cornerRadius: borderRect.height / 2.0).cgPath
++        self.titleNode.attributedText = NSAttributedString(string: self.word, font: font, textColor: theme.list.itemSecondaryTextColor)
++        let titleSize = self.titleNode.updateLayout(CGSize(width: size.width - chipHorizontalPadding * 2.0, height: size.height))
++        self.titleNode.frame = CGRect(origin: CGPoint(x: floor((size.width - titleSize.width) / 2.0), y: floor((size.height - titleSize.height) / 2.0)), size: titleSize)
++    }
++}
++
++final class PeerInfoMuteExceptionsKeywordsItemNode: ListViewItemNode, UITextFieldDelegate, ItemListItemNode {
++    private let backgroundNode: ASDisplayNode
++    private let topStripeNode: ASDisplayNode
++    private let bottomStripeNode: ASDisplayNode
++    private let maskNode: ASImageNode
++    private let textNode: TextFieldNode
++    private var chipNodes: [KeywordChipNode] = []
++    private var suggestionNodes: [OutlineChipNode] = []
++    private var demoTypingCount = 0
++    private var demoChipOrigin: CGPoint?
++
++    private var item: PeerInfoMuteExceptionsKeywordsItem?
++
++    var tag: ItemListItemTag? {
++        return nil
++    }
++
++    init() {
++        self.backgroundNode = ASDisplayNode()
++        self.backgroundNode.isLayerBacked = true
++        self.topStripeNode = ASDisplayNode()
++        self.topStripeNode.isLayerBacked = true
++        self.bottomStripeNode = ASDisplayNode()
++        self.bottomStripeNode.isLayerBacked = true
++        self.maskNode = ASImageNode()
++        self.textNode = TextFieldNode()
++
++        super.init(layerBacked: false)
++
++        self.addSubnode(self.textNode)
++        // Демо-ролик: «печатает» слово без клавиатуры, символы по очереди вырастают из левого нижнего угла.
++        NotificationCenter.default.addObserver(self, selector: #selector(self.demoTypeWord(_:)), name: Notification.Name("ConceptsDemoTypeWord"), object: nil)
++    }
++
++    deinit {
++        NotificationCenter.default.removeObserver(self)
++    }
++
++    @objc private func demoTypeWord(_ notification: Notification) {
++        guard let word = notification.userInfo?["word"] as? String, let item = self.item, !self.textNode.isHidden else {
++            return
++        }
++        let textField = self.textNode.textField
++        let font = textField.font ?? UIFont.systemFont(ofSize: 17.0)
++        let color = item.presentationData.theme.list.itemPrimaryTextColor
++        let origin = self.textNode.frame.origin
++        let height = self.textNode.frame.height
++        let container = UIView(frame: CGRect(origin: origin, size: CGSize(width: self.textNode.frame.width, height: height)))
++        container.isUserInteractionEnabled = false
++        self.view.addSubview(container)
++        textField.isHidden = true
++        self.demoTypingCount += 1
++        // Плейсхолдер пропадает с началом набора и возвращается только после последнего слова.
++        conceptsDemoHidePlaceholder = true
++        let isLast = (notification.userInfo?["last"] as? Bool) ?? false
++        // Точные позиции символов по раскладке текста (с кернингом), чтобы набор не «ехал» по трекингу.
++        let storage = NSTextStorage(string: word, attributes: [.font: font])
++        let layoutManager = NSLayoutManager()
++        let textContainer = NSTextContainer(size: CGSize(width: 10000.0, height: 1000.0))
++        textContainer.lineFragmentPadding = 0.0
++        layoutManager.addTextContainer(textContainer)
++        storage.addLayoutManager(layoutManager)
++        layoutManager.ensureLayout(for: textContainer)
++        for (index, character) in word.enumerated() {
++            let label = UILabel()
++            label.font = font
++            label.textColor = color
++            label.text = String(character)
++            label.sizeToFit()
++            let x = layoutManager.location(forGlyphAt: index).x
++            label.layer.anchorPoint = CGPoint(x: 0.5, y: 1.0)
++            label.frame = CGRect(x: x, y: floor((height - label.bounds.height) / 2.0), width: label.bounds.width, height: label.bounds.height)
++            container.addSubview(label)
++            let delay = 0.07 * Double(index)
++            label.alpha = 1.0
++            label.transform = .identity
++            let bounce = CASpringAnimation(keyPath: "transform.scale")
++            bounce.fromValue = 0.55
++            bounce.toValue = 1.0
++            bounce.mass = 1.0
++            bounce.stiffness = 420.0
++            // Заметный лёгкий перелёт (~10 %) у каждой буквы.
++            bounce.damping = 18.0
++            bounce.duration = bounce.settlingDuration
++            bounce.beginTime = CACurrentMediaTime() + delay
++            bounce.fillMode = .backwards
++            label.layer.add(bounce, forKey: "charBounce")
++            let appear = CABasicAnimation(keyPath: "opacity")
++            appear.fromValue = 0.0
++            appear.toValue = 1.0
++            appear.duration = 0.2
++            appear.beginTime = CACurrentMediaTime() + delay
++            appear.fillMode = .backwards
++            label.layer.add(appear, forKey: "charFade")
++        }
++        let total = 0.07 * Double(word.count) + 0.3
++        // Слово превращается в чипс: набранный текст уходит (скейл вниз + прозрачность), а чипс появляется из скейла с отскоком.
++        DispatchQueue.main.asyncAfter(deadline: .now() + total, execute: { [weak self, weak container] in
++            if let container, let node = self {
++                // Чипс вырастет из места, где только что стоял набранный текст.
++                let textWidth = (word as NSString).size(withAttributes: [.font: container.subviews.first.flatMap { ($0 as? UILabel)?.font } ?? UIFont.systemFont(ofSize: 17.0)]).width
++                node.demoChipOrigin = CGPoint(x: container.frame.minX + textWidth / 2.0, y: container.frame.midY)
++            }
++            if isLast {
++                conceptsDemoHidePlaceholder = false
++            }
++            if let item = self?.item {
++                _ = item.add(word)
++            }
++            if let container {
++                UIView.animate(withDuration: 0.12, delay: 0.0, options: [.curveEaseIn], animations: {
++                    container.alpha = 0.0
++                }, completion: { [weak self] _ in
++                    container.removeFromSuperview()
++                    if let self {
++                        self.demoTypingCount -= 1
++                        if self.demoTypingCount <= 0 {
++                            self.textNode.textField.isHidden = false
++                        }
++                    }
++                })
++            } else if let self {
++                self.demoTypingCount -= 1
++                if self.demoTypingCount <= 0 {
++                    self.textNode.textField.isHidden = false
++                }
++            }
++        })
++    }
++
++    override func didLoad() {
++        super.didLoad()
++
++        self.textNode.textField.delegate = self
++        self.textNode.textField.autocorrectionType = .no
++        self.textNode.textField.autocapitalizationType = .none
++        self.textNode.textField.returnKeyType = .done
++        self.textNode.textField.addTarget(self, action: #selector(self.textFieldChanged), for: .editingChanged)
++        self.textNode.textField.didDeleteBackwardWhileEmpty = { [weak self] in
++            self?.deleteBackwardWhileEmpty()
++        }
++        self.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:))))
++    }
++
++    func asyncLayout() -> (_ item: PeerInfoMuteExceptionsKeywordsItem, _ params: ListViewItemLayoutParams, _ neighbors: ItemListNeighbors) -> (ListViewItemNodeLayout, () -> Void) {
++        let currentItem = self.item
++
++        return { [weak self] item, params, neighbors in
++            let themeUpdated = currentItem?.presentationData.theme !== item.presentationData.theme
++            let font = Font.regular(item.presentationData.fontSize.itemListBaseFontSize)
++            let chipFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 15.0 / 17.0))
++
++            let leftInset: CGFloat = 16.0 + params.leftInset
++            let rightInset: CGFloat = 16.0 + params.rightInset
++            let verticalInset: CGFloat = 10.0
++            let availableWidth = params.width - leftInset - rightInset
++
++            // Фишки раскладываются построчно; поле ввода встаёт после последней или на новую строку.
++            var chipFrames: [CGRect] = []
++            var offset = CGPoint(x: leftInset, y: verticalInset)
++            for keyword in item.keywords {
++                let textWidth = ceil((keyword as NSString).size(withAttributes: [.font: chipFont]).width)
++                let width = min(availableWidth, textWidth + chipHorizontalPadding * 2.0)
++                if offset.x > leftInset && offset.x + width > params.width - rightInset {
++                    offset.x = leftInset
++                    offset.y += chipHeight + chipSpacing
++                }
++                chipFrames.append(CGRect(origin: offset, size: CGSize(width: width, height: chipHeight)))
++                offset.x += width + chipSpacing
++            }
++
++            var inputFrame: CGRect?
++            if item.isInputEnabled {
++                if offset.x > leftInset && params.width - rightInset - offset.x < minimumInputWidth {
++                    offset.x = leftInset
++                    offset.y += chipHeight + chipSpacing
++                }
++                inputFrame = CGRect(origin: CGPoint(x: offset.x + (offset.x > leftInset ? 2.0 : 0.0), y: offset.y), size: CGSize(width: params.width - rightInset - offset.x, height: chipHeight))
++            }
++            // Подсказки идут ниже поля ввода, отдельными строками.
++            var suggestionFrames: [CGRect] = []
++            let suggestionWords = item.isInputEnabled ? item.suggestions : []
++            if !suggestionWords.isEmpty {
++                offset.x = leftInset
++                offset.y += chipHeight + chipSpacing
++                for word in suggestionWords {
++                    let textWidth = ceil((word as NSString).size(withAttributes: [.font: chipFont]).width)
++                    let width = min(availableWidth, textWidth + chipHorizontalPadding * 2.0)
++                    if offset.x > leftInset && offset.x + width > params.width - rightInset {
++                        offset.x = leftInset
++                        offset.y += chipHeight + chipSpacing
++                    }
++                    suggestionFrames.append(CGRect(origin: offset, size: CGSize(width: width, height: chipHeight)))
++                    offset.x += width + chipSpacing
++                }
++            }
++            let contentHeight = max(44.0, offset.y + chipHeight + verticalInset)
++
++            let contentSize = CGSize(width: params.width, height: contentHeight)
++            let insets = itemListNeighborsGroupedInsets(neighbors, params)
++            let layout = ListViewItemNodeLayout(contentSize: contentSize, insets: insets)
++            let separatorHeight = UIScreenPixel
++
++            return (layout, { [weak self] in
++                guard let strongSelf = self else {
++                    return
++                }
++                let theme = item.presentationData.theme
++                strongSelf.item = item
++
++                if themeUpdated {
++                    strongSelf.topStripeNode.backgroundColor = theme.list.itemBlocksSeparatorColor
++                    strongSelf.bottomStripeNode.backgroundColor = theme.list.itemBlocksSeparatorColor
++                    strongSelf.backgroundNode.backgroundColor = theme.list.itemBlocksBackgroundColor
++                    strongSelf.textNode.textField.textColor = theme.list.itemPrimaryTextColor
++                    strongSelf.textNode.textField.keyboardAppearance = theme.rootController.keyboardColor.keyboardAppearance
++                    strongSelf.textNode.textField.tintColor = theme.list.itemAccentColor
++                }
++                strongSelf.textNode.textField.font = font
++                strongSelf.textNode.textField.typingAttributes = [NSAttributedString.Key.font: font]
++                strongSelf.textNode.textField.attributedPlaceholder = NSAttributedString(string: conceptsDemoHidePlaceholder ? "" : item.placeholder, font: font, textColor: theme.list.itemPlaceholderTextColor)
++
++                // Фишки сопоставляются по слову: новые появляются с анимацией, удалённые исчезают.
++                var updatedChipNodes: [KeywordChipNode] = []
++                for (index, keyword) in item.keywords.enumerated() {
++                    let chipNode: KeywordChipNode
++                    var animateIn = false
++                    if let existing = strongSelf.chipNodes.first(where: { $0.keyword == keyword }) {
++                        chipNode = existing
++                    } else {
++                        chipNode = KeywordChipNode(keyword: keyword)
++                        strongSelf.addSubnode(chipNode)
++                        animateIn = currentItem != nil
++                    }
++                    let frame = chipFrames[index]
++                    let previousFrame = chipNode.frame
++                    chipNode.frame = frame
++                    if !animateIn {
++                        demoSpringMove(chipNode, from: previousFrame, to: frame)
++                    }
++                    chipNode.update(theme: theme, font: chipFont, size: frame.size)
++                    if animateIn {
++                        chipNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.12)
++                        // Фишка выскакивает с отскоком: небольшой перелёт за 1.0 и возврат.
++                        let bounce = CASpringAnimation(keyPath: "transform.scale")
++                        bounce.fromValue = 0.55
++                        bounce.toValue = 1.0
++                        bounce.mass = 1.0
++                        bounce.stiffness = 330.0
++                        bounce.damping = 17.0
++                        bounce.initialVelocity = 0.0
++                        bounce.duration = bounce.settlingDuration
++                        chipNode.layer.add(bounce, forKey: "keywordBounce")
++                        if let origin = strongSelf.demoChipOrigin {
++                            strongSelf.demoChipOrigin = nil
++                            let travel = CASpringAnimation(keyPath: "position")
++                            travel.fromValue = NSValue(cgPoint: origin)
++                            travel.toValue = NSValue(cgPoint: CGPoint(x: frame.midX, y: frame.midY))
++                            travel.mass = 1.0
++                            travel.stiffness = 380.0
++                            travel.damping = 32.0
++                            travel.duration = travel.settlingDuration
++                            chipNode.layer.add(travel, forKey: "keywordTravel")
++                        }
++                    }
++                    updatedChipNodes.append(chipNode)
++                }
++                for chipNode in strongSelf.chipNodes where !updatedChipNodes.contains(where: { $0 === chipNode }) {
++                    chipNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15, removeOnCompletion: false, completion: { [weak chipNode] _ in
++                        chipNode?.removeFromSupernode()
++                    })
++                    chipNode.layer.animateScale(from: 1.0, to: 0.2, duration: 0.15, removeOnCompletion: false)
++                }
++                strongSelf.chipNodes = updatedChipNodes
++                
++                var updatedSuggestionNodes: [OutlineChipNode] = []
++                for (index, word) in suggestionWords.enumerated() {
++                    let node: OutlineChipNode
++                    if let existing = strongSelf.suggestionNodes.first(where: { $0.word == word }) {
++                        node = existing
++                    } else {
++                        node = OutlineChipNode(word: word)
++                        strongSelf.addSubnode(node)
++                        if currentItem != nil {
++                            node.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
++                        }
++                    }
++                    let frame = suggestionFrames[index]
++                    let previousFrame = node.frame
++                    node.frame = frame
++                    demoSpringMove(node, from: previousFrame, to: frame)
++                    node.update(theme: theme, font: chipFont, size: frame.size)
++                    updatedSuggestionNodes.append(node)
++                }
++                for node in strongSelf.suggestionNodes where !updatedSuggestionNodes.contains(where: { $0 === node }) {
++                    node.removeFromSupernode()
++                }
++                strongSelf.suggestionNodes = updatedSuggestionNodes
++
++                if let inputFrame {
++                    strongSelf.textNode.isHidden = false
++                    strongSelf.textNode.frame = inputFrame
++                } else {
++                    strongSelf.textNode.isHidden = true
++                    if strongSelf.textNode.textField.isFirstResponder {
++                        strongSelf.textNode.textField.resignFirstResponder()
++                    }
++                }
++
++                if strongSelf.backgroundNode.supernode == nil {
++                    strongSelf.insertSubnode(strongSelf.backgroundNode, at: 0)
++                }
++                if strongSelf.topStripeNode.supernode == nil {
++                    strongSelf.insertSubnode(strongSelf.topStripeNode, at: 1)
++                }
++                if strongSelf.bottomStripeNode.supernode == nil {
++                    strongSelf.insertSubnode(strongSelf.bottomStripeNode, at: 2)
++                }
++                if strongSelf.maskNode.supernode == nil {
++                    strongSelf.insertSubnode(strongSelf.maskNode, at: 3)
++                }
++
++                let hasCorners = itemListHasRoundedBlockLayout(params)
++                var hasTopCorners = false
++                var hasBottomCorners = false
++                switch neighbors.top {
++                case .sameSection(false):
++                    strongSelf.topStripeNode.isHidden = true
++                default:
++                    hasTopCorners = true
++                    strongSelf.topStripeNode.isHidden = hasCorners
++                }
++                let bottomStripeInset: CGFloat
++                switch neighbors.bottom {
++                case .sameSection(false):
++                    bottomStripeInset = leftInset
++                    strongSelf.bottomStripeNode.isHidden = false
++                default:
++                    bottomStripeInset = 0.0
++                    hasBottomCorners = true
++                    strongSelf.bottomStripeNode.isHidden = hasCorners
++                }
++
++                strongSelf.maskNode.image = hasCorners ? PresentationResourcesItemList.cornersImage(theme, top: hasTopCorners, bottom: hasBottomCorners, glass: true) : nil
++                strongSelf.backgroundNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -min(insets.top, separatorHeight)), size: CGSize(width: params.width, height: contentSize.height + min(insets.top, separatorHeight) + min(insets.bottom, separatorHeight)))
++                strongSelf.maskNode.frame = strongSelf.backgroundNode.frame.inset(by: UIEdgeInsets(top: 0.0, left: params.leftInset, bottom: 0.0, right: params.rightInset))
++                strongSelf.topStripeNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -min(insets.top, separatorHeight)), size: CGSize(width: params.width, height: separatorHeight))
++                strongSelf.bottomStripeNode.frame = CGRect(origin: CGPoint(x: bottomStripeInset, y: contentSize.height - separatorHeight), size: CGSize(width: params.width - bottomStripeInset - params.rightInset - 16.0, height: separatorHeight))
++            })
++        }
++    }
++
++    // MARK: - Ввод
++
++    /// Добавляет все завершённые слова из текста; незавершённый хвост остаётся в поле.
++    private func commit(_ text: String, keepTail: Bool) {
++        guard let item = self.item else {
++            return
++        }
++        var parts = text.components(separatedBy: CharacterSet(charactersIn: ",\n"))
++        let tail = keepTail ? (parts.popLast() ?? "") : ""
++        var rejected = false
++        for part in parts {
++            let keyword = part.trimmingCharacters(in: .whitespacesAndNewlines)
++            if keyword.isEmpty {
++                continue
++            }
++            if !item.add(keyword) {
++                rejected = true
++            }
++        }
++        self.textNode.textField.text = tail
++        if rejected {
++            self.textNode.layer.addShakeAnimation()
++            HapticFeedback().error()
++        }
++    }
++
++    @objc private func textFieldChanged() {
++        self.selectChip(nil)
++        let text = self.textNode.textField.text ?? ""
++        if text.contains(",") || text.contains("\n") {
++            self.commit(text, keepTail: true)
++        }
++    }
++
++    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
++        let text = textField.text ?? ""
++        if text.trimmingCharacters(in: .whitespaces).isEmpty {
++            textField.resignFirstResponder()
++        } else {
++            self.commit(text + ",", keepTail: true)
++        }
++        return false
++    }
++
++    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
++        let newText = ((textField.text ?? "") as NSString).replacingCharacters(in: range, with: string)
++        let longestPart = newText.components(separatedBy: CharacterSet(charactersIn: ",\n")).map { $0.count }.max() ?? 0
++        if longestPart > 40 {
++            self.textNode.layer.addShakeAnimation()
++            return false
++        }
++        return true
++    }
++
++    func textFieldDidEndEditing(_ textField: UITextField) {
++        self.selectChip(nil)
++        if let text = textField.text, !text.trimmingCharacters(in: .whitespaces).isEmpty {
++            self.commit(text + ",", keepTail: true)
++        }
++    }
++
++    private func deleteBackwardWhileEmpty() {
++        if let selected = self.chipNodes.first(where: { $0.isSelected }) {
++            self.item?.remove(selected.keyword)
++        } else if let last = self.chipNodes.last {
++            self.selectChip(last.keyword)
++        }
++    }
++
++    private func selectChip(_ keyword: String?) {
++        for chipNode in self.chipNodes {
++            chipNode.setSelected(chipNode.keyword == keyword, animated: true)
++        }
++    }
++
++    @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
++        guard case .ended = recognizer.state else {
++            return
++        }
++        let point = recognizer.location(in: self.view)
++        if let node = self.suggestionNodes.first(where: { $0.frame.insetBy(dx: -2.0, dy: -3.0).contains(point) }) {
++            self.item?.addSuggestion(node.word)
++            return
++        }
++        if let chipNode = self.chipNodes.first(where: { $0.frame.insetBy(dx: -2.0, dy: -3.0).contains(point) }) {
++            if chipNode.isSelected {
++                self.item?.remove(chipNode.keyword)
++            } else {
++                self.selectChip(chipNode.keyword)
++                if !self.textNode.isHidden && !self.textNode.textField.isFirstResponder {
++                    self.textNode.textField.becomeFirstResponder()
++                }
++            }
++        } else {
++            self.selectChip(nil)
++            if !self.textNode.isHidden {
++                self.textNode.textField.becomeFirstResponder()
++            }
++        }
++    }
++
++    override func animateInsertion(_ currentTimestamp: Double, duration: Double, options: ListViewItemAnimationOptions) {
++        self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.4)
++    }
++
++    override func animateRemoved(_ currentTimestamp: Double, duration: Double) {
++        self.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15, removeOnCompletion: false)
++    }
++}
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsScreen.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsScreen.swift
+new file mode 100644
+index 00000000..4522e28b
+--- /dev/null
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoMuteExceptionsScreen.swift
+@@ -0,0 +1,468 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import ItemListUI
++import ChatListFilterSettingsHeaderItem
++import PresentationDataUtils
++import AccountContext
++
++// Локальные концепты: экран «Исключения» для канала без звука. Сначала ключевые слова (работают
++// для любого поста), затем типы постов. По умолчанию всё выключено (ConceptsMuteExceptions.swift).
++// Устройство повторяет настройки: строки с иконками как в «Сохранять в Фото», слова — фишками
++// в одном поле, как получатели в поле «Кому» (PeerInfoMuteExceptionsKeywordsItem.swift).
++
++func conceptsMuteExceptionsString(_ strings: PresentationStrings, _ en: String, _ ru: String) -> String {
++    return strings.baseLanguageCode == "ru" ? ru : en
++}
++
++func muteExceptionContentTitle(_ strings: PresentationStrings, _ content: ConceptsMuteExceptionContent) -> String {
++    switch content {
++    case .text:
++        return conceptsMuteExceptionsString(strings, "All Text Posts", "Все текстовые посты")
++    case .photo:
++        return conceptsMuteExceptionsString(strings, "Photos", "Фото")
++    case .video:
++        return conceptsMuteExceptionsString(strings, "Videos", "Видео")
++    case .sticker:
++        return conceptsMuteExceptionsString(strings, "Stickers", "Стикеры")
++    case .gif:
++        return conceptsMuteExceptionsString(strings, "GIFs", "GIF")
++    case .audio:
++        return conceptsMuteExceptionsString(strings, "Music", "Музыка")
++    case .voice:
++        return conceptsMuteExceptionsString(strings, "Voice Messages", "Голосовые")
++    case .roundVideo:
++        return conceptsMuteExceptionsString(strings, "Video Messages", "Видеосообщения")
++    case .file:
++        return conceptsMuteExceptionsString(strings, "Files", "Файлы")
++    case .link:
++        return conceptsMuteExceptionsString(strings, "Links", "Ссылки")
++    case .poll:
++        return conceptsMuteExceptionsString(strings, "Polls", "Опросы")
++    case .giveaway:
++        return conceptsMuteExceptionsString(strings, "Giveaways", "Розыгрыши")
++    case .location:
++        return conceptsMuteExceptionsString(strings, "Locations", "Геопозиции")
++    case .contact:
++        return conceptsMuteExceptionsString(strings, "Contacts", "Контакты")
++    case .story:
++        return conceptsMuteExceptionsString(strings, "Stories", "Истории")
++    case .paid:
++        return conceptsMuteExceptionsString(strings, "Paid Media", "Платное медиа")
++    }
++}
++
++private let roundVideoIcon = renderSettingsIcon(name: "Item List/Icons/Video", backgroundColors: [UIColor(rgb: 0x00c7be)])
++private let linkIcon = renderSettingsIcon(name: "Item List/Icons/Link", backgroundColors: [UIColor(rgb: 0xffcc02)])
++private let pollIcon = renderSettingsIcon(name: "Item List/Icons/Stats", backgroundColors: [UIColor(rgb: 0xff2d55)])
++private let giveawayIcon = renderSettingsIcon(name: "Item List/Icons/Gift", backgroundColors: [UIColor(rgb: 0xaf52de)])
++private let otherIcon = renderSettingsIcon(name: "Item List/Icons/Multiple", backgroundColors: [UIColor(rgb: 0x8e8e93)])
++
++func muteExceptionContentIcon(_ content: ConceptsMuteExceptionContent) -> UIImage? {
++    switch content {
++    case .text:
++        return PresentationResourcesSettings.messages
++    case .photo:
++        return PresentationResourcesSettings.photosLightBlue
++    case .video:
++        return PresentationResourcesSettings.videos
++    case .sticker:
++        return PresentationResourcesSettings.stickersGreen
++    case .gif:
++        return PresentationResourcesSettings.gifs
++    case .audio:
++        return PresentationResourcesSettings.music
++    case .voice:
++        return PresentationResourcesSettings.voices
++    case .roundVideo:
++        return roundVideoIcon
++    case .file:
++        return PresentationResourcesSettings.files
++    case .link:
++        return linkIcon
++    case .poll:
++        return pollIcon
++    case .giveaway:
++        return giveawayIcon
++    case .paid:
++        return PresentationResourcesSettings.photosLightBlue
++    case .location, .contact, .story:
++        return otherIcon
++    }
++}
++
++/// Короткое описание для второй строки пункта меню: ««тон», Photos».
++func conceptsMuteExceptionSummary(_ strings: PresentationStrings, _ exception: ConceptsMuteException) -> String {
++    var parts = exception.keywords.map { "«\($0)»" }
++    for content in ConceptsMuteExceptionContent.allCases where exception.contentTypes.contains(content) {
++        parts.append(muteExceptionContentTitle(strings, content))
++    }
++    return parts.joined(separator: ", ")
++}
++
++private let maxKeywordCount = 50
++
++/// Типы, которые собраны в раскрывающуюся группу «Media», как «Отправка медиа» в правах группы.
++private let mediaContentTypes: [ConceptsMuteExceptionContent] = [.photo, .video, .sticker, .gif, .audio, .voice, .roundVideo, .file, .link, .paid]
++/// Редкие типы постов — вторая раскрывающаяся группа «Other».
++private let otherContentTypes: [ConceptsMuteExceptionContent] = [.location, .contact, .story]
++
++private struct MuteExceptionsMediaItem: Equatable {
++    let content: ConceptsMuteExceptionContent
++    let title: String
++    let isSelected: Bool
++}
++
++private final class MuteExceptionsArguments {
++    let context: AccountContext
++    let toggle: (ConceptsMuteExceptionContent, Bool) -> Void
++    let setGroup: ([ConceptsMuteExceptionContent], Bool) -> Void
++    let toggleExpanded: (Bool) -> Void
++    let addKeyword: (String) -> Bool
++    let removeKeyword: (String) -> Void
++    let toggleSuggestion: (String) -> Void
++    let reset: () -> Void
++
++    init(context: AccountContext, toggle: @escaping (ConceptsMuteExceptionContent, Bool) -> Void, setGroup: @escaping ([ConceptsMuteExceptionContent], Bool) -> Void, toggleExpanded: @escaping (Bool) -> Void, addKeyword: @escaping (String) -> Bool, removeKeyword: @escaping (String) -> Void, toggleSuggestion: @escaping (String) -> Void, reset: @escaping () -> Void) {
++        self.context = context
++        self.toggle = toggle
++        self.setGroup = setGroup
++        self.toggleExpanded = toggleExpanded
++        self.addKeyword = addKeyword
++        self.removeKeyword = removeKeyword
++        self.toggleSuggestion = toggleSuggestion
++        self.reset = reset
++    }
++}
++
++private enum MuteExceptionsSection: Int32 {
++    case header
++    case keywords
++    case types
++    case reset
++}
++
++private enum MuteExceptionsEntry: ItemListNodeEntry {
++    case header(String, EnginePeer)
++    case keywordsHeader(String)
++    case keywords([String], [String], String, Bool)
++    case keywordsFooter(String)
++    case typesHeader(String)
++    case text(String, Bool)
++    case media(String, [MuteExceptionsMediaItem], Bool)
++    case poll(String, Bool)
++    case giveaway(String, Bool)
++    case other(String, [MuteExceptionsMediaItem], Bool)
++    case typesFooter(String)
++    case reset(String)
++
++    var section: ItemListSectionId {
++        switch self {
++        case .header:
++            return MuteExceptionsSection.header.rawValue
++        case .keywordsHeader, .keywords, .keywordsFooter:
++            return MuteExceptionsSection.keywords.rawValue
++        case .typesHeader, .text, .media, .poll, .giveaway, .other, .typesFooter:
++            return MuteExceptionsSection.types.rawValue
++        case .reset:
++            return MuteExceptionsSection.reset.rawValue
++        }
++    }
++
++    var sortIndex: Int32 {
++        switch self {
++        case .header:
++            return 0
++        case .keywordsHeader:
++            return 10
++        case .keywords:
++            return 11
++        case .keywordsFooter:
++            return 12
++        case .typesHeader:
++            return 1000
++        case .text:
++            return 1001
++        case .media:
++            return 1002
++        case .poll:
++            return 1003
++        case .giveaway:
++            return 1004
++        case .other:
++            return 1005
++        case .typesFooter:
++            return 1900
++        case .reset:
++            return 2000
++        }
++    }
++
++    var stableId: Int32 {
++        return self.sortIndex
++    }
++
++    static func ==(lhs: MuteExceptionsEntry, rhs: MuteExceptionsEntry) -> Bool {
++        switch (lhs, rhs) {
++        case let (.keywordsHeader(l), .keywordsHeader(r)), let (.keywordsFooter(l), .keywordsFooter(r)), let (.typesHeader(l), .typesHeader(r)), let (.typesFooter(l), .typesFooter(r)), let (.reset(l), .reset(r)):
++            return l == r
++        case let (.header(lt, lp), .header(rt, rp)):
++            return lt == rt && lp == rp
++        case let (.keywords(lk, ls, lp, le), .keywords(rk, rs, rp, re)):
++            return lk == rk && ls == rs && lp == rp && le == re
++        case let (.text(lt, lv), .text(rt, rv)), let (.poll(lt, lv), .poll(rt, rv)), let (.giveaway(lt, lv), .giveaway(rt, rv)):
++            return lt == rt && lv == rv
++        case let (.media(lt, li, le), .media(rt, ri, re)), let (.other(lt, li, le), .other(rt, ri, re)):
++            return lt == rt && li == ri && le == re
++        default:
++            return false
++        }
++    }
++
++    static func <(lhs: MuteExceptionsEntry, rhs: MuteExceptionsEntry) -> Bool {
++        return lhs.sortIndex < rhs.sortIndex
++    }
++
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let arguments = arguments as! MuteExceptionsArguments
++        switch self {
++        case let .header(text, peer):
++            return ChatListFilterSettingsHeaderItem(context: arguments.context, theme: presentationData.theme, text: text, animation: .notifications, cornerPeer: peer, headline: conceptsMuteExceptionsString(presentationData.strings, "Unmute Similar Posts", "Звук для похожих постов"), sectionId: self.section)
++        case let .keywordsHeader(text), let .typesHeader(text):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .keywords(keywords, suggestions, placeholder, isInputEnabled):
++            return PeerInfoMuteExceptionsKeywordsItem(presentationData: presentationData, keywords: keywords, suggestions: suggestions, placeholder: placeholder, isInputEnabled: isInputEnabled, sectionId: self.section, add: { keyword in
++                return arguments.addKeyword(keyword)
++            }, remove: { keyword in
++                arguments.removeKeyword(keyword)
++            }, addSuggestion: { word in
++                arguments.toggleSuggestion(word)
++            })
++        case let .keywordsFooter(text), let .typesFooter(text):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
++        case let .text(title, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: muteExceptionContentIcon(.text), title: title, value: value, sectionId: self.section, style: .blocks, updated: { value in
++                arguments.toggle(.text, value)
++            })
++        case let .media(title, items, isExpanded):
++            return expandableItem(presentationData: presentationData, arguments: arguments, icon: PresentationResourcesSettings.photosLightBlue, title: title, types: mediaContentTypes, items: items, isExpanded: isExpanded, isMedia: true, sectionId: self.section)
++        case let .other(title, items, isExpanded):
++            return expandableItem(presentationData: presentationData, arguments: arguments, icon: muteExceptionContentIcon(.location), title: title, types: otherContentTypes, items: items, isExpanded: isExpanded, isMedia: false, sectionId: self.section)
++        case let .poll(title, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: muteExceptionContentIcon(.poll), title: title, value: value, sectionId: self.section, style: .blocks, updated: { value in
++                arguments.toggle(.poll, value)
++            })
++        case let .giveaway(title, value):
++            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: muteExceptionContentIcon(.giveaway), title: title, value: value, sectionId: self.section, style: .blocks, updated: { value in
++                arguments.toggle(.giveaway, value)
++            })
++        case let .reset(title):
++            return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .destructive, alignment: .center, sectionId: self.section, style: .blocks, action: {
++                arguments.reset()
++            })
++        }
++    }
++}
++
++private func expandableItem(presentationData: ItemListPresentationData, arguments: MuteExceptionsArguments, icon: UIImage?, title: String, types: [ConceptsMuteExceptionContent], items: [MuteExceptionsMediaItem], isExpanded: Bool, isMedia: Bool, sectionId: ItemListSectionId) -> ListViewItem {
++    return ItemListExpandableSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: icon, title: title, value: items.allSatisfy { $0.isSelected }, isExpanded: isExpanded, subItems: items.map { item in
++        return ItemListExpandableSwitchItem.SubItem(id: AnyHashable(item.content.rawValue), title: item.title, isSelected: item.isSelected, isEnabled: true)
++    }, sectionId: sectionId, style: .blocks, updated: { value in
++        arguments.setGroup(types, value)
++    }, selectAction: {
++        arguments.toggleExpanded(isMedia)
++    }, subAction: { subItem in
++        guard let rawValue = subItem.id.base as? String, let content = ConceptsMuteExceptionContent(rawValue: rawValue) else {
++            return
++        }
++        arguments.toggle(content, !subItem.isSelected)
++    })
++}
++
++private func muteExceptionsEntries(strings: PresentationStrings, peer: EnginePeer, title: String, exception: ConceptsMuteException, suggestions: [String], isMediaExpanded: Bool, isOtherExpanded: Bool) -> [MuteExceptionsEntry] {
++    var entries: [MuteExceptionsEntry] = []
++    entries.append(.header(conceptsMuteExceptionsString(strings, "«\(title)» stays muted. You’ll get sound only for posts with these words or of these types.", "«\(title)» остаётся без звука. Звук будет только у постов с этими словами или такого типа."), peer))
++    
++    entries.append(.keywordsHeader(conceptsMuteExceptionsString(strings, "KEYWORDS", "КЛЮЧЕВЫЕ СЛОВА")))
++    let isInputEnabled = exception.keywords.count < maxKeywordCount
++    let placeholder = exception.keywords.isEmpty ? conceptsMuteExceptionsString(strings, "Add a word, e.g. TON", "Добавить слово, например «тон»") : conceptsMuteExceptionsString(strings, "Add a word", "Добавить слово")
++    // Слова из поста — серые контурные фишки в этой же ячейке; уже добавленные не показываем.
++    let addedKeywords = Set(exception.keywords.map { $0.lowercased() })
++    let visibleSuggestions = suggestions.filter { !addedKeywords.contains($0.lowercased()) }
++    entries.append(.keywords(exception.keywords, visibleSuggestions, placeholder, isInputEnabled))
++    if !isInputEnabled {
++        entries.append(.keywordsFooter(conceptsMuteExceptionsString(strings, "You've reached the limit of \(maxKeywordCount) words. Remove one to add another.", "Это максимум — \(maxKeywordCount) слов. Удалите одно, чтобы добавить новое.")))
++    } else if !visibleSuggestions.isEmpty {
++        entries.append(.keywordsFooter(conceptsMuteExceptionsString(strings, "Tap a gray word from this post to add it. Tap an added word twice to remove it.", "Нажмите на серое слово из поста, чтобы добавить его. Чтобы удалить добавленное, нажмите на него дважды.")))
++    } else if exception.keywords.isEmpty {
++        entries.append(.keywordsFooter(conceptsMuteExceptionsString(strings, "Posts and captions with these words will notify you. Separate words with Return or a comma.", "Посты и подписи с этими словами будут уведомлять. Слова разделяйте вводом или запятой.")))
++    } else {
++        entries.append(.keywordsFooter(conceptsMuteExceptionsString(strings, "Tap a word twice to remove it.", "Чтобы удалить слово, нажмите на него дважды.")))
++    }
++    
++    entries.append(.typesHeader(conceptsMuteExceptionsString(strings, "ALSO NOTIFY ABOUT", "ТАКЖЕ УВЕДОМЛЯТЬ О")))
++    entries.append(.text(muteExceptionContentTitle(strings, .text), exception.contentTypes.contains(.text)))
++    entries.append(.media(conceptsMuteExceptionsString(strings, "Media", "Медиа"), mediaContentTypes.map { content in
++        return MuteExceptionsMediaItem(content: content, title: muteExceptionContentTitle(strings, content), isSelected: exception.contentTypes.contains(content))
++    }, isMediaExpanded))
++    entries.append(.poll(muteExceptionContentTitle(strings, .poll), exception.contentTypes.contains(.poll)))
++    entries.append(.giveaway(muteExceptionContentTitle(strings, .giveaway), exception.contentTypes.contains(.giveaway)))
++    entries.append(.other(conceptsMuteExceptionsString(strings, "Other", "Другое"), otherContentTypes.map { content in
++        return MuteExceptionsMediaItem(content: content, title: muteExceptionContentTitle(strings, content), isSelected: exception.contentTypes.contains(content))
++    }, isOtherExpanded))
++    entries.append(.typesFooter(conceptsMuteExceptionsString(strings, "Posts of these types notify you even without keywords.", "Посты этих типов уведомляют, даже если в них нет ключевых слов.")))
++    
++    if !exception.isEmpty {
++        entries.append(.reset(conceptsMuteExceptionsString(strings, "Remove All Exceptions", "Удалить все исключения")))
++    }
++    return entries
++}
++
++/// Единственный редактор исключений канала. `suggestionsFrom` — текст поста, из которого открыт редактор
++/// (меню поста): слова из него показываются подсказками; `isModal` — открыт карточкой с кнопкой «Done».
++public func peerInfoMuteExceptionsScreen(context: AccountContext, peer: EnginePeer, suggestionsFrom postText: String? = nil, isModal: Bool = false) -> ViewController {
++    let peerId = peer.id
++    let suggestions = postText.map { muteExceptionSuggestedWords(from: $0) } ?? []
++    // Слова, известные экрану прямо сейчас: ячейка с фишками сразу узнаёт, принято ли слово.
++    let currentKeywords = Atomic<[String]>(value: [])
++    // Группа «Media» свёрнута, пока пользователь её не откроет (в демо её можно раскрыть флагом запуска).
++    let initialMediaExpanded = conceptsOfflineDemoEnabled && ProcessInfo.processInfo.arguments.contains("--concepts-demo-expand-media")
++    let isMediaExpanded = ValuePromise<Bool>(initialMediaExpanded, ignoreRepeated: true)
++    let isMediaExpandedValue = Atomic<Bool>(value: initialMediaExpanded)
++    let initialOtherExpanded = conceptsOfflineDemoEnabled && ProcessInfo.processInfo.arguments.contains("--concepts-demo-expand-other")
++    let isOtherExpanded = ValuePromise<Bool>(initialOtherExpanded, ignoreRepeated: true)
++    let isOtherExpandedValue = Atomic<Bool>(value: initialOtherExpanded)
++
++    let update: (@escaping (ConceptsMuteException) -> ConceptsMuteException) -> Void = { f in
++        let _ = updateConceptsMuteException(postbox: context.account.postbox, peerId: peerId, f).startStandalone()
++    }
++
++    var popImpl: (() -> Void)?
++
++    let addKeywordImpl: (String) -> Bool = { keyword in
++        var accepted = false
++        let _ = currentKeywords.modify { keywords in
++            if keywords.count >= maxKeywordCount || keywords.contains(where: { $0.lowercased() == keyword.lowercased() }) {
++                return keywords
++            }
++            accepted = true
++            return keywords + [keyword]
++        }
++        if accepted {
++            update { exception in
++                var exception = exception
++                if !exception.keywords.contains(where: { $0.lowercased() == keyword.lowercased() }) && exception.keywords.count < maxKeywordCount {
++                    exception.keywords.append(keyword)
++                }
++                return exception
++            }
++        }
++        return accepted
++    }
++    let removeKeywordImpl: (String) -> Void = { keyword in
++        let _ = currentKeywords.modify { keywords in
++            return keywords.filter { $0 != keyword }
++        }
++        update { exception in
++            var exception = exception
++            exception.keywords.removeAll(where: { $0 == keyword })
++            return exception
++        }
++    }
++
++    let arguments = MuteExceptionsArguments(context: context, toggle: { content, value in
++        update { exception in
++            var exception = exception
++            if value {
++                exception.contentTypes.insert(content)
++            } else {
++                exception.contentTypes.remove(content)
++            }
++            return exception
++        }
++    }, setGroup: { types, value in
++        update { exception in
++            var exception = exception
++            for content in types {
++                if value {
++                    exception.contentTypes.insert(content)
++                } else {
++                    exception.contentTypes.remove(content)
++                }
++            }
++            return exception
++        }
++    }, toggleExpanded: { isMedia in
++        if isMedia {
++            let value = isMediaExpandedValue.modify { !$0 }
++            isMediaExpanded.set(value)
++        } else {
++            let value = isOtherExpandedValue.modify { !$0 }
++            isOtherExpanded.set(value)
++        }
++    }, addKeyword: { keyword in
++        return addKeywordImpl(keyword)
++    }, removeKeyword: { keyword in
++        removeKeywordImpl(keyword)
++    }, toggleSuggestion: { word in
++        if let existing = currentKeywords.with({ $0 }).first(where: { $0.lowercased() == word.lowercased() }) {
++            removeKeywordImpl(existing)
++        } else {
++            let _ = addKeywordImpl(word)
++        }
++    }, reset: {
++        let _ = currentKeywords.swap([])
++        update { _ in
++            return ConceptsMuteException()
++        }
++        popImpl?()
++    })
++
++    let titleVisiblePromise = ValuePromise<Bool>(false, ignoreRepeated: true)
++    var dismissImpl: (() -> Void)?
++    let title: String
++    if case let .channel(channel) = peer {
++        title = channel.title
++    } else {
++        title = ""
++    }
++    let signal = combineLatest(queue: .mainQueue(),
++        context.sharedContext.presentationData,
++        conceptsMuteException(postbox: context.account.postbox, peerId: peerId),
++        isMediaExpanded.get(),
++        isOtherExpanded.get(),
++        titleVisiblePromise.get()
++    )
++    |> map { presentationData, exception, isMediaExpanded, isOtherExpanded, titleVisible -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let _ = currentKeywords.swap(exception.keywords)
++        let rightNavigationButton: ItemListNavigationButton? = ItemListNavigationButton(content: .icon(.done), style: .bold, enabled: true, action: {
++            dismissImpl?()
++        })
++        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(titleVisible ? conceptsMuteExceptionsString(presentationData.strings, "Unmute Similar", "Звук для похожих") : ""), leftNavigationButton: nil, rightNavigationButton: rightNavigationButton, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
++        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: muteExceptionsEntries(strings: presentationData.strings, peer: peer, title: title, exception: exception, suggestions: suggestions, isMediaExpanded: isMediaExpanded, isOtherExpanded: isOtherExpanded), style: .blocks, animateChanges: true)
++        return (controllerState, (listState, arguments))
++    }
++
++    let controller = ItemListController(context: context, state: signal)
++    if isModal {
++        controller.navigationPresentation = .modal
++    }
++    controller.contentOffsetChanged = { offset, _ in
++        // Крупный заголовок уходит под навбар — заголовок появляется в навбаре (как в нативе).
++        if case let .known(value) = offset {
++            titleVisiblePromise.set(value > 118.0)
++        } else if case .none = offset {
++            titleVisiblePromise.set(true)
++        }
++    }
++    dismissImpl = { [weak controller] in
++        controller?.dismiss(animated: true)
++    }
++    popImpl = { [weak controller] in
++        let _ = (controller?.navigationController as? NavigationController)?.popViewController(animated: true)
++    }
++    return controller
++}
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
+index 96d3fb3e..2aaba189 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenPerformButtonAction.swift
+@@ -68,6 +68,13 @@ extension PeerInfoScreenNode {
+             if self.data?.threadData == nil, case let .channel(channel) = self.data?.peer, channel.isForumOrMonoForum {
+                 displayCustomNotificationSettings = true
+             }
++            // Локальные концепты: исключения для канала без звука (офлайн-демо). Меню открывается
++            // и у замьюченного канала, чтобы к исключениям можно было вернуться.
++            var conceptsMuteExceptionsAvailable = false
++            if conceptsMuteExceptionsEnabled, self.chatLocation.threadId == nil, case let .channel(channel) = self.data?.peer, case .broadcast = channel.info {
++                conceptsMuteExceptionsAvailable = true
++                displayCustomNotificationSettings = true
++            }
+             
+             let peerId = self.data?.peer?.id ?? self.peerId
+             
+@@ -287,6 +294,7 @@ extension PeerInfoScreenNode {
+                         controller.push(exceptionController)
+                     })
+                 })))
++                let conceptsMuteExceptionsItemIndex = items.count
+                 
+                 if chatIsMuted {
+                     items.append(.action(ContextMenuActionItem(text: self.presentationData.strings.PeerInfo_ButtonUnmute, icon: { theme in
+@@ -366,7 +374,32 @@ extension PeerInfoScreenNode {
+                 self.view.endEditing(true)
+                 
+                 if let sourceNode = self.headerNode.buttonNodes[.mute]?.referenceNode {
+-                    let contextController = makeContextController(presentationData: self.presentationData, source: .reference(PeerInfoContextReferenceContentSource(controller: controller, sourceNode: sourceNode)), items: .single(ContextController.Items(content: .list(items), tip: tip)), gesture: gesture)
++                    var contextItems: Signal<ContextController.Items, NoError> = .single(ContextController.Items(content: .list(items), tip: tip))
++                    if conceptsMuteExceptionsAvailable, let peer = self.data?.peer {
++                        let baseItems = items
++                        let presentationData = self.presentationData
++                        contextItems = conceptsMuteException(postbox: self.context.account.postbox, peerId: peerId)
++                        |> take(1)
++                        |> map { [weak self] exception -> ContextController.Items in
++                            var items = baseItems
++                            let title = exception.isEmpty ? conceptsMuteExceptionsString(presentationData.strings, "Add Exception", "Добавить исключение") : conceptsMuteExceptionsString(presentationData.strings, "Exceptions", "Исключения")
++                            let textLayout: ContextMenuActionItemTextLayout = exception.isEmpty ? .singleLine : .secondLineWithValue(conceptsMuteExceptionSummary(presentationData.strings, exception))
++                            items.insert(.action(ContextMenuActionItem(text: title, textLayout: textLayout, icon: { theme in
++                                return generateTintedImage(image: UIImage(bundleImageName: "News/Channel/MenuNotify"), color: theme.contextMenu.primaryColor)
++                            }, action: { _, f in
++                                f(.dismissWithoutContent)
++                                guard let self else {
++                                    return
++                                }
++                                if !chatIsMuted {
++                                    let _ = self.context.engine.peers.updatePeerMuteSetting(peerId: peerId, threadId: nil, muteInterval: Int32.max).startStandalone()
++                                }
++                                self.controller?.push(peerInfoMuteExceptionsScreen(context: self.context, peer: peer))
++                            })), at: min(conceptsMuteExceptionsItemIndex, items.count))
++                            return ContextController.Items(content: .list(items), tip: tip)
++                        }
++                    }
++                    let contextController = makeContextController(presentationData: self.presentationData, source: .reference(PeerInfoContextReferenceContentSource(controller: controller, sourceNode: sourceNode)), items: contextItems, gesture: gesture)
+                     contextController.dismissed = { [weak self] in
+                         if let strongSelf = self {
+                             strongSelf.state = strongSelf.state.withHighlightedButton(nil)
+diff --git a/submodules/TelegramUI/Resources/Animations/ConceptsBellMuted.tgs b/submodules/TelegramUI/Resources/Animations/ConceptsBellMuted.tgs
+new file mode 100644
+index 0000000000000000000000000000000000000000..20d22515cc871c2c58eae9f028f66d5a9d809926
+GIT binary patch
+literal 4745
+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
+Hmw^EQpZ@=F
+
+literal 0
+HcmV?d00001
+
+diff --git a/submodules/TelegramUI/Resources/Animations/ConceptsBellRing.tgs b/submodules/TelegramUI/Resources/Animations/ConceptsBellRing.tgs
+new file mode 100644
+index 0000000000000000000000000000000000000000..c8516d40b1e6f92b353a7b749ee060e497d31dc0
+GIT binary patch
+literal 5661
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+index 0ab035e1..0894c9d6 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+@@ -1544,7 +1544,57 @@ extension ChatControllerImpl {
+                 }))
+             }
+         }
+-        
++
++        // Локальные концепты: переход к первому непрочитанному посту из исключений.
++        self.chatDisplayNode.navigateButtons.conceptsMuteExceptionsPressed = { [weak self] in
++            if let strongSelf = self, strongSelf.isNodeLoaded, let peerId = strongSelf.chatLocation.peerId {
++                let signal = conceptsMuteExceptionUnreadMessages(context: strongSelf.context, peerId: peerId) |> take(1)
++                strongSelf.navigationActionDisposable.set((signal |> deliverOnMainQueue).startStrict(next: { indices in
++                    if let strongSelf = self, let index = indices.first {
++                        // Пост подсвечивается, а слово из исключения в нём — как цитата.
++                        strongSelf.navigationActionDisposable.set((conceptsMuteExceptionQuote(context: strongSelf.context, messageId: index.id) |> deliverOnMainQueue).startStrict(next: { quote in
++                            guard let strongSelf = self else {
++                                return
++                            }
++                            // Пост и слово в нём подсвечиваются так же, как при переходе по цитате.
++                            let fromIndex = strongSelf.chatDisplayNode.historyNode.anchorMessageInCurrentHistoryView()?.index ?? index
++                            strongSelf.chatDisplayNode.historyNode.scrollToMessage(from: fromIndex, to: index, animated: true, highlight: true, quote: quote.flatMap { (string: $0.string, offset: $0.offset) }, scrollPosition: conceptsDemoScrollPosition(key: "bellScroll", fallback: .center(.top)))
++                            if conceptsMuteExceptionsEnabled {
++                                // Подсветка как при переходе по цитате: пост и слово в нём, когда пост доехал до экрана.
++                                let deadline = CFAbsoluteTimeGetCurrent() + 4.0
++                                func highlightWhenVisible() {
++                                    guard let strongSelf = self, let controllerInteraction = strongSelf.controllerInteraction else {
++                                        return
++                                    }
++                                    if strongSelf.chatDisplayNode.historyNode.isMessageVisibleOnScreen(index.id) || CFAbsoluteTimeGetCurrent() > deadline {
++                                        Queue.mainQueue().after(0.45, {
++                                            guard let strongSelf = self, let controllerInteraction = strongSelf.controllerInteraction, let message = strongSelf.chatDisplayNode.historyNode.messageInCurrentHistoryView(index.id)?._asMessage() else {
++                                                return
++                                            }
++                                            let state = ChatInterfaceHighlightedState(messageStableId: message.stableId, quote: quote.flatMap { ChatInterfaceHighlightedState.Quote(string: $0.string, offset: $0.offset) }, subject: nil)
++                                            controllerInteraction.highlightedState = state
++                                            strongSelf.updateItemNodesHighlightedStates(animated: true)
++                                            Queue.mainQueue().after(1.6, {
++                                                if let strongSelf = self, let controllerInteraction = strongSelf.controllerInteraction, controllerInteraction.highlightedState == state {
++                                                    controllerInteraction.highlightedState = nil
++                                                    strongSelf.updateItemNodesHighlightedStates(animated: true)
++                                                }
++                                            })
++                                        })
++                                        let _ = controllerInteraction
++                                    } else {
++                                        Queue.mainQueue().after(0.05, highlightWhenVisible)
++                                    }
++                                }
++                                highlightWhenVisible()
++                            }
++                        }))
++                    }
++                }))
++            }
++        }
++
++
+         self.chatDisplayNode.navigateButtons.pollVotesButton.activated = { [weak self] gesture, _ in
+             guard let strongSelf = self else {
+                 gesture.cancel()
+@@ -5047,16 +5097,22 @@ extension ChatControllerImpl {
+                     }
+                 
+                     self.chatUnreadMentionCountDisposable?.dispose()
+-                    self.chatUnreadMentionCountDisposable = (self.context.account.viewTracker.unseenPersonalMessagesAndReactionCount(peerId: peerId, threadId: nil) |> deliverOnMainQueue).startStrict(next: { [weak self] mentionCount, reactionCount, pollVoteCount in
++                    self.chatUnreadMentionCountDisposable = (combineLatest(
++                        self.context.account.viewTracker.unseenPersonalMessagesAndReactionCount(peerId: peerId, threadId: nil),
++                        conceptsMuteExceptionUnreadMessages(context: self.context, peerId: peerId)
++                    ) |> deliverOnMainQueue).startStrict(next: { [weak self] counts, conceptsMuteExceptionMessages in
++                        let (mentionCount, reactionCount, pollVoteCount) = counts
+                         if let strongSelf = self {
+                             if case .standard(.previewing) = strongSelf.presentationInterfaceState.mode {
+                                 strongSelf.chatDisplayNode.navigateButtons.mentionCount = 0
+                                 strongSelf.chatDisplayNode.navigateButtons.reactionsCount = 0
+                                 strongSelf.chatDisplayNode.navigateButtons.pollVotesCount = 0
++                                strongSelf.chatDisplayNode.navigateButtons.conceptsMuteExceptionsCount = 0
+                             } else {
+                                 strongSelf.chatDisplayNode.navigateButtons.mentionCount = mentionCount
+                                 strongSelf.chatDisplayNode.navigateButtons.reactionsCount = reactionCount
+                                 strongSelf.chatDisplayNode.navigateButtons.pollVotesCount = pollVoteCount
++                                strongSelf.chatDisplayNode.navigateButtons.conceptsMuteExceptionsCount = Int32(conceptsMuteExceptionMessages.count)
+                             }
+                         }
+                     })
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
+index 50e958a6..ebed56d2 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenMessageContextMenu.swift
+@@ -121,7 +121,7 @@ extension ChatControllerImpl {
+                         }
+                     } else {
+                         let numberOfComponents = message.text.components(separatedBy: CharacterSet.whitespacesAndNewlines).count
+-                        let displayTextSelectionTip = numberOfComponents >= 3 && !message.text.isEmpty && chatTextSelectionTips < 3 && !isAd
++                        let displayTextSelectionTip = numberOfComponents >= 3 && !message.text.isEmpty && chatTextSelectionTips < 3 && !isAd && !conceptsOfflineDemoEnabled
+                         if displayTextSelectionTip {
+                             let _ = ApplicationSpecificNotice.incrementChatTextSelectionTips(accountManager: self.context.sharedContext.accountManager).startStandalone()
+                             tip = .textSelection
+diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+index dd9d428b..e755131d 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+@@ -862,7 +862,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+                 return
+             }
+             if strongSelf.context.sharedContext.energyUsageSettings.fullTranslucency {
+-                strongSelf.backgroundNode.animateEvent(transition: transition, extendAnimation: false)
++                if conceptsDemoWindowHeightReduction == 0.0 { strongSelf.backgroundNode.animateEvent(transition: transition, extendAnimation: false) }
+             }
+         }
+ 
+@@ -2176,7 +2176,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+                     return
+                 }
+                 if self.context.sharedContext.energyUsageSettings.fullTranslucency {
+-                    self.backgroundNode.animateEvent(transition: transition, extendAnimation: false)
++                    if conceptsDemoWindowHeightReduction == 0.0 { self.backgroundNode.animateEvent(transition: transition, extendAnimation: false) }
+                 }
+             })
+             
+@@ -2348,7 +2348,8 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+             self.overlayContextPanelNode = nil
+         }
+         
+-        let inputPanelsInset: CGFloat = 8.0
++        // Демо-ролик (узкое окно): нижние контролы ближе к низу.
++        let inputPanelsInset: CGFloat = conceptsDemoWindowHeightReduction > 0.0 ? 2.0 : 8.0
+         let accessoryPanelsInset: CGFloat = 8.0
+         var inputPanelsHeight: CGFloat = 0.0
+         
+@@ -2733,12 +2734,14 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+         self.historyNode.scrollEnabled = !(self.isScrollingLockedAtTop || self.chatPresentationInterfaceState.focusedPollAddOptionMessageId != nil)
+         
+         let navigateButtonsSize = self.navigateButtons.updateLayout(transition: transition)
+-        let navigateButtonsMinY = layout.size.height - containerInsets.bottom - inputPanelsHeight - navigateButtonsSize.height - 20.0
++        // Демо-ролик: кнопки доскролла поднимаем в верхнюю половину экрана, чтобы мокап в ролике не ездил вверх-вниз.
++        let navigateButtonsDemoLift: CGFloat = 0.0
++        let navigateButtonsMinY = layout.size.height - containerInsets.bottom - inputPanelsHeight - navigateButtonsSize.height - 20.0 - navigateButtonsDemoLift
+         // iPhone Duo: beside a free bottom corner the input panel runs into the strip; the buttons follow it
+         // (and keep the strip beside the column). Without corner blocks this is the plain safe inset.
+         let navigateButtonsRightInset = sideColumnBandInsets(layout: layout, bandMinY: navigateButtonsMinY, bandMaxY: navigateButtonsMinY + navigateButtonsSize.height, column: sideColumnExtent).right
+         var navigateButtonsFrame = CGRect(origin: CGPoint(x: layout.size.width - navigateButtonsRightInset - navigateButtonsSize.width - 8.0, y: navigateButtonsMinY), size: navigateButtonsSize)
+-        if containerInsets.bottom <= 32.0 {
++        if containerInsets.bottom <= 32.0 && conceptsDemoWindowHeightReduction == 0.0 {
+             navigateButtonsFrame.origin.x -= 18.0
+         }
+         if case .overlay = self.chatPresentationInterfaceState.mode {
+@@ -3648,7 +3651,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+                 // carries the >80pt jump. Tap-to-dismiss and keyboard-open still animate.
+                 let isSwipeDismissal = self.historyNode.usesCoreListBackend && dismissedInputByDragging
+                 if self.context.sharedContext.energyUsageSettings.fullTranslucency && !isSwipeDismissal {
+-                    self.backgroundNode.animateEvent(transition: transition, extendAnimation: false)
++                    if conceptsDemoWindowHeightReduction == 0.0 { self.backgroundNode.animateEvent(transition: transition, extendAnimation: false) }
+                 }
+             }
+             //self.historyNode.didScrollWithOffset?(listBottomInset - previousListBottomInset, transition, nil)
+diff --git a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
+index 26809c39..40fa141d 100644
+--- a/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
++++ b/submodules/TelegramUI/Sources/ChatHistoryListNode.swift
+@@ -3939,6 +3939,24 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
+         self.chatHistoryLocationValue = ChatHistoryLocationInput(content: .Scroll(subject: MessageHistoryScrollToSubject(index: .message(toIndex), quote: quote.flatMap { quote in MessageHistoryScrollToSubject.Quote(string: quote.string, offset: quote.offset) }, subject: subject, setupReply: setupReply), anchorIndex: .message(toIndex), sourceIndex: .message(fromIndex), scrollPosition: scrollPosition, animated: animated, highlight: highlight, setupReply: setupReply), id: self.takeNextHistoryLocationId())
+     }
+     
++    /// Локальные концепты (демо-ролик): плавный скролл к посту изингом пользователя cubic-bezier(0, 0.4, 0, 1) за заданное время.
++    public func conceptsAnimatedScroll(toMessageId messageId: MessageId, position: ListViewScrollPosition, duration: Double, curve: (Float, Float, Float, Float) = (0.0, 0.4, 0.0, 1.0), spring: (mass: CGFloat, stiffness: CGFloat, damping: CGFloat, velocity: CGFloat)? = nil) {
++        // Список чата перевёрнут: прямая транзакция трактует .top как визуальный низ (как и scrollToMessage через историю).
++        var position = position
++        switch position {
++        case let .bottom(offset):
++            position = .top(offset)
++        case let .top(offset):
++            position = .bottom(offset)
++        default:
++            break
++        }
++        guard let historyView = self.historyView, let listIndex = chatHistoryListIndex(ofMessageId: messageId, in: historyView) else {
++            return
++        }
++        self.listView.chatHistoryTransaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [], scrollToItem: ListViewScrollToItem(index: listIndex, position: position, animated: true, curve: spring.map { ListViewAnimationCurve.CustomSpring(duration: duration, mass: $0.mass, stiffness: $0.stiffness, damping: $0.damping, initialVelocity: $0.velocity) } ?? .Custom(duration: duration, curve.0, curve.1, curve.2, curve.3), directionHint: .Up), additionalScrollDistance: 0.0, updateSizeAndInsets: nil, stationaryItemRange: nil, customAnimationTransition: nil, maintainsUnreadItemAlignment: false, updateOpaqueState: nil, completion: { _ in })
++    }
++    
+     public func anchorMessageInCurrentHistoryView() -> EngineMessage? {
+         if let historyView = self.historyView {
+             if let visibleRange = self.listView.displayedItemRange.visibleRange {
+diff --git a/submodules/TelegramUI/Sources/ChatHistoryNavigationButtonNode.swift b/submodules/TelegramUI/Sources/ChatHistoryNavigationButtonNode.swift
+index 53e1f936..d4557813 100644
+--- a/submodules/TelegramUI/Sources/ChatHistoryNavigationButtonNode.swift
++++ b/submodules/TelegramUI/Sources/ChatHistoryNavigationButtonNode.swift
+@@ -8,6 +8,7 @@ import AnimatedCountLabelNode
+ import GlassBackgroundComponent
+ import ComponentFlow
+ import ComponentDisplayAdapters
++import AppBundle
+ 
+ private let badgeFont = Font.with(size: 13.0, traits: [.monospacedNumbers])
+ 
+@@ -17,6 +18,17 @@ enum ChatHistoryNavigationButtonType {
+     case mentions
+     case reactions
+     case pollVotes
++    // Локальные концепты: посты из исключений канала без звука.
++    case conceptsMuteExceptions
++}
++
++private func conceptsMuteExceptionsButtonImage() -> UIImage? {
++    return generateImage(CGSize(width: 38.0, height: 38.0), contextGenerator: { size, context in
++        context.clear(CGRect(origin: CGPoint(), size: size))
++        if let image = generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Unmute"), color: UIColor.white), let cgImage = image.cgImage {
++            context.draw(cgImage, in: CGRect(origin: CGPoint(x: floor((size.width - image.size.width) / 2.0), y: floor((size.height - image.size.height) / 2.0)), size: image.size))
++        }
++    })?.withRenderingMode(.alwaysTemplate)
+ }
+ 
+ class ChatHistoryNavigationButtonNode: ContextControllerSourceNode {
+@@ -51,6 +63,7 @@ class ChatHistoryNavigationButtonNode: ContextControllerSourceNode {
+     private var preferClearGlass: Bool
+     private let type: ChatHistoryNavigationButtonType
+     
++    
+     init(theme: PresentationTheme, preferClearGlass: Bool, backgroundNode: WallpaperBackgroundNode, type: ChatHistoryNavigationButtonType) {
+         self.theme = theme
+         self.preferClearGlass = preferClearGlass
+@@ -72,6 +85,8 @@ class ChatHistoryNavigationButtonNode: ContextControllerSourceNode {
+             self.imageView.image = PresentationResourcesChat.chatHistoryReactionsButtonImage(theme)
+         case .pollVotes:
+             self.imageView.image = PresentationResourcesChat.chatHistoryPollVotesButtonImage(theme)
++        case .conceptsMuteExceptions:
++            self.imageView.image = conceptsMuteExceptionsButtonImage()
+         }
+         
+         self.badgeBackgroundView = GlassBackgroundView()
+@@ -131,6 +146,8 @@ class ChatHistoryNavigationButtonNode: ContextControllerSourceNode {
+                 self.imageView.image = PresentationResourcesChat.chatHistoryReactionsButtonImage(theme)
+             case .pollVotes:
+                 self.imageView.image = PresentationResourcesChat.chatHistoryPollVotesButtonImage(theme)
++            case .conceptsMuteExceptions:
++                self.imageView.image = conceptsMuteExceptionsButtonImage()
+             }
+             
+             self.badgeBackgroundView.update(size: self.badgeBackgroundView.bounds.size, cornerRadius: self.badgeBackgroundView.bounds.height * 0.5, isDark: theme.overallDarkAppearance, tintColor: .init(kind: .custom(style: .default, color: theme.chat.inputPanel.actionControlFillColor)), transition: .immediate)
+diff --git a/submodules/TelegramUI/Sources/ChatHistoryNavigationButtons.swift b/submodules/TelegramUI/Sources/ChatHistoryNavigationButtons.swift
+index de472c88..ebda4091 100644
+--- a/submodules/TelegramUI/Sources/ChatHistoryNavigationButtons.swift
++++ b/submodules/TelegramUI/Sources/ChatHistoryNavigationButtons.swift
+@@ -6,6 +6,9 @@ import AsyncDisplayKit
+ import TelegramPresentationData
+ import WallpaperBackgroundNode
+ 
++/// Демо-ролик: скрыть кнопку «вниз» до конца записи.
++var conceptsDemoHideDownButton = false
++
+ final class ChatHistoryNavigationButtons: ASDisplayNode {
+     struct ButtonState: Equatable {
+         var isEnabled: Bool
+@@ -32,6 +35,7 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+     
+     let reactionsButton: ChatHistoryNavigationButtonNode
+     let pollVotesButton: ChatHistoryNavigationButtonNode
++    let conceptsMuteExceptionsButton: ChatHistoryNavigationButtonNode
+     let mentionsButton: ChatHistoryNavigationButtonNode
+     let downButton: ChatHistoryNavigationButtonNode
+     let upButton: ChatHistoryNavigationButtonNode
+@@ -50,6 +54,7 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+     
+     var reactionsPressed: (() -> Void)?
+     var pollVotesPressed: (() -> Void)?
++    var conceptsMuteExceptionsPressed: (() -> Void)?
+     var mentionsPressed: (() -> Void)?
+     
+     var directionButtonState: DirectionState = DirectionState(up: nil, down: nil) {
+@@ -112,6 +117,21 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+         }
+     }
+     
++    // Локальные концепты: непрочитанные посты из исключений канала без звука.
++    var conceptsMuteExceptionsCount: Int32 = 0 {
++        didSet {
++            if self.conceptsMuteExceptionsCount != 0 {
++                self.conceptsMuteExceptionsButton.badge = compactNumericCountString(Int(self.conceptsMuteExceptionsCount), decimalSeparator: self.dateTimeFormat.decimalSeparator)
++            } else {
++                self.conceptsMuteExceptionsButton.badge = ""
++            }
++            
++            if (oldValue != 0) != (self.conceptsMuteExceptionsCount != 0) {
++                let _ = self.updateLayout(transition: .animated(duration: 0.3, curve: .spring))
++            }
++        }
++    }
++    
+     init(theme: PresentationTheme, preferClearGlass: Bool, dateTimeFormat: PresentationDateTimeFormat, backgroundNode: WallpaperBackgroundNode, isChatRotated: Bool) {
+         self.isChatRotated = isChatRotated
+         self.theme = theme
+@@ -130,6 +150,10 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+         self.pollVotesButton.alpha = 0.0
+         self.pollVotesButton.isHidden = true
+         
++        self.conceptsMuteExceptionsButton = ChatHistoryNavigationButtonNode(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode, type: .conceptsMuteExceptions)
++        self.conceptsMuteExceptionsButton.alpha = 0.0
++        self.conceptsMuteExceptionsButton.isHidden = true
++        
+         self.downButton = ChatHistoryNavigationButtonNode(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode, type: isChatRotated ? .down : .up)
+         self.downButton.alpha = 0.0
+         self.downButton.isHidden = true
+@@ -142,6 +166,7 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+         
+         self.addSubnode(self.reactionsButton)
+         self.addSubnode(self.pollVotesButton)
++        self.addSubnode(self.conceptsMuteExceptionsButton)
+         self.addSubnode(self.mentionsButton)
+         self.addSubnode(self.downButton)
+         self.addSubnode(self.upButton)
+@@ -154,6 +179,10 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+             self?.pollVotesPressed?()
+         }
+         
++        self.conceptsMuteExceptionsButton.tapped = { [weak self] in
++            self?.conceptsMuteExceptionsPressed?()
++        }
++        
+         self.mentionsButton.tapped = { [weak self] in
+             self?.mentionsPressed?()
+         }
+@@ -173,6 +202,7 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+         
+         self.reactionsButton.updateTheme(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode)
+         self.pollVotesButton.updateTheme(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode)
++        self.conceptsMuteExceptionsButton.updateTheme(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode)
+         self.mentionsButton.updateTheme(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode)
+         self.downButton.updateTheme(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode)
+         self.upButton.updateTheme(theme: theme, preferClearGlass: preferClearGlass, backgroundNode: backgroundNode)
+@@ -192,6 +222,11 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+         pollVotesFrame.origin.y += rect.minY
+         self.pollVotesButton.update(rect: pollVotesFrame, within: containerSize, transition: transition)
+         
++        var conceptsMuteExceptionsFrame = self.conceptsMuteExceptionsButton.frame
++        conceptsMuteExceptionsFrame.origin.x += rect.minX
++        conceptsMuteExceptionsFrame.origin.y += rect.minY
++        self.conceptsMuteExceptionsButton.update(rect: conceptsMuteExceptionsFrame, within: containerSize, transition: transition)
++        
+         var mentionsFrame = self.mentionsButton.frame
+         mentionsFrame.origin.x += rect.minX
+         mentionsFrame.origin.y += rect.minY
+@@ -215,8 +250,10 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+         var mentionsOffset: CGFloat = 0.0
+         var reactionsOffset: CGFloat = 0.0
+         var pollVotesOffset: CGFloat = 0.0
++        var conceptsMuteExceptionsOffset: CGFloat = 0.0
+         
+-        if let down = self.directionButtonState.down {
++        // Демо-ролик: в конце петли кнопка «вниз» уходит вместе с быстрым отскроллом и больше не появляется.
++        if let down = self.directionButtonState.down, !conceptsDemoHideDownButton {
+             self.downButton.imageView.alpha = down.isEnabled ? 1.0 : 0.5
+             self.downButton.isEnabled = down.isEnabled
+             
+@@ -287,6 +324,7 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+         }
+         
+         if self.pollVotesCount != 0 {
++            conceptsMuteExceptionsOffset += buttonSize.height + 12.0
+             self.pollVotesButton.isHidden = false
+             transition.updateAlpha(node: self.pollVotesButton, alpha: 1.0)
+             transition.updateTransformScale(node: self.pollVotesButton, scale: 1.0)
+@@ -300,18 +338,34 @@ final class ChatHistoryNavigationButtons: ASDisplayNode {
+             transition.updateTransformScale(node: self.pollVotesButton, scale: 0.2)
+         }
+         
++        if self.conceptsMuteExceptionsCount != 0 {
++            self.conceptsMuteExceptionsButton.isHidden = false
++            transition.updateAlpha(node: self.conceptsMuteExceptionsButton, alpha: 1.0)
++            transition.updateTransformScale(node: self.conceptsMuteExceptionsButton, scale: 1.0)
++        } else {
++            transition.updateAlpha(node: self.conceptsMuteExceptionsButton, alpha: 0.0, completion: { [weak self] completed in
++                guard let strongSelf = self, completed else {
++                    return
++                }
++                strongSelf.conceptsMuteExceptionsButton.isHidden = true
++            })
++            transition.updateTransformScale(node: self.conceptsMuteExceptionsButton, scale: 0.2)
++        }
++        
+         if self.isChatRotated {
+             transition.updatePosition(node: self.downButton, position: CGRect(origin: CGPoint(x: 0.0, y: completeSize.height - buttonSize.height), size: buttonSize).center)
+             transition.updatePosition(node: self.upButton, position: CGRect(origin: CGPoint(x: 0.0, y: completeSize.height - buttonSize.height - upOffset), size: buttonSize).center)
+             transition.updatePosition(node: self.mentionsButton, position: CGRect(origin: CGPoint(x: 0.0, y: completeSize.height - buttonSize.height - mentionsOffset), size: buttonSize).center)
+             transition.updatePosition(node: self.reactionsButton, position: CGRect(origin: CGPoint(x: 0.0, y: completeSize.height - buttonSize.height - mentionsOffset - reactionsOffset), size: buttonSize).center)
+             transition.updatePosition(node: self.pollVotesButton, position: CGRect(origin: CGPoint(x: 0.0, y: completeSize.height - buttonSize.height - mentionsOffset - reactionsOffset - pollVotesOffset), size: buttonSize).center)
++            transition.updatePosition(node: self.conceptsMuteExceptionsButton, position: CGRect(origin: CGPoint(x: 0.0, y: completeSize.height - buttonSize.height - mentionsOffset - reactionsOffset - pollVotesOffset - conceptsMuteExceptionsOffset), size: buttonSize).center)
+         } else {
+             transition.updatePosition(node: self.downButton, position: CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: buttonSize).center)
+             transition.updatePosition(node: self.upButton, position: CGRect(origin: CGPoint(x: 0.0, y: upOffset), size: buttonSize).center)
+             transition.updatePosition(node: self.mentionsButton, position: CGRect(origin: CGPoint(x: 0.0, y: mentionsOffset), size: buttonSize).center)
+             transition.updatePosition(node: self.reactionsButton, position: CGRect(origin: CGPoint(x: 0.0, y: mentionsOffset + reactionsOffset), size: buttonSize).center)
+             transition.updatePosition(node: self.pollVotesButton, position: CGRect(origin: CGPoint(x: 0.0, y: mentionsOffset + reactionsOffset + pollVotesOffset), size: buttonSize).center)
++            transition.updatePosition(node: self.conceptsMuteExceptionsButton, position: CGRect(origin: CGPoint(x: 0.0, y: mentionsOffset + reactionsOffset + pollVotesOffset + conceptsMuteExceptionsOffset), size: buttonSize).center)
+         }
+         
+         if let (rect, containerSize) = self.absoluteRect {
+diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+index 32c7ba34..c4ad768b 100644
+--- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
++++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+@@ -1954,6 +1954,20 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             })))
+         }
+ 
++        // Локальные концепты: «Исключить из мьюта…» в замьюченном канале — открывает редактор исключений.
++        if conceptsMuteExceptionsEnabled, chatPresentationInterfaceState.peerIsMuted, let channel = message.peers[message.id.peerId] as? TelegramChannel, case .broadcast = channel.info, messages.count == 1 {
++            let isRussian = chatPresentationInterfaceState.strings.baseLanguageCode == "ru"
++            actions.append(.action(ContextMenuActionItem(text: isRussian ? "Звук для похожих" : "Unmute Similar", icon: { theme in
++                return generateTintedImage(image: UIImage(bundleImageName: "News/Channel/MenuNotify"), color: theme.actionSheet.primaryTextColor)
++            }, action: { _, f in
++                f(.dismissWithoutContent)
++                // Демо-ролик: редактор открывается после полного закрытия меню, чтобы меню и шторка не накладывались.
++                Queue.mainQueue().after(0.28, {
++                    conceptsPresentMuteExceptionEditor(context: context, message: message, navigationController: controllerInteraction.navigationController())
++                })
++            })))
++        }
++
+         if data.messageActions.options.contains(.forward) {
+             if !isCopyProtected {
+                 actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Conversation_ContextMenuForward, icon: { theme in
+diff --git a/submodules/TelegramUI/Sources/ConceptsMuteExceptionNavigation.swift b/submodules/TelegramUI/Sources/ConceptsMuteExceptionNavigation.swift
+new file mode 100644
+index 00000000..9930d627
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/ConceptsMuteExceptionNavigation.swift
+@@ -0,0 +1,68 @@
++import Foundation
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import Postbox
++import Display
++import ChatControllerInteraction
++
++// Локальные концепты: непрочитанные посты канала без звука, прошедшие через исключение.
++// Питают кнопку доскролла с колокольчиком, как кнопки упоминаний и реакций.
++func conceptsMuteExceptionUnreadMessages(context: AccountContext, peerId: EnginePeer.Id) -> Signal<[EngineMessage.Index], NoError> {
++    return combineLatest(
++        conceptsMuteExceptionUnseen(postbox: context.account.postbox)
++        |> map { unseen -> [EngineMessage.Index] in
++            return unseen[peerId] ?? []
++        }
++        |> distinctUntilChanged,
++        context.engine.data.subscribe(TelegramEngine.EngineData.Item.Messages.PeerReadCounters(id: peerId))
++    )
++    |> map { indices, readCounters -> [EngineMessage.Index] in
++        return conceptsMuteExceptionUnreadIndices(indices, readCounters: readCounters)
++    }
++    |> distinctUntilChanged
++}
++
++/// Слово из исключения, найденное в тексте поста: его подсвечиваем внутри пузыря.
++func conceptsMuteExceptionQuote(context: AccountContext, messageId: EngineMessage.Id) -> Signal<NavigateToMessageParams.Quote?, NoError> {
++    return context.account.postbox.transaction { transaction -> NavigateToMessageParams.Quote? in
++        guard let message = transaction.getMessage(messageId), !message.text.isEmpty else {
++            return nil
++        }
++        let exception = conceptsMuteException(transaction: transaction, peerId: messageId.peerId)
++        guard let keyword = conceptsMuteExceptionKeywordMatch(text: message.text, keywords: exception.keywords) else {
++            return nil
++        }
++        let text = message.text as NSString
++        var searchRange = NSRange(location: 0, length: text.length)
++        while searchRange.length > 0 {
++            let found = text.range(of: keyword, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
++            if found.location == NSNotFound {
++                break
++            }
++            let isWordStart = found.location == 0 || !CharacterSet.alphanumerics.contains(UnicodeScalar(text.character(at: found.location - 1)) ?? " ")
++            let endIndex = found.location + found.length
++            let isWordEnd = endIndex >= text.length || !CharacterSet.alphanumerics.contains(UnicodeScalar(text.character(at: endIndex)) ?? " ")
++            if isWordStart && isWordEnd {
++                return NavigateToMessageParams.Quote(string: text.substring(with: found), offset: found.location)
++            }
++            searchRange = NSRange(location: endIndex, length: text.length - endIndex)
++        }
++        return nil
++    }
++}
++
++/// Куда ставить пост при доскролле. В демо режим можно поменять без пересборки в /tmp/concepts-demo-coords.json:
++/// {"scrollMode": [0..3, смещение]}: 0 — .top, 1 — .bottom, 2 — .center(.top), 3 — .center(.bottom).
++func conceptsDemoScrollPosition(key: String, fallback: ListViewScrollPosition) -> ListViewScrollPosition {
++    guard conceptsOfflineDemoEnabled, let data = FileManager.default.contents(atPath: "/tmp/concepts-demo-coords.json"), let json = try? JSONSerialization.jsonObject(with: data) as? [String: [Double]], let value = json[key], value.count == 2 else {
++        return fallback
++    }
++    let offset = CGFloat(value[1])
++    switch Int(value[0]) {
++    case 0: return .top(offset)
++    case 1: return .bottom(offset)
++    case 2: return .center(.top)
++    default: return .center(.bottom)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/ConceptsMuteExceptionQuickAdd.swift b/submodules/TelegramUI/Sources/ConceptsMuteExceptionQuickAdd.swift
+new file mode 100644
+index 00000000..a4b67c4c
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/ConceptsMuteExceptionQuickAdd.swift
+@@ -0,0 +1,16 @@
++import Foundation
++import UIKit
++import Display
++import TelegramCore
++import AccountContext
++import PeerInfoScreen
++
++// Локальные концепты: «Исключить из мьюта…» в меню поста замьюченного канала открывает тот же единственный
++// редактор исключений (PeerInfoMuteExceptionsScreen), но карточкой и с подсказками слов из этого поста.
++func conceptsPresentMuteExceptionEditor(context: AccountContext, message: EngineRawMessage, navigationController: NavigationController?) {
++    guard let rawPeer = message.peers[message.id.peerId] else {
++        return
++    }
++    let editor = peerInfoMuteExceptionsScreen(context: context, peer: EnginePeer(rawPeer), suggestionsFrom: message.text, isModal: true)
++    navigationController?.pushViewController(editor)
++}

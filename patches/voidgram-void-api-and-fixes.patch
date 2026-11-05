@@ -1,0 +1,1330 @@
+diff --git a/submodules/AccountContext/Sources/AyuPluginBundle.swift b/submodules/AccountContext/Sources/AyuPluginBundle.swift
+index 3f4f8826..6a38a804 100644
+--- a/submodules/AccountContext/Sources/AyuPluginBundle.swift
++++ b/submodules/AccountContext/Sources/AyuPluginBundle.swift
+@@ -6,10 +6,12 @@ import Compression
+ /// `require`, so a bundle installs and runs like a single-file plugin; plugins in different
+ /// languages talk through `ayu.bus`.
+ public enum AyuPluginBundle {
+-    /// "ayujs", "ayupy" and "ayulua" are the same languages as "js", "py" and "lua".
++    /// "ayujs", "voidjs", "ayupy" and "ayulua" are the same languages as "js", "py" and "lua".
+     static func language(_ fileExtension: String) -> String {
+         let lower = fileExtension.lowercased()
+-        return lower.hasPrefix("ayu") ? String(lower.dropFirst(3)) : lower
++        if lower.hasPrefix("ayu") { return String(lower.dropFirst(3)) }
++        if lower.hasPrefix("void") { return String(lower.dropFirst(4)) }
++        return lower
+     }
+ 
+     public static func isBundle(_ data: Data) -> Bool {
+diff --git a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
+index a38dbceb..33ec5975 100644
+--- a/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
++++ b/submodules/AccountContext/Sources/AyuPluginHostAPI.swift
+@@ -51,6 +51,8 @@ public final class AyuPluginUI {
+     public var requestPermissions: ((_ owner: String, _ names: [String], _ completion: @escaping (Bool) -> Void) -> Void)?
+     /// Installed by TelegramUI: replaces the composer text of the open chat.
+     public var setComposerText: ((String) -> Void)?
++    /// Installed by TelegramUI: the current composer text of the open chat.
++    public var getComposerText: (() -> String?)?
+     /// Replaces the selected composer text (`ayu.composer.replaceSelection`).
+     public var replaceComposerSelection: ((String) -> Void)?
+     /// Scrolls the open chat to a message id (`ayu.chat.scrollTo`).
+@@ -869,7 +871,10 @@ enum AyuPluginSpectrumFeed {
+ 
+     static func start(owner: String, bands: Int, fps: Double) {
+         stop(owner: owner)
+-        let interval = 1.0 / max(1.0, min(30.0, fps))
++        // 30 Hz FFT for every listener kept the CPU warm; 20 Hz is smooth for bars and
++        // 8 Hz in Low Power Mode. Plugins asking for less keep their rate.
++        let ceiling = AyuPower.isThrottled ? 6.0 : 20.0
++        let interval = 1.0 / max(1.0, min(ceiling, fps))
+         let count = max(4, min(64, bands))
+         let timer = DispatchSource.makeTimerSource(queue: queue)
+         timer.schedule(deadline: .now(), repeating: interval)
+diff --git a/submodules/AccountContext/Sources/AyuPluginHostExtras.swift b/submodules/AccountContext/Sources/AyuPluginHostExtras.swift
+index 047b90b0..55193fd6 100644
+--- a/submodules/AccountContext/Sources/AyuPluginHostExtras.swift
++++ b/submodules/AccountContext/Sources/AyuPluginHostExtras.swift
+@@ -11,6 +11,48 @@ import Display
+ enum AyuPluginHostExtras {
+     private static let maxText = 1_000_000
+ 
++    /// The methods this build actually answers. A plugin can check before relying on one.
++    static let capabilities: [String] = [
++        "ui.alert", "ui.sheet", "ui.menu.add", "ui.menu.remove", "ui.profile.addBlock", "ui.profile.removeBlock",
++        "ui.profile.addButton", "ui.profile.removeButton", "ui.tabs.add", "ui.tabs.remove", "ui.sidebar.show",
++        "ui.searchBar.show", "ui.searchBar.setResults", "ui.badge.add", "ui.badge.remove", "ui.avatar.decorate",
++        "ui.avatar.clear", "ui.overlay.create", "ui.overlay.update", "ui.overlay.addText", "ui.overlay.addClock",
++        "ui.overlay.showFPS", "ui.overlay.remove", "ui.animation.play", "ui.floatingButton.add",
++        "ui.floatingButton.remove", "ui.progress.show", "ui.progress.hide", "ui.chatBackground.set",
++        "ui.chatBackground.reset", "ui.font.set", "ui.font.reset", "ui.gifts.catalog.list",
++        "screens.show", "chat.scrollTo", "chat.toolbar.add", "chat.toolbar.remove", "chat.toolbar.filter",
++        "chat.filter.set", "chat.draft.insert", "chat.draft.clear", "composer.addButton", "composer.removeButton",
++        "composer.setText", "composer.replaceSelection", "commands.register", "messages.send", "messages.edit",
++        "messages.react", "messages.get", "messages.bookmarks.list", "messages.bookmarks.add",
++        "messages.bookmarks.remove", "profile.notes.get", "profile.notes.set", "profile.nickname.get",
++        "profile.nickname.set", "media.process", "media.fromMessage", "media.sendImage", "media.cutOutSticker",
++        "media.describePhoto", "tools.chatStats", "tools.yearInReview", "tools.downloadChatMedia",
++        "player.state", "player.control", "player.spectrum.get", "player.spectrum.subscribe",
++        "player.spectrum.unsubscribe", "player.visualizer.set", "player.visualizer.clear", "player.canvas.draw",
++        "player.canvas.clear", "net.fetch", "ai.complete", "secrets.get", "secrets.set", "clipboard.write",
++        "clipboard.read", "clipboard.hasText", "clipboard.clear", "device.info", "device.battery",
++        "device.isCharging", "device.screen", "device.darkMode", "device.model", "device.systemVersion",
++        "device.timezone", "device.isLowPower", "device.freeDisk", "device.memory", "device.uptime",
++        "device.thermalState", "haptics.play", "haptics.pattern", "speech.speak", "speech.stop",
++        "speech.isSpeaking", "speech.voices", "notify.schedule", "notify.cancel", "notify.cancelAll",
++        "files.export", "bus.emit", "permissions.has", "permissions.request", "registry.isVerified",
++        "tl.block", "tl.unblock", "tl.observe", "crypto.sha256", "crypto.sha1", "crypto.sha512", "crypto.md5",
++        "crypto.hmac", "crypto.randomBytes", "crypto.uuid", "encoding.base64Encode", "encoding.base64Decode",
++        "encoding.hexEncode", "encoding.hexDecode", "app.version", "app.build", "app.name", "app.plugins",
++        "sdk.capabilities", "plugin.resources", "debug.inspect", "accessibility.info", "appearance.info",
++        "storage.transaction", "storage.get", "storage.set"
++    ]
++
++    static var thermalStateName: String {
++        switch ProcessInfo.processInfo.thermalState {
++        case .nominal: return "nominal"
++        case .fair: return "fair"
++        case .serious: return "serious"
++        case .critical: return "critical"
++        @unknown default: return "unknown"
++        }
++    }
++
+     static func handle(pluginId: String, op: String, args: [String: Any], allowed: (AyuPluginPermission) -> Bool) -> Any? {
+         func string(_ key: String, _ limit: Int = maxText) -> String {
+             return String((args[key] as? String ?? "").prefix(limit))
+@@ -23,6 +65,66 @@ enum AyuPluginHostExtras {
+         }
+ 
+         switch op {
++        // Introspection and small platform facts. Pure reads, no permission.
++        case "sdk.capabilities":
++            return value(AyuPluginHostExtras.capabilities)
++        case "plugin.resources", "debug.inspect":
++            return value([
++                "id": pluginId,
++                "thermalState": AyuPluginHostExtras.thermalStateName,
++                "lowPowerMode": ProcessInfo.processInfo.isLowPowerModeEnabled,
++                "uptime": ProcessInfo.processInfo.systemUptime,
++                "storageLimit": 64 * 1024
++            ])
++        case "accessibility.info":
++            return value([
++                "voiceOver": UIAccessibility.isVoiceOverRunning,
++                "reduceMotion": UIAccessibility.isReduceMotionEnabled,
++                "reduceTransparency": UIAccessibility.isReduceTransparencyEnabled,
++                "boldText": UIAccessibility.isBoldTextEnabled,
++                "invertColors": UIAccessibility.isInvertColorsEnabled,
++                "switchControl": UIAccessibility.isSwitchControlRunning,
++                "closedCaptioning": UIAccessibility.isClosedCaptioningEnabled,
++                "buttonShapes": UIAccessibility.isButtonShapesEnabled,
++                "grayscale": UIAccessibility.isGrayscaleEnabled,
++                "onOffSwitchLabels": UIAccessibility.isOnOffSwitchLabelsEnabled,
++                "dynamicType": UIApplication.shared.preferredContentSizeCategory.rawValue
++            ])
++        case "appearance.info":
++            return value([
++                "dark": UITraitCollection.current.userInterfaceStyle == .dark,
++                "classicDesign": AyuAppearancePlus.classicDesign,
++                "noGlass": AyuAppearancePlus.noGlass,
++                "blurGlass": AyuAppearancePlus.blurGlass,
++                "glassStyle": AyuAppearancePlus.glassStyle.rawValue,
++                "slowMotion": AyuAppearancePlus.slowMotionFactor,
++                "throttled": AyuPower.isThrottled
++            ])
++        // Several storage keys in one call, so a plugin does not write the defaults file per key.
++        case "storage.transaction":
++            let values = args["values"] as? [String: Any] ?? [:]
++            var count = 0
++            for (key, raw) in values.prefix(64) {
++                let name = String(key.prefix(128))
++                let text = raw is NSNull ? nil : (raw as? String).map { String($0.prefix(64 * 1024)) }
++                if AyuScriptRuntime.setStorageValue(pluginId: pluginId, key: name, value: text) {
++                    count += 1
++                }
++            }
++            return ["ok": true, "count": count]
++        // Draft editing without sending: insert at the end or clear the open composer.
++        case "chat.draft.insert":
++            guard allowed(.composer) else { return nil }
++            let text = string("text", 64 * 1024)
++            DispatchQueue.main.async {
++                let current = AyuPluginUI.shared.getComposerText?() ?? ""
++                AyuPluginUI.shared.setComposerText?(current + text)
++            }
++            return ["ok": true]
++        case "chat.draft.clear":
++            guard allowed(.composer) else { return nil }
++            DispatchQueue.main.async { AyuPluginUI.shared.setComposerText?("") }
++            return ["ok": true]
+         // Hashes and encodings: pure, no permission.
+         case "crypto.sha256":
+             return value(hex(Data(SHA256.hash(data: Data(string("text").utf8)))))
+diff --git a/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift b/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift
+index 0e6ef85b..3cac62c1 100644
+--- a/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift
++++ b/submodules/AccountContext/Sources/AyuPluginKillSwitch.swift
+@@ -47,7 +47,7 @@ public final class AyuPluginKillSwitch {
+ 
+     public func refresh() {
+         self.lock.lock()
+-        if let lastFetch = self.lastFetch, Date().timeIntervalSince(lastFetch) < 60 * 60 {
++        if let lastFetch = self.lastFetch, Date().timeIntervalSince(lastFetch) < 6 * 60 * 60 {
+             self.lock.unlock()
+             return
+         }
+diff --git a/submodules/AccountContext/Sources/AyuScriptCatalog.swift b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
+index 0b9c5d33..f0d446f8 100644
+--- a/submodules/AccountContext/Sources/AyuScriptCatalog.swift
++++ b/submodules/AccountContext/Sources/AyuScriptCatalog.swift
+@@ -36,10 +36,10 @@ public final class AyuScriptCatalog {
+         public var fileExtension: String {
+             switch self.kind {
+             case "iosplug": return "iosplug"
+-            case "python": return "ayu.py"
+-            case "lua": return "ayu.lua"
++            case "python": return "void.py"
++            case "lua": return "void.lua"
+             case "wasm": return "wasm"
+-            default: return "ayu.js"
++            default: return "void.js"
+             }
+         }
+ 
+diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
+index 0b4f1b32..935e0c39 100644
+--- a/submodules/AccountContext/Sources/AyuScriptRuntime.swift
++++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
+@@ -90,7 +90,9 @@ public final class AyuScriptRuntime {
+     public static let shared = AyuScriptRuntime()
+     public static let didChangeNotification = Notification.Name("AyuGram.ScriptPluginsChanged")
+     /// Every spelling of a code plugin: "plugin.ayu.js" ends in "js", "plugin.ayujs" in "ayujs".
+-    public static let fileExtensions: Set<String> = ["js", "ayujs", "py", "ayupy", "lua", "ayulua", "wasm", "ayuwasm"]
++    /// "voidjs"/"voidpy"/"voidlua"/"voidwasm" are the VoidGram spellings of the same languages;
++    /// both families install and run, so plugins written before the rename keep working.
++    public static let fileExtensions: Set<String> = ["js", "ayujs", "voidjs", "py", "ayupy", "voidpy", "lua", "ayulua", "voidlua", "wasm", "ayuwasm", "voidwasm"]
+ 
+     /// Presents short host messages (`ayu.toast`); installed by the app on launch.
+     public var toastHandler: ((String) -> Void)?
+@@ -169,7 +171,7 @@ public final class AyuScriptRuntime {
+         if data.starts(with: [0x00, 0x61, 0x73, 0x6d]) {
+             return self.previewWasm(data, filename: filename)
+         }
+-        let language: Language = (fileExtension == "py" || fileExtension == "ayupy") ? .python : ((fileExtension == "lua" || fileExtension == "ayulua") ? .lua : .javascript)
++        let language: Language = (fileExtension == "py" || fileExtension == "ayupy" || fileExtension == "voidpy") ? .python : ((fileExtension == "lua" || fileExtension == "ayulua" || fileExtension == "voidlua") ? .lua : .javascript)
+         guard data.count <= 512 * 1024, let source = String(data: data, encoding: .utf8), !source.contains("\u{0}") else { return nil }
+         let commentPrefix = language == .python ? "#" : (language == .lua ? "--" : "//")
+         var fields: [String: String] = [:]
+@@ -222,8 +224,9 @@ public final class AyuScriptRuntime {
+     }
+ 
+     /// A WebAssembly plugin describes itself in its `ayu.manifest` custom section (JSON).
++    /// New modules may call the section `void.manifest`; both are read.
+     private func previewWasm(_ data: Data, filename: String) -> Plugin? {
+-        guard data.count <= 2 * 1024 * 1024, let manifest = AyuScriptRuntime.wasmCustomSection(data, name: "ayu.manifest"),
++        guard data.count <= 2 * 1024 * 1024, let manifest = AyuScriptRuntime.wasmCustomSection(data, name: "ayu.manifest") ?? AyuScriptRuntime.wasmCustomSection(data, name: "void.manifest"),
+               let fields = (try? JSONSerialization.jsonObject(with: manifest)) as? [String: Any] else { return nil }
+         let fallbackId = ((filename as NSString).deletingPathExtension).lowercased()
+         return Plugin(
+@@ -359,10 +362,10 @@ public final class AyuScriptRuntime {
+         guard let plugin = self.plugin(id: id), let url = self.sourceURL(plugin), let data = try? Data(contentsOf: url) else { return nil }
+         let suffix: String
+         switch plugin.engine {
+-        case .javascript: suffix = ".ayu.js"
+-        case .python: suffix = ".ayu.py"
++        case .javascript: suffix = ".void.js"
++        case .python: suffix = ".void.py"
+         case .wasm: suffix = ".wasm"
+-        case .lua: suffix = ".ayu.lua"
++        case .lua: suffix = ".void.lua"
+         }
+         return (plugin.id + suffix, data)
+     }
+@@ -882,16 +885,19 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+     }
+ 
+     private func schedule(id: Int, handler: JSValue, milliseconds: Double, repeats: Bool) {
++        // A repeating timer below 100 ms is a busy loop on the plugin queue; the documented
++        // limit is once per 100 ms. One-shot timers may still fire immediately.
++        let delay = repeats ? max(100.0, milliseconds) : max(0.0, milliseconds)
+         let item = DispatchWorkItem { [weak self] in
+             guard let self, !self.stopped, self.timers[id] != nil else { return }
+             if !repeats { self.timers.removeValue(forKey: id) }
+             handler.call(withArguments: [])
+             if repeats, self.timers[id] != nil {
+-                self.schedule(id: id, handler: handler, milliseconds: milliseconds, repeats: true)
++                self.schedule(id: id, handler: handler, milliseconds: delay, repeats: true)
+             }
+         }
+         self.timers[id] = item
+-        self.queue.asyncAfter(deadline: .now() + .milliseconds(Int(milliseconds)), execute: item)
++        self.queue.asyncAfter(deadline: .now() + .milliseconds(Int(delay)), execute: item)
+     }
+ 
+     /// The JavaScript side of the API, plus a small WhiteGram (`wg`) compatibility layer.
+@@ -936,6 +942,8 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+         // Dot commands share one outgoing-text hook.
+         const commandHandlers = {};
+         let commandHookInstalled = false;
++        // `ayu.on` registrations, so `ayu.events.off` can silence one without a native call.
++        const listeners = new Map();
+         function installCommandHook() {
+             if (commandHookInstalled) return;
+             commandHookInstalled = true;
+@@ -1025,7 +1033,23 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+             warn: function () { host.log('warning', fmt(arguments)); },
+             error: function () { host.log('error', fmt(arguments)); },
+             toast: (value) => host.toast(text(value)),
+-            on: (event, fn) => { if (typeof fn === 'function') host.on(text(event), fn); },
++            on: (event, fn) => {
++                if (typeof fn !== 'function') return;
++                const name = text(event);
++                const record = { fn: fn, active: true };
++                const list = listeners.get(name) || [];
++                list.push(record);
++                listeners.set(name, list);
++                host.on(name, function (payload) { if (record.active) fn(payload); });
++            },
++            events: Object.freeze({
++                off: (event, fn) => {
++                    const list = listeners.get(text(event)) || [];
++                    for (const record of list) {
++                        if (record.fn === fn || fn === undefined) record.active = false;
++                    }
++                }
++            }),
+             hooks: Object.freeze({
+                 before: (point, fn) => register(point, 'before', fn),
+                 after: (point, fn) => register(point, 'after', fn),
+@@ -1212,6 +1236,10 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+             }),
+             chat: Object.freeze({
+                 scrollTo: (messageId) => host.call('chat.scrollTo', { messageId: Number(messageId) }),
++                draft: Object.freeze({
++                    insert: (value) => host.call('chat.draft.insert', { text: text(value) }),
++                    clear: () => host.call('chat.draft.clear', {})
++                }),
+                 toolbar: Object.freeze({
+                     add: (button, fn) => {
+                         const ok = host.call('chat.toolbar.add', button || {});
+@@ -1333,6 +1361,21 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+                 name: () => hostValue('app.name', {}),
+                 plugins: () => hostValue('app.plugins', {}) || []
+             }),
++            sdk: Object.freeze({
++                capabilities: () => hostValue('sdk.capabilities', {}) || []
++            }),
++            plugin: Object.freeze({
++                resources: () => hostValue('plugin.resources', {}) || {}
++            }),
++            debug: Object.freeze({
++                inspect: () => hostValue('debug.inspect', {}) || {}
++            }),
++            accessibility: Object.freeze({
++                info: () => hostValue('accessibility.info', {}) || {}
++            }),
++            appearance: Object.freeze({
++                info: () => hostValue('appearance.info', {}) || {}
++            }),
+             speech: Object.freeze({
+                 speak: (value, options) => !!host.call('speech.speak', Object.assign({}, options || {}, { text: text(value) })),
+                 stop: () => !!host.call('speech.stop', {}),
+@@ -1516,6 +1559,7 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+             storage: Object.freeze({
+                 get: (key) => { const v = host.storageGet(text(key)); return v === undefined ? null : v; },
+                 set: (key, value) => host.storageSet(text(key), value === null || value === undefined ? null : text(value)),
++                transaction: (values) => host.call('storage.transaction', { values: values && typeof values === 'object' ? values : {} }),
+                 remove: (key) => host.storageSet(text(key), null),
+                 has: (key) => { const v = host.storageGet(text(key)); return v !== undefined && v !== null; },
+                 getJSON: (key, fallback) => { const v = host.storageGet(text(key)); if (v === undefined || v === null) return fallback === undefined ? null : fallback; try { return JSON.parse(v); } catch (e) { return fallback === undefined ? null : fallback; } },
+@@ -1524,6 +1568,12 @@ private final class AyuScriptInstance: AyuPluginInstance, AyuReplInstance {
+             })
+         });
+         root.ayu = ayu;
++        // VoidGram API names. `void` is a reserved word in JavaScript, so plugin code uses
++        // `voidgram` (or `globalThis.void`); Python, Lua and Rust use `void` directly.
++        // `ayu` stays as an alias: plugins written before the rename keep working unchanged.
++        root.void = ayu;
++        root.$void = ayu;
++        root.voidgram = ayu;
+         root.setTimeout = (fn, ms) => host.setTimer(fn, Number(ms) || 0, false);
+         root.setInterval = (fn, ms) => host.setTimer(fn, Number(ms) || 0, true);
+         root.clearTimeout = (id) => host.clearTimer(Number(id) || 0);
+diff --git a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift b/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
+index 1fe23b6b..aa810369 100644
+--- a/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
++++ b/submodules/AccountContext/Sources/AyuVerifiedRegistry.swift
+@@ -38,7 +38,7 @@ public final class AyuVerifiedRegistry {
+ 
+     private static let publicKey = Data(base64Encoded: "GDJWDwzdxjryMJhA2dS+zM2p3AHK8O35B/cc5VjKcEU=")!
+     private static let baseURL = "https://raw.githubusercontent.com/murk-sus/AyuGramm-Plugins/main/registry/"
+-    private static let refreshInterval: TimeInterval = 60 * 60
++    private static let refreshInterval: TimeInterval = 6 * 60 * 60
+ 
+     private let lock = NSLock()
+     private var entries: [Int64: Entry] = [:]
+diff --git a/submodules/AyuPluginEngines/Sources/AyuLuaEngine.c b/submodules/AyuPluginEngines/Sources/AyuLuaEngine.c
+index ceb1994d..582b53f0 100644
+--- a/submodules/AyuPluginEngines/Sources/AyuLuaEngine.c
++++ b/submodules/AyuPluginEngines/Sources/AyuLuaEngine.c
+@@ -191,6 +191,9 @@ static const char *ayu_lua_prelude =
+     "  local fn = pending[payload.requestId]\n"
+     "  if fn then pending[payload.requestId] = nil; fn(payload.choice) end\n"
+     "end)\n"
++    // VoidGram spelling: `void.` (and `voidgram.`) are the same table as `ayu.`.
++    "void = ayu\n"
++    "voidgram = ayu\n"
+     "function __ayu_dispatch(request)\n"
+     "  local r = json.decode(request) or {}\n"
+     "  if r.op == 'hook' then\n"
+diff --git a/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
+index 98e5904c..f28b8008 100644
+--- a/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
++++ b/submodules/AyuPluginEngines/Sources/AyuPythonEngine.c
+@@ -458,6 +458,9 @@ static const char *ayu_py_prelude =
+     "            return f\n"
+     "        return add if fn is None else add(fn)\n"
+     "ayu = _Ayu()\n"
++    // VoidGram spelling: every Python plugin may use `void.` (or `voidgram.`) instead of `ayu.`.
++    "void = ayu\n"
++    "voidgram = ayu\n"
+     "def _ayu_ui_result(payload):\n"
+     "    fn = _ayu_pending.pop(payload.get('requestId'), None)\n"
+     "    if fn is not None:\n"
+diff --git a/submodules/AyuPluginEngines/Sources/AyuWasmEngine.c b/submodules/AyuPluginEngines/Sources/AyuWasmEngine.c
+index ca0067ac..995bd911 100644
+--- a/submodules/AyuPluginEngines/Sources/AyuWasmEngine.c
++++ b/submodules/AyuPluginEngines/Sources/AyuWasmEngine.c
+@@ -37,7 +37,8 @@ static void ayu_wasm_initialize(void) {
+     if (!wasm_runtime_full_init(&args)) {
+         return;
+     }
+-    ayu_wasm_ready = wasm_runtime_register_natives("ayu", ayu_wasm_symbols, sizeof(ayu_wasm_symbols) / sizeof(ayu_wasm_symbols[0]));
++    ayu_wasm_ready = wasm_runtime_register_natives("ayu", ayu_wasm_symbols, sizeof(ayu_wasm_symbols) / sizeof(ayu_wasm_symbols[0]))
++        && wasm_runtime_register_natives("void", ayu_wasm_symbols, sizeof(ayu_wasm_symbols) / sizeof(ayu_wasm_symbols[0]));
+ }
+ 
+ static char *ayu_wasm_strdup(const char *string) {
+@@ -145,15 +146,28 @@ AyuWasmPlugin *ayu_wasm_create(const uint8_t *bytes, uint32_t size, AyuEngineHos
+         return NULL;
+     }
+     wasm_runtime_set_custom_data(plugin->instance, plugin);
++    // `void_*` is the VoidGram spelling; `ayu_*` stays for modules built before the rename.
+     plugin->allocate = wasm_runtime_lookup_function(plugin->instance, "ayu_alloc");
++    if (plugin->allocate == NULL) {
++        plugin->allocate = wasm_runtime_lookup_function(plugin->instance, "void_alloc");
++    }
+     plugin->release = wasm_runtime_lookup_function(plugin->instance, "ayu_free");
++    if (plugin->release == NULL) {
++        plugin->release = wasm_runtime_lookup_function(plugin->instance, "void_free");
++    }
+     plugin->dispatch = wasm_runtime_lookup_function(plugin->instance, "ayu_dispatch");
++    if (plugin->dispatch == NULL) {
++        plugin->dispatch = wasm_runtime_lookup_function(plugin->instance, "void_dispatch");
++    }
+     if (plugin->allocate == NULL || plugin->dispatch == NULL) {
+-        ayu_wasm_set_error(error, "The module must export ayu_alloc and ayu_dispatch.");
++        ayu_wasm_set_error(error, "The module must export ayu_alloc and ayu_dispatch (or void_alloc and void_dispatch).");
+         ayu_wasm_destroy(plugin);
+         return NULL;
+     }
+     wasm_function_inst_t initialize = wasm_runtime_lookup_function(plugin->instance, "ayu_init");
++    if (initialize == NULL) {
++        initialize = wasm_runtime_lookup_function(plugin->instance, "void_init");
++    }
+     if (initialize != NULL) {
+         wasm_exec_env_t env = wasm_runtime_create_exec_env(plugin->instance, 64 * 1024);
+         if (env == NULL) {
+diff --git a/submodules/ChatListUI/Sources/ChatListControllerNode.swift b/submodules/ChatListUI/Sources/ChatListControllerNode.swift
+index cea2685e..bc06d7dd 100644
+--- a/submodules/ChatListUI/Sources/ChatListControllerNode.swift
++++ b/submodules/ChatListUI/Sources/ChatListControllerNode.swift
+@@ -1714,7 +1714,13 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
+                 self.ayuBottomFoldersBackground = background
+                 self.view.addSubview(background)
+             }
+-            background.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .systemChromeMaterialDark : .systemChromeMaterialLight)
++            if AyuAppearancePlus.glassSurfacesDisabled {
++                background.effect = nil
++                background.backgroundColor = self.presentationData.theme.rootController.tabBar.backgroundColor
++            } else {
++                background.backgroundColor = .clear
++                background.effect = UIBlurEffect(style: self.presentationData.theme.overallDarkAppearance ? .systemChromeMaterialDark : .systemChromeMaterialLight)
++            }
+             let tabsSize = self.ayuBottomFolders.update(transition: transition, component: ayuBottomTabs, environment: {}, containerSize: CGSize(width: max(0.0, layout.size.width - layout.safeInsets.left - layout.safeInsets.right - 32.0), height: 48.0))
+             let height = max(40.0, tabsSize.height)
+             self.ayuBottomFoldersHeight = height + 12.0
+diff --git a/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift b/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
+index ea858a4a..73b5e3f4 100644
+--- a/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
++++ b/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
+@@ -565,6 +565,7 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+     // by the backdrop's own shape mask, plus an optional outline.
+     private var ayuEffectView: UIVisualEffectView?
+     private var ayuOverlayView: UIView?
++    private var ayuOutlineView: UIView?
+     private var ayuForcesMask = false
+ 
+     private func ayuInsertBackgroundContent(_ backgroundContent: WallpaperBubbleBackgroundNode) {
+@@ -614,12 +615,31 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+             self.ayuOverlayView = nil
+         }
+         if AyuGlass.outline {
+-            self.layer.borderWidth = 1.0
+-            self.layer.borderColor = UIColor(white: 1.0, alpha: 0.35).cgColor
+-            self.layer.cornerRadius = cornerRadius
+-        } else if self.layer.borderWidth != 0.0 {
+-            self.layer.borderWidth = 0.0
+-            self.layer.cornerRadius = 0.0
++            // The fill is a subview of this backdrop, so a border on `self.layer` sits behind
++            // it and the outline never shows. Draw the border in a dedicated view on top.
++            let outline = self.ayuOutlineView ?? UIView()
++            outline.isUserInteractionEnabled = false
++            outline.backgroundColor = .clear
++            outline.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++            outline.frame = self.bounds
++            outline.layer.borderWidth = 1.0
++            outline.layer.borderColor = UIColor(white: 1.0, alpha: 0.35).cgColor
++            outline.layer.cornerRadius = cornerRadius
++            if outline.superview == nil {
++                self.view.addSubview(outline)
++            }
++            self.ayuOutlineView = outline
++            if self.layer.borderWidth != 0.0 {
++                self.layer.borderWidth = 0.0
++                self.layer.cornerRadius = 0.0
++            }
++        } else {
++            self.ayuOutlineView?.removeFromSuperview()
++            self.ayuOutlineView = nil
++            if self.layer.borderWidth != 0.0 {
++                self.layer.borderWidth = 0.0
++                self.layer.cornerRadius = 0.0
++            }
+         }
+         self.ayuForcesMask = effect != nil || AyuGlass.outline
+         // The wallpaper-coloured bubble content fades like the regular fill.
+diff --git a/submodules/Components/SheetComponent/Sources/SheetComponent.swift b/submodules/Components/SheetComponent/Sources/SheetComponent.swift
+index e49298b6..1220974d 100644
+--- a/submodules/Components/SheetComponent/Sources/SheetComponent.swift
++++ b/submodules/Components/SheetComponent/Sources/SheetComponent.swift
+@@ -698,7 +698,9 @@ private final class SheetBackgroundBlurView: UIView {
+     }
+     
+     func update(style: UIBlurEffect.Style, size: CGSize, topCornerRadius: CGFloat, bottomCornerRadius: CGFloat, bottomCornerRadii: (left: CGFloat, right: CGFloat)? = nil, transition: ComponentTransition) {
+-        if self.currentStyle != style {
++        if AyuAppearancePlus.glassSurfacesDisabled {
++            self.effectView.effect = nil
++        } else if self.currentStyle != style {
+             self.currentStyle = style
+             self.effectView.effect = UIBlurEffect(style: style)
+         }
+diff --git a/submodules/Display/Source/AyuAppearancePlus.swift b/submodules/Display/Source/AyuAppearancePlus.swift
+index 037ede6e..3d8bf25a 100644
+--- a/submodules/Display/Source/AyuAppearancePlus.swift
++++ b/submodules/Display/Source/AyuAppearancePlus.swift
+@@ -92,6 +92,12 @@ public enum AyuAppearancePlus {
+         return AyuAppearancePlus.launchGlassStyle == .telegram || AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.launchNoGlass || AyuAppearancePlus.launchBlurGlass
+     }
+ 
++    /// Every glass and blur surface must be drawn flat: classic design or "No glass".
++    /// Read once per launch, like the glass views themselves.
++    public static var glassSurfacesDisabled: Bool {
++        return AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.launchNoGlass
++    }
++
+     public static var needsRelaunch: Bool {
+         return AyuAppearancePlus.glassStyle != AyuAppearancePlus.launchGlassStyle || AyuAppearancePlus.classicDesign != AyuAppearancePlus.launchClassicDesign || AyuAppearancePlus.noGlass != AyuAppearancePlus.launchNoGlass || AyuAppearancePlus.blurGlass != AyuAppearancePlus.launchBlurGlass
+     }
+@@ -118,3 +124,35 @@ public enum AyuAppearancePlus {
+         NotificationCenter.default.post(name: didChangeNotification, object: nil)
+     }
+ }
++
++/// Automatic power saving. Low Power Mode or a hot phone turns off the optional animation
++/// work (particles, extra display-link frames) without changing any saved setting.
++public enum AyuPower {
++    private static let powerSaverKey = "ayu.power.saver"
++
++    /// On by default: optional particles and extra display-link frames stay off until the
++    /// owner turns this off. It never changes the interface the person chose.
++    public static var powerSaver: Bool {
++        get { return UserDefaults.standard.object(forKey: powerSaverKey) as? Bool ?? true }
++        set {
++            UserDefaults.standard.set(newValue, forKey: powerSaverKey)
++            NotificationCenter.default.post(name: AyuAppearancePlus.didChangeNotification, object: nil)
++        }
++    }
++
++    public static var isThrottled: Bool {
++        if powerSaver {
++            return true
++        }
++        let process = ProcessInfo.processInfo
++        if process.isLowPowerModeEnabled {
++            return true
++        }
++        switch process.thermalState {
++        case .serious, .critical:
++            return true
++        default:
++            return false
++        }
++    }
++}
+diff --git a/submodules/Display/Source/AyuGlass.swift b/submodules/Display/Source/AyuGlass.swift
+index 992c3d8b..61e228c5 100644
+--- a/submodules/Display/Source/AyuGlass.swift
++++ b/submodules/Display/Source/AyuGlass.swift
+@@ -45,7 +45,7 @@ public enum AyuGlass {
+ 
+     /// A thin line around every bubble.
+     public static var outline: Bool {
+-        get { return !AyuDecoyMode.isActive && UserDefaults.standard.bool(forKey: key + "outline") }
++        get { return !off && UserDefaults.standard.bool(forKey: key + "outline") }
+         set { set(newValue, "outline") }
+     }
+ 
+diff --git a/submodules/Display/Source/AyuOverlayEffects.swift b/submodules/Display/Source/AyuOverlayEffects.swift
+index a6b18470..165883e5 100644
+--- a/submodules/Display/Source/AyuOverlayEffects.swift
++++ b/submodules/Display/Source/AyuOverlayEffects.swift
+@@ -108,7 +108,7 @@ public final class AyuOverlayEffects {
+     /// The user's own effect, kept apart from plugin overlays.
+     public func applySettings() {
+         // Snow is drawn in the chat background, under the messages (AyuChatBackgroundSnowView).
+-        if AyuOverlayEffects.effect == .none || AyuOverlayEffects.effect == .snow {
++        if AyuOverlayEffects.effect == .none || AyuOverlayEffects.effect == .snow || AyuPower.isThrottled {
+             self.removeParticles(id: "ayu.settings")
+         } else {
+             self.setParticles(id: "ayu.settings", Particles(effect: AyuOverlayEffects.effect, amount: AyuOverlayEffects.amount, speed: AyuOverlayEffects.speed))
+@@ -135,7 +135,7 @@ public final class AyuOverlayEffects {
+             self.particles[id] = value
+             self.emitters[id]?.removeFromSuperlayer()
+             self.emitters[id] = nil
+-            guard value.effect != .none else { return }
++            guard value.effect != .none, !AyuPower.isThrottled else { return }
+             let emitter = CAEmitterLayer()
+             emitter.emitterShape = .line
+             emitter.renderMode = .unordered
+@@ -545,7 +545,7 @@ public final class AyuChatBackgroundSnowView: UIView {
+     private var isOn = false
+ 
+     private func update() {
+-        let on = AyuOverlayEffects.effect == .snow && !UIAccessibility.isReduceMotionEnabled
++        let on = AyuOverlayEffects.effect == .snow && !UIAccessibility.isReduceMotionEnabled && !AyuPower.isThrottled
+         self.isHidden = !on
+         if on {
+             self.emitter.emitterCells = [AyuOverlayEffects.shared.cell(AyuOverlayEffects.Particles(effect: .snow, amount: AyuOverlayEffects.amount, speed: AyuOverlayEffects.speed))]
+diff --git a/submodules/Display/Source/ContextMenuContainerNode.swift b/submodules/Display/Source/ContextMenuContainerNode.swift
+index 445654a9..b20073a7 100644
+--- a/submodules/Display/Source/ContextMenuContainerNode.swift
++++ b/submodules/Display/Source/ContextMenuContainerNode.swift
+@@ -28,7 +28,7 @@ public final class ContextMenuContainerNode: ASDisplayNode {
+         
+         super.init()
+         
+-        if isBlurred {
++        if isBlurred && !AyuAppearancePlus.glassSurfacesDisabled {
+             let effectView = UIVisualEffectView(effect: UIBlurEffect(style: isDark ? .dark : .light))
+             self.containerNode.view.addSubview(effectView)
+             self.effectView = effectView
+diff --git a/submodules/Display/Source/NavigationBackgroundView.swift b/submodules/Display/Source/NavigationBackgroundView.swift
+index 2fff1fe1..3dfa889a 100644
+--- a/submodules/Display/Source/NavigationBackgroundView.swift
++++ b/submodules/Display/Source/NavigationBackgroundView.swift
+@@ -64,7 +64,7 @@ public final class NavigationBackgroundNode: ASDisplayNode {
+             self.scheduledUpdate = true
+             return
+         }
+-        if self.enableBlur && !sharedIsReduceTransparencyEnabled && ((self._color.alpha > .ulpOfOne && self._color.alpha < 0.95) || forceKeepBlur) {
++        if self.enableBlur && !AyuAppearancePlus.glassSurfacesDisabled && !sharedIsReduceTransparencyEnabled && ((self._color.alpha > .ulpOfOne && self._color.alpha < 0.95) || forceKeepBlur) {
+             if self.effectView == nil {
+                 let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .light))
+ 
+@@ -215,7 +215,7 @@ open class BlurredBackgroundView: UIView {
+     }
+     
+     private func updateBackgroundBlur(forceKeepBlur: Bool) {
+-        if let color = self._color, self.enableBlur && !sharedIsReduceTransparencyEnabled && ((color.alpha > .ulpOfOne && color.alpha < 0.95) || forceKeepBlur) {
++        if let color = self._color, self.enableBlur && !AyuAppearancePlus.glassSurfacesDisabled && !sharedIsReduceTransparencyEnabled && ((color.alpha > .ulpOfOne && color.alpha < 0.95) || forceKeepBlur) {
+             if self.effectView == nil {
+                 let effectView = UIVisualEffectView(effect: UIBlurEffect(style: .light))
+ 
+diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+index a69a82ae..a10c8f6e 100644
+--- a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
++++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+@@ -18,6 +18,7 @@ private enum AyuAppearancePlusRow: Int32 {
+     case telegramGlass = 11
+     case classicDesign = 21
+     case noGlass = 22
++    case powerSaver = 23
+     case slowMotion = 25
+     case relaunchInfo = 30
+     case settingsRows = 35
+@@ -106,6 +107,7 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+         case .telegramGlass: AyuAppearancePlus.glassStyle = value ? .telegram : .system
+         case .classicDesign: AyuAppearancePlus.classicDesign = value
+         case .noGlass: AyuAppearancePlus.noGlass = value
++        case .powerSaver: AyuPower.powerSaver = value
+         default: break
+         }
+     })
+@@ -131,6 +133,7 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+             .header(3, 20, ru ? "ДИЗАЙН" : "DESIGN"),
+             .toggle(3, AyuAppearancePlusRow.classicDesign.rawValue, symbol("clock.arrow.circlepath", 0xFF2D55), ru ? "Старый дизайн Telegram" : "Classic Telegram design", ru ? "Как Telegram до Liquid Glass: полная нижняя панель и плоские панели без стекла" : "Telegram before Liquid Glass: full-width tab bar and flat panels without glass", AyuAppearancePlus.classicDesign),
+             .toggle(3, AyuAppearancePlusRow.noGlass.rawValue, symbol("square.slash", 0x8E8E93), ru ? "Без стекла" : "No glass", ru ? "Плоские панели везде: папки, чаты, настройки, кнопки" : "Flat panels everywhere: folders, chats, settings, buttons", AyuAppearancePlus.noGlass),
++            .toggle(3, AyuAppearancePlusRow.powerSaver.rawValue, symbol("battery.50", 0x34C759), ru ? "Экономия энергии" : "Power saving", ru ? "Меньше частиц и кадров: телефон меньше греется. Включается автоматически в режиме энергосбережения и при нагреве" : "Fewer particles and frames: the phone stays cooler. Also switches on in Low Power Mode and when the phone is hot", AyuPower.powerSaver),
+             .link(3, AyuAppearancePlusRow.slowMotion.rawValue, symbol("tortoise.fill", 0x34C759), ru ? "Slow-Motion анимаций" : "Animation slow motion", AyuAppearancePlus.slowMotionFactor > 1.0 ? String(format: "%.0f×", AyuAppearancePlus.slowMotionFactor) : (ru ? "выкл." : "off"))
+         ]
+         if AyuAppearancePlus.needsRelaunch {
+diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+index b1426ea6..76e83747 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+@@ -96,7 +96,7 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+             AyuCategoryItem(id: 12, symbol: "photo.stack.fill", color: 0x34C759, titleRu: "Архив медиа", titleEn: "Media archive", subtitleRu: "Сохранённые фото и видео из удалённых", subtitleEn: "Saved photos and videos from deleted messages", open: page { AyuMediaArchiveScreen(context: $0) }, imageName: "AyuGram/MediaArchive"),
+             AyuCategoryItem(id: 13, symbol: "doc.on.doc.fill", color: 0x5856D6, titleRu: "Обход ограничений", titleEn: "Restriction bypass", subtitleRu: "Копирование, скриншоты, исчезающие медиа", subtitleEn: "Copying, screenshots, disappearing media", open: page { ayuRestrictionBypassController(context: $0) }),
+             AyuCategoryItem(id: 14, symbol: "textformat", color: 0x007AFF, titleRu: "Отправка", titleEn: "Sending", subtitleRu: "Автозамена, анти-капс, ответ с цитатой, отложенная отправка", subtitleEn: "Auto-replace, anti-caps, reply with a quote, delayed sending", open: page { ayuSendingController(context: $0) }),
+-            AyuCategoryItem(id: 15, symbol: "character.bubble.fill", color: 0x34C759, titleRu: "Перевод", titleEn: "Translation", subtitleRu: "Сервис, кнопка на сообщениях, перевод перед отправкой", subtitleEn: "Service, button on messages, translation before sending", open: page { ayuTranslationSettingsController(context: $0) }),
++            AyuCategoryItem(id: 15, symbol: "character.bubble.fill", color: 0x34C759, titleRu: "Перевод", titleEn: "Translation", subtitleRu: "Сервис и кнопка на сообщениях", subtitleEn: "Service and the button on messages", open: page { ayuTranslationSettingsController(context: $0) }),
+             AyuCategoryItem(id: 16, symbol: "line.3.horizontal.decrease.circle.fill", color: 0xFF3B30, titleRu: "Фильтры", titleEn: "Filters", subtitleRu: "Скрывать сообщения по словам и регуляркам", subtitleEn: "Hide messages by words and patterns", open: page { ayuChatOptionsController(context: $0, regex: true) }, imageName: "AyuGram/Filter"),
+             AyuCategoryItem(id: 17, symbol: "hand.tap.fill", color: 0xFF9500, titleRu: "Меню и жесты", titleEn: "Menu & gestures", subtitleRu: "Пункты меню сообщений и двойной тап", subtitleEn: "Message menu items and double tap", open: page { ayuInterfaceSettingsController(context: $0, contextMenu: true) }),
+             AyuCategoryItem(id: 18, symbol: "bubble.left.and.bubble.right.fill", color: 0x32ADE6, titleRu: "Чаты", titleEn: "Chats", subtitleRu: "Поведение чатов и реакции", subtitleEn: "Chat behaviour and reactions", open: page { ayuChatsSettingsController(context: $0) }),
+diff --git a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+index f16e5455..74ee626f 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+@@ -65,6 +65,7 @@ func ayuRestrictionBypassController(context: AccountContext) -> ViewController {
+ // MARK: - Messages → Sending
+ 
+ func ayuSendingController(context: AccountContext) -> ViewController {
++    let ghostStore = context.account.network.ayuGhostMode
+     return ayuPage(context: context, title: { $0 ? "Отправка" : "Sending" }, notifications: [AyuTextShortcuts.didChangeNotification], entries: { ru in
+         let undo = UserDefaults.standard.integer(forKey: "ayu.extra.undoSendSeconds")
+         return [
+@@ -72,7 +73,7 @@ func ayuSendingController(context: AccountContext) -> ViewController {
+             .link(1, 1, symbol("text.badge.plus", 0x007AFF), ru ? "Автозамена и шаблоны" : "Auto-replace and templates", AyuTextShortcuts.isActive ? (ru ? "вкл." : "on") : ""),
+             .toggle(1, 2, symbol("textformat.size.smaller", 0xFF9500), ru ? "Анти-капс" : "Anti-caps", ru ? "«ПРИВЕТ ВСЕМ» уходит как «Привет всем»" : "“HELLO THERE” goes out as “Hello there”", AyuExtras.isOn(.antiCaps)),
+             .toggle(1, 3, symbol("quote.opening", 0x5856D6), ru ? "Ответ с цитатой" : "Reply with a quote", ru ? "Обычный ответ цитирует начало сообщения" : "A plain reply quotes the start of the message", AyuExtras.isOn(.replyWithQuote)),
+-            .toggle(1, 4, symbol("globe", 0x34C759), ru ? "Перевод перед отправкой" : "Translate before sending", ru ? "Кнопка 🌐 над клавиатурой" : "A 🌐 button above the keyboard", AyuExtras.isOn(.translateBeforeSend)),
++            .toggle(1, 6, symbol("quote.bubble", 0x5856D6), ru ? "Цитировать при ответе" : "Quote when replying", ru ? "Выключите, чтобы ответ не цитировал сообщение" : "Turn off so a reply does not quote the message", ghostStore.current.interface.autoQuoteReplies),
+             .toggle(1, 5, symbol("link.badge.plus", 0x007AFF), ru ? "Чистые ссылки" : "Clean links", ru ? "Без utm_*, fbclid и других меток" : "No utm_*, fbclid and other trackers", AyuExtras.isOn(.cleanLinks)),
+             .header(2, 10, ru ? "ОТПРАВКА" : "SENDING"),
+             .link(2, 11, symbol("timer", 0xFF9500), ru ? "Отложенная отправка" : "Delayed sending", undo == 0 ? (ru ? "выкл." : "off") : "\(undo) " + (ru ? "с" : "s")),
+@@ -95,8 +96,16 @@ func ayuSendingController(context: AccountContext) -> ViewController {
+         switch id {
+         case 2: AyuExtras.set(.antiCaps, value)
+         case 3: AyuExtras.set(.replyWithQuote, value)
+-        case 4: AyuExtras.set(.translateBeforeSend, value)
+         case 5: AyuExtras.set(.cleanLinks, value)
++        case 6:
++            do {
++                try ghostStore.update { $0.interface.autoQuoteReplies = value }
++            } catch {
++                let ru = context.sharedContext.currentPresentationData.with({ $0 }).strings.baseLanguageCode.hasPrefix("ru")
++                let alert = UIAlertController(title: "VoidGram", message: ru ? "Не удалось сохранить настройку." : "The setting could not be saved.", preferredStyle: .alert)
++                alert.addAction(UIAlertAction(title: "OK", style: .default))
++                context.sharedContext.applicationBindings.presentNativeController(alert)
++            }
+         case 12: AyuExtras.set(.randomFileNames, value)
+         case 13: AyuExtras.set(.spoofPhotoMetadata, value)
+         default: break
+diff --git a/submodules/SettingsUI/Sources/AyuExtrasController.swift b/submodules/SettingsUI/Sources/AyuExtrasController.swift
+index 2d5a6d20..c481161b 100644
+--- a/submodules/SettingsUI/Sources/AyuExtrasController.swift
++++ b/submodules/SettingsUI/Sources/AyuExtrasController.swift
+@@ -46,7 +46,6 @@ private let ayuExtraRows: [AyuExtraRow] = [
+     AyuExtraRow(section: 2, id: 13, key: .springScroll, symbol: "arrow.up.and.down.text.horizontal", color: 0x32ADE6, titleRu: "Анимация прокрутки чата", titleEn: "Chat scrolling animation", infoRu: "Чат дольше скользит и мягко останавливается вместо резкой остановки", infoEn: "The chat glides longer and settles softly instead of stopping short"),
+     AyuExtraRow(section: 2, id: 14, key: .notifyDeleted, symbol: "bell.badge.fill", color: 0xFF3B30, titleRu: "Уведомлять об удалённых", titleEn: "Notify about deletions", infoRu: "«X удалил сообщение в Y» — нужно сохранение удалённых в истории", infoEn: "\"X deleted a message in Y\" — needs saving deleted messages in History"),
+     AyuExtraRow(section: 2, id: 15, key: .readAfterReaction, symbol: "hand.thumbsup.fill", color: 0x007AFF, titleRu: "Прочитать после реакции", titleEn: "Read after a reaction", infoRu: "В режиме призрака реакция отмечает чат прочитанным, как ответ", infoEn: "In ghost mode a reaction marks the chat read, like a reply"),
+-    AyuExtraRow(section: 2, id: 16, key: .translateBeforeSend, symbol: "globe", color: 0x34C759, titleRu: "Перевод перед отправкой", titleEn: "Translate before sending", infoRu: "Кнопка 🌐 над клавиатурой переводит набранный текст на выбранный язык", infoEn: "A 🌐 button above the keyboard translates your draft to the chosen language"),
+     AyuExtraRow(section: 2, id: 17, key: .accentPerAccount, symbol: "paintpalette.fill", color: 0xAF52DE, titleRu: "Свой акцент у каждого аккаунта", titleEn: "Accent per account", infoRu: "При переключении аккаунта возвращается акцентный цвет, выбранный в нём", infoEn: "Switching accounts brings back the accent colour picked in that account"),
+     AyuExtraRow(section: 2, id: 18, key: .pluginAutoUpdate, symbol: "arrow.triangle.2.circlepath", color: 0x34C759, titleRu: "Автообновление плагинов", titleEn: "Auto-update plugins", infoRu: "Плагины из каталога обновляются при запуске; прошлая версия сохраняется для отката", infoEn: "Catalog plugins update at launch; the previous version is kept for rollback"),
+     AyuExtraRow(section: 2, id: 19, key: .noReactionGlow, symbol: "sparkles", color: 0xFFCC00, titleRu: "Без свечения реакций", titleEn: "No reaction glow", infoRu: "Кнопка платной реакции ⭐ без мерцания", infoEn: "The paid ⭐ reaction button without the shimmer"),
+@@ -99,7 +98,7 @@ func ayuExtrasController(context: AccountContext) -> ViewController {
+             context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: AyuHistoryFeedController(context: context)))
+             return
+         }
+-        if id == 35 {
++        if id == 40 {
+             let steps = [0, 3, 5, 7, 10]
+             let current = UserDefaults.standard.integer(forKey: "ayu.extra.undoSendSeconds")
+             UserDefaults.standard.set(steps[((steps.firstIndex(of: current) ?? 0) + 1) % steps.count], forKey: "ayu.extra.undoSendSeconds")
+@@ -154,7 +153,7 @@ func ayuExtrasController(context: AccountContext) -> ViewController {
+         entries.insert(.link(2, 12, AyuSettingsIcons.symbol("arrow.down.circle.fill", color: UIColor(rgb: 0x007AFF)), ru ? "Скорость загрузки (потоки)" : "Download speed (threads)", threads == 0 ? (ru ? "стандарт" : "default") : "\(threads)"), at: entries.firstIndex(where: { $0.stableId > 12 }) ?? entries.count)
+         entries.insert(.info(3, 29, ru ? "В меню плеера (⋯ у текста) также есть таймер сна и эквалайзер." : "The player menu (⋯ next to the lyrics) also has a sleep timer and the equalizer."), at: entries.firstIndex(where: { $0.stableId > 29 }) ?? entries.count)
+         let undoSeconds = UserDefaults.standard.integer(forKey: "ayu.extra.undoSendSeconds")
+-        entries.append(.link(4, 35, AyuSettingsIcons.symbol("arrow.uturn.backward.circle.fill", color: UIColor(rgb: 0x34C759)), ru ? "Отмена отправки" : "Undo send", undoSeconds == 0 ? (ru ? "выкл." : "off") : (ru ? "\(undoSeconds) с" : "\(undoSeconds) s")))
++        entries.append(.link(4, 40, AyuSettingsIcons.symbol("arrow.uturn.backward.circle.fill", color: UIColor(rgb: 0x34C759)), ru ? "Отмена отправки" : "Undo send", undoSeconds == 0 ? (ru ? "выкл." : "off") : (ru ? "\(undoSeconds) с" : "\(undoSeconds) s")))
+         entries.append(.link(4, 36, AyuSettingsIcons.symbol("trash.fill", color: UIColor(rgb: 0xFF3B30)), ru ? "Очистить сохранённые удалённые" : "Clear saved deleted", ""))
+         entries.append(.link(4, 37, AyuSettingsIcons.symbol("eraser.fill", color: UIColor(rgb: 0xFF9500)), ru ? "Очистить сохранённые изменённые" : "Clear saved edits", ""))
+         entries.append(.link(4, 38, AyuSettingsIcons.symbol("square.and.arrow.up.fill", color: UIColor(rgb: 0x007AFF)), ru ? "Экспорт удалённых и изменённых" : "Export deleted and edited", "JSON"))
+diff --git a/submodules/SettingsUI/Sources/AyuToolsController.swift b/submodules/SettingsUI/Sources/AyuToolsController.swift
+index 3b2fea6e..7579e708 100644
+--- a/submodules/SettingsUI/Sources/AyuToolsController.swift
++++ b/submodules/SettingsUI/Sources/AyuToolsController.swift
+@@ -69,6 +69,8 @@ private enum AyuToolsRow: Int32 {
+     case linksHeader = 70
+     case linkRules = 71
+     case linkInfo = 72
++    case openBrowser = 73
++    case browserInfo = 74
+     case backupHeader = 80
+     case backupMake = 81
+     case backupRestore = 82
+@@ -315,6 +317,8 @@ func ayuToolsController(context: AccountContext) -> ViewController {
+                 })
+             })
+             context.sharedContext.applicationBindings.presentNativeController(UINavigationController(rootViewController: bookmarks))
++        case .openBrowser?:
++            context.sharedContext.applicationBindings.presentNativeController(webBrowserSettingsController(context: context))
+         case .linkRules?:
+             let sheet = UIAlertController(title: ru ? "Переписывание ссылок" : "Link rewriting", message: ru ? "Ссылки открываются через удобные или приватные зеркала." : "Links open through friendlier or private front ends.", preferredStyle: .actionSheet)
+             for rule in AyuLinkRewrite.Rule.allCases {
+@@ -410,6 +414,8 @@ func ayuToolsController(context: AccountContext) -> ViewController {
+         let activeRules = AyuLinkRewrite.Rule.allCases.filter { AyuLinkRewrite.isOn($0) }.count
+         entries.append(.link(8, AyuToolsRow.linkRules.rawValue, symbol("arrow.triangle.swap", 0x007AFF), ru ? "Переписывание ссылок" : "Link rewriting", activeRules == 0 ? (ru ? "выкл." : "off") : "\(activeRules)"))
+         entries.append(.info(8, AyuToolsRow.linkInfo.rawValue, ru ? "X → fxtwitter, YouTube → Invidious, Instagram → ddinstagram, Reddit → old.reddit, TikTok → vxtiktok. Плагины могут добавлять свои правила (хук link.open)." : "X → fxtwitter, YouTube → Invidious, Instagram → ddinstagram, Reddit → old.reddit, TikTok → vxtiktok. Plugins can add rules (the link.open hook)."))
++        entries.append(.link(8, AyuToolsRow.openBrowser.rawValue, symbol("safari.fill", 0x007AFF), ru ? "Браузер для ссылок" : "Browser for links", ""))
++        entries.append(.info(8, AyuToolsRow.browserInfo.rawValue, ru ? "Ссылки открываются в выбранном браузере вместо встроенного. «В приложении» — Safari внутри VoidGram." : "Links open in the chosen browser instead of the built-in one. “In-app” means Safari inside VoidGram."))
+         entries.append(.header(9, AyuToolsRow.backupHeader.rawValue, ru ? "РЕЗЕРВНАЯ КОПИЯ" : "BACKUP"))
+         entries.append(.link(9, AyuToolsRow.backupMake.rawValue, symbol("lock.doc.fill", 0x34C759), ru ? "Создать зашифрованный бэкап" : "Create an encrypted backup", ""))
+         entries.append(.link(9, AyuToolsRow.backupRestore.rawValue, symbol("arrow.counterclockwise.circle.fill", 0x007AFF), ru ? "Восстановить из бэкапа" : "Restore from a backup", ""))
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
+index 5eb4c952..a65701ab 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
+@@ -186,6 +186,27 @@ public final class AyuGhostModeStore {
+             self.value = AyuGhostModeSettings()
+             self.hadLoadError = false
+         }
++        // Ghost Mode is on everywhere for everyone from this version on. The chat button then
++        // writes only this chat's override (`exceptionPeerIds` / `enabledPeerIds`), so switching
++        // it off in one chat never touches the others.
++        let migrationKey = "ayu.ghost.defaultsOn.v1"
++        if !UserDefaults.standard.bool(forKey: migrationKey) {
++            UserDefaults.standard.set(true, forKey: migrationKey)
++            self.value.hideReadReceipts = true
++            self.value.hideOnline = true
++            self.value.hideTyping = true
++            self.value.hideUploadProgress = true
++            do {
++                let data = try JSONEncoder().encode(self.value)
++                #if os(iOS)
++                try data.write(to: self.fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
++                #else
++                try data.write(to: self.fileURL, options: .atomic)
++                #endif
++            } catch {
++                NSLog("VoidGram: could not save the Ghost Mode defaults: %@", error.localizedDescription)
++            }
++        }
+     }
+ 
+     /// The committed policy with code-plugin feature overrides applied on top. Writes go
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+index 9b300d15..781f9159 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -182,9 +182,10 @@ public final class AyuSupportersManager {
+         self.loadAyuRegistryCache()
+         self.refreshAyuRegistryIfStale()
+         self.refresh()
+-        // Re-read on every return to the app, so a new badge shows without waiting 15 minutes.
++        // Re-read when the app returns after a while; a 10-second window hit the network on
++        // every app switch. Fifteen minutes matches the in-app refresh.
+         NotificationCenter.default.addObserver(forName: NSNotification.Name("UIApplicationDidBecomeActiveNotification"), object: nil, queue: nil) { [weak self] _ in
+-            self?.refreshAyuRegistryIfStale(interval: 10.0)
++            self?.refreshAyuRegistryIfStale(interval: 15.0 * 60.0)
+         }
+     }
+ 
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
+index 74a1c863..2ce01a11 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
+@@ -132,6 +132,26 @@ private func ayuRemoveExpiredTombstones(transaction: Transaction, previous: AyuM
+     if !ids.isEmpty { transaction.deleteMessages(Array(ids), forEachMedia: nil) }
+ }
+ 
++/// State replay calls this on every transaction; decoding the whole history each time was a
++/// constant CPU cost. The full prune runs at most once a minute, while the explicit history
++/// operations below still call `ayuPruneHistory` directly.
++private enum AyuHistoryPruneClock {
++    static let lock = NSLock()
++    static var last: TimeInterval = 0.0
++}
++
++func ayuPruneHistoryIfNeeded(transaction: Transaction) {
++    AyuHistoryPruneClock.lock.lock()
++    let now = Date().timeIntervalSince1970
++    let due = now - AyuHistoryPruneClock.last >= 60.0
++    if due {
++        AyuHistoryPruneClock.last = now
++    }
++    AyuHistoryPruneClock.lock.unlock()
++    guard due else { return }
++    _ = ayuPruneHistory(transaction: transaction)
++}
++
+ @discardableResult
+ func ayuPruneHistory(transaction: Transaction) -> AyuMessageHistoryState {
+     let original = ayuDecodeHistoryState(entry: transaction.getPreferencesEntry(key: ayuHistoryKey))
+diff --git a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
+index e5363dd4..e4a9f2e6 100644
+--- a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
++++ b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
+@@ -6432,7 +6432,7 @@ func replayFinalState(
+         })
+     }
+     
+-    ayuPruneHistory(transaction: transaction)
++    ayuPruneHistoryIfNeeded(transaction: transaction)
+     return AccountReplayedFinalState(
+         state: finalState,
+         addedIncomingMessageIds: addedIncomingMessageIds,
+diff --git a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
+index 88537b0f..130703d7 100644
+--- a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
++++ b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
+@@ -577,7 +577,7 @@ public class GlassBackgroundView: UIView {
+     private var ayuBlurClippingContext: ClippingShapeContext?
+     
+     public override init(frame: CGRect) {
+-        if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl {
++        if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl, !GlassBackgroundView.flatMode, !GlassBackgroundView.blurMode {
+             self.legacyView = nil
+             self.legacyHighlightContainerView = nil
+             self.legacyHighlightClippingContext = nil
+@@ -984,7 +984,7 @@ public final class GlassBackgroundContainerView: UIView {
+     /// Whether containers merge the glass shapes in them: native glass does, the custom implementation (before iOS 26, or
+     /// `GlassBackgroundView.useCustomGlassImpl`) only stacks them.
+     public static var mergesShapes: Bool {
+-        if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl {
++        if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl, !GlassBackgroundView.flatMode, !GlassBackgroundView.blurMode {
+             return true
+         }
+         return false
+@@ -992,7 +992,7 @@ public final class GlassBackgroundContainerView: UIView {
+ 
+     public init(spacing: CGFloat = 7.0) {
+         self.spacing = spacing
+-        if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl {
++        if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl, !GlassBackgroundView.flatMode, !GlassBackgroundView.blurMode {
+             let effect = UIGlassContainerEffect()
+             effect.spacing = spacing
+             let nativeView = UIVisualEffectView(effect: effect)
+diff --git a/submodules/TelegramUI/Components/MediaEditor/Sources/MediaEditorUtils.swift b/submodules/TelegramUI/Components/MediaEditor/Sources/MediaEditorUtils.swift
+index 176b61a9..b479b666 100644
+--- a/submodules/TelegramUI/Components/MediaEditor/Sources/MediaEditorUtils.swift
++++ b/submodules/TelegramUI/Components/MediaEditor/Sources/MediaEditorUtils.swift
+@@ -68,38 +68,50 @@ func textureRotatonForAVAsset(_ asset: AVAsset, mirror: Bool = false) -> Texture
+ }
+ 
+ func loadTexture(image: UIImage, device: MTLDevice) -> MTLTexture? {
+-    func dataForImage(_ image: UIImage) -> UnsafeMutablePointer<UInt8> {
+-        let imageRef = image.cgImage
+-        let width = Int(image.size.width)
+-        let height = Int(image.size.height)
+-        let colorSpace = CGColorSpaceCreateDeviceRGB()
+-        
+-        let rawData = UnsafeMutablePointer<UInt8>.allocate(capacity: width * height * 4)
+-        let bytePerPixel = 4
+-        let bytesPerRow = bytePerPixel * Int(width)
+-        let bitsPerComponent = 8
+-        let bitmapInfo = CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
+-        if let context = CGContext(data: rawData, width: width, height: height, bitsPerComponent: bitsPerComponent, bytesPerRow: bytesPerRow, space: colorSpace, bitmapInfo: bitmapInfo.rawValue) {
+-            context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+-            context.draw(imageRef!, in: CGRect(x: 0, y: 0, width: width, height: height))
++    // The texture is created in pixels, so the CPU buffer must be in pixels too. Reading
++    // `image.size` here (points) allocated a smaller buffer than the texture and the GPU
++    // consumed past its end — that is where the torn edges and colour fringes came from.
++    let normalizedImage: CGImage
++    if image.imageOrientation == .up, let imageRef = image.cgImage {
++        normalizedImage = imageRef
++    } else {
++        let format = UIGraphicsImageRendererFormat()
++        format.scale = image.scale
++        format.opaque = false
++        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
++        let rendered = renderer.image { _ in
++            image.draw(in: CGRect(origin: .zero, size: image.size))
+         }
+-        return rawData
++        guard let imageRef = rendered.cgImage else {
++            return nil
++        }
++        normalizedImage = imageRef
++    }
++
++    let width = normalizedImage.width
++    let height = normalizedImage.height
++    guard width > 0, height > 0 else {
++        return nil
+     }
+-    
+-    let width = Int(image.size.width * image.scale)
+-    let height = Int(image.size.height * image.scale)
+     let bytePerPixel = 4
+     let bytesPerRow = bytePerPixel * width
+-    
+-    var texture : MTLTexture?
+-    let region = MTLRegionMake2D(0, 0, Int(width), Int(height))
++    let rawData = UnsafeMutablePointer<UInt8>.allocate(capacity: width * height * bytePerPixel)
++    let colorSpace = CGColorSpaceCreateDeviceRGB()
++    let bitmapInfo = CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
++    guard let context = CGContext(data: rawData, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow, space: colorSpace, bitmapInfo: bitmapInfo.rawValue) else {
++        rawData.deallocate()
++        return nil
++    }
++    context.clear(CGRect(x: 0, y: 0, width: width, height: height))
++    context.draw(normalizedImage, in: CGRect(x: 0, y: 0, width: width, height: height))
++
+     let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
+-    texture = device.makeTexture(descriptor: textureDescriptor)
+-    
+-    let data = dataForImage(image)
+-    texture?.replace(region: region, mipmapLevel: 0, withBytes: data, bytesPerRow: bytesPerRow)
+-    data.deallocate()
+-    
++    guard let texture = device.makeTexture(descriptor: textureDescriptor) else {
++        rawData.deallocate()
++        return nil
++    }
++    texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: rawData, bytesPerRow: bytesPerRow)
++    rawData.deallocate()
+     return texture
+ }
+ 
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenAvatarSetup.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenAvatarSetup.swift
+index 33754d2b..42a46a68 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenAvatarSetup.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenAvatarSetup.swift
+@@ -106,7 +106,7 @@ public extension PeerInfoScreenImpl {
+             if let asset = result as? PHAsset {
+                 subject = .single(.asset(asset))
+             } else if let image = result as? UIImage {
+-                subject = .single(.image(image: image, dimensions: PixelDimensions(image.size), additionalImage: nil, additionalImagePosition: .bottomRight, fromCamera: false))
++                subject = .single(.image(image: image, dimensions: PixelDimensions(CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)), additionalImage: nil, additionalImagePosition: .bottomRight, fromCamera: false))
+             } else if let result = result as? Signal<CameraScreenImpl.Result, NoError> {
+                 subject = result
+                 |> map { value -> MediaEditorScreenImpl.Subject? in
+@@ -114,7 +114,7 @@ public extension PeerInfoScreenImpl {
+                     case .pendingImage:
+                         return nil
+                     case let .image(image):
+-                        return .image(image: image.image, dimensions: PixelDimensions(image.image.size), additionalImage: nil, additionalImagePosition: .topLeft, fromCamera: false)
++                        return .image(image: image.image, dimensions: PixelDimensions(CGSize(width: image.image.size.width * image.image.scale, height: image.image.size.height * image.image.scale)), additionalImage: nil, additionalImagePosition: .topLeft, fromCamera: false)
+                     case let .video(video):
+                         return .video(videoPath: video.videoPath, thumbnail: video.coverImage, mirror: video.mirror, additionalVideoPath: nil, additionalThumbnail: nil, dimensions: video.dimensions, duration: video.duration, videoPositionChanges: [], additionalVideoPosition: .topLeft, fromCamera: false)
+                     default:
+@@ -563,7 +563,7 @@ extension PeerInfoScreenImpl {
+                 if let asset = result as? PHAsset {
+                     subject = .single(.asset(asset))
+                 } else if let image = result as? UIImage {
+-                    subject = .single(.image(image: image, dimensions: PixelDimensions(image.size), additionalImage: nil, additionalImagePosition: .bottomRight, fromCamera: false))
++                    subject = .single(.image(image: image, dimensions: PixelDimensions(CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)), additionalImage: nil, additionalImagePosition: .bottomRight, fromCamera: false))
+                 } else if let result = result as? Signal<CameraScreenImpl.Result, NoError> {
+                     subject = result
+                     |> map { value -> MediaEditorScreenImpl.Subject? in
+@@ -571,7 +571,7 @@ extension PeerInfoScreenImpl {
+                         case .pendingImage:
+                             return nil
+                         case let .image(image):
+-                            return .image(image: image.image, dimensions: PixelDimensions(image.image.size), additionalImage: nil, additionalImagePosition: .topLeft, fromCamera: false)
++                            return .image(image: image.image, dimensions: PixelDimensions(CGSize(width: image.image.size.width * image.image.scale, height: image.image.size.height * image.image.scale)), additionalImage: nil, additionalImagePosition: .topLeft, fromCamera: false)
+                         case let .video(video):
+                             return .video(videoPath: video.videoPath, thumbnail: video.coverImage, mirror: video.mirror, additionalVideoPath: nil, additionalThumbnail: nil, dimensions: video.dimensions, duration: video.duration, videoPositionChanges: [], additionalVideoPosition: .topLeft, fromCamera: false)
+                         default:
+diff --git a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
+index dcc5bc5b..ac8c379a 100644
+--- a/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
++++ b/submodules/TelegramUI/Components/VideoMessageCameraScreen/Sources/VideoMessageCameraScreen.swift
+@@ -2294,9 +2294,9 @@ public class VideoMessageCameraScreen: ViewController {
+     private func requestAudioSession() {
+         let audioSessionType: ManagedAudioSessionType
+         if self.context.sharedContext.currentMediaInputSettings.with({ $0 }).pauseMusicOnRecording { 
+-            audioSessionType = .record(speaker: false, video: false, withOthers: false)
++            audioSessionType = .record(speaker: false, video: true, withOthers: false)
+         } else {
+-            audioSessionType = .record(speaker: false, video: false, withOthers: true)
++            audioSessionType = .record(speaker: false, video: true, withOthers: true)
+         }
+       
+         self.audioSessionDisposable = self.context.sharedContext.mediaManager.audioSession.push(audioSessionType: audioSessionType, activate: { [weak self] _ in
+diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
+index fa935b91..3e85456f 100644
+--- a/submodules/TelegramUI/Sources/AppDelegate.swift
++++ b/submodules/TelegramUI/Sources/AppDelegate.swift
+@@ -3170,7 +3170,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         }
+         self.openUrlWhenReadyDisposable.set((signal
+         |> deliverOnMainQueue).start(next: { [weak self] context in
+-            if url.isFileURL, ["plugin", "iosplug", "ayujs", "ayupy", "ayulua", "ayuwasm"].contains(url.pathExtension.lowercased()) || [".ayu.js", ".ayu.py", ".ayu.lua", ".ayu.wasm"].contains(where: { url.lastPathComponent.lowercased().hasSuffix($0) }) {
++            if url.isFileURL, ["plugin", "iosplug", "ayujs", "ayupy", "ayulua", "ayuwasm", "voidjs", "voidpy", "voidlua", "voidwasm"].contains(url.pathExtension.lowercased()) || [".ayu.js", ".ayu.py", ".ayu.lua", ".ayu.wasm", ".void.js", ".void.py", ".void.lua", ".void.wasm"].contains(where: { url.lastPathComponent.lowercased().hasSuffix($0) }) {
+                 ayuImportPlugin(context: context.context, fileURL: url, filename: url.lastPathComponent)
+             } else if (WalletContext.isTonConnectUrl(url.absoluteString) || url.scheme?.lowercased() == "ton"), !WalletConfiguration.with(appConfiguration: context.context.currentAppConfiguration.with { $0 }).isAvailable {
+                 self?.presentWalletUnavailable(in: context)
+diff --git a/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift b/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift
+index 2709e0cf..4abd2f2f 100644
+--- a/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift
++++ b/submodules/TelegramUI/Sources/AyuAttachmentMenuController.swift
+@@ -64,7 +64,12 @@ final class AyuAttachmentMenuController: ViewController {
+         self.trackKeyboard()
+         self.outside.addTarget(self, action: #selector(self.cancel), for: .touchUpInside)
+         self.view.addSubview(self.outside)
+-        self.panel.effect = UIBlurEffect(style: self.theme.overallDarkAppearance ? .systemChromeMaterialDark : .systemChromeMaterialLight)
++        if AyuAppearancePlus.glassSurfacesDisabled {
++            self.panel.effect = nil
++            self.panel.backgroundColor = self.theme.list.blocksBackgroundColor
++        } else {
++            self.panel.effect = UIBlurEffect(style: self.theme.overallDarkAppearance ? .systemChromeMaterialDark : .systemChromeMaterialLight)
++        }
+         self.panel.layer.cornerRadius = 26.0
+         self.panel.layer.cornerCurve = .continuous
+         self.panel.alpha = 0.0
+@@ -93,6 +98,9 @@ final class AyuAttachmentMenuController: ViewController {
+                 return attributes
+             }
+             row.configuration = configuration
++            row.layer.cornerRadius = 16.0
++            row.layer.cornerCurve = .continuous
++            row.clipsToBounds = true
+             let icon = UIImageView(image: UIImage(systemName: details.1))
+             icon.tintColor = .white
+             icon.contentMode = .center
+diff --git a/submodules/TelegramUI/Sources/AyuComposerBar.swift b/submodules/TelegramUI/Sources/AyuComposerBar.swift
+index b3421a72..477e2920 100644
+--- a/submodules/TelegramUI/Sources/AyuComposerBar.swift
++++ b/submodules/TelegramUI/Sources/AyuComposerBar.swift
+@@ -14,7 +14,6 @@ final class AyuComposerBar: UIView {
+     private let stack = UIStackView()
+     private weak var controller: ChatControllerImpl?
+     private var observers: [NSObjectProtocol] = []
+-    private let translateDisposable = MetaDisposable()
+ 
+     init(controller: ChatControllerImpl) {
+         self.controller = controller
+@@ -36,7 +35,7 @@ final class AyuComposerBar: UIView {
+             self.stack.centerYAnchor.constraint(equalTo: self.scrollView.centerYAnchor),
+             self.stack.heightAnchor.constraint(equalToConstant: 30.0)
+         ])
+-        for name in [AyuPluginUI.didChangeNotification, AyuExtras.didChangeNotification] {
++        for name in [AyuPluginUI.didChangeNotification] {
+             self.observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { [weak self] _ in
+                 self?.rebuild()
+             }))
+@@ -52,7 +51,6 @@ final class AyuComposerBar: UIView {
+         for observer in self.observers {
+             NotificationCenter.default.removeObserver(observer)
+         }
+-        self.translateDisposable.dispose()
+     }
+ 
+     private func chip(_ title: String, symbol: String?) -> UIButton {
+@@ -75,10 +73,6 @@ final class AyuComposerBar: UIView {
+         }
+         let buttons = AyuPluginUI.shared.composerButtons
+         let commands = AyuPluginUI.shared.commands
+-        let translate = AyuExtras.isOn(.translateBeforeSend)
+-        if translate {
+-            self.stack.addArrangedSubview(self.translateButton())
+-        }
+         for item in buttons {
+             let button = self.chip(item.title, symbol: item.icon ?? "puzzlepiece.extension")
+             button.addAction(UIAction(handler: { [weak self] _ in
+@@ -106,57 +100,7 @@ final class AyuComposerBar: UIView {
+             }), for: .touchUpInside)
+             self.stack.addArrangedSubview(button)
+         }
+-        self.isHidden = buttons.isEmpty && commands.isEmpty && !translate && AyuPluginUI.shared.toolbarButtons.isEmpty
+-    }
+-
+-    private static let languages: [(code: String, title: String)] = [
+-        ("en", "English"), ("ru", "Русский"), ("uk", "Українська"), ("de", "Deutsch"), ("es", "Español"),
+-        ("fr", "Français"), ("it", "Italiano"), ("pt", "Português"), ("tr", "Türkçe"), ("pl", "Polski"),
+-        ("zh", "中文"), ("ja", "日本語"), ("ko", "한국어"), ("ar", "العربية"), ("kk", "Қазақша")
+-    ]
+-    private static let targetKey = "ayu.extra.translateTo"
+-
+-    /// Tap: translate to the last language. Long press: pick another one.
+-    private func translateButton() -> UIButton {
+-        let target = UserDefaults.standard.string(forKey: AyuComposerBar.targetKey) ?? "en"
+-        let button = self.chip("→ " + target.uppercased(), symbol: "globe")
+-        button.addAction(UIAction(handler: { [weak self] _ in
+-            self?.translateDraft(to: UserDefaults.standard.string(forKey: AyuComposerBar.targetKey) ?? "en")
+-        }), for: .touchUpInside)
+-        button.menu = UIMenu(children: AyuComposerBar.languages.map { language in
+-            return UIAction(title: language.title, state: language.code == target ? .on : .off, handler: { [weak self] _ in
+-                UserDefaults.standard.set(language.code, forKey: AyuComposerBar.targetKey)
+-                self?.rebuild()
+-                self?.translateDraft(to: language.code)
+-            })
+-        })
+-        return button
+-    }
+-
+-    private func translateDraft(to language: String) {
+-        guard let controller = self.controller else { return }
+-        let text = controller.presentationInterfaceState.interfaceState.effectiveInputState.inputText.string
+-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+-        // On-device Apple translation first (iOS 26+, downloaded languages), then Telegram's.
+-        AyuAppleTranslation.translate(text, to: language, completion: { [weak self, weak controller] result in
+-            if let result, !result.isEmpty {
+-                controller?.ayuSetInputText(result)
+-            } else {
+-                self?.translateWithTelegram(text, to: language)
+-            }
+-        })
+-    }
+-
+-    private func translateWithTelegram(_ text: String, to language: String) {
+-        guard let controller = self.controller else { return }
+-        self.translateDisposable.set((controller.context.engine.messages.translate(text: text, toLang: language)
+-        |> deliverOnMainQueue).startStrict(next: { [weak controller] result in
+-            if let (translated, _) = result {
+-                controller?.ayuSetInputText(translated)
+-            }
+-        }, error: { _ in
+-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+-        }))
++        self.isHidden = buttons.isEmpty && commands.isEmpty && AyuPluginUI.shared.toolbarButtons.isEmpty
+     }
+ }
+ 
+diff --git a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+index 97b92591..d244d80d 100644
+--- a/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuMusicPlayerController.swift
+@@ -340,7 +340,13 @@ final class AyuMusicPlayerView: UIView {
+     var safeInsets = UIEdgeInsets()
+ 
+     private let backdropNode = TransformImageNode()
+-    private let backdropBlur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
++    private let backdropBlur: UIVisualEffectView = {
++        let view = UIVisualEffectView(effect: AyuAppearancePlus.glassSurfacesDisabled ? nil : UIBlurEffect(style: .systemUltraThinMaterialDark))
++        if AyuAppearancePlus.glassSurfacesDisabled {
++            view.backgroundColor = UIColor(white: 0.0, alpha: 0.55)
++        }
++        return view
++    }()
+     private let backdropDim = UIView()
+     private let grabber = UIView()
+ 
+@@ -550,7 +556,7 @@ final class AyuMusicPlayerView: UIView {
+ 
+         let displayLink = CADisplayLink(target: AyuWeakTarget(self), selector: #selector(AyuWeakTarget.tick))
+         if #available(iOS 15.0, *) {
+-            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 30.0, maximum: 120.0, preferred: 120.0)
++            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 30.0, maximum: 60.0, preferred: 60.0)
+         } else {
+             displayLink.preferredFramesPerSecond = 60
+         }
+@@ -628,7 +634,8 @@ final class AyuMusicPlayerView: UIView {
+             if isPaused { self.musicHaptics.suspend() }
+             // Nothing moves while paused; keep the link slow instead of redrawing at 120 Hz.
+             if #available(iOS 15.0, *) {
+-                self.displayLink?.preferredFrameRateRange = isPaused ? CAFrameRateRange(minimum: 10.0, maximum: 15.0, preferred: 15.0) : CAFrameRateRange(minimum: 30.0, maximum: 120.0, preferred: 120.0)
++                let playingRate = AyuPower.isThrottled ? CAFrameRateRange(minimum: 20.0, maximum: 30.0, preferred: 30.0) : CAFrameRateRange(minimum: 30.0, maximum: 60.0, preferred: 60.0)
++                self.displayLink?.preferredFrameRateRange = isPaused ? CAFrameRateRange(minimum: 10.0, maximum: 15.0, preferred: 15.0) : playingRate
+             }
+             ayuSetImageAnimated(self.playPauseButton, ayuSymbol(isPaused ? "play.fill" : "pause.fill", size: 44.0))
+             self.playPauseButton.accessibilityLabel = isPaused ? (self.russian ? "Воспроизвести" : "Play") : (self.russian ? "Пауза" : "Pause")
+diff --git a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
+index d79e6d31..4ae7bf78 100644
+--- a/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
++++ b/submodules/TelegramUI/Sources/AyuPluginAppServices.swift
+@@ -379,4 +379,7 @@ func ayuInstallPluginAppServices(sharedContext: SharedAccountContext) {
+     AyuPluginUI.shared.setComposerText = { text in
+         AyuPluginChatTracker.current?.ayuSetInputText(text)
+     }
++    AyuPluginUI.shared.getComposerText = {
++        return AyuPluginChatTracker.current?.presentationInterfaceState.interfaceState.effectiveInputState.inputText.string
++    }
+ }
+diff --git a/submodules/TelegramUI/Sources/AyuVoicePlayerController.swift b/submodules/TelegramUI/Sources/AyuVoicePlayerController.swift
+index 01d06bbf..0596eed4 100644
+--- a/submodules/TelegramUI/Sources/AyuVoicePlayerController.swift
++++ b/submodules/TelegramUI/Sources/AyuVoicePlayerController.swift
+@@ -206,7 +206,7 @@ final class AyuVoicePlayerView: UIView {
+         })
+ 
+         let displayLink = CADisplayLink(target: AyuVoiceWeakTarget(self), selector: #selector(AyuVoiceWeakTarget.tick))
+-        displayLink.preferredFramesPerSecond = 60
++        displayLink.preferredFramesPerSecond = 30
+         displayLink.add(to: .main, forMode: .common)
+         self.displayLink = displayLink
+     }
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenViewOnceMediaMessage.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenViewOnceMediaMessage.swift
+index a40fe91b..217e2bc3 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerOpenViewOnceMediaMessage.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerOpenViewOnceMediaMessage.swift
+@@ -127,6 +127,13 @@ extension ChatControllerImpl {
+             self.present(controller, in: .window(.root))
+             return
+         }
++
++        // View-once round videos never reach SecretMediaPreviewController: they are played by
++        // the instant-video overlay, which was created with `storeAfterDownload: nil`. Save the
++        // copy here, before playback, so the "Save view-once media" switch covers circles too.
++        if AyuExtras.isOn(.saveViewOnce), let file = message.media.first(where: { ($0 as? TelegramMediaFile)?.isInstantVideo == true }) as? TelegramMediaFile {
++            let _ = SaveToCameraRoll.saveToCameraRoll(context: self.context, userLocation: .peer(message.id.peerId), mediaReference: .message(message: MessageReference(message._asMessage()), media: file)).startStandalone()
++        }
+         
+         let isIncoming = message.effectivelyIncoming(self.context.account.peerId)
+         
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index f1f4b069..2f66f632 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -9280,9 +9280,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             return
+         }
+ 
+-        // AyuGram "Undo send": hold the messages for a few seconds with an Undo button.
++        // AyuGram "Undo send": hold text messages for a few seconds with an Undo button.
++        // Media never goes through this path: the overlay is presented while the picker is
++        // closing, and holding a photo/video there loses the upload (it looked like sending
++        // was broken). Files, photos and videos are sent immediately.
+         let ayuUndoSeconds = AyuUndoSend.seconds
+-        if ayuUndoSeconds > 0 && !AyuUndoSend.bypass && !postpone && peerId.namespace != Namespaces.Peer.SecretChat {
++        if ayuUndoSeconds > 0 && !AyuUndoSend.bypass && !postpone && !media && peerId.namespace != Namespaces.Peer.SecretChat {
+             let ru = self.presentationData.strings.baseLanguageCode.hasPrefix("ru")
+             var undone = false
+             let controller = UndoOverlayController(presentationData: self.presentationData, content: .info(title: nil, text: ru ? "Отправка через \(ayuUndoSeconds) с" : "Sending in \(ayuUndoSeconds) s", timeout: Double(ayuUndoSeconds), customUndoText: ru ? "Отменить" : "Undo"), elevatedLayout: false, action: { [weak self] action in
+diff --git a/submodules/TelegramUI/Sources/OpenChatMessage.swift b/submodules/TelegramUI/Sources/OpenChatMessage.swift
+index d18b3e7e..94e84d55 100644
+--- a/submodules/TelegramUI/Sources/OpenChatMessage.swift
++++ b/submodules/TelegramUI/Sources/OpenChatMessage.swift
+@@ -233,7 +233,7 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
+             case let .document(file, immediateShare):
+                 params.dismissInput()
+                 let presentationData = params.context.sharedContext.currentPresentationData.with { $0 }
+-                if !immediateShare, let name = file.fileName, [".plugin", ".iosplug", ".ayujs", ".ayu.js", ".ayupy", ".ayu.py", ".ayulua", ".ayu.lua", ".ayuwasm", ".ayu.wasm"].contains(where: { name.lowercased().hasSuffix($0) }), !params.message.isCopyProtected(), !params.copyProtected, params.message.id.peerId.namespace != Namespaces.Peer.SecretChat {
++                if !immediateShare, let name = file.fileName, [".plugin", ".iosplug", ".ayujs", ".ayu.js", ".voidjs", ".void.js", ".ayupy", ".ayu.py", ".voidpy", ".void.py", ".ayulua", ".ayu.lua", ".voidlua", ".void.lua", ".ayuwasm", ".ayu.wasm", ".voidwasm", ".void.wasm"].contains(where: { name.lowercased().hasSuffix($0) }), !params.message.isCopyProtected(), !params.copyProtected, params.message.id.peerId.namespace != Namespaces.Peer.SecretChat {
+                     let _ = (params.context.engine.resources.data(resource: EngineMediaResource(file.resource))
+                     |> filter { $0.isComplete }
+                     |> take(1)
+diff --git a/submodules/UndoUI/Sources/UndoOverlayControllerNode.swift b/submodules/UndoUI/Sources/UndoOverlayControllerNode.swift
+index 251e9255..3e55f120 100644
+--- a/submodules/UndoUI/Sources/UndoOverlayControllerNode.swift
++++ b/submodules/UndoUI/Sources/UndoOverlayControllerNode.swift
+@@ -1589,7 +1589,13 @@ final class UndoOverlayControllerNode: ViewControllerTracingNode {
+ 
+         self.panelWrapperNode = ASDisplayNode()
+         
+-        self.effectView = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
++        if AyuAppearancePlus.glassSurfacesDisabled {
++            let view = UIView()
++            view.backgroundColor = presentationData.theme.rootController.tabBar.backgroundColor
++            self.effectView = view
++        } else {
++            self.effectView = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
++        }
+         
+         super.init()
+         

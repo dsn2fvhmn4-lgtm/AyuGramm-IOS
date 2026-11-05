@@ -1,164 +1,3 @@
-diff --git a/Telegram/AyuIntents/AyuAppIntents.swift b/Telegram/AyuIntents/AyuAppIntents.swift
-index 2897c42b..60781209 100644
---- a/Telegram/AyuIntents/AyuAppIntents.swift
-+++ b/Telegram/AyuIntents/AyuAppIntents.swift
-@@ -55,27 +55,6 @@ private var ayuRussian: Bool {
-     return Locale.preferredLanguages.first?.hasPrefix("ru") == true
- }
- 
--@available(iOS 16.0, *)
--struct AyuSetGhostModeIntent: AppIntent {
--    static let title: LocalizedStringResource = "Ghost Mode"
--    static let description = IntentDescription("Turns VoidGram Ghost Mode on or off: no read receipts, online status, typing or upload progress.")
--
--    @Parameter(title: "Enabled", default: true)
--    var enabled: Bool
--
--    static var parameterSummary: some ParameterSummary {
--        Summary("Set Ghost Mode to \(\.$enabled)")
--    }
--
--    func perform() async throws -> some IntentResult & ProvidesDialog {
--        guard let answer = await AyuIntentChannel.ask("ghost.set", ["enabled": self.enabled]), answer["ok"] as? Bool == true else {
--            throw AyuIntentError(message: ayuRussian ? "VoidGram ещё не готов. Откройте приложение и попробуйте снова." : "VoidGram is not ready yet. Open the app and try again.")
--        }
--        let text = self.enabled ? (ayuRussian ? "Режим призрака включён" : "Ghost Mode is on") : (ayuRussian ? "Режим призрака выключен" : "Ghost Mode is off")
--        return .result(dialog: IntentDialog(stringLiteral: text))
--    }
--}
--
- @available(iOS 16.0, *)
- struct AyuSendMessageIntent: AppIntent {
-     static let title: LocalizedStringResource = "Send a Message with VoidGram"
-@@ -121,7 +100,6 @@ struct AyuUnreadCountIntent: AppIntent {
- @available(iOS 17.0, *)
- struct AyuAppShortcuts: AppShortcutsProvider {
-     static var appShortcuts: [AppShortcut] {
--        AppShortcut(intent: AyuSetGhostModeIntent(), phrases: ["Turn on Ghost Mode in \(.applicationName)", "Ghost Mode in \(.applicationName)"], shortTitle: "Ghost Mode", systemImageName: "eye.slash.fill")
-         AppShortcut(intent: AyuUnreadCountIntent(), phrases: ["Unread in \(.applicationName)", "How many unread in \(.applicationName)"], shortTitle: "Unread", systemImageName: "envelope.badge.fill")
-         AppShortcut(intent: AyuSendMessageIntent(), phrases: ["Send a message with \(.applicationName)"], shortTitle: "Send Message", systemImageName: "paperplane.fill")
-     }
-diff --git a/Telegram/BUILD b/Telegram/BUILD
-index 42b85492..fa6518ed 100644
---- a/Telegram/BUILD
-+++ b/Telegram/BUILD
-@@ -446,6 +446,7 @@ plist_fragment(
-             <key>CFBundleURLSchemes</key>
-             <array>
-                 <string>telegram</string>
-+                <string>voidgram</string>
-             </array>
-         </dict>
-         <dict>
-@@ -1369,9 +1370,6 @@ ios_extension(
-     deps = [
-         ":WidgetExtensionLib",
-     ],
--    app_intents = [
--        ":WidgetExtensionLib",
--    ],
-     frameworks = [
-         ":SwiftSignalKitFramework",
-         ":PostboxFramework",
-diff --git a/Telegram/WidgetKitWidget/AyuSystemWidgets.swift b/Telegram/WidgetKitWidget/AyuSystemWidgets.swift
-index b34a1208..0a0e2612 100644
---- a/Telegram/WidgetKitWidget/AyuSystemWidgets.swift
-+++ b/Telegram/WidgetKitWidget/AyuSystemWidgets.swift
-@@ -64,47 +64,4 @@ struct AyuNowPlayingLiveActivity: Widget {
-     }
- }
- 
--// MARK: - Control Center: Ghost Mode
--
--@available(iOS 18.0, *)
--struct AyuGhostToggleIntent: SetValueIntent {
--    static let title: LocalizedStringResource = "Ghost Mode"
--
--    @Parameter(title: "Enabled")
--    var value: Bool
--
--    init() {}
--
--    func perform() async throws -> some IntentResult {
--        // The extension cannot change account settings: it asks the app, which applies the
--        // request at once when running (Darwin notification) or the next time it opens.
--        let defaults = ayuGroupDefaults()
--        defaults?.set(self.value, forKey: "ayu.ghost.request")
--        defaults?.set(self.value, forKey: "ayu.ghost.active")
--        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFNotificationName("one.ayugram.control.ghost" as CFString), nil, nil, true)
--        return .result()
--    }
--}
--
--@available(iOS 18.0, *)
--struct AyuGhostControlProvider: ControlValueProvider {
--    var previewValue: Bool { false }
--
--    func currentValue() async throws -> Bool {
--        return ayuGroupDefaults()?.bool(forKey: "ayu.ghost.active") ?? false
--    }
--}
--
--@available(iOS 18.0, *)
--struct AyuGhostControl: ControlWidget {
--    var body: some ControlWidgetConfiguration {
--        StaticControlConfiguration(kind: "one.ayugram.control.ghost", provider: AyuGhostControlProvider()) { enabled in
--            ControlWidgetToggle("Ghost Mode", isOn: enabled, action: AyuGhostToggleIntent()) { isOn in
--                Label(isOn ? "On" : "Off", systemImage: isOn ? "eye.slash.fill" : "eye.fill")
--            }
--        }
--        .displayName("VoidGram Ghost Mode")
--        .description("Turns VoidGram Ghost Mode on and off.")
--    }
--}
- #endif
-diff --git a/Telegram/WidgetKitWidget/TodayViewController.swift b/Telegram/WidgetKitWidget/TodayViewController.swift
-index 38ba562c..54e2b3ca 100644
---- a/Telegram/WidgetKitWidget/TodayViewController.swift
-+++ b/Telegram/WidgetKitWidget/TodayViewController.swift
-@@ -964,7 +964,6 @@ struct AllWidgets18: WidgetBundle {
-         Static_Widget()
-         Static_AvatarsWidget()
-         AyuNowPlayingLiveActivity()
--        AyuGhostControl()
-    }
- }
- 
-diff --git a/submodules/AccountContext/Sources/AyuScriptRuntime.swift b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-index 0b4f1b32..2bc89f0f 100644
---- a/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-+++ b/submodules/AccountContext/Sources/AyuScriptRuntime.swift
-@@ -467,7 +467,7 @@ public final class AyuScriptRuntime {
- 
-     /// Starts every enabled plugin once per launch (never in decoy mode).
-     public func bootstrap() {
--        if AyuDecoyState.isActive {
-+        if AyuDecoyState.isActive || !AyuFeatureGate.isUnlocked {
-             return
-         }
-         self.lock.lock()
-@@ -507,7 +507,7 @@ public final class AyuScriptRuntime {
-     // MARK: Lifecycle
- 
-     private func start(_ plugin: Plugin) {
--        guard let url = self.sourceURL(plugin), let data = try? Data(contentsOf: url) else { return }
-+        guard AyuFeatureGate.isUnlocked, let url = self.sourceURL(plugin), let data = try? Data(contentsOf: url) else { return }
-         self.stop(id: plugin.id)
-         let instance: AyuPluginInstance
-         switch plugin.engine {
-diff --git a/submodules/Display/Source/AyuExtras.swift b/submodules/Display/Source/AyuExtras.swift
-index 683e0043..093f7f77 100644
---- a/submodules/Display/Source/AyuExtras.swift
-+++ b/submodules/Display/Source/AyuExtras.swift
-@@ -78,7 +78,7 @@ public enum AyuExtras {
-     }
- 
-     public static func isOn(_ key: Key) -> Bool {
--        return !AyuDecoyMode.isActive && UserDefaults.standard.bool(forKey: "ayu.extra." + key.rawValue)
-+        return !AyuDecoyMode.isActive && (AyuFeatureGateUI.isUnlocked || !AyuFeatureGateUI.restrictedExtras.contains(key)) && UserDefaults.standard.bool(forKey: "ayu.extra." + key.rawValue)
-     }
- 
-     public static func set(_ key: Key, _ value: Bool) {
 diff --git a/submodules/Display/Source/AyuFeatureGateUI.swift b/submodules/Display/Source/AyuFeatureGateUI.swift
 new file mode 100644
 index 00000000..cc1d5121
@@ -191,10 +30,35 @@ index 734f3f8d..67be968c 100644
              entries.append(.input(14, text.deleted, AyuStrings.deleted.text(ru)))
          }
 diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
-index b1426ea6..006524ce 100644
+index b1426ea6..4c7c3532 100644
 --- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
 +++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
-@@ -147,7 +147,9 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+@@ -62,8 +62,13 @@ struct AyuCategoryItem {
+     let subtitleEn: String
+     let open: (AccountContext, @escaping (ViewController) -> Void) -> Void
+     var imageName: String? = nil
++    /// Draws AyuGram's ghost instead of `symbol`; `true` adds the Ghost Mode+ badge.
++    var ghostPlus: Bool? = nil
+ 
+     var icon: UIImage? {
++        if let ghostPlus {
++            return AyuSettingsIcons.ghost(color: UIColor(rgb: color), plus: ghostPlus)
++        }
+         if let imageName {
+             return AyuSettingsIcons.glyph(imageName, color: UIColor(rgb: color), side: imageName.hasPrefix("AyuGram/") ? 20.0 : nil)
+         }
+@@ -84,8 +89,8 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+     switch category {
+     case .privacy:
+         return [
+-            AyuCategoryItem(id: 1, symbol: "eye.slash.fill", color: 0x8E5CF7, titleRu: "Режим призрака", titleEn: "Ghost Mode", subtitleRu: "Прочтения, онлайн, набор, загрузка", subtitleEn: "Read receipts, online, typing, uploads", open: page { ayuGhostModeController(context: $0) }),
+-            AyuCategoryItem(id: 2, symbol: "eye.trianglebadge.exclamationmark.fill", color: 0x5856D6, titleRu: "Режим призрака+", titleEn: "Ghost Mode+", subtitleRu: "Тонкая настройка", subtitleEn: "Fine-tuning", open: page { ayuGhostModePlusController(context: $0) }),
++            AyuCategoryItem(id: 1, symbol: "eye.slash.fill", color: 0x8E5CF7, titleRu: "Режим призрака", titleEn: "Ghost Mode", subtitleRu: "Прочтения, онлайн, набор, загрузка", subtitleEn: "Read receipts, online, typing, uploads", open: page { ayuGhostModeController(context: $0) }, ghostPlus: false),
++            AyuCategoryItem(id: 2, symbol: "eye.trianglebadge.exclamationmark.fill", color: 0x5856D6, titleRu: "Режим призрака+", titleEn: "Ghost Mode+", subtitleRu: "Тонкая настройка", subtitleEn: "Fine-tuning", open: page { ayuGhostModePlusController(context: $0) }, ghostPlus: true),
+             AyuCategoryItem(id: 3, symbol: "person.crop.circle.badge.checkmark", color: 0x8E5CF7, titleRu: "Призрак по чатам", titleEn: "Ghost Mode by chat", subtitleRu: "Включить или выключить в отдельных чатах", subtitleEn: "On or off in single chats", open: page { ayuGhostExceptionsController(context: $0) }),
+             AyuCategoryItem(id: 4, symbol: "figure.walk.motion", color: 0x34C759, titleRu: "Активность и следы", titleEn: "Activity & traces", subtitleRu: "Статусы, всегда онлайн, прочитать локально, истории, номер", subtitleEn: "Statuses, always online, read locally, stories, number", open: page { ayuPrivacyPlusController(context: $0) }),
+             AyuCategoryItem(id: 5, symbol: "hand.raised.fill", color: 0x34C759, titleRu: "Приватность и мелочи", titleEn: "Privacy & extras", subtitleRu: "Метаданные фото, чистые ссылки, анти-скам, звонки", subtitleEn: "Photo metadata, clean links, anti-scam, calls", open: page { ayuExtrasController(context: $0) })
+@@ -147,7 +152,9 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
  
  func ayuCategoryController(context: AccountContext, category: AyuCategory) -> ViewController {
      var push: ((ViewController) -> Void)?
@@ -355,32 +219,6 @@ index dadd53ce..46df3fe1 100644
  
      return entries
  }
-diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuActivityPrivacy.swift b/submodules/TelegramCore/Sources/AyuGram/AyuActivityPrivacy.swift
-index 6c2f7b82..546b8db0 100644
---- a/submodules/TelegramCore/Sources/AyuGram/AyuActivityPrivacy.swift
-+++ b/submodules/TelegramCore/Sources/AyuGram/AyuActivityPrivacy.swift
-@@ -66,7 +66,7 @@ public enum AyuActivityFilter {
-     }
- 
-     static func isHidden(_ activity: PeerInputActivity) -> Bool {
--        guard !AyuDecoyState.isActive else { return false }
-+        guard !AyuDecoyState.isActive, AyuFeatureGate.isUnlocked else { return false }
-         lock.lock(); defer { lock.unlock() }
-         if cache == nil {
-             cache = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift b/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift
-index 65be1255..c1324fb1 100644
---- a/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift
-+++ b/submodules/TelegramCore/Sources/AyuGram/AyuAfterSendRead.swift
-@@ -13,7 +13,7 @@ func ayuMarkReadAfterSending(postbox: Postbox, network: Network, stateManager: A
- 
- /// "Read after a reaction": reacting to a message in ghost mode marks that chat read, like a reply does.
- func ayuMarkReadAfterReaction(postbox: Postbox, network: Network, stateManager: AccountStateManager, peerId: PeerId) {
--    guard UserDefaults.standard.bool(forKey: "ayu.extra.readAfterReaction"), !AyuDecoyState.isActive, peerId.namespace != Namespaces.Peer.SecretChat else { return }
-+    guard UserDefaults.standard.bool(forKey: "ayu.extra.readAfterReaction"), !AyuDecoyState.isActive, AyuFeatureGate.isUnlocked, peerId.namespace != Namespaces.Peer.SecretChat else { return }
-     ayuMarkPeerRead(postbox: postbox, network: network, stateManager: stateManager, peerId: peerId, requireSetting: false)
- }
- 
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuFeatureGate.swift b/submodules/TelegramCore/Sources/AyuGram/AyuFeatureGate.swift
 new file mode 100644
 index 00000000..3d0dc90b
@@ -418,208 +256,3 @@ index 00000000..3d0dc90b
 +        return unlock(code: code)
 +    }
 +}
-diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-index 5eb4c952..fae4c753 100644
---- a/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-+++ b/submodules/TelegramCore/Sources/AyuGram/AyuGhostModeSettings.swift
-@@ -201,6 +201,9 @@ public final class AyuGhostModeStore {
-         self.lock.lock()
-         let value = self.value
-         self.lock.unlock()
-+        if !AyuFeatureGate.isUnlocked {
-+            return value.gated
-+        }
-         return AyuHooks.shared.applyingOverrides(to: value)
-     }
- 
-@@ -227,7 +230,7 @@ public final class AyuGhostModeStore {
-         let observers = Array(self.observers.values)
-         let committed = updated
-         self.observationQueue.async {
--            for observer in observers { observer(committed) }
-+            for observer in observers { observer(AyuFeatureGate.isUnlocked ? committed : committed.gated) }
-         }
-     }
- 
-@@ -237,7 +240,7 @@ public final class AyuGhostModeStore {
-         let id = UUID()
-         self.observers[id] = observer
-         let initial = self.value
--        self.observationQueue.async { observer(initial) }
-+        self.observationQueue.async { observer(AyuFeatureGate.isUnlocked ? initial : initial.gated) }
-         return id
-     }
- 
-@@ -248,6 +251,24 @@ public final class AyuGhostModeStore {
-     }
- }
- 
-+extension AyuGhostModeSettings {
-+    /// The settings with everything behind AyuFeatureGate switched off; the stored value is kept.
-+    var gated: AyuGhostModeSettings {
-+        var value = self
-+        value.hideReadReceipts = false
-+        value.hideOnline = false
-+        value.hideTyping = false
-+        value.hideUploadProgress = false
-+        value.silentSendMode = .never
-+        value.enabledPeerIds = []
-+        value.plugins = AyuPluginRegistry()
-+        value.advanced.localPremium = false
-+        value.advanced.localEmojiStatusEnabled = false
-+        value.appearance.showGhostButton = false
-+        return value
-+    }
-+}
-+
- /// The list from Security → Accounts, read without Display (same UserDefaults key and notification).
- public enum AyuAccountScopeCore {
-     private static let lock = NSLock()
-diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-index 74a1c863..d2430ff9 100644
---- a/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-+++ b/submodules/TelegramCore/Sources/AyuGram/AyuMessageHistory.swift
-@@ -163,7 +163,7 @@ func ayuArchiveMessage(transaction: Transaction, mediaBox: MediaBox, message: Me
-     let isOwn = !message.flags.contains(.Incoming)
-     let legacySkipOwn = UserDefaults.standard.bool(forKey: "ayu.extra.skipOwnMessagesHistory")
-     let skipOwn = isOwn && (legacySkipOwn || UserDefaults.standard.bool(forKey: kind == .edited ? "ayu.extra.skipOwnEdited" : "ayu.extra.skipOwnDeleted"))
--    let shouldCapture = (kind == .edited ? state.saveEdits : state.saveDeleted) && !skipOwn
-+    let shouldCapture = AyuFeatureGate.isUnlocked && (kind == .edited ? state.saveEdits : state.saveDeleted) && !skipOwn
-     // Code plugins: `messageDeleted` / `messageEdited`, whether or not the history keeps it.
-     if peerAllows && (kind == .deleted || contentChanged) && message.id.namespace == Namespaces.Message.Cloud {
-         ayuPostHistoryEvent(kind: kind, message: message, newText: updated?.text, accountPeerId: (transaction.getState() as? AuthorizedAccountState)?.peerId, notifyAllowed: shouldCapture && !message.isCopyProtected() && !ayuHistoryHasExpiringAttribute(message.attributes) && updateAllows && (state.saveForBots || !isBot) && ayuHistorySupportedMedia(message.media))
-diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuStayAfterBan.swift b/submodules/TelegramCore/Sources/AyuGram/AyuStayAfterBan.swift
-index 88bf87c8..644ed95e 100644
---- a/submodules/TelegramCore/Sources/AyuGram/AyuStayAfterBan.swift
-+++ b/submodules/TelegramCore/Sources/AyuGram/AyuStayAfterBan.swift
-@@ -5,7 +5,7 @@ import Foundation
- /// only its membership changes. New messages still stop: the server no longer serves the chat.
- enum AyuStayAfterBan {
-     static var isEnabled: Bool {
--        return UserDefaults.standard.bool(forKey: "ayu.extra.stayAfterBan")
-+        return AyuFeatureGate.isUnlocked && UserDefaults.standard.bool(forKey: "ayu.extra.stayAfterBan")
-     }
- 
-     static func merge(previous: TelegramChannel, banned: TelegramChannel) -> TelegramChannel {
-diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuTLHooks.swift b/submodules/TelegramCore/Sources/AyuGram/AyuTLHooks.swift
-index 8ae42f4b..6f0aace3 100644
---- a/submodules/TelegramCore/Sources/AyuGram/AyuTLHooks.swift
-+++ b/submodules/TelegramCore/Sources/AyuGram/AyuTLHooks.swift
-@@ -64,7 +64,7 @@ public enum AyuTLHooks {
-     }
- 
-     static func shouldBlock(_ method: String) -> Bool {
--        guard !AyuDecoyState.isActive else { return false }
-+        guard !AyuDecoyState.isActive, AyuFeatureGate.isUnlocked else { return false }
-         lock.lock()
-         defer { lock.unlock() }
-         return blockedUnion.contains(method)
-diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
-index fa935b91..9271189b 100644
---- a/submodules/TelegramUI/Sources/AppDelegate.swift
-+++ b/submodules/TelegramUI/Sources/AppDelegate.swift
-@@ -2794,6 +2794,16 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
-             }
-         }
-         |> deliverOnMainQueue).start(next: { sharedContext, context, authContext in
-+            // voidgram://unlock?k=…: a wrong code is ignored without any reply.
-+            if let unlocked = AyuFeatureGate.handle(url: url) {
-+                if unlocked {
-+                    let presentationData = sharedContext.currentPresentationData.with { $0 }
-+                    let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
-+                    let text = ru ? "Готово. Перезапусти VoidGram, чтобы всё заработало." : "Done. Restart VoidGram to finish."
-+                    sharedContext.presentGlobalController(UndoOverlayController(presentationData: presentationData, content: .info(title: nil, text: text, timeout: nil, customUndoText: nil), action: { _ in return false }), nil)
-+                }
-+                return
-+            }
-             if let authContext = authContext, let confirmationCode = parseConfirmationCodeUrl(sharedContext: sharedContext, url: url) {
-                 authContext.rootController.applyConfirmationCode(confirmationCode)
-             } else if let context = context {
-@@ -3170,7 +3180,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
-         }
-         self.openUrlWhenReadyDisposable.set((signal
-         |> deliverOnMainQueue).start(next: { [weak self] context in
--            if url.isFileURL, ["plugin", "iosplug", "ayujs", "ayupy", "ayulua", "ayuwasm"].contains(url.pathExtension.lowercased()) || [".ayu.js", ".ayu.py", ".ayu.lua", ".ayu.wasm"].contains(where: { url.lastPathComponent.lowercased().hasSuffix($0) }) {
-+            if url.isFileURL, AyuFeatureGate.isUnlocked, ["plugin", "iosplug", "ayujs", "ayupy", "ayulua", "ayuwasm"].contains(url.pathExtension.lowercased()) || [".ayu.js", ".ayu.py", ".ayu.lua", ".ayu.wasm"].contains(where: { url.lastPathComponent.lowercased().hasSuffix($0) }) {
-                 ayuImportPlugin(context: context.context, fileURL: url, filename: url.lastPathComponent)
-             } else if (WalletContext.isTonConnectUrl(url.absoluteString) || url.scheme?.lowercased() == "ton"), !WalletConfiguration.with(appConfiguration: context.context.currentAppConfiguration.with { $0 }).isAvailable {
-                 self?.presentWalletUnavailable(in: context)
-diff --git a/submodules/TelegramUI/Sources/AyuSystemIntegration.swift b/submodules/TelegramUI/Sources/AyuSystemIntegration.swift
-index f2c9b36f..6cdbc1ab 100644
---- a/submodules/TelegramUI/Sources/AyuSystemIntegration.swift
-+++ b/submodules/TelegramUI/Sources/AyuSystemIntegration.swift
-@@ -85,7 +85,7 @@ enum AyuSystemIntegration {
-     }
- 
-     static func setGhost(_ enabled: Bool, completion: @escaping (Bool) -> Void) {
--        guard !AyuDecoyMode.isActive else {
-+        guard !AyuDecoyMode.isActive, AyuFeatureGateUI.isUnlocked else {
-             completion(false)
-             return
-         }
-diff --git a/submodules/TelegramUI/Sources/ChatControllerContentData.swift b/submodules/TelegramUI/Sources/ChatControllerContentData.swift
-index c91eeb49..b9a4c6af 100644
---- a/submodules/TelegramUI/Sources/ChatControllerContentData.swift
-+++ b/submodules/TelegramUI/Sources/ChatControllerContentData.swift
-@@ -790,7 +790,7 @@ extension ChatControllerImpl {
-                         shouldDismiss = true
-                     } else if let previous = strongSelf.state.peerView, let channel = previous.peers[previous.peerId] as? TelegramChannel, channel.participationStatus != .kicked, let updatedChannel = peerView.peers[peerView.peerId] as? TelegramChannel, updatedChannel.participationStatus == .kicked {
-                         // AyuGram "Stay in chat after being banned": the open chat stays readable.
--                        shouldDismiss = !UserDefaults.standard.bool(forKey: "ayu.extra.stayAfterBan")
-+                        shouldDismiss = !(AyuFeatureGate.isUnlocked && UserDefaults.standard.bool(forKey: "ayu.extra.stayAfterBan"))
-                     } else if let previous = strongSelf.state.peerView, let secretChat = previous.peers[previous.peerId] as? TelegramSecretChat, case .active = secretChat.embeddedState, let updatedSecretChat = peerView.peers[peerView.peerId] as? TelegramSecretChat, case .terminated = updatedSecretChat.embeddedState {
-                         shouldDismiss = true
-                     }
-diff --git a/submodules/TelegramUI/Sources/OpenChatMessage.swift b/submodules/TelegramUI/Sources/OpenChatMessage.swift
-index d18b3e7e..92837323 100644
---- a/submodules/TelegramUI/Sources/OpenChatMessage.swift
-+++ b/submodules/TelegramUI/Sources/OpenChatMessage.swift
-@@ -233,7 +233,7 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
-             case let .document(file, immediateShare):
-                 params.dismissInput()
-                 let presentationData = params.context.sharedContext.currentPresentationData.with { $0 }
--                if !immediateShare, let name = file.fileName, [".plugin", ".iosplug", ".ayujs", ".ayu.js", ".ayupy", ".ayu.py", ".ayulua", ".ayu.lua", ".ayuwasm", ".ayu.wasm"].contains(where: { name.lowercased().hasSuffix($0) }), !params.message.isCopyProtected(), !params.copyProtected, params.message.id.peerId.namespace != Namespaces.Peer.SecretChat {
-+                if !immediateShare, AyuFeatureGate.isUnlocked, let name = file.fileName, [".plugin", ".iosplug", ".ayujs", ".ayu.js", ".ayupy", ".ayu.py", ".ayulua", ".ayu.lua", ".ayuwasm", ".ayu.wasm"].contains(where: { name.lowercased().hasSuffix($0) }), !params.message.isCopyProtected(), !params.copyProtected, params.message.id.peerId.namespace != Namespaces.Peer.SecretChat {
-                     let _ = (params.context.engine.resources.data(resource: EngineMediaResource(file.resource))
-                     |> filter { $0.isComplete }
-                     |> take(1)
-diff --git a/submodules/TelegramUI/Sources/SharedWakeupManager.swift b/submodules/TelegramUI/Sources/SharedWakeupManager.swift
-index e9323567..378c01ed 100644
---- a/submodules/TelegramUI/Sources/SharedWakeupManager.swift
-+++ b/submodules/TelegramUI/Sources/SharedWakeupManager.swift
-@@ -1150,7 +1150,7 @@ public final class SharedWakeupManager {
-                 account.shouldExplicitelyKeepWorkerConnections.set(.single(tasks.backgroundAudio || tasks.backgroundLocation || tasks.importantTasks.pendingStoryCount != 0 || tasks.importantTasks.pendingMessageCount != 0))
-                 // AyuGram "Always online": stay online while the app runs, also in the background
-                 // (until iOS suspends it). Ghost Mode's hidden online still wins in the network layer.
--                let ayuAlwaysOnline = UserDefaults.standard.bool(forKey: "ayu.extra.alwaysOnline") && !AyuDecoyMode.isActive
-+                let ayuAlwaysOnline = UserDefaults.standard.bool(forKey: "ayu.extra.alwaysOnline") && !AyuDecoyMode.isActive && AyuFeatureGateUI.isUnlocked
-                 account.shouldKeepOnlinePresence.set(.single(primary && (self.inForeground || ayuAlwaysOnline)))
-                 account.shouldKeepBackgroundDownloadConnections.set(.single(tasks.backgroundDownloads))
-             }
-diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
-index ea5e6e6b..eb7fe3f0 100644
---- a/tools/ayu-tests/main.swift
-+++ b/tools/ayu-tests/main.swift
-@@ -19,8 +19,22 @@ let second = root.appendingPathComponent("account-2")
- try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
- try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
- 
-+// The policies below are the unlocked ones; the gate itself is checked right after.
-+UserDefaults.standard.set(true, forKey: AyuFeatureGate.unlockedKey)
- let store = AyuGhostModeStore(accountPath: first.path)
- check(store.current == AyuGhostModeSettings(), "Fresh account must use upstream behavior")
-+do {
-+    let gatePath = root.appendingPathComponent("gate")
-+    try FileManager.default.createDirectory(at: gatePath, withIntermediateDirectories: true)
-+    let gateStore = AyuGhostModeStore(accountPath: gatePath.path)
-+    try gateStore.update { $0.setAllEnabled(true); $0.advanced.localPremium = true }
-+    UserDefaults.standard.set(false, forKey: AyuFeatureGate.unlockedKey)
-+    check(!gateStore.current.isActive && !gateStore.current.advanced.localPremium && !gateStore.current.appearance.showGhostButton, "Locked gate turns Ghost Mode and Local Premium off")
-+    check(!AyuFeatureGate.unlock(code: "0000000") && !AyuFeatureGate.isUnlocked, "A wrong code keeps the gate locked")
-+    check(AyuFeatureGate.handle(url: URL(string: "https://example.com/unlock?k=0000000")!) == nil && AyuFeatureGate.handle(url: URL(string: "voidgram://unlock?k=0000000")!) == false && !AyuFeatureGate.isUnlocked, "Only a right voidgram:// link unlocks")
-+    UserDefaults.standard.set(true, forKey: AyuFeatureGate.unlockedKey)
-+    check(gateStore.current.allEnabled && gateStore.current.advanced.localPremium, "Unlocking restores the stored settings")
-+}
- check(!store.hadLoadError, "Missing settings are not corruption")
- var observed: [AyuGhostModeSettings] = []
- let observationEvents = DispatchSemaphore(value: 0)

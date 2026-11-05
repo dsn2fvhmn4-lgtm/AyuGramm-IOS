@@ -39,7 +39,7 @@ index 2897c42b..60781209 100644
          AppShortcut(intent: AyuSendMessageIntent(), phrases: ["Send a message with \(.applicationName)"], shortTitle: "Send Message", systemImageName: "paperplane.fill")
      }
 diff --git a/Telegram/BUILD b/Telegram/BUILD
-index 42b85492..ef433fac 100644
+index 42b85492..fa6518ed 100644
 --- a/Telegram/BUILD
 +++ b/Telegram/BUILD
 @@ -446,6 +446,7 @@ plist_fragment(
@@ -50,6 +50,16 @@ index 42b85492..ef433fac 100644
              </array>
          </dict>
          <dict>
+@@ -1369,9 +1370,6 @@ ios_extension(
+     deps = [
+         ":WidgetExtensionLib",
+     ],
+-    app_intents = [
+-        ":WidgetExtensionLib",
+-    ],
+     frameworks = [
+         ":SwiftSignalKitFramework",
+         ":PostboxFramework",
 diff --git a/Telegram/WidgetKitWidget/AyuSystemWidgets.swift b/Telegram/WidgetKitWidget/AyuSystemWidgets.swift
 index b34a1208..0a0e2612 100644
 --- a/Telegram/WidgetKitWidget/AyuSystemWidgets.swift
@@ -248,7 +258,7 @@ index 496d3a52..6afb04a0 100644
      let palette = AyuPreferencesPalette(background: data.theme.list.blocksBackgroundColor, panel: data.theme.list.itemBlocksBackgroundColor, text: data.theme.list.itemPrimaryTextColor, secondary: data.theme.list.itemSecondaryTextColor, accent: data.theme.list.itemAccentColor)
      let initialImport: (URL, String)?
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
-index 1b9e749a..417d49b5 100644
+index 1b9e749a..34aef4ba 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 @@ -58,7 +58,7 @@ public func ayuSettingsController(context: AccountContext) -> ViewController {
@@ -270,12 +280,13 @@ index 1b9e749a..417d49b5 100644
          let data = ItemListPresentationData(presentationData)
          let state = ItemListControllerState(presentationData: data, title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
          return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
-@@ -191,7 +194,7 @@ func ayuPresentAppIcons(context: AccountContext) {
+@@ -191,7 +194,8 @@ func ayuPresentAppIcons(context: AccountContext) {
  func ayuCategoryRows(category: Int, ru: Bool) -> (title: String, rows: [(Int32, String)]) {
      switch category {
      case 0:
 -        return ("VoidGram", [(0, "Ghost Mode"), (50, "Ghost Mode+"), (1, AyuStrings.messageHistory.text(ru)), (53, AyuStrings.mediaArchive.text(ru))])
-+        return ("VoidGram", AyuFeatureGate.isUnlocked ? [(0, "Ghost Mode"), (50, "Ghost Mode+"), (1, AyuStrings.messageHistory.text(ru)), (53, AyuStrings.mediaArchive.text(ru))] : [])
++        let rows: [(Int32, String)] = [(0, "Ghost Mode"), (50, "Ghost Mode+"), (1, AyuStrings.messageHistory.text(ru)), (53, AyuStrings.mediaArchive.text(ru))]
++        return ("VoidGram", AyuFeatureGate.isUnlocked ? rows : [])
      case 2:
          return (AyuStrings.general.text(ru), [(51, AyuStrings.translationProviders.text(ru)), (2, AyuStrings.sendingOptions.text(ru)), (5, AyuStrings.interface.text(ru)), (6, AyuStrings.messageMenu.text(ru))])
      case 3:

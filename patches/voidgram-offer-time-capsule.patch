@@ -1,0 +1,402 @@
+diff --git a/submodules/ChatListUI/BUILD b/submodules/ChatListUI/BUILD
+index af464d40..523469d3 100644
+--- a/submodules/ChatListUI/BUILD
++++ b/submodules/ChatListUI/BUILD
+@@ -12,6 +12,7 @@ swift_library(
+         "-warnings-as-errors",
+     ],
+     deps = [
++        "//submodules/TelegramUI/Components/TimeCapsule",
+         "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
+         "//submodules/LottieSettings:LottieSettings",
+         "//submodules/AsyncDisplayKit:AsyncDisplayKit",
+diff --git a/submodules/ChatListUI/Sources/Node/ChatListItemStrings.swift b/submodules/ChatListUI/Sources/Node/ChatListItemStrings.swift
+index 0106efd4..f9e2592c 100644
+--- a/submodules/ChatListUI/Sources/Node/ChatListItemStrings.swift
++++ b/submodules/ChatListUI/Sources/Node/ChatListItemStrings.swift
+@@ -1,5 +1,6 @@
+ import Foundation
+ import TelegramCore
++import TimeCapsule
+ import TelegramPresentationData
+ import TelegramUIPreferences
+ import TelegramStringFormatting
+@@ -117,6 +118,18 @@ public func chatListItemStrings(strings: PresentationStrings, nameDisplayOrder:
+                 messageText = message.text
+                 richTextPreview = nil
+                 messageEntities = message._asMessage().textEntitiesAttribute?.entities ?? []
++                // VoidGram (Time Capsule): a sealed capsule's text stays under dust in the list too.
++                if let openDate = TimeCapsuleTransport.openDate(entities: messageEntities) {
++                    messageEntities = TimeCapsuleTransport.visibleEntities(messageEntities)
++                    if openDate > TimeCapsuleTransport.now() {
++                        messageEntities = messageEntities.filter { entity in
++                            if case .Spoiler = entity.type {
++                                return false
++                            }
++                            return true
++                        } + [MessageTextEntity(range: 0 ..< (messageText as NSString).length, type: .Spoiler)]
++                    }
++                }
+                 for entity in messageEntities {
+                     if case let .CustomEmoji(_, fileId) = entity.type {
+                         if customEmojiRanges == nil {
+diff --git a/submodules/ChatSendMessageActionUI/BUILD b/submodules/ChatSendMessageActionUI/BUILD
+index cd0a50a2..ee54f55d 100644
+--- a/submodules/ChatSendMessageActionUI/BUILD
++++ b/submodules/ChatSendMessageActionUI/BUILD
+@@ -10,6 +10,7 @@ swift_library(
+         "-warnings-as-errors",
+     ],
+     deps = [
++        "//submodules/TelegramUI/Components/TimeCapsule",
+         "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
+         "//submodules/LottieSettings:LottieSettings",
+         "//submodules/AsyncDisplayKit:AsyncDisplayKit",
+diff --git a/submodules/ChatSendMessageActionUI/Sources/ChatSendMessageContextScreen.swift b/submodules/ChatSendMessageActionUI/Sources/ChatSendMessageContextScreen.swift
+index 5b917a4f..866ac0f0 100644
+--- a/submodules/ChatSendMessageActionUI/Sources/ChatSendMessageContextScreen.swift
++++ b/submodules/ChatSendMessageActionUI/Sources/ChatSendMessageContextScreen.swift
+@@ -20,6 +20,7 @@ import TelegramAnimatedStickerNode
+ import AnimatedStickerNode
+ import ChatInputTextNode
+ import UndoUI
++import TimeCapsule
+ 
+ func convertFrame(_ frame: CGRect, from fromView: UIView, to toView: UIView) -> CGRect {
+     let sourceWindowFrame = fromView.convert(frame, to: nil)
+@@ -619,6 +620,30 @@ final class ChatSendMessageContextScreenComponent: Component {
+                             self.environment?.controller()?.dismiss()
+                         }
+                     )))
++                    if !reminders {
++                        // VoidGram (Time Capsule): the schedule picker chooses the moment, the message goes now.
++                        items.append(.action(ContextMenuActionItem(
++                            id: AnyHashable("timeCapsule"),
++                            text: environment.strings.baseLanguageCode.hasPrefix("ru") ? "Капсула времени" : "Time Capsule",
++                            icon: { theme in
++                                return generateTintedImage(image: UIImage(systemName: "hourglass"), color: theme.contextMenu.primaryColor)
++                            }, action: { [weak self] _, _ in
++                                guard let self, let component = self.component else {
++                                    return
++                                }
++                                self.animateOutToEmpty = true
++
++                                let sendParameters = ChatSendMessageActionSheetController.SendParameters(
++                                    effect: self.selectedMessageEffect.flatMap({ ChatSendMessageActionSheetController.SendParameters.Effect(id: $0.id) }),
++                                    textIsAboveMedia: self.mediaCaptionIsAbove
++                                )
++
++                                TimeCapsuleTransport.isArmed = true
++                                component.schedule(sendParameters)
++                                self.environment?.controller()?.dismiss()
++                            }
++                        )))
++                    }
+                 }
+                 if canMakePaidContent {
+                     let title: String
+diff --git a/submodules/TelegramUI/BUILD b/submodules/TelegramUI/BUILD
+index e2353ccc..5efded83 100644
+--- a/submodules/TelegramUI/BUILD
++++ b/submodules/TelegramUI/BUILD
+@@ -353,6 +353,7 @@ swift_library(
+         "//submodules/TelegramUI/Components/Chat/ChatMessageForwardInfoNode",
+         "//submodules/TelegramUI/Components/Chat/ChatAvatarNavigationNode",
+         "//submodules/TelegramUI/Components/Chat/BlackHoleDelete",
++        "//submodules/TelegramUI/Components/TimeCapsule",
+         "//submodules/TelegramUI/Components/PeerReportScreen",
+         "//submodules/Utils/VolumeButtons",
+         "//submodules/ChatContextQuery",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
+index 17b69c60..aed75434 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
+@@ -11,6 +11,7 @@ swift_library(
+     ],
+     deps = [
+         "//submodules/TelegramUI/Components/VisualQuote",
++        "//submodules/TelegramUI/Components/TimeCapsule",
+         "//submodules/AsyncDisplayKit",
+         "//submodules/LottieSettings:LottieSettings",
+         "//submodules/Display",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
+index fe9d7e9c..724aaa9e 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
+@@ -30,6 +30,7 @@ import ShimmeringMask
+ import StreamingTextReveal
+ import WalletContext
+ import VisualQuote
++import TimeCapsule
+ 
+ private final class CachedChatMessageText {
+     let text: String
+@@ -126,6 +127,8 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+     private var expandedBlockIds: Set<Int> = Set()
+     private var appliedExpandedBlockIds: Set<Int>?
+     private var displayContentsUnderSpoilers: (value: Bool, location: CGPoint?) = (false, nil)
++    /// A Time Capsule not yet open: its text stays under the dust, whatever is tapped.
++    private var isTimeCapsuleSealed = false
+     
+     private var isSummaryApplied = false
+ 
+@@ -453,6 +456,18 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                 if let entities = messageEntities {
+                     messageEntities = VisualQuoteTransport.visibleEntities(entities)
+                 }
++                // VoidGram (Time Capsule): until its moment, a capsule shows a countdown and dust over the text.
++                var timeCapsuleSealed = false
++                if let entities = messageEntities, let openDate = TimeCapsuleTransport.openDate(entities: entities) {
++                    let visible = TimeCapsuleTransport.visibleEntities(entities)
++                    if let sealed = TimeCapsuleTransport.sealedPresentation(text: rawText, entities: visible, openDate: openDate, russian: item.presentationData.strings.baseLanguageCode.hasPrefix("ru")) {
++                        rawText = sealed.text
++                        messageEntities = sealed.entities
++                        timeCapsuleSealed = true
++                    } else {
++                        messageEntities = visible
++                    }
++                }
+ 
+                 if incoming && item.associatedData.isSuspiciousPeer, let entities = messageEntities {
+                     messageEntities = entities.filter(\.isShownFromSuspiciousPeer)
+@@ -696,7 +711,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                     cutout: nil,
+                     insets: textInsets,
+                     lineColor: messageTheme.accentControlColor,
+-                    displayContentsUnderSpoilers: displayContentsUnderSpoilers.value,
++                    displayContentsUnderSpoilers: displayContentsUnderSpoilers.value && !timeCapsuleSealed,
+                     customTruncationToken: customTruncationToken,
+                     expandedBlocks: expandedBlockIds,
+                     computeCharacterRects: true
+@@ -799,6 +814,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                     return (boundingSize, { [weak self] animation, synchronousLoads, itemApply in
+                         if let strongSelf = self {
+                             strongSelf.item = item
++                            strongSelf.isTimeCapsuleSealed = timeCapsuleSealed
+                             if let updatedCachedChatMessageText = updatedCachedChatMessageText {
+                                 strongSelf.cachedChatMessageText = updatedCachedChatMessageText
+                             }
+@@ -1728,6 +1744,9 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+         if self.displayContentsUnderSpoilers.value == value {
+             return
+         }
++        if value && self.isTimeCapsuleSealed {
++            return
++        }
+         self.displayContentsUnderSpoilers = (value, location)
+         if let item = self.item {
+             item.controllerInteraction.requestMessageUpdate(item.message.id, false, nil)
+diff --git a/submodules/TelegramUI/Components/TimeCapsule/BUILD b/submodules/TelegramUI/Components/TimeCapsule/BUILD
+new file mode 100644
+index 00000000..9863f61a
+--- /dev/null
++++ b/submodules/TelegramUI/Components/TimeCapsule/BUILD
+@@ -0,0 +1,19 @@
++load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
++
++swift_library(
++    name = "TimeCapsule",
++    module_name = "TimeCapsule",
++    srcs = glob([
++        "Sources/**/*.swift",
++    ]),
++    copts = [
++        "-warnings-as-errors",
++    ],
++    deps = [
++        "//submodules/Postbox",
++        "//submodules/TelegramCore",
++    ],
++    visibility = [
++        "//visibility:public",
++    ],
++)
+diff --git a/submodules/TelegramUI/Components/TimeCapsule/Sources/TimeCapsuleTransport.swift b/submodules/TelegramUI/Components/TimeCapsule/Sources/TimeCapsuleTransport.swift
+new file mode 100644
+index 00000000..85e53f41
+--- /dev/null
++++ b/submodules/TelegramUI/Components/TimeCapsule/Sources/TimeCapsuleTransport.swift
+@@ -0,0 +1,123 @@
++import Foundation
++import Postbox
++import TelegramCore
++
++/// VoidGram (Time Capsule, after rouk69/telegram-tt): a message sealed until a moment the sender
++/// picks. The moment travels with the message the way Visual Quote's region does: a zero-width
++/// space at the start of the text carries a `TextUrl` entity whose URL holds the Unix time. Until
++/// then VoidGram shows the text under spoiler dust with a live countdown; other clients show the
++/// text as it is.
++public enum TimeCapsuleTransport {
++    public static let marker: String = "\u{200B}"
++    public static let markerLength: Int = (marker as NSString).length
++    /// example.com is reserved for documentation, so the link never resolves to anything real.
++    private static let urlPrefix: String = "https://example.com/time-capsule#"
++
++    /// Set by the send menu's Time Capsule item; the schedule picker that follows sends a capsule.
++    public static var isArmed = false
++    /// The moment the next outgoing text is sealed until; read once by the send path.
++    public static var pendingOpenDate: Int32?
++
++    public static func takeArmed() -> Bool {
++        let value = self.isArmed
++        self.isArmed = false
++        return value
++    }
++
++    public static func url(openDate: Int32) -> String {
++        return self.urlPrefix + String(openDate)
++    }
++
++    public static func openDate(fromUrl url: String) -> Int32? {
++        guard url.hasPrefix(self.urlPrefix), let value = Int32(url.dropFirst(self.urlPrefix.count)), value > 0 else {
++            return nil
++        }
++        return value
++    }
++
++    public static func openDate(entities: [MessageTextEntity]) -> Int32? {
++        for entity in entities {
++            if case let .TextUrl(url) = entity.type, let value = self.openDate(fromUrl: url) {
++                return value
++            }
++        }
++        return nil
++    }
++
++    /// The entities without the capsule's own, so the marker is never drawn or tapped.
++    public static func visibleEntities(_ entities: [MessageTextEntity]) -> [MessageTextEntity] {
++        return entities.filter { entity in
++            if case let .TextUrl(url) = entity.type, self.openDate(fromUrl: url) != nil {
++                return false
++            }
++            return true
++        }
++    }
++
++    public static func now() -> Int32 {
++        return Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
++    }
++
++    /// Seals the first text message (or caption) of an outgoing batch until `openDate`. The other
++    /// entities move right by the marker's length; link previews stay off for the marker's URL.
++    public static func applyToOutgoing(_ messages: [EnqueueMessage], openDate: Int32) -> [EnqueueMessage] {
++        var attached = false
++        return messages.map { message in
++            guard !attached, case let .message(originalText, originalAttributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = message, !originalText.isEmpty, !originalAttributes.contains(where: { $0 is RichTextMessageAttribute }) else {
++                return message
++            }
++            var attributes = originalAttributes
++            var entities: [MessageTextEntity] = []
++            for attribute in attributes {
++                if let attribute = attribute as? TextEntitiesMessageAttribute {
++                    entities = attribute.entities
++                    break
++                }
++            }
++            let shifted = entities.map { entity in
++                MessageTextEntity(range: (entity.range.lowerBound + self.markerLength) ..< (entity.range.upperBound + self.markerLength), type: entity.type)
++            }
++            let text = self.marker + originalText
++            attributes.removeAll(where: { $0 is TextEntitiesMessageAttribute })
++            attributes.append(TextEntitiesMessageAttribute(entities: [MessageTextEntity(range: 0 ..< self.markerLength, type: .TextUrl(url: self.url(openDate: openDate)))] + shifted))
++            if !attributes.contains(where: { $0 is WebpagePreviewMessageAttribute }) {
++                var flags = OutgoingContentInfoFlags()
++                if let index = attributes.firstIndex(where: { $0 is OutgoingContentInfoMessageAttribute }), let current = attributes[index] as? OutgoingContentInfoMessageAttribute {
++                    flags = current.flags
++                    attributes.remove(at: index)
++                }
++                flags.insert(.disableLinkPreviews)
++                attributes.append(OutgoingContentInfoMessageAttribute(flags: flags))
++            }
++            attached = true
++            return .message(text: text, attributes: attributes, inlineStickers: inlineStickers, mediaReference: mediaReference, threadId: threadId, replyToMessageId: replyToMessageId, replyToStoryId: replyToStoryId, localGroupingKey: localGroupingKey, correlationId: correlationId, bubbleUpEmojiOrStickersets: bubbleUpEmojiOrStickersets)
++        }
++    }
++
++    /// How a sealed capsule is drawn: a countdown line ("Opens in 2 hours", a live relative date),
++    /// then the text under spoiler dust. Returns nil once the capsule is open.
++    public static func sealedPresentation(text: String, entities: [MessageTextEntity], openDate: Int32, russian: Bool) -> (text: String, entities: [MessageTextEntity])? {
++        guard openDate > self.now() else {
++            return nil
++        }
++        let prefix = russian ? "⏳ Откроется " : "⏳ Opens "
++        // The relative date entity draws its own text over this placeholder.
++        let placeholder = "…"
++        let header = prefix + placeholder + "\n"
++        let headerLength = (header as NSString).length
++        let prefixLength = (prefix as NSString).length
++        let placeholderLength = (placeholder as NSString).length
++        let bodyLength = (text as NSString).length
++        var result: [MessageTextEntity] = [
++            MessageTextEntity(range: prefixLength ..< (prefixLength + placeholderLength), type: .FormattedDate(format: .relative, date: openDate))
++        ]
++        for entity in entities {
++            if case .Spoiler = entity.type {
++                continue
++            }
++            result.append(MessageTextEntity(range: (entity.range.lowerBound + headerLength) ..< (entity.range.upperBound + headerLength), type: entity.type))
++        }
++        result.append(MessageTextEntity(range: headerLength ..< (headerLength + bodyLength), type: .Spoiler))
++        return (header + text, result)
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index f5e26396..81761be9 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -2,6 +2,7 @@ import Foundation
+ import UIKit
+ import Postbox
+ import VisualQuote
++import TimeCapsule
+ import SwiftSignalKit
+ import Display
+ import AsyncDisplayKit
+@@ -4402,9 +4403,33 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             guard let self else {
+                 return
+             }
++            let isTimeCapsule = TimeCapsuleTransport.takeArmed()
+             guard !self.presentAccountFrozenInfoIfNeeded(delay: true) else {
+                 return
+             }
++            if isTimeCapsule && self.presentationInterfaceState.interfaceState.mediaDraftState == nil {
++                // VoidGram (Time Capsule): the picked moment seals the message, which is sent right away.
++                self.presentScheduleTimePicker(completion: { [weak self] result in
++                    guard let self else {
++                        return
++                    }
++                    if result.time != scheduleWhenOnlineTimestamp && result.time > TimeCapsuleTransport.now() {
++                        TimeCapsuleTransport.pendingOpenDate = result.time
++                    }
++                    self.chatDisplayNode.sendCurrentMessage(silentPosting: result.silentPosting, messageEffect: (params?.effect).flatMap {
++                        return ChatSendMessageEffect(id: $0.id)
++                    }) { [weak self] in
++                        TimeCapsuleTransport.pendingOpenDate = nil
++                        guard let self else {
++                            return
++                        }
++                        self.updateChatPresentationInterfaceState(animated: true, interactive: false, saveInterfaceState: self.presentationInterfaceState.subject != .scheduledMessages, {
++                            $0.updatedInterfaceState { $0.withUpdatedReplyMessageSubject(nil).withUpdatedSendMessageEffect(nil).withUpdatedPostSuggestionState(nil).withUpdatedForwardMessageIds(nil).withUpdatedForwardOptionsState(nil).withUpdatedComposeInputState(ChatTextInputState(inputText: NSAttributedString(string: ""))) }
++                        })
++                    }
++                })
++                return
++            }
+             self.presentScheduleTimePicker(completion: { [weak self] result in
+                 if let strongSelf = self {
+                     if let _ = strongSelf.presentationInterfaceState.interfaceState.mediaDraftState {
+@@ -9188,7 +9213,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+         
+         // A reply to a photo detail: the region leaves the reply subject here, for every send path, and
+         // rides in the text of the first message that has room for it (see VisualQuoteTransport).
+-        let messages = VisualQuoteTransport.applyToOutgoing(messages, textLimit: 4096, captionLimit: Int(self.context.userLimits.maxCaptionLength))
++        var messages = VisualQuoteTransport.applyToOutgoing(messages, textLimit: 4096, captionLimit: Int(self.context.userLimits.maxCaptionLength))
++        // VoidGram (Time Capsule): a send started from the capsule item is sealed until the chosen moment.
++        if let openDate = TimeCapsuleTransport.pendingOpenDate {
++            TimeCapsuleTransport.pendingOpenDate = nil
++            messages = TimeCapsuleTransport.applyToOutgoing(messages, openDate: openDate)
++        }
+ 
+         return messages.map { message in
+             var message = message

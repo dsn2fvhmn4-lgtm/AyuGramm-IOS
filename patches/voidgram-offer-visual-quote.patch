@@ -1,0 +1,2200 @@
+diff --git a/Telegram/Telegram-iOS/en.lproj/Localizable.strings b/Telegram/Telegram-iOS/en.lproj/Localizable.strings
+index c9d87756..f5a92228 100644
+--- a/Telegram/Telegram-iOS/en.lproj/Localizable.strings
++++ b/Telegram/Telegram-iOS/en.lproj/Localizable.strings
+@@ -17262,3 +17262,5 @@ Error: %8$@";
+ "VoiceTranscript.PreviousVoice" = "Previous Voice";
+ "VoiceTranscript.ItemsHint" = "Tap the time to jump to it in the transcript. Tap the text to reply in the chat or copy it.";
+ "VoiceTranscript.TasksHint" = "Tap a task to mark it as done.";
++
++"VisualQuote.VoiceOver.SelectedArea" = "Selected area";
+diff --git a/submodules/AccountContext/Sources/GalleryController.swift b/submodules/AccountContext/Sources/GalleryController.swift
+index 29082c9e..b8cf7481 100644
+--- a/submodules/AccountContext/Sources/GalleryController.swift
++++ b/submodules/AccountContext/Sources/GalleryController.swift
+@@ -10,6 +10,8 @@ public enum GalleryMediaSubject: Hashable {
+     case pollOption(Data)
+     case pollSolution
+     case instantPageMedia(EngineMedia.Id)
++    /// A region of a photo message (Visual Quote), encoded with `VisualQuoteRegion.encoded()`; the gallery opens zoomed to it.
++    case visualQuoteRegion(Data)
+     /// A specific medium inside a rich message's `RichTextMessageAttribute` InstantPage. Rich media lives
+     /// in the attribute, not `message.media`, so `effectiveMedia` can hold several and the default
+     /// first-match resolution would open the wrong one. Distinct from `instantPageMedia`, whose only
+diff --git a/submodules/GalleryData/Sources/GalleryData.swift b/submodules/GalleryData/Sources/GalleryData.swift
+index b9274cc2..8c691cbc 100644
+--- a/submodules/GalleryData/Sources/GalleryData.swift
++++ b/submodules/GalleryData/Sources/GalleryData.swift
+@@ -357,7 +357,12 @@ public func chatMessageGalleryControllerData(
+                         openChatLocation = .peer(id: message.id.peerId)
+                         openChatLocationContextHolder = Atomic<ChatLocationContextHolder?>(value: nil)
+                     }
+-                    let gallery = GalleryController(context: context, source: source ?? (standalone ? .standaloneMessage(message, mediaSubject) : .peerMessagesAtId(messageId: message.id, chatLocation: openChatLocation, customTag: chatFilterTag, chatLocationContextHolder: openChatLocationContextHolder)), invertItemOrder: reverseMessageGalleryOrder, streamSingleVideo: stream, fromPlayingVideo: autoplayingVideo, landscape: landscape, timecode: startState.timecode, playbackRate: startState.rate, synchronousLoad: synchronousLoad, replaceRootController: { [weak navigationController] controller, ready in
++                    // A visual quote opens the quoted photo on its own, so the region subject reaches the item.
++                    var openStandalone = standalone
++                    if case .visualQuoteRegion = mediaSubject {
++                        openStandalone = true
++                    }
++                    let gallery = GalleryController(context: context, source: source ?? (openStandalone ? .standaloneMessage(message, mediaSubject) : .peerMessagesAtId(messageId: message.id, chatLocation: openChatLocation, customTag: chatFilterTag, chatLocationContextHolder: openChatLocationContextHolder)), invertItemOrder: reverseMessageGalleryOrder, streamSingleVideo: stream, fromPlayingVideo: autoplayingVideo, landscape: landscape, timecode: startState.timecode, playbackRate: startState.rate, synchronousLoad: synchronousLoad, replaceRootController: { [weak navigationController] controller, ready in
+                         navigationController?.replaceTopController(controller, animated: false, ready: ready)
+                     }, baseNavigationController: navigationController, actionInteraction: actionInteraction)
+                     gallery.temporaryDoNotWaitForReady = autoplayingVideo
+diff --git a/submodules/GalleryUI/BUILD b/submodules/GalleryUI/BUILD
+index ca5425fb..159b727a 100644
+--- a/submodules/GalleryUI/BUILD
++++ b/submodules/GalleryUI/BUILD
+@@ -69,6 +69,7 @@ swift_library(
+         "//submodules/Components/ComponentDisplayAdapters",
+         "//submodules/ComponentFlow",
+         "//submodules/TelegramUI/Components/ToastComponent",
++        "//submodules/TelegramUI/Components/VisualQuote",
+         "//submodules/SemanticStatusNode",
+         "//submodules/TelegramUI/Components/PlainButtonComponent",
+         "//submodules/AvatarNode",
+diff --git a/submodules/GalleryUI/Sources/Items/ChatImageGalleryItem.swift b/submodules/GalleryUI/Sources/Items/ChatImageGalleryItem.swift
+index a1f9746c..83e459bc 100644
+--- a/submodules/GalleryUI/Sources/Items/ChatImageGalleryItem.swift
++++ b/submodules/GalleryUI/Sources/Items/ChatImageGalleryItem.swift
+@@ -28,6 +28,7 @@ import AdsReportScreen
+ import GlassBackgroundComponent
+ import ComponentFlow
+ import ComponentDisplayAdapters
++import VisualQuote
+ 
+ /// Upper bound on the pixel dimensions a full-screen photo is decoded and rasterized at.
+ /// Photos larger than this are downscaled to fit; smaller ones are left untouched.
+@@ -240,6 +241,20 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
+     private let moreBarButton: MoreHeaderButton
+     
+     private var tilingNode: TilingNode?
++
++    private var visualQuoteFrameNode: VisualQuoteFrameNode?
++    private var visualQuotePreviousPanMinimumTouches: Int?
++    private var visualQuoteReplyButton: VisualQuoteReplyButtonNode?
++    private var visualQuoteHighlightNode: VisualQuoteFrameNode?
++    private var visualQuoteControlsInset: UIEdgeInsets?
++    private var visualQuoteNavigationBarHeight: CGFloat = 0.0
++    private var visualQuoteLayoutSize: CGSize?
++    private var visualQuoteRegion: VisualQuoteRegion?
++    private var visualQuoteDetectionId: Int = 0
++    private var visualQuoteIsCopyProtected: Bool = false
++    private var visualQuoteReplyPeer: EnginePeer?
++    private let visualQuoteReplyPeerDisposable = MetaDisposable()
++
+     fileprivate let _ready = Promise<Void>()
+     fileprivate let _title = Promise<String>()
+     fileprivate let _titleContent = Promise<GalleryTitleView.Content?>(nil)
+@@ -343,6 +358,7 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
+         self.statusDisposable.dispose()
+         self.dataDisposable.dispose()
+         self.recognitionDisposable.dispose()
++        self.visualQuoteReplyPeerDisposable.dispose()
+     }
+     
+     override func ready() -> Signal<Void, NoError> {
+@@ -360,6 +376,15 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
+         let statusSize = CGSize(width: 50.0, height: 50.0)
+         transition.updateFrame(node: self.statusNodeContainer, frame: CGRect(origin: CGPoint(x: floor((layout.size.width - statusSize.width) / 2.0), y: floor((layout.size.height - statusSize.height) / 2.0)), size: statusSize))
+         transition.updateFrame(node: self.statusNode, frame: CGRect(origin: CGPoint(), size: statusSize))
++
++        self.visualQuoteNavigationBarHeight = navigationBarHeight
++        if self.visualQuoteControlsInset != nil && self.visualQuoteLayoutSize != layout.size {
++            // The zoom was reset for the new size, so the room made for the controls is no longer right.
++            self.visualQuoteControlsInset = nil
++            self.scrollNode.view.contentInset = UIEdgeInsets()
++        }
++        self.visualQuoteLayoutSize = layout.size
++        self.updateVisualQuoteLayout(transition: transition)
+     }
+     
+     private func setupImageRecognition(_ generate: @escaping (TransformImageArguments) -> DrawingContext?, dimensions: PixelDimensions) {
+@@ -458,6 +483,14 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
+     }
+     
+     fileprivate func setMessage(_ message: Message, mediaSubject: GalleryMediaSubject?, displayInfo: Bool, translateToLanguage: String?, peerIsCopyProtected: Bool, isSecret: Bool, location: MessageHistoryEntryLocation?) {
++        if self.message?.id != message.id {
++            self.clearVisualQuoteSelection(animated: false)
++            self.clearVisualQuoteHighlight()
++            if self.visualQuoteControlsInset != nil {
++                self.visualQuoteControlsInset = nil
++                self.scrollNode.view.contentInset = UIEdgeInsets()
++            }
++        }
+         self.message = message
+         self.mediaSubject = mediaSubject
+         self.displayInfo = displayInfo
+@@ -467,6 +500,20 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
+         self.imageNode.captureProtected = message.id.peerId.namespace == Namespaces.Peer.SecretChat || message.isCopyProtected() || peerIsCopyProtected || isSecret || message.paidContent != nil
+         self.updateFooter(animated: false)
+         
++        self.visualQuoteIsCopyProtected = message.isCopyProtected() || peerIsCopyProtected
++        self.visualQuoteReplyPeer = nil
++        if self.isVisualQuoteEnabled && self.isVisualQuotePhoto {
++            VisualQuoteDetector.prepare(context: self.context)
++            // Selection is offered only where a reply can be sent, like the "more" menu's Reply.
++            self.visualQuoteReplyPeerDisposable.set((self.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: message.id.peerId))
++            |> deliverOnMainQueue).start(next: { [weak self] peer in
++                guard let self, let peer, canSendMessagesToPeer(peer) else {
++                    return
++                }
++                self.visualQuoteReplyPeer = peer
++            }))
++        }
++
+         var title: String?
+         if let _ = message.adAttribute {
+             title = self.presentationData.strings.Gallery_Ad
+@@ -1170,6 +1217,356 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
+         self.statusNodeContainer.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15, timingFunction: CAMediaTimingFunctionName.easeIn.rawValue, removeOnCompletion: false)
+     }
+     
++    // MARK: - Visual Quote
++
++    private var isVisualQuoteEnabled: Bool {
++        return true // VoidGram: Visual Quote is always on
++    }
++
++    /// Regular photos only: no secret, paid or copy-protected media, no ads, no tiled local files.
++    private var isVisualQuotePhoto: Bool {
++        guard let message = self.message, !self.isSecret, !self.visualQuoteIsCopyProtected, message.adAttribute == nil, message.paidContent == nil, self.tilingNode == nil else {
++            return false
++        }
++        return message.media.contains(where: { $0 is TelegramMediaImage })
++    }
++
++    /// The photo qualifies and a reply can be sent to its chat.
++    private var isVisualQuoteSupported: Bool {
++        return self.isVisualQuotePhoto && self.visualQuoteReplyPeer != nil
++    }
++
++    /// How far the gallery's top buttons and bottom toolbar reach into this node while they are shown.
++    private var visualQuoteControlsInsets: (top: CGFloat, bottom: CGFloat) {
++        guard self.controlsVisibility() else {
++            return (0.0, 0.0)
++        }
++        var bottom: CGFloat = 0.0
++        if self.footerContentNode.supernode != nil && !self.footerContentNode.bounds.isEmpty {
++            let footerFrame = self.footerContentNode.view.convert(self.footerContentNode.bounds, to: self.view)
++            bottom = max(0.0, self.bounds.height - footerFrame.minY)
++        }
++        return (self.visualQuoteNavigationBarHeight, bottom)
++    }
++
++    override func contentLongTapAction(location: CGPoint) -> Bool {
++        guard self.isVisualQuoteEnabled, self.isVisualQuoteSupported, let image = self.imageNode.image else {
++            return false
++        }
++        let bounds = self.imageNode.bounds
++        guard bounds.width > 0.0, bounds.height > 0.0 else {
++            return false
++        }
++        let pointInImage = self.scrollNode.view.convert(location, to: self.imageNode.view)
++        guard bounds.contains(pointInImage) else {
++            return false
++        }
++        let normalizedPoint = CGPoint(x: pointInImage.x / bounds.width, y: pointInImage.y / bounds.height)
++
++        // Show a default frame around the point right away; detection then pulls it onto the object if one is found.
++        let defaultRegion = VisualQuoteDetector.pointRegion(at: normalizedPoint, imageSize: bounds.size)
++        self.setVisualQuoteRegion(defaultRegion, animated: true)
++        HapticFeedback().impact(.light)
++
++        self.visualQuoteDetectionId += 1
++        let detectionId = self.visualQuoteDetectionId
++        VisualQuoteDetector.detect(image: image, normalizedPoint: normalizedPoint, completion: { [weak self] detection in
++            guard let self, self.visualQuoteDetectionId == detectionId, self.visualQuoteFrameNode != nil else {
++                return
++            }
++            if case let .object(region) = detection {
++                self.setVisualQuoteRegion(region, animated: true)
++                HapticFeedback().tap()
++            }
++        })
++        return true
++    }
++
++    override func activateAsInitial() {
++        super.activateAsInitial()
++        guard let region = VisualQuoteRegion(mediaSubject: self.mediaSubject) else {
++            return
++        }
++        // Wait for the transition from the bubble to settle, then zoom to the region and dim the rest.
++        Queue.mainQueue().after(0.45) { [weak self] in
++            self?.zoomToVisualQuote(region: region)
++        }
++    }
++
++    private func zoomToVisualQuote(region: VisualQuoteRegion) {
++        // A selection the user started in the meantime wins over the passive highlight.
++        guard self.visualQuoteFrameNode == nil, let (_, contentNode) = self.zoomableContent else {
++            return
++        }
++        let contentBounds = contentNode.bounds
++        guard contentBounds.width > 0.0, contentBounds.height > 0.0 else {
++            return
++        }
++        let scrollView = self.scrollNode.view
++        let regionRect = region.rect(in: contentBounds.size)
++        // Leave room around the fragment and keep the aspect ratio of the screen.
++        let padded = regionRect.insetBy(dx: -regionRect.width * 0.35, dy: -regionRect.height * 0.35)
++        let viewSize = scrollView.bounds.size
++
++        // The gallery's top buttons and bottom toolbar float over the photo; the fragment should end up between them.
++        let gap: CGFloat = 8.0
++        let controls = self.visualQuoteControlsInsets
++        let freeTop = controls.top > 0.0 ? controls.top + gap : 0.0
++        let freeBottom = viewSize.height - (controls.bottom > 0.0 ? controls.bottom + gap : 0.0)
++
++        var scale = min(viewSize.width / max(1.0, padded.width), viewSize.height / max(1.0, padded.height))
++        // A tall fragment is zoomed a little less so it fits between the controls.
++        scale = min(scale, (freeBottom - freeTop) / max(1.0, regionRect.height))
++        scale = min(scrollView.maximumZoomScale, max(scrollView.minimumZoomScale, scale))
++
++        // Put the fragment as close to the middle as the photo allows, the way zoom(to:) does: near an
++        // edge the view stops at the photo's border (D-028). Only if that leaves the fragment under the
++        // top buttons or the bottom toolbar, shift the photo just enough to clear them; the missing room
++        // becomes a content inset, which goes away once the user scrolls or zooms (D-029).
++        let zoomedSize = CGSize(width: contentBounds.width * scale, height: contentBounds.height * scale)
++        let originY = zoomedSize.height < viewSize.height ? (viewSize.height - zoomedSize.height) / 2.0 : 0.0
++        var offset = CGPoint()
++        if zoomedSize.width > viewSize.width {
++            offset.x = max(0.0, min(zoomedSize.width - viewSize.width, regionRect.midX * scale - viewSize.width / 2.0))
++        }
++        if zoomedSize.height > viewSize.height {
++            offset.y = max(0.0, min(zoomedSize.height - viewSize.height, regionRect.midY * scale - viewSize.height / 2.0))
++        }
++        let regionTop = originY + regionRect.minY * scale - offset.y
++        let regionBottom = originY + regionRect.maxY * scale - offset.y
++        if regionBottom - regionTop <= freeBottom - freeTop {
++            if regionTop < freeTop {
++                offset.y -= freeTop - regionTop
++            } else if regionBottom > freeBottom {
++                offset.y += regionBottom - freeBottom
++            }
++        }
++        let inset = UIEdgeInsets(top: max(0.0, -offset.y), left: 0.0, bottom: max(0.0, offset.y - (zoomedSize.height - viewSize.height)), right: 0.0)
++        self.visualQuoteControlsInset = inset == UIEdgeInsets() ? nil : inset
++        UIView.animate(withDuration: 0.35, delay: 0.0, options: [.curveEaseInOut], animations: {
++            scrollView.zoomScale = scale
++            scrollView.contentInset = inset
++            scrollView.contentOffset = offset
++        })
++
++        // Dim the photo around the quoted area and keep it that way: the highlight lives inside
++        // the zoomable content, so it follows every zoom and scroll until the gallery closes.
++        let highlight = VisualQuoteFrameNode(region: region, mode: .highlight)
++        highlight.frame = contentBounds
++        highlight.update(imageFrame: contentBounds, visibleBounds: contentBounds, region: region, animated: false)
++        self.visualQuoteHighlightNode = highlight
++        contentNode.addSubnode(highlight)
++        self.updateVisualQuoteHighlightOutline()
++        highlight.animateIn()
++    }
++
++    override func scrollViewDidZoom(_ scrollView: UIScrollView) {
++        super.scrollViewDidZoom(scrollView)
++        self.updateVisualQuoteHighlightOutline()
++        self.updateVisualQuoteLayout(transition: .immediate)
++    }
++
++    func scrollViewDidScroll(_ scrollView: UIScrollView) {
++        if self.visualQuoteFrameNode != nil {
++            self.updateVisualQuoteLayout(transition: .immediate)
++        }
++    }
++
++    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
++        self.clearVisualQuoteControlsInset()
++    }
++
++    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
++        self.clearVisualQuoteControlsInset()
++    }
++
++    private func clearVisualQuoteControlsInset() {
++        guard self.visualQuoteControlsInset != nil else {
++            return
++        }
++        self.visualQuoteControlsInset = nil
++        let scrollView = self.scrollNode.view
++        UIView.animate(withDuration: 0.25, delay: 0.0, options: [.curveEaseInOut, .allowUserInteraction], animations: {
++            scrollView.contentInset = UIEdgeInsets()
++        })
++    }
++
++    private func updateVisualQuoteHighlightOutline() {
++        guard let highlight = self.visualQuoteHighlightNode, let (_, contentNode) = self.zoomableContent else {
++            return
++        }
++        let onScreenWidth = self.visualQuoteImageFrame.width
++        guard onScreenWidth > 0.0 else {
++            return
++        }
++        highlight.setOutlineWidth(contentNode.bounds.width / onScreenWidth)
++    }
++
++    private func clearVisualQuoteHighlight() {
++        guard let highlight = self.visualQuoteHighlightNode else {
++            return
++        }
++        self.visualQuoteHighlightNode = nil
++        highlight.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak highlight] _ in
++            highlight?.removeFromSupernode()
++        })
++    }
++
++    override func contentTapAction() -> Bool {
++        if self.visualQuoteFrameNode != nil {
++            self.clearVisualQuoteSelection(animated: true)
++            return true
++        }
++        return false
++    }
++
++    override func contentDoubleTapAction(location: CGPoint) -> Bool {
++        return self.visualQuoteFrameNode != nil
++    }
++
++    /// The photo's on-screen frame in this node's coordinates.
++    private var visualQuoteImageFrame: CGRect {
++        return self.imageNode.view.convert(self.imageNode.bounds, to: self.view)
++    }
++
++    private func setVisualQuoteRegion(_ region: VisualQuoteRegion, animated: Bool) {
++        self.visualQuoteRegion = region
++        let frameNode: VisualQuoteFrameNode
++        var isNew = false
++        if let current = self.visualQuoteFrameNode {
++            frameNode = current
++        } else {
++            self.clearVisualQuoteHighlight()
++            frameNode = VisualQuoteFrameNode(region: region)
++            frameNode.isAccessibilityElement = true
++            frameNode.accessibilityLabel = self.presentationData.strings.VisualQuote_VoiceOver_SelectedArea
++            frameNode.regionChanged = { [weak self] region in
++                guard let self else {
++                    return
++                }
++                self.visualQuoteRegion = region
++                self.updateVisualQuoteReplyButton(transition: .immediate)
++            }
++            frameNode.dragEnded = { [weak self] in
++                self?.updateVisualQuoteReplyButton(transition: .animated(duration: 0.3, curve: .spring))
++            }
++            self.visualQuoteFrameNode = frameNode
++            // Keep the overlay under the scroll view so its pinch recognizer sees touches
++            // that start inside the selection. One finger edits; two fingers move the photo.
++            self.scrollNode.addSubnode(frameNode)
++            isNew = true
++            self.visualQuotePreviousPanMinimumTouches = self.scrollNode.view.panGestureRecognizer.minimumNumberOfTouches
++            self.scrollNode.view.panGestureRecognizer.minimumNumberOfTouches = 2
++        }
++        frameNode.frame = self.scrollNode.view.bounds
++        frameNode.update(imageFrame: self.visualQuoteImageFrame, visibleBounds: self.bounds, region: region, animated: animated && !isNew)
++        if isNew && animated {
++            frameNode.animateIn()
++        }
++        self.updateVisualQuoteReplyButton(transition: isNew ? .animated(duration: 0.2, curve: .easeInOut) : .animated(duration: 0.3, curve: .spring))
++    }
++
++    private func clearVisualQuoteSelection(animated: Bool) {
++        self.visualQuoteDetectionId += 1
++        self.visualQuoteRegion = nil
++        if let frameNode = self.visualQuoteFrameNode {
++            self.visualQuoteFrameNode = nil
++            if let minimumTouches = self.visualQuotePreviousPanMinimumTouches {
++                self.scrollNode.view.panGestureRecognizer.minimumNumberOfTouches = minimumTouches
++                self.visualQuotePreviousPanMinimumTouches = nil
++            }
++            self.scrollNode.view.isScrollEnabled = !self.scrollNode.view.zoomScale.isEqual(to: self.scrollNode.view.minimumZoomScale)
++            if animated {
++                frameNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak frameNode] _ in
++                    frameNode?.removeFromSupernode()
++                })
++            } else {
++                frameNode.removeFromSupernode()
++            }
++        }
++        self.updateVisualQuoteReplyButton(transition: animated ? .animated(duration: 0.2, curve: .easeInOut) : .immediate)
++    }
++
++    private func updateVisualQuoteLayout(transition: ContainedViewLayoutTransition) {
++        if let frameNode = self.visualQuoteFrameNode, let region = self.visualQuoteRegion {
++            frameNode.frame = self.scrollNode.view.bounds
++            frameNode.update(imageFrame: self.visualQuoteImageFrame, visibleBounds: self.bounds, region: region, animated: false)
++        }
++        self.updateVisualQuoteReplyButton(transition: transition)
++    }
++
++    private func updateVisualQuoteReplyButton(transition: ContainedViewLayoutTransition) {
++        guard let region = self.visualQuoteRegion, self.visualQuoteFrameNode != nil else {
++            if let button = self.visualQuoteReplyButton {
++                self.visualQuoteReplyButton = nil
++                if transition.isAnimated {
++                    button.layer.animateScale(from: 1.0, to: 0.8, duration: 0.2, removeOnCompletion: false)
++                    button.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { [weak button] _ in
++                        button?.removeFromSupernode()
++                    })
++                } else {
++                    button.removeFromSupernode()
++                }
++            }
++            return
++        }
++
++        let button: VisualQuoteReplyButtonNode
++        var isNew = false
++        if let current = self.visualQuoteReplyButton {
++            button = current
++        } else {
++            button = VisualQuoteReplyButtonNode()
++            self.visualQuoteReplyButton = button
++            self.addSubnode(button)
++            isNew = true
++        }
++        let size = button.update(theme: defaultDarkColorPresentationTheme, title: self.presentationData.strings.Conversation_ContextMenuReply, action: { [weak self] in
++            self?.visualQuoteReplyPressed()
++        }, transition: transition)
++
++        let imageFrame = self.visualQuoteImageFrame
++        let regionRect = CGRect(x: imageFrame.minX + region.rect.minX * imageFrame.width, y: imageFrame.minY + region.rect.minY * imageFrame.height, width: region.rect.width * imageFrame.width, height: region.rect.height * imageFrame.height)
++        let spacing: CGFloat = 20.0
++        let controls = self.visualQuoteControlsInsets
++        let topLimit: CGFloat = controls.top + spacing
++        let bottomLimit: CGFloat = self.bounds.height - controls.bottom - spacing
++
++        var frame = CGRect(origin: CGPoint(x: regionRect.midX - size.width / 2.0, y: regionRect.maxY + spacing), size: size)
++        if frame.maxY > bottomLimit {
++            frame.origin.y = regionRect.minY - spacing - size.height
++            if frame.minY < topLimit {
++                frame.origin.y = bottomLimit - size.height
++            }
++        }
++        frame.origin.x = max(16.0, min(self.bounds.width - 16.0 - size.width, frame.origin.x))
++        frame.origin.x = floor(frame.origin.x)
++        frame.origin.y = floor(frame.origin.y)
++
++        if isNew {
++            button.frame = frame
++            if transition.isAnimated {
++                button.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
++                button.layer.animateSpring(from: 0.8 as NSNumber, to: 1.0 as NSNumber, keyPath: "transform.scale", duration: 0.5)
++            }
++        } else {
++            transition.updateFrame(node: button, frame: frame)
++        }
++    }
++
++    private func visualQuoteReplyPressed() {
++        guard let message = self.message, let region = self.visualQuoteRegion, let peer = self.visualQuoteReplyPeer, let navigationController = self.baseNavigationController() else {
++            return
++        }
++        // Mirrors the "Reply" action of the "more" menu; the region rides along as the reply's inner subject.
++        let context = self.context
++        self.beginCustomDismiss(.simpleAnimation)
++        context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: context, chatLocation: .peer(peer), subject: .message(id: .id(message.id), highlight: ChatControllerSubject.MessageHighlight(quote: nil, subject: region.innerSubject), timecode: nil, setupReply: true)))
++        Queue.mainQueue().after(0.3) { [weak self] in
++            self?.completeCustomDismiss(false)
++        }
++    }
++
+     override func visibilityUpdated(isVisible: Bool) {
+         super.visibilityUpdated(isVisible: isVisible)
+         
+diff --git a/submodules/GalleryUI/Sources/ZoomableContentGalleryItemNode.swift b/submodules/GalleryUI/Sources/ZoomableContentGalleryItemNode.swift
+index b5c2b824..40accd91 100644
+--- a/submodules/GalleryUI/Sources/ZoomableContentGalleryItemNode.swift
++++ b/submodules/GalleryUI/Sources/ZoomableContentGalleryItemNode.swift
+@@ -67,6 +67,11 @@ open class ZoomableContentGalleryItemNode: GalleryItemNode, ASScrollViewDelegate
+         return false
+     }
+     
++    /// Called when the user holds a finger on the content. `location` is in the scroll view's coordinates.
++    open func contentLongTapAction(location: CGPoint) -> Bool {
++        return false
++    }
++
+     @objc open func contentTap(_ recognizer: TapLongTapOrDoubleTapGestureRecognizer) {
+         if recognizer.state == .ended {
+             if let (gesture, location) = recognizer.lastRecognizedGestureAndLocation {
+@@ -101,6 +106,10 @@ open class ZoomableContentGalleryItemNode: GalleryItemNode, ASScrollViewDelegate
+                             } else {
+                                 self.scrollNode.view.setZoomScale(self.scrollNode.view.minimumZoomScale, animated: true)
+                             }
++                        case .longTap:
++                            if self.contentLongTapAction(location: location) {
++                                return
++                            }
+                         default:
+                             break
+                     }
+diff --git a/submodules/TelegramUI/BUILD b/submodules/TelegramUI/BUILD
+index ef154d07..e2353ccc 100644
+--- a/submodules/TelegramUI/BUILD
++++ b/submodules/TelegramUI/BUILD
+@@ -543,6 +543,7 @@ swift_library(
+         "//submodules/TelegramUI/Components/LiquidGlassShapes",
+         "//submodules/TelegramUI/Components/Chat/ChatInputAccessoryPanel",
+         "//submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel",
++        "//submodules/TelegramUI/Components/VisualQuote",
+         "//submodules/TelegramUI/Components/Chat/ChatRecordingViewOnceButtonNode",
+         "//submodules/TelegramUI/Components/Chat/ChatPanelsComponent",
+         "//submodules/TelegramUI/Components/EdgeEffect",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/BUILD b/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/BUILD
+index 8bf7cbea..f39a7aac 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/BUILD
+@@ -25,6 +25,7 @@ swift_library(
+         "//submodules/TextFormat",
+         "//submodules/TelegramUI/Components/CompositeTextNode",
+         "//submodules/ChatInterfaceState",
++        "//submodules/TelegramUI/Components/VisualQuote",
+     ],
+     visibility = [
+         "//visibility:public",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/Sources/ChatInputMessageAccessoryPanel.swift b/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/Sources/ChatInputMessageAccessoryPanel.swift
+index 84ddcb51..95a9ccb7 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/Sources/ChatInputMessageAccessoryPanel.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatInputMessageAccessoryPanel/Sources/ChatInputMessageAccessoryPanel.swift
+@@ -16,6 +16,7 @@ import PhotoResources
+ import TextFormat
+ import CompositeTextNode
+ import ChatInterfaceState
++import VisualQuote
+ 
+ private func generateCloseIcon() -> UIImage {
+     return generateImage(CGSize(width: 12.0, height: 12.0), contextGenerator: { size, context in
+@@ -365,6 +366,8 @@ public final class ChatInputMessageAccessoryPanel: Component {
+         private var deckListMessageIds: [EngineMessage.Id] = []
+         
+         private var inlineTextStarImage: UIImage?
++        private var visualQuoteImageNode: TransformImageNode?
++        private var visualQuoteImageKey: (EngineMessage.Id, VisualQuoteRegion)?
+         private var inlineTextTonImage: (UIImage, UIColor)?
+         
+         public var transitionData: ChatInputAccessoryPanelTransitionData? {
+@@ -951,7 +954,7 @@ public final class ChatInputMessageAccessoryPanel: Component {
+                     
+                     if let icon {
+                         let rawString: PresentationStrings.FormattedString
+-                        if reply.quote != nil {
++                        if reply.quote != nil || VisualQuoteRegion(innerSubject: reply.innerSubject) != nil {
+                             rawString = environment.strings.Chat_ReplyPanel_ReplyToQuoteBy(peer.debugDisplayTitle)
+                         } else {
+                             rawString = environment.strings.Chat_ReplyPanel_ReplyTo(peer.debugDisplayTitle)
+@@ -988,10 +991,11 @@ public final class ChatInputMessageAccessoryPanel: Component {
+                     if case .todoItem = reply.innerSubject {
+                         let string = environment.strings.Chat_ReplyPanel_ReplyToTodoItem
+                         titleText = [.text(NSAttributedString(string: string, font: Font.medium(14.0), textColor: environment.theme.chat.inputPanel.panelControlAccentColor))]
+-                    } else if case .pollOption = reply.innerSubject {
++                    } else if case .pollOption = reply.innerSubject, VisualQuoteRegion(innerSubject: reply.innerSubject) == nil {
+                         let string = environment.strings.Chat_ReplyPanel_ReplyToPollOption
+                         titleText = [.text(NSAttributedString(string: string, font: Font.medium(14.0), textColor: environment.theme.chat.inputPanel.panelControlAccentColor))]
+-                    } else if let _ = reply.quote {
++                    } else if reply.quote != nil || VisualQuoteRegion(innerSubject: reply.innerSubject) != nil {
++                        // A visual quote is titled like a text quote (D-031).
+                         let string = environment.strings.Chat_ReplyPanel_ReplyToQuoteBy(authorName).string
+                         titleText = [.text(NSAttributedString(string: string, font: Font.medium(14.0), textColor: environment.theme.chat.inputPanel.panelControlAccentColor))]
+                     } else {
+@@ -1333,8 +1337,36 @@ public final class ChatInputMessageAccessoryPanel: Component {
+                 }
+             }
+             
++            // A reply to a photo detail shows the selected fragment before the text, drawn by the bubble
++            // header's generator: the whole fragment, placeholder bands around it, rounded corners.
++            var contentLeftInset = lineFrame.maxX + textInsets.left
++            if case let .reply(reply) = component.contents, let region = VisualQuoteRegion(innerSubject: reply.innerSubject), let message = self.messages.first, let photo = message.media.first(where: { $0 is TelegramMediaImage }) as? TelegramMediaImage {
++                let imageNode: TransformImageNode
++                if let current = self.visualQuoteImageNode {
++                    imageNode = current
++                } else {
++                    imageNode = TransformImageNode()
++                    self.visualQuoteImageNode = imageNode
++                    self.addSubview(imageNode.view)
++                }
++                imageNode.captureProtected = message._asMessage().isCopyProtected()
++                if self.visualQuoteImageKey?.0 != message.id || self.visualQuoteImageKey?.1 != region {
++                    self.visualQuoteImageKey = (message.id, region)
++                    imageNode.setSignal(visualQuoteCropImage(postbox: component.context.account.postbox, message: message._asMessage(), photo: photo, region: region))
++                }
++                let cropSize = CGSize(width: 36.0, height: 36.0)
++                let applyImage = imageNode.asyncLayout()(TransformImageArguments(corners: ImageCorners(radius: 6.0), imageSize: cropSize, boundingSize: cropSize, intrinsicInsets: UIEdgeInsets(), emptyColor: environment.theme.chat.inputPanel.primaryTextColor.withAlphaComponent(0.1)))
++                applyImage()
++                transition.setFrame(view: imageNode.view, frame: CGRect(origin: CGPoint(x: contentLeftInset, y: floor((size.height - cropSize.height) / 2.0)), size: cropSize))
++                contentLeftInset += cropSize.width + 8.0
++            } else if let imageNode = self.visualQuoteImageNode {
++                self.visualQuoteImageNode = nil
++                self.visualQuoteImageKey = nil
++                imageNode.view.removeFromSuperview()
++            }
++
+             self.titleNode.components = titleText
+-            let titleSize = self.titleNode.update(constrainedSize: CGSize(width: availableSize.width - lineFrame.maxX - textInsets.left - textInsets.right, height: 100.0))
++            let titleSize = self.titleNode.update(constrainedSize: CGSize(width: availableSize.width - contentLeftInset - textInsets.right, height: 100.0))
+             
+             let textRenderInsets = UIEdgeInsets(top: 2.0, left: 2.0, bottom: 2.0, right: 2.0)
+             let textSize = self.text.update(
+@@ -1351,7 +1383,7 @@ public final class ChatInputMessageAccessoryPanel: Component {
+                     displaysAsynchronously: false
+                 )),
+                 environment: {},
+-                containerSize: CGSize(width: availableSize.width - lineFrame.maxX - textInsets.left - textInsets.right, height: 100.0)
++                containerSize: CGSize(width: availableSize.width - contentLeftInset - textInsets.right, height: 100.0)
+             )
+             let tintTextString = NSMutableAttributedString(attributedString: textString)
+             tintTextString.addAttribute(.foregroundColor, value: UIColor.black, range: NSRange(location: 0, length: tintTextString.length))
+@@ -1369,13 +1401,13 @@ public final class ChatInputMessageAccessoryPanel: Component {
+                     displaysAsynchronously: false
+                 )),
+                 environment: {},
+-                containerSize: CGSize(width: availableSize.width - lineFrame.maxX - textInsets.left - textInsets.right, height: 100.0)
++                containerSize: CGSize(width: availableSize.width - contentLeftInset - textInsets.right, height: 100.0)
+             )
+             
+             let titleTextSpacing: CGFloat = 1.0
+             
+-            let titleFrame = CGRect(origin: CGPoint(x: lineFrame.maxX + textInsets.left, y: textInsets.top), size: titleSize)
+-            let textFrame = CGRect(origin: CGPoint(x: lineFrame.maxX + textInsets.left - textRenderInsets.left, y: titleFrame.maxY + titleTextSpacing - textRenderInsets.top), size: textSize)
++            let titleFrame = CGRect(origin: CGPoint(x: contentLeftInset, y: textInsets.top), size: titleSize)
++            let textFrame = CGRect(origin: CGPoint(x: contentLeftInset - textRenderInsets.left, y: titleFrame.maxY + titleTextSpacing - textRenderInsets.top), size: textSize)
+             
+             transition.setFrame(view: self.titleNode.view, frame: titleFrame)
+             
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/BUILD
+index c4badf4e..e94f5542 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/BUILD
+@@ -47,6 +47,7 @@ swift_library(
+         "//submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode",
+         "//submodules/TelegramUI/Components/Chat/ChatMessageItemCommon",
+         "//submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode",
++        "//submodules/TelegramUI/Components/VisualQuote",
+         "//submodules/TelegramUI/Components/Chat/ChatMessageCallBubbleContentNode",
+         "//submodules/TelegramUI/Components/Chat/ChatMessageInteractiveFileNode",
+         "//submodules/TelegramUI/Components/Chat/ChatMessageFileBubbleContentNode",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+index 75cc605b..0bf7d700 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageBubbleItemNode/Sources/ChatMessageBubbleItemNode.swift
+@@ -39,6 +39,7 @@ import ChatMessageTextBubbleContentNode
+ import ChatMessageRichDataBubbleContentNode
+ import ChatMessageItemCommon
+ import ChatMessageReplyInfoNode
++import VisualQuote
+ import ChatMessageCallBubbleContentNode
+ import ChatMessageInteractiveFileNode
+ import ChatMessageFileBubbleContentNode
+@@ -962,6 +963,22 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+             }
+             
+             if let singleUrl = accessibilityData.singleUrl {
++                // The invisible transport entity is metadata, not a web link for VoiceOver.
++                if let region = VisualQuoteTransport.region(fromUrl: singleUrl) {
++                    guard let item = strongSelf.item else {
++                        return false
++                    }
++                    for attribute in item.message.attributes {
++                        if let attribute = attribute as? ReplyMessageAttribute {
++                            if let replyMessage = item.message.associatedMessages[attribute.messageId], replyMessage.media.contains(where: { $0 is TelegramMediaImage }), item.controllerInteraction.openMessage(replyMessage, OpenMessageParams(mode: .default, mediaSubject: region.galleryMediaSubject)) {
++                                return true
++                            }
++                            item.controllerInteraction.navigateToMessage(item.message.id, attribute.messageId, NavigateToMessageParams(timestamp: nil, quote: nil, subject: attribute.innerSubject, progress: nil))
++                            return true
++                        }
++                    }
++                    return false
++                }
+                 strongSelf.item?.controllerInteraction.openUrl(ChatControllerInteraction.OpenUrl(url: singleUrl, concealed: false, external: false, message: strongSelf.item?.content.firstMessage))
+                 return true
+             }
+@@ -5835,7 +5852,11 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+         
+         self.messageAccessibilityArea.accessibilityLabel = accessibilityData.label
+         self.messageAccessibilityArea.accessibilityValue = accessibilityData.value
+-        self.messageAccessibilityArea.accessibilityHint = accessibilityData.hint
++        if let singleUrl = accessibilityData.singleUrl, VisualQuoteTransport.region(fromUrl: singleUrl) != nil {
++            self.messageAccessibilityArea.accessibilityHint = self.item?.presentationData.strings.VoiceOver_Chat_OpenHint
++        } else {
++            self.messageAccessibilityArea.accessibilityHint = accessibilityData.hint
++        }
+         self.messageAccessibilityArea.accessibilityTraits = accessibilityData.traits
+         if let customActions = accessibilityData.customActions {
+             self.messageAccessibilityArea.accessibilityCustomActions = customActions.map({ action -> UIAccessibilityCustomAction in
+@@ -6077,6 +6098,12 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
+                                     guard let self else {
+                                         return
+                                     }
++                                    // A reply to a photo detail opens the original in the gallery, zoomed to the region.
++                                    if let region = VisualQuoteTransport.region(in: item.message), let replyMessage = item.message.associatedMessages[attribute.messageId], replyMessage.media.contains(where: { $0 is TelegramMediaImage }) {
++                                        if item.controllerInteraction.openMessage(replyMessage, OpenMessageParams(mode: .default, mediaSubject: region.galleryMediaSubject)) {
++                                            return
++                                        }
++                                    }
+                                     var progress: Promise<Bool>?
+                                     if let replyInfoNode = self.replyInfoNode {
+                                         progress = replyInfoNode.makeProgress()
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode/BUILD
+index 7acafa37..b7a0d920 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode/BUILD
+@@ -28,6 +28,7 @@ swift_library(
+         "//submodules/TelegramUI/Components/Chat/ChatMessageItemCommon",
+         "//submodules/TelegramUI/Components/Chat/MessageInlineBlockBackgroundView",
+         "//submodules/TelegramUI/Components/EmojiTextAttachmentView",
++        "//submodules/TelegramUI/Components/VisualQuote",
+     ],
+     visibility = [
+         "//visibility:public",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode/Sources/ChatMessageReplyInfoNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode/Sources/ChatMessageReplyInfoNode.swift
+index 39ee42e1..3bad8b29 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode/Sources/ChatMessageReplyInfoNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageReplyInfoNode/Sources/ChatMessageReplyInfoNode.swift
+@@ -8,6 +8,7 @@ import TelegramPresentationData
+ import AccountContext
+ import LocalizedPeerData
+ import PhotoResources
++import VisualQuote
+ import TelegramStringFormatting
+ import TextFormat
+ import InvisibleInkDustNode
+@@ -143,6 +144,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+     private var dustNode: InvisibleInkDustNode?
+     private var imageNode: TransformImageNode?
+     private var previousMediaReference: AnyMediaReference?
++    fileprivate var previousVisualQuoteRegion: VisualQuoteRegion?
+     private var expiredStoryIconView: UIImageView?
+     private var checkLayer: CheckLayer?
+     private var giftEmojiLayer: InlineStickerItemLayer?
+@@ -198,6 +200,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+         let textNodeLayout = TextNodeWithEntities.asyncLayout(maybeNode?.textNode)
+         let imageNodeLayout = TransformImageNode.asyncLayout(maybeNode?.imageNode)
+         let previousMediaReference = maybeNode?.previousMediaReference
++        let previousVisualQuoteRegion = maybeNode?.previousVisualQuoteRegion
+         
+         let isQuoteExpanded = maybeNode?.isQuoteExpanded ?? false
+         let previousDeckRowTextNodes: [(title: TextNode?, text: TextNode?)] = maybeNode?.deckRowItems.map { ($0.titleNode, $0.textNode) } ?? []
+@@ -578,7 +581,15 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+             var updatedMediaReference: AnyMediaReference?
+             var imageDimensions: CGSize?
+             var hasRoundImage = false
+-            if case let .pollOption(optionId) = arguments.innerSubject, let poll = arguments.message?.media.first(where: { $0 is TelegramMediaPoll }) as? TelegramMediaPoll, let pollOption = poll.options.first(where: { $0.opaqueIdentifier == optionId }), let media = pollOption.media {
++            // A reply to a photo detail (Visual Quote): show the selected fragment, larger than a plain photo thumbnail.
++            var visualQuote: (region: VisualQuoteRegion, message: EngineRawMessage, photo: TelegramMediaImage)?
++            if let region = VisualQuoteTransport.region(in: arguments.parentMessage), let message = arguments.message, !message.containsSecretMedia, let photo = message.media.first(where: { $0 is TelegramMediaImage }) as? TelegramMediaImage, let representation = largestRepresentationForPhoto(photo) {
++                visualQuote = (region, message, photo)
++                // Laid out like a text quote (name + quote icon), with the fragment where the quoted text goes.
++                messageText = NSAttributedString(string: "", font: textFont, textColor: textColor)
++                updatedMediaReference = .message(message: MessageReference(message), media: photo)
++                imageDimensions = CGSize(width: max(1.0, representation.dimensions.cgSize.width * region.rect.width), height: max(1.0, representation.dimensions.cgSize.height * region.rect.height))
++            } else if case let .pollOption(optionId) = arguments.innerSubject, let poll = arguments.message?.media.first(where: { $0 is TelegramMediaPoll }) as? TelegramMediaPoll, let pollOption = poll.options.first(where: { $0.opaqueIdentifier == optionId }), let media = pollOption.media {
+                 if let image = media as? TelegramMediaImage {
+                     updatedMediaReference = .message(message: MessageReference(arguments.parentMessage), media: image)
+                     if let representation = largestRepresentationForPhoto(image) {
+@@ -700,8 +711,11 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+                 isQuote = true
+             }
+             
+-            if isQuote {
++            let showsQuoteIcon = isQuote || visualQuote != nil
++            if showsQuoteIcon {
+                 additionalTitleWidth += 10.0
++            }
++            if isQuote {
+                 maxTitleNumberOfLines = 2
+                 maxTextNumberOfLines = isQuoteExpanded ? 50 : 5
+                 if imageTextInset != 0.0 {
+@@ -732,14 +746,20 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+             
+             let imageSide: CGFloat
+             let titleLineHeight: CGFloat = titleLayout.linesRects().first?.height ?? 12.0
+-            imageSide = titleLineHeight * 2.0
++            imageSide = floor(titleLineHeight * (visualQuote != nil ? VisualQuoteLayout.replyImageScale : 2.0))
+             
+             var applyImage: (() -> TransformImageNode)?
++            var imageBoundingSize = CGSize(width: imageSide, height: imageSide)
+             if let imageDimensions = imageDimensions {
+-                let boundingSize = CGSize(width: imageSide, height: imageSide)
+-                leftInset += imageSide + 6.0
++                if visualQuote != nil {
++                    imageBoundingSize = VisualQuoteLayout.replyThumbnailSize(fragmentSize: imageDimensions, side: imageSide, maximumWidth: arguments.constrainedSize.width - 8.0 - 9.0 - 6.0)
++                }
++                let boundingSize = imageBoundingSize
++                if visualQuote == nil {
++                    leftInset += boundingSize.width + 6.0
++                }
+                 var radius: CGFloat = 4.0
+-                var imageSize = imageDimensions.aspectFilled(boundingSize)
++                var imageSize = visualQuote != nil ? boundingSize : imageDimensions.aspectFilled(boundingSize)
+                 if hasRoundImage {
+                     radius = boundingSize.width / 2.0
+                     imageSize.width += 2.0
+@@ -771,7 +791,11 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+                 mediaUserLocation = .peer(message.id.peerId)
+             }
+             
+-            if let updatedMediaReference = updatedMediaReference, mediaUpdated && imageDimensions != nil {
++            if let visualQuote, mediaUpdated || previousVisualQuoteRegion != visualQuote.region {
++                updateImageSignal = visualQuoteCropImage(postbox: arguments.context.account.postbox, message: visualQuote.message, photo: visualQuote.photo, region: visualQuote.region)
++            } else if let updatedMediaReference = updatedMediaReference, imageDimensions != nil, mediaUpdated || (visualQuote == nil && previousVisualQuoteRegion != nil) {
++                // Removing a visual quote can keep the same original photo. Restore its regular
++                // thumbnail even when the media reference itself did not change.
+                 if let imageReference = updatedMediaReference.concrete(TelegramMediaImage.self) {
+                     updateImageSignal = chatMessagePhotoThumbnail(account: arguments.context.account, userLocation: mediaUserLocation, photoReference: imageReference, blurred: hasSpoiler)
+                 } else if let fileReference = updatedMediaReference.concrete(TelegramMediaFile.self) {
+@@ -787,6 +811,13 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+             size.width = max(titleLayout.size.width + additionalTitleWidth - textInsets.left - textInsets.right, textLeftInset + textLayout.size.width - textInsets.left - textInsets.right - textCutoutWidth) + leftInset + 6.0
+             size.height = titleLayout.size.height + textLayout.size.height - 2 * (textInsets.top + textInsets.bottom) + 2 * spacing
+             size.height += 2.0
++            var visualQuoteImageOriginY: CGFloat = 4.0
++            if visualQuote != nil {
++                // Name on top (as for a text quote), the fragment below it with the text's spacing.
++                visualQuoteImageOriginY = titleLayout.size.height - textInsets.bottom + 4.0
++                size.width = max(size.width, 9.0 + imageBoundingSize.width + 6.0)
++                size.height = visualQuoteImageOriginY + imageBoundingSize.height + 5.0
++            }
+             if isExpiredStory || isStory || isPoll {
+                 size.width += 16.0
+             }
+@@ -883,6 +914,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+                 }
+                 
+                 node.previousMediaReference = updatedMediaReference
++                node.previousVisualQuoteRegion = visualQuote?.region
+                 
+                 var deckSnapshotView: UIView?
+                 let isSameDeck = deck != nil && node.appliedDeckParentStableId == arguments.parentMessage.stableId
+@@ -932,7 +964,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+                         node.addSubnode(imageNode)
+                         node.imageNode = imageNode
+                     }
+-                    imageNode.frame = CGRect(origin: CGPoint(x: 9.0, y: 4.0), size: CGSize(width: imageSide, height: imageSide))
++                    imageNode.frame = CGRect(origin: CGPoint(x: 9.0, y: visualQuoteImageOriginY), size: imageBoundingSize)
+                     
+                     if let updateImageSignal = updateImageSignal {
+                         imageNode.setSignal(updateImageSignal)
+@@ -1066,7 +1098,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
+                     animation: animation
+                 )
+                 
+-                if isQuote {
++                if showsQuoteIcon {
+                     let quoteIconFrame = CGRect(origin: CGPoint(x: backgroundFrame.maxX - 4.0 - quoteIcon.size.width, y: backgroundFrame.minY + 4.0), size: quoteIcon.size)
+                     
+                     let quoteIconView: UIImageView
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
+index b722c93b..17b69c60 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
+@@ -10,6 +10,7 @@ swift_library(
+         "-warnings-as-errors",
+     ],
+     deps = [
++        "//submodules/TelegramUI/Components/VisualQuote",
+         "//submodules/AsyncDisplayKit",
+         "//submodules/LottieSettings:LottieSettings",
+         "//submodules/Display",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
+index f94dbfe0..fe9d7e9c 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
+@@ -29,6 +29,7 @@ import InteractiveTextComponent
+ import ShimmeringMask
+ import StreamingTextReveal
+ import WalletContext
++import VisualQuote
+ 
+ private final class CachedChatMessageText {
+     let text: String
+@@ -448,6 +449,11 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                 }
+                 
+                 
++                // Region metadata must not become a visible or tappable text link.
++                if let entities = messageEntities {
++                    messageEntities = VisualQuoteTransport.visibleEntities(entities)
++                }
++
+                 if incoming && item.associatedData.isSuspiciousPeer, let entities = messageEntities {
+                     messageEntities = entities.filter(\.isShownFromSuspiciousPeer)
+                 }
+diff --git a/submodules/TelegramUI/Components/VisualQuote/BUILD b/submodules/TelegramUI/Components/VisualQuote/BUILD
+new file mode 100644
+index 00000000..9e3c57c3
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/BUILD
+@@ -0,0 +1,29 @@
++load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
++
++swift_library(
++    name = "VisualQuote",
++    module_name = "VisualQuote",
++    srcs = glob([
++        "Sources/**/*.swift",
++    ]),
++    copts = [
++        "-warnings-as-errors",
++    ],
++    deps = [
++        "//submodules/AsyncDisplayKit",
++        "//submodules/Display",
++        "//submodules/SSignalKit/SwiftSignalKit",
++        "//submodules/AccountContext",
++        "//submodules/TelegramCore",
++        "//submodules/Postbox",
++        "//submodules/PhotoResources",
++        "//submodules/TelegramPresentationData",
++        "//submodules/ComponentFlow",
++        "//submodules/Components/ComponentDisplayAdapters",
++        "//submodules/TelegramUI/Components/GlassControls",
++        "//submodules/TelegramUI/Components/MediaEditor/ImageObjectSeparation",
++    ],
++    visibility = [
++        "//visibility:public",
++    ],
++)
+diff --git a/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteCodec.swift b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteCodec.swift
+new file mode 100644
+index 00000000..37a1b5cc
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteCodec.swift
+@@ -0,0 +1,76 @@
++import Foundation
++import UIKit
++import TelegramCore
++
++/// Transport of a region on the wire for the prototype.
++///
++/// The region uses `EngineMessageReplyInnerSubject.pollOption` only inside the composer.
++/// `VisualQuoteTransport` carries these bytes in a text entity because the server discards
++/// `poll_option` on photo replies. In production this would be a dedicated reply field;
++/// see the README.
++///
++/// Layout: "VQ1" + kind (1 byte) + six little-endian Float32: point x, y; rect x, y, width, height.
++public extension VisualQuoteRegion {
++    private static let magic: [UInt8] = [0x56, 0x51, 0x31] // "VQ1"
++    private static let encodedLength = 3 + 1 + 6 * 4
++
++    func encoded() -> Data {
++        var data = Data(VisualQuoteRegion.magic)
++        data.append(self.kind == .object ? 1 : 0)
++        for value in [self.point.x, self.point.y, self.rect.minX, self.rect.minY, self.rect.width, self.rect.height] {
++            var bits = Float32(value).bitPattern.littleEndian
++            withUnsafeBytes(of: &bits) { data.append(contentsOf: $0) }
++        }
++        return data
++    }
++
++    init?(encoded data: Data) {
++        guard data.count == VisualQuoteRegion.encodedLength, Array(data.prefix(3)) == VisualQuoteRegion.magic else {
++            return nil
++        }
++        let bytes = [UInt8](data)
++        guard bytes[3] == 0 || bytes[3] == 1 else {
++            return nil
++        }
++        var values: [CGFloat] = []
++        for index in 0 ..< 6 {
++            let offset = 4 + index * 4
++            let bits = UInt32(bytes[offset]) | (UInt32(bytes[offset + 1]) << 8) | (UInt32(bytes[offset + 2]) << 16) | (UInt32(bytes[offset + 3]) << 24)
++            let value = CGFloat(Float32(bitPattern: bits))
++            guard value.isFinite else {
++                return nil
++            }
++            values.append(value)
++        }
++        let rect = CGRect(x: values[2], y: values[3], width: values[4], height: values[5])
++        guard rect.width > 0.0, rect.height > 0.0 else {
++            return nil
++        }
++        // Independently encoded Float32 origins and sizes can add up to slightly more than 1.
++        // Allow only that rounding error, then clamp it away before cropping or zooming.
++        let tolerance: CGFloat = 0.000001
++        guard values.allSatisfy({ $0 >= -tolerance && $0 <= 1.0 + tolerance }),
++              rect.maxX <= 1.0 + tolerance, rect.maxY <= 1.0 + tolerance else {
++            return nil
++        }
++        let boundedRect = rect.intersection(CGRect(x: 0.0, y: 0.0, width: 1.0, height: 1.0))
++        guard !boundedRect.isNull, boundedRect.width > 0.0, boundedRect.height > 0.0 else {
++            return nil
++        }
++        let point = CGPoint(x: max(0.0, min(1.0, values[0])), y: max(0.0, min(1.0, values[1])))
++        self.init(kind: bytes[3] == 1 ? .object : .point, point: point, rect: boundedRect)
++    }
++
++    /// The region as the composer's local reply inner subject (not the wire transport).
++    var innerSubject: EngineMessageReplyInnerSubject {
++        return .pollOption(self.encoded())
++    }
++
++    /// The region carried by a reply's inner subject, if it is one.
++    init?(innerSubject: EngineMessageReplyInnerSubject?) {
++        guard case let .pollOption(data) = innerSubject else {
++            return nil
++        }
++        self.init(encoded: data)
++    }
++}
+diff --git a/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteCropImage.swift b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteCropImage.swift
+new file mode 100644
+index 00000000..e1ecd138
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteCropImage.swift
+@@ -0,0 +1,121 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import Postbox
++import TelegramCore
++import AccountContext
++import PhotoResources
++
++/// Layout constants shared by the places that draw a visual quote.
++public enum VisualQuoteLayout {
++    /// The fragment in a reply header, as a multiple of the title line height (a plain photo reply uses 2).
++    public static let replyImageScale: CGFloat = 8.0
++
++    /// The thumbnail box for a fragment of `fragmentSize` pixels when the usual square side is `side` and the
++    /// header can be up to `maximumWidth` wide. The box takes the fragment's own shape: a landscape fragment
++    /// grows in width (like a long text quote takes the whole bubble width) while its height stays within
++    /// `side`; a portrait one keeps `side` as height. The short side never drops below a quarter of `side`.
++    public static func replyThumbnailSize(fragmentSize: CGSize, side: CGFloat, maximumWidth: CGFloat) -> CGSize {
++        let minimumShortSide = floor(side / 4.0)
++        guard fragmentSize.width > 0.0, fragmentSize.height > 0.0 else {
++            return CGSize(width: side, height: side)
++        }
++        if fragmentSize.width >= fragmentSize.height {
++            let width = min(max(side, maximumWidth), floor(side * fragmentSize.width / fragmentSize.height))
++            return CGSize(width: width, height: max(minimumShortSide, min(side, floor(width * fragmentSize.height / fragmentSize.width))))
++        } else {
++            return CGSize(width: max(minimumShortSide, floor(side * fragmentSize.width / fragmentSize.height)), height: side)
++        }
++    }
++}
++
++public extension VisualQuoteRegion {
++    /// The region as a gallery media subject, so the gallery can open zoomed to it.
++    var galleryMediaSubject: GalleryMediaSubject {
++        return .visualQuoteRegion(self.encoded())
++    }
++
++    init?(mediaSubject: GalleryMediaSubject?) {
++        guard case let .visualQuoteRegion(data) = mediaSubject else {
++            return nil
++        }
++        self.init(encoded: data)
++    }
++}
++
++/// A `TransformImageNode` signal that draws the selected region of a photo message, cut out of
++/// the best representation available locally (the thumbnail first, the full photo once downloaded).
++public func visualQuoteCropImage(postbox: Postbox, message: Message, photo: TelegramMediaImage, region: VisualQuoteRegion) -> Signal<(TransformImageArguments) -> DrawingContext?, NoError> {
++    let photoReference = ImageMediaReference.message(message: MessageReference(message), media: photo)
++    return chatMessagePhoto(postbox: postbox, userLocation: .peer(message.id.peerId), photoReference: photoReference)
++    |> map { generate -> (TransformImageArguments) -> DrawingContext? in
++        // The node asks again whenever its layout changes; decode the photo once per emission.
++        let decoded = Atomic<(side: CGFloat, image: CGImage?)?>(value: nil)
++        return { arguments in
++            guard let context = DrawingContext(size: arguments.drawingSize, scale: arguments.scale ?? 0.0, clear: true) else {
++                return nil
++            }
++            let drawingRect = arguments.drawingRect
++
++            // Decode the whole photo at a size that keeps the fragment sharp but stays cheap.
++            let fragmentScale = max(1.0, 1.0 / max(region.rect.width, region.rect.height))
++            let decodeSide = min(1536.0, max(arguments.boundingSize.width, arguments.boundingSize.height) * fragmentScale * UIScreenScale)
++            let dimensions = (largestRepresentationForPhoto(photo)?.dimensions.cgSize ?? CGSize(width: 1.0, height: 1.0)).fitted(CGSize(width: decodeSide, height: decodeSide))
++            let fullArguments = TransformImageArguments(corners: ImageCorners(), imageSize: dimensions, boundingSize: dimensions, intrinsicInsets: UIEdgeInsets())
++
++            let full: CGImage?
++            if let current = decoded.with({ $0 }), current.side == decodeSide {
++                full = current.image
++            } else {
++                full = generate(fullArguments)?.generateImage()?.cgImage
++                let _ = decoded.swap((decodeSide, full))
++            }
++            var cropped: CGImage?
++            if let full {
++                let width = CGFloat(full.width)
++                let height = CGFloat(full.height)
++                let cropRect = CGRect(x: floor(region.rect.minX * width), y: floor(region.rect.minY * height), width: max(1.0, floor(region.rect.width * width)), height: max(1.0, floor(region.rect.height * height))).intersection(CGRect(x: 0.0, y: 0.0, width: width, height: height))
++                if !cropRect.isNull {
++                    cropped = full.cropping(to: cropRect)
++                }
++            }
++
++            var cornerRadius: CGFloat = 0.0
++            if case let .Corner(radius) = arguments.corners.topLeft {
++                cornerRadius = radius
++            }
++            context.withFlippedContext { c in
++                // Clip to the rounded shape instead of `addCorners`: that helper multiplies the colour of
++                // semi-transparent pixels by their alpha once more, which darkened the corners of the
++                // placeholder bands around a fragment.
++                if cornerRadius > 0.0 {
++                    c.addPath(UIBezierPath(roundedRect: drawingRect, cornerRadius: cornerRadius).cgPath)
++                    c.clip()
++                }
++                c.setBlendMode(.copy)
++                if let cropped {
++                    let imageSize = CGSize(width: cropped.width, height: cropped.height)
++                    // Show the whole fragment; when the box could not take its exact shape (short side clamped),
++                    // the remainder is filled with the placeholder colour.
++                    c.setFillColor((arguments.emptyColor ?? UIColor.white).cgColor)
++                    c.fill(drawingRect)
++                    let fittedSize = imageSize.aspectFitted(drawingRect.size)
++                    let fittedRect = CGRect(origin: CGPoint(x: drawingRect.midX - fittedSize.width / 2.0, y: drawingRect.midY - fittedSize.height / 2.0), size: fittedSize)
++                    if cornerRadius > 0.0 {
++                        // When the fragment sits inside placeholder bands, round its own corners too, like the
++                        // thumbnail's; when it fills the box this is the same shape as the clip above.
++                        c.addPath(UIBezierPath(roundedRect: fittedRect, cornerRadius: min(cornerRadius, min(fittedRect.width, fittedRect.height) / 2.0)).cgPath)
++                        c.clip()
++                    }
++                    c.interpolationQuality = .medium
++                    c.draw(cropped, in: fittedRect)
++                } else {
++                    c.setFillColor((arguments.emptyColor ?? UIColor.white).cgColor)
++                    c.fill(drawingRect)
++                }
++            }
++            return context
++        }
++    }
++}
+diff --git a/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteDetector.swift b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteDetector.swift
+new file mode 100644
+index 00000000..1888895f
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteDetector.swift
+@@ -0,0 +1,151 @@
++import Foundation
++import UIKit
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import ImageObjectSeparation
++
++/// Result of looking for an object under the user's finger.
++public enum VisualQuoteDetection {
++    /// An object was found under the point; the region's rect is its bounding box.
++    case object(region: VisualQuoteRegion)
++    /// Nothing confident under the point.
++    case point(region: VisualQuoteRegion)
++}
++
++/// Finds the object under a touch point using the same object separation the
++/// sticker editor uses (`ImageObjectSeparation`): Vision subject lifting on
++/// device, a CoreML fallback model in the simulator.
++public final class VisualQuoteDetector {
++    private static var preparedAccountId: AccountRecordId?
++    private static var availabilityDisposable: Disposable?
++    private static var isAvailable: Bool = false
++
++    /// Makes object separation ready for the given account. In the simulator this downloads the
++    /// fallback model once per launch; until it arrives, detection returns `.point`.
++    public static func prepare(context: AccountContext) {
++        if self.preparedAccountId == context.account.id {
++            return
++        }
++        self.preparedAccountId = context.account.id
++        self.isAvailable = false
++        self.availabilityDisposable?.dispose()
++        self.availabilityDisposable = (cutoutAvailability(context: context)
++        |> deliverOnMainQueue).start(next: { availability in
++            if case .available = availability {
++                self.isAvailable = true
++            }
++        })
++    }
++
++    /// Detects the object under `normalizedPoint` (0...1, top-left origin). The completion is called on the main queue.
++    public static func detect(image: UIImage, normalizedPoint: CGPoint, completion: @escaping (VisualQuoteDetection) -> Void) {
++        let pointDetection = VisualQuoteDetection.point(region: self.pointRegion(at: normalizedPoint, imageSize: image.size))
++        guard self.isAvailable else {
++            completion(pointDetection)
++            return
++        }
++        // The object separation's CoreML fallback (used in the simulator) scales the mask back with
++        // `image.size`, which is in points. Gallery images carry the screen scale, so hand over a
++        // pixel-sized copy (scale 1) to keep the mask aligned with the image.
++        guard let cgImage = image.cgImage else {
++            completion(pointDetection)
++            return
++        }
++        let pixelImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: image.imageOrientation)
++        cutoutImage(from: pixelImage, editedImage: nil, crop: nil, target: .point(normalizedPoint), includeExtracted: false, completion: { results in
++            var detection = pointDetection
++            for result in results {
++                guard let maskImage = result.maskImage, case let .image(uiImage, _) = maskImage, let cgImage = uiImage.cgImage else {
++                    continue
++                }
++                guard let bitmap = MaskBitmap(cgImage: cgImage, maxSide: 256) else {
++                    continue
++                }
++                let rect = bitmap.boundingRect()
++                let containsPoint = bitmap.contains(normalizedPoint: normalizedPoint)
++                guard containsPoint, let rect else {
++                    continue
++                }
++                if rect.width < 0.01 || rect.height < 0.01 {
++                    continue
++                }
++                detection = .object(region: VisualQuoteRegion(kind: .object, point: normalizedPoint, rect: rect))
++                break
++            }
++            Queue.mainQueue().async {
++                completion(detection)
++            }
++        })
++    }
++
++    /// A square area around the point, about a fifth of the shorter side of the image.
++    public static func pointRegion(at point: CGPoint, imageSize: CGSize) -> VisualQuoteRegion {
++        let side = min(imageSize.width, imageSize.height) * 0.2
++        let width = min(1.0, side / max(1.0, imageSize.width))
++        let height = min(1.0, side / max(1.0, imageSize.height))
++        var rect = CGRect(x: point.x - width / 2.0, y: point.y - height / 2.0, width: width, height: height)
++        rect.origin.x = max(0.0, min(1.0 - width, rect.origin.x))
++        rect.origin.y = max(0.0, min(1.0 - height, rect.origin.y))
++        return VisualQuoteRegion(kind: .point, point: point, rect: rect)
++    }
++}
++
++/// A downscaled 8-bit copy of a mask, used to test containment and compute a bounding box.
++private struct MaskBitmap {
++    let width: Int
++    let height: Int
++    let pixels: [UInt8]
++
++    init?(cgImage: CGImage, maxSide: Int) {
++        let scale = min(1.0, CGFloat(maxSide) / CGFloat(max(cgImage.width, cgImage.height)))
++        let width = max(1, Int(CGFloat(cgImage.width) * scale))
++        let height = max(1, Int(CGFloat(cgImage.height) * scale))
++        var pixels = [UInt8](repeating: 0, count: width * height)
++        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
++            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else {
++                return false
++            }
++            context.interpolationQuality = .medium
++            context.draw(cgImage, in: CGRect(origin: CGPoint(), size: CGSize(width: width, height: height)))
++            return true
++        }
++        if !drawn {
++            return nil
++        }
++        self.width = width
++        self.height = height
++        self.pixels = pixels
++    }
++
++    /// Bitmap rows start at the top of the image, so a top-left normalized point maps directly.
++    func contains(normalizedPoint point: CGPoint) -> Bool {
++        let x = max(0, min(self.width - 1, Int(point.x * CGFloat(self.width))))
++        let y = max(0, min(self.height - 1, Int(point.y * CGFloat(self.height))))
++        return self.pixels[y * self.width + x] > 127
++    }
++
++    func boundingRect() -> CGRect? {
++        var minX = self.width, minY = self.height, maxX = -1, maxY = -1
++        for y in 0 ..< self.height {
++            let row = y * self.width
++            for x in 0 ..< self.width {
++                if self.pixels[row + x] > 127 {
++                    if x < minX { minX = x }
++                    if x > maxX { maxX = x }
++                    if y < minY { minY = y }
++                    if y > maxY { maxY = y }
++                }
++            }
++        }
++        if maxX < 0 {
++            return nil
++        }
++        return CGRect(
++            x: CGFloat(minX) / CGFloat(self.width),
++            y: CGFloat(minY) / CGFloat(self.height),
++            width: CGFloat(maxX - minX + 1) / CGFloat(self.width),
++            height: CGFloat(maxY - minY + 1) / CGFloat(self.height)
++        )
++    }
++}
+diff --git a/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteFrameNode.swift b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteFrameNode.swift
+new file mode 100644
+index 00000000..9abe6363
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteFrameNode.swift
+@@ -0,0 +1,279 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++
++/// An adjustable frame over a photo: the selected area is shown with corner handles,
++/// the rest of the photo is dimmed, like the crop tool in the media editor. The user
++/// drags a corner to resize or the inside to move. The node spans the whole item and
++/// only takes touches near the frame, so taps outside still reach the photo.
++///
++/// In the `.highlight` mode the node only dims the photo around the area: no outline,
++/// no handles and no touches. The receiver sees this when opening a quoted region.
++public final class VisualQuoteFrameNode: ASDisplayNode, UIGestureRecognizerDelegate {
++    public enum Mode {
++        case editable
++        case highlight
++    }
++
++    public let mode: Mode
++    private static let minimumSide: CGFloat = 44.0
++    private static let handleHitRadius: CGFloat = 38.0
++    private static let cornerRadius: CGFloat = 16.0
++    private static let cornerSmoothing: CGFloat = 0.6
++    /// Fraction of the straight-ish ends of each corner curve left out of the marks.
++    private static let markTrim: CGFloat = 0.35
++    private static let markWidth: CGFloat = 3.0
++    /// The media editor's crop tool dims with black at 0.45; the passive highlight is denser, since there is no outline to carry the contrast.
++    private static let editableDimAlpha: CGFloat = 0.4
++    private static let highlightDimAlpha: CGFloat = 0.45
++
++    private enum DragMode {
++        case move
++        case corner(left: Bool, top: Bool)
++    }
++
++    public private(set) var region: VisualQuoteRegion
++    /// Called continuously while the user drags.
++    public var regionChanged: ((VisualQuoteRegion) -> Void)?
++    /// Called when a drag ends.
++    public var dragEnded: (() -> Void)?
++
++    private var imageFrame: CGRect = CGRect()
++    private var visibleBounds: CGRect = CGRect()
++    private var frameRect: CGRect = CGRect()
++
++    private let dimLayer = SimpleShapeLayer()
++    private let borderLayer = SimpleShapeLayer()
++    private let bracketsLayer = SimpleShapeLayer()
++
++    private var dragMode: DragMode?
++    private var dragStartRect: CGRect = CGRect()
++    /// Where the finger went down. The pan only begins after some movement, so a quick drag
++    /// out of a corner is already outside the corner's zone by then.
++    private var touchDownLocation: CGPoint?
++
++    public init(region: VisualQuoteRegion, mode: Mode = .editable) {
++        self.region = region
++        self.mode = mode
++
++        super.init()
++
++        self.dimLayer.fillRule = .evenOdd
++        self.dimLayer.fillColor = UIColor(white: 0.0, alpha: mode == .editable ? VisualQuoteFrameNode.editableDimAlpha : VisualQuoteFrameNode.highlightDimAlpha).cgColor
++        self.layer.addSublayer(self.dimLayer)
++
++        self.borderLayer.fillColor = nil
++        self.borderLayer.strokeColor = UIColor(white: 1.0, alpha: 0.7).cgColor
++        self.borderLayer.lineWidth = 1.0
++        self.layer.addSublayer(self.borderLayer)
++
++        guard case .editable = mode else {
++            self.isUserInteractionEnabled = false
++            return
++        }
++
++        self.bracketsLayer.fillColor = nil
++        self.bracketsLayer.strokeColor = UIColor.white.cgColor
++        self.bracketsLayer.lineWidth = VisualQuoteFrameNode.markWidth
++        self.bracketsLayer.lineCap = .round
++        self.layer.addSublayer(self.bracketsLayer)
++    }
++
++    override public func didLoad() {
++        super.didLoad()
++
++        guard case .editable = self.mode else {
++            return
++        }
++        let panRecognizer = UIPanGestureRecognizer(target: self, action: #selector(self.panGesture(_:)))
++        panRecognizer.maximumNumberOfTouches = 1
++        panRecognizer.delegate = self
++        self.view.addGestureRecognizer(panRecognizer)
++    }
++
++    /// `imageFrame` is the photo's on-screen frame in this node's coordinates; `visibleBounds` limits where handles may go.
++    public func update(imageFrame: CGRect, visibleBounds: CGRect, region: VisualQuoteRegion, animated: Bool) {
++        self.imageFrame = imageFrame
++        self.visibleBounds = visibleBounds
++        self.region = region
++        self.setFrameRect(self.rect(for: region), animated: animated)
++    }
++
++    /// In `.highlight` mode the node lives inside the zoomed photo, so the outline width is set in
++    /// photo units to come out as one screen point at the current zoom.
++    public func setOutlineWidth(_ width: CGFloat) {
++        self.borderLayer.lineWidth = width
++    }
++
++    public func animateIn() {
++        self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
++        guard case .editable = self.mode else {
++            return
++        }
++        self.bracketsLayer.animateSpring(from: 1.15 as NSNumber, to: 1.0 as NSNumber, keyPath: "transform.scale", duration: 0.5)
++    }
++
++    // MARK: - Geometry
++
++    private func rect(for region: VisualQuoteRegion) -> CGRect {
++        let rect = region.rect
++        return CGRect(
++            x: self.imageFrame.minX + rect.minX * self.imageFrame.width,
++            y: self.imageFrame.minY + rect.minY * self.imageFrame.height,
++            width: rect.width * self.imageFrame.width,
++            height: rect.height * self.imageFrame.height
++        )
++    }
++
++    private func region(for rect: CGRect) -> VisualQuoteRegion {
++        guard self.imageFrame.width > 0.0, self.imageFrame.height > 0.0 else {
++            return self.region
++        }
++        var region = self.region
++        region.rect = CGRect(
++            x: (rect.minX - self.imageFrame.minX) / self.imageFrame.width,
++            y: (rect.minY - self.imageFrame.minY) / self.imageFrame.height,
++            width: rect.width / self.imageFrame.width,
++            height: rect.height / self.imageFrame.height
++        )
++        return region
++    }
++
++    private var allowedRect: CGRect {
++        let rect = self.imageFrame.intersection(self.visibleBounds)
++        return rect.isNull ? self.imageFrame : rect
++    }
++
++    private func setFrameRect(_ rect: CGRect, animated: Bool) {
++        let previousPaths = (self.dimLayer.path, self.borderLayer.path, self.bracketsLayer.path)
++        self.frameRect = rect
++
++        let shape = smoothRoundedRectPath(rect, cornerRadius: VisualQuoteFrameNode.cornerRadius, smoothing: VisualQuoteFrameNode.cornerSmoothing)
++        let dimPath = UIBezierPath(rect: self.imageFrame)
++        dimPath.append(UIBezierPath(cgPath: shape))
++        self.dimLayer.path = dimPath.cgPath
++        self.borderLayer.path = shape
++        guard case .editable = self.mode else {
++            if animated, let dimFrom = previousPaths.0, let borderFrom = previousPaths.1 {
++                let timing = CAMediaTimingFunctionName.easeInEaseOut.rawValue
++                self.dimLayer.animate(from: dimFrom, to: self.dimLayer.path!, keyPath: "path", timingFunction: timing, duration: 0.3)
++                self.borderLayer.animate(from: borderFrom, to: self.borderLayer.path!, keyPath: "path", timingFunction: timing, duration: 0.3)
++            }
++            return
++        }
++        self.bracketsLayer.path = smoothCornerMarksPath(rect, cornerRadius: VisualQuoteFrameNode.cornerRadius, smoothing: VisualQuoteFrameNode.cornerSmoothing, trim: VisualQuoteFrameNode.markTrim)
++
++        if animated, let dimFrom = previousPaths.0, let borderFrom = previousPaths.1, let bracketsFrom = previousPaths.2 {
++            let timing = CAMediaTimingFunctionName.easeInEaseOut.rawValue
++            self.dimLayer.animate(from: dimFrom, to: self.dimLayer.path!, keyPath: "path", timingFunction: timing, duration: 0.3)
++            self.borderLayer.animate(from: borderFrom, to: self.borderLayer.path!, keyPath: "path", timingFunction: timing, duration: 0.3)
++            self.bracketsLayer.animate(from: bracketsFrom, to: self.bracketsLayer.path!, keyPath: "path", timingFunction: timing, duration: 0.3)
++        }
++    }
++
++    // MARK: - Touches
++
++    override public func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
++        guard case .editable = self.mode else {
++            return nil
++        }
++        let radius = VisualQuoteFrameNode.handleHitRadius
++        if self.frameRect.insetBy(dx: -radius, dy: -radius).contains(point) {
++            return self.view
++        }
++        return nil
++    }
++
++    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
++        return otherGestureRecognizer is UIPanGestureRecognizer
++    }
++
++    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
++        if gestureRecognizer.numberOfTouches == 0 {
++            self.touchDownLocation = touch.location(in: self.view)
++        }
++        return true
++    }
++
++    @objc private func panGesture(_ recognizer: UIPanGestureRecognizer) {
++        switch recognizer.state {
++        case .began:
++            let location = self.touchDownLocation ?? recognizer.location(in: self.view)
++            self.dragStartRect = self.frameRect
++            self.dragMode = self.dragMode(at: location)
++        case .changed:
++            guard let dragMode = self.dragMode else {
++                return
++            }
++            let translation = recognizer.translation(in: self.view)
++            let rect = self.constrained(self.dragged(self.dragStartRect, mode: dragMode, by: translation), mode: dragMode)
++            self.region = self.region(for: rect)
++            self.setFrameRect(rect, animated: false)
++            self.regionChanged?(self.region)
++        case .ended, .cancelled, .failed:
++            self.dragMode = nil
++            self.dragEnded?()
++        default:
++            break
++        }
++    }
++
++    private func dragMode(at point: CGPoint) -> DragMode {
++        let rect = self.frameRect
++        // On a small frame the corner zones would swallow the inside, so shrink them to keep moving possible.
++        let radius = min(VisualQuoteFrameNode.handleHitRadius, min(rect.width, rect.height) / 3.0)
++        let corners: [(CGPoint, Bool, Bool)] = [
++            (CGPoint(x: rect.minX, y: rect.minY), true, true),
++            (CGPoint(x: rect.maxX, y: rect.minY), false, true),
++            (CGPoint(x: rect.minX, y: rect.maxY), true, false),
++            (CGPoint(x: rect.maxX, y: rect.maxY), false, false)
++        ]
++        var best: (CGFloat, DragMode) = (CGFloat.greatestFiniteMagnitude, .move)
++        for (corner, left, top) in corners {
++            let distance = hypot(point.x - corner.x, point.y - corner.y)
++            if distance <= radius && distance < best.0 {
++                best = (distance, .corner(left: left, top: top))
++            }
++        }
++        return best.1
++    }
++
++    private func dragged(_ rect: CGRect, mode: DragMode, by translation: CGPoint) -> CGRect {
++        switch mode {
++        case .move:
++            return rect.offsetBy(dx: translation.x, dy: translation.y)
++        case let .corner(left, top):
++            var minX = rect.minX, maxX = rect.maxX, minY = rect.minY, maxY = rect.maxY
++            if left {
++                minX = min(minX + translation.x, maxX - VisualQuoteFrameNode.minimumSide)
++            } else {
++                maxX = max(maxX + translation.x, minX + VisualQuoteFrameNode.minimumSide)
++            }
++            if top {
++                minY = min(minY + translation.y, maxY - VisualQuoteFrameNode.minimumSide)
++            } else {
++                maxY = max(maxY + translation.y, minY + VisualQuoteFrameNode.minimumSide)
++            }
++            return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
++        }
++    }
++
++    private func constrained(_ rect: CGRect, mode: DragMode) -> CGRect {
++        let bounds = self.allowedRect
++        var rect = rect
++        switch mode {
++        case .move:
++            rect.size.width = min(rect.width, bounds.width)
++            rect.size.height = min(rect.height, bounds.height)
++            rect.origin.x = max(bounds.minX, min(bounds.maxX - rect.width, rect.minX))
++            rect.origin.y = max(bounds.minY, min(bounds.maxY - rect.height, rect.minY))
++        case .corner:
++            rect = rect.intersection(bounds)
++            if rect.isNull {
++                rect = self.dragStartRect
++            }
++        }
++        return rect
++    }
++}
+diff --git a/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteRegion.swift b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteRegion.swift
+new file mode 100644
+index 00000000..7494d903
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteRegion.swift
+@@ -0,0 +1,33 @@
++import Foundation
++import UIKit
++
++/// A detail of a photo that a reply refers to.
++///
++/// All coordinates are normalized to `0...1` relative to the original image,
++/// with the origin in the top-left corner, so the region does not depend on the
++/// resolution of the representation (thumbnail or full-size) it is drawn on.
++public struct VisualQuoteRegion: Equatable {
++    public enum Kind: Equatable {
++        /// A detected object; `rect` is its bounding box.
++        case object
++        /// No confident object under the finger; `rect` is a small area around `point`.
++        case point
++    }
++
++    public var kind: Kind
++    /// The point the user touched.
++    public var point: CGPoint
++    /// The highlighted area.
++    public var rect: CGRect
++
++    public init(kind: Kind, point: CGPoint, rect: CGRect) {
++        self.kind = kind
++        self.point = point
++        self.rect = rect
++    }
++
++    /// Converts the normalized rectangle to a rectangle in a view of the given size.
++    public func rect(in size: CGSize) -> CGRect {
++        return CGRect(x: self.rect.minX * size.width, y: self.rect.minY * size.height, width: self.rect.width * size.width, height: self.rect.height * size.height)
++    }
++}
+diff --git a/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteReplyButtonNode.swift b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteReplyButtonNode.swift
+new file mode 100644
+index 00000000..a6088ca1
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteReplyButtonNode.swift
+@@ -0,0 +1,59 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++import TelegramPresentationData
++import ComponentFlow
++import ComponentDisplayAdapters
++import GlassControls
++
++/// The "Reply" control that appears next to a selection in the gallery. It reuses
++/// the glass control group the gallery footer is built from, so it matches the
++/// other gallery buttons.
++public final class VisualQuoteReplyButtonNode: ASDisplayNode {
++    private let buttonView = ComponentView<Empty>()
++    private var action: (() -> Void)?
++
++    override public init() {
++        super.init()
++
++        // The glass group draws its title as an image, so VoiceOver gets the label from here.
++        self.isAccessibilityElement = true
++        self.accessibilityTraits = .button
++    }
++
++    override public func accessibilityActivate() -> Bool {
++        self.action?()
++        return true
++    }
++
++    /// Lays out the button and returns its size.
++    public func update(theme: PresentationTheme, title: String, action: @escaping () -> Void, transition: ContainedViewLayoutTransition) -> CGSize {
++        self.action = action
++        self.accessibilityLabel = title
++        let size = self.buttonView.update(
++            transition: ComponentTransition(transition),
++            component: AnyComponent(GlassControlGroupComponent(
++                theme: theme,
++                preferClearGlass: false,
++                background: .panel,
++                items: [GlassControlGroupComponent.Item(
++                    id: AnyHashable("reply"),
++                    content: .text(title),
++                    action: action
++                )],
++                minWidth: 44.0,
++                textHorizontalInset: 16.0
++            )),
++            environment: {},
++            containerSize: CGSize(width: 240.0, height: 44.0)
++        )
++        if let view = self.buttonView.view {
++            if view.superview == nil {
++                self.view.addSubview(view)
++            }
++            ComponentTransition(transition).setFrame(view: view, frame: CGRect(origin: CGPoint(), size: size))
++        }
++        return size
++    }
++}
+diff --git a/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteShapes.swift b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteShapes.swift
+new file mode 100644
+index 00000000..63445dd1
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteShapes.swift
+@@ -0,0 +1,134 @@
++import Foundation
++import UIKit
++
++/// Corner geometry for a rounded rectangle with Figma-style corner smoothing (a "squircle").
++/// `smoothing` is 0...1, where 0 is a plain circular corner and 0.6 is the common design default.
++/// The construction follows the published Figma corner-smoothing math.
++private struct SmoothCorner {
++    let radius: CGFloat
++    let p: CGFloat
++    let a: CGFloat
++    let b: CGFloat
++    let c: CGFloat
++    let d: CGFloat
++    let angleAlpha: CGFloat
++
++    init(rect: CGRect, cornerRadius: CGFloat, smoothing: CGFloat) {
++        let radius = max(0.0, min(cornerRadius, min(rect.width, rect.height) / 2.0))
++        let smoothing = max(0.0, min(1.0, smoothing))
++        let shortestSide = min(rect.width, rect.height)
++        let p = min(shortestSide / 2.0, (1.0 + smoothing) * radius)
++        let arcMeasure = 90.0 * (1.0 - smoothing)
++        let arcSectionLength = sin(arcMeasure / 2.0 * .pi / 180.0) * radius * sqrt(2.0)
++        let angleAlpha = (90.0 - arcMeasure) / 2.0
++        let p3ToP4Distance = radius * tan(angleAlpha / 2.0 * .pi / 180.0)
++        let angleBeta = 45.0 * smoothing
++        let c = p3ToP4Distance * cos(angleBeta * .pi / 180.0)
++        let d = c * tan(angleBeta * .pi / 180.0)
++        let b = (p - arcSectionLength - c - d) / 3.0
++        self.radius = radius
++        self.p = p
++        self.a = 2.0 * b
++        self.b = b
++        self.c = c
++        self.d = d
++        self.angleAlpha = angleAlpha
++    }
++}
++
++private func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
++    return CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
++}
++
++/// Cubic Bézier control points for the part of the curve after `t` (de Casteljau).
++private func cubicTail(_ p0: CGPoint, _ p1: CGPoint, _ p2: CGPoint, _ p3: CGPoint, from t: CGFloat) -> (CGPoint, CGPoint, CGPoint, CGPoint) {
++    let p01 = lerp(p0, p1, t), p12 = lerp(p1, p2, t), p23 = lerp(p2, p3, t)
++    let p012 = lerp(p01, p12, t), p123 = lerp(p12, p23, t)
++    return (lerp(p012, p123, t), p123, p23, p3)
++}
++
++/// Cubic Bézier control points for the part of the curve before `t`.
++private func cubicHead(_ p0: CGPoint, _ p1: CGPoint, _ p2: CGPoint, _ p3: CGPoint, to t: CGFloat) -> (CGPoint, CGPoint, CGPoint, CGPoint) {
++    let p01 = lerp(p0, p1, t), p12 = lerp(p1, p2, t), p23 = lerp(p2, p3, t)
++    let p012 = lerp(p01, p12, t), p123 = lerp(p12, p23, t)
++    return (p0, p01, p012, lerp(p012, p123, t))
++}
++
++/// Appends the four corner curves of `rect` to `path`, clockwise from the top-right corner.
++/// `edge` is called before each corner with the point where the corner curve starts; it either
++/// draws the edge up to that point or starts a new subpath there.
++private func addSmoothCorners(to path: UIBezierPath, rect: CGRect, corner k: SmoothCorner, trim: CGFloat, edge: (UIBezierPath, CGPoint) -> Void) {
++    let w = rect.width
++    let h = rect.height
++    let r = k.radius
++    let alpha = k.angleAlpha * .pi / 180.0
++    func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
++        return CGPoint(x: rect.minX + x, y: rect.minY + y)
++    }
++    // One corner: a lead-in cubic, the circular arc and a lead-out cubic. `trim` (0...1) drops that
++    // fraction of the lead-in and lead-out curves, which shortens corner marks without moving the arc.
++    func corner(leadIn: (CGPoint, CGPoint, CGPoint, CGPoint), arcCenter: CGPoint, startAngle: CGFloat, endAngle: CGFloat, leadOut: (CGPoint, CGPoint, CGPoint, CGPoint)) {
++        let lead = trim > 0.0 ? cubicTail(leadIn.0, leadIn.1, leadIn.2, leadIn.3, from: trim) : leadIn
++        let out = trim > 0.0 ? cubicHead(leadOut.0, leadOut.1, leadOut.2, leadOut.3, to: 1.0 - trim) : leadOut
++        edge(path, lead.0)
++        path.addCurve(to: lead.3, controlPoint1: lead.1, controlPoint2: lead.2)
++        path.addArc(withCenter: arcCenter, radius: r, startAngle: startAngle, endAngle: endAngle, clockwise: true)
++        path.addCurve(to: out.3, controlPoint1: out.1, controlPoint2: out.2)
++    }
++
++    // Top-right
++    corner(
++        leadIn: (point(w - k.p, 0.0), point(w - k.p + k.a, 0.0), point(w - k.p + k.a + k.b, 0.0), point(w - k.p + k.a + k.b + k.c, k.d)),
++        arcCenter: point(w - r, r), startAngle: -(.pi / 2.0) + alpha, endAngle: -alpha,
++        leadOut: (point(w - k.d, k.p - k.a - k.b - k.c), point(w, k.p - k.a - k.b), point(w, k.p - k.a), point(w, k.p))
++    )
++    // Bottom-right
++    corner(
++        leadIn: (point(w, h - k.p), point(w, h - k.p + k.a), point(w, h - k.p + k.a + k.b), point(w - k.d, h - k.p + k.a + k.b + k.c)),
++        arcCenter: point(w - r, h - r), startAngle: alpha, endAngle: (.pi / 2.0) - alpha,
++        leadOut: (point(w - k.p + k.a + k.b + k.c, h - k.d), point(w - k.p + k.a + k.b, h), point(w - k.p + k.a, h), point(w - k.p, h))
++    )
++    // Bottom-left
++    corner(
++        leadIn: (point(k.p, h), point(k.p - k.a, h), point(k.p - k.a - k.b, h), point(k.p - k.a - k.b - k.c, h - k.d)),
++        arcCenter: point(r, h - r), startAngle: (.pi / 2.0) + alpha, endAngle: .pi - alpha,
++        leadOut: (point(k.d, h - k.p + k.a + k.b + k.c), point(0.0, h - k.p + k.a + k.b), point(0.0, h - k.p + k.a), point(0.0, h - k.p))
++    )
++    // Top-left
++    corner(
++        leadIn: (point(0.0, k.p), point(0.0, k.p - k.a), point(0.0, k.p - k.a - k.b), point(k.d, k.p - k.a - k.b - k.c)),
++        arcCenter: point(r, r), startAngle: .pi + alpha, endAngle: (3.0 * .pi / 2.0) - alpha,
++        leadOut: (point(k.p - k.a - k.b - k.c, k.d), point(k.p - k.a - k.b, 0.0), point(k.p - k.a, 0.0), point(k.p, 0.0))
++    )
++}
++
++/// A closed rounded rectangle with smooth corners.
++func smoothRoundedRectPath(_ rect: CGRect, cornerRadius: CGFloat, smoothing: CGFloat) -> CGPath {
++    let corner = SmoothCorner(rect: rect, cornerRadius: cornerRadius, smoothing: smoothing)
++    guard corner.radius > 0.0 else {
++        return CGPath(rect: rect, transform: nil)
++    }
++    let path = UIBezierPath()
++    var isFirst = true
++    addSmoothCorners(to: path, rect: rect, corner: corner, trim: 0.0, edge: { path, point in
++        if isFirst {
++            path.move(to: point)
++            isFirst = false
++        } else {
++            path.addLine(to: point)
++        }
++    })
++    path.close()
++    return path.cgPath
++}
++
++/// The four corners of the same rounded rectangle as separate open strokes: corner marks that sit
++/// exactly on the frame's outline. `trim` shortens each mark by that fraction of its lead-in and lead-out.
++func smoothCornerMarksPath(_ rect: CGRect, cornerRadius: CGFloat, smoothing: CGFloat, trim: CGFloat = 0.0) -> CGPath {
++    let corner = SmoothCorner(rect: rect, cornerRadius: cornerRadius, smoothing: smoothing)
++    let path = UIBezierPath()
++    addSmoothCorners(to: path, rect: rect, corner: corner, trim: trim, edge: { path, point in
++        path.move(to: point)
++    })
++    return path.cgPath
++}
+diff --git a/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteTransport.swift b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteTransport.swift
+new file mode 100644
+index 00000000..c596c6e1
+--- /dev/null
++++ b/submodules/TelegramUI/Components/VisualQuote/Sources/VisualQuoteTransport.swift
+@@ -0,0 +1,184 @@
++import Foundation
++import UIKit
++import TelegramCore
++import Postbox
++
++/// Carries a region on a regular reply message without a schema change.
++///
++/// The reply header has no field for an image region, and the server drops unknown reply data
++/// (it silently discards `poll_option` on a reply to a photo). So the prototype prepends a
++/// zero-width space to the message text and gives it a `TextUrl` entity whose URL holds the
++/// encoded region; link previews are disabled for the message. Our own client additionally
++/// leaves this entity out of text rendering (`visibleEntities`). In production this would be a
++/// dedicated reply field next to `todo_item_id` / `poll_option`; see the README.
++public enum VisualQuoteTransport {
++    /// The invisible character the entity is attached to.
++    public static let marker: String = "\u{200B}"
++    /// The marker's length in UTF-16 units, the unit of entity ranges and message length limits.
++    public static let markerLength: Int = (marker as NSString).length
++    /// example.com is reserved for documentation, so the link never resolves to anything real.
++    private static let urlPrefix: String = "https://example.com/visual-quote#"
++
++    public static func url(for region: VisualQuoteRegion) -> String {
++        let payload = region.encoded().base64EncodedString()
++            .replacingOccurrences(of: "+", with: "-")
++            .replacingOccurrences(of: "/", with: "_")
++            .replacingOccurrences(of: "=", with: "")
++        return urlPrefix + payload
++    }
++
++    public static func region(fromUrl url: String) -> VisualQuoteRegion? {
++        guard url.hasPrefix(urlPrefix) else {
++            return nil
++        }
++        var payload = String(url.dropFirst(urlPrefix.count))
++            .replacingOccurrences(of: "-", with: "+")
++            .replacingOccurrences(of: "_", with: "/")
++        while payload.count % 4 != 0 {
++            payload.append("=")
++        }
++        guard let data = Data(base64Encoded: payload) else {
++            return nil
++        }
++        return VisualQuoteRegion(encoded: data)
++    }
++
++    /// Prepends the marker and its entity to an outgoing text; the other entities shift right by
++    /// the marker's length. Entity ranges are UTF-16 offsets.
++    ///
++    /// The marker is the first character on purpose. CoreText drops a trailing zero-width space
++    /// from the glyph run and reports caret offset 0 for its index, so a link underline on a
++    /// trailing marker stretches across the whole line (seen in stock Telegram in themes where
++    /// links are underlined). For a leading marker both caret offsets are 0 and nothing is drawn.
++    public static func attach(_ region: VisualQuoteRegion, toText text: String, entities: [MessageTextEntity]) -> (text: String, entities: [MessageTextEntity]) {
++        let shifted = entities.map { entity in
++            MessageTextEntity(range: (entity.range.lowerBound + markerLength) ..< (entity.range.upperBound + markerLength), type: entity.type)
++        }
++        return (marker + text, [MessageTextEntity(range: 0 ..< markerLength, type: .TextUrl(url: url(for: region)))] + shifted)
++    }
++
++    /// Removes the marker and its entity from a message's text for editing, shifting the other
++    /// entities back. Works for the marker at either end (older messages carried it last). The
++    /// region itself is read from the original message again and re-attached when the edit is saved.
++    public static func detach(text: String, entities: [MessageTextEntity]) -> (text: String, entities: [MessageTextEntity]) {
++        guard let index = entities.firstIndex(where: { entity in
++            if case let .TextUrl(url) = entity.type, region(fromUrl: url) != nil {
++                return true
++            }
++            return false
++        }) else {
++            return (text, entities)
++        }
++        let nsText = text as NSString
++        var remaining = entities
++        remaining.remove(at: index)
++        let markerLocation = entities[index].range.lowerBound
++        guard markerLocation >= 0, markerLocation + markerLength <= nsText.length, nsText.substring(with: NSRange(location: markerLocation, length: markerLength)) == marker else {
++            return (text, remaining)
++        }
++        let strippedText = nsText.replacingCharacters(in: NSRange(location: markerLocation, length: markerLength), with: "")
++        let shifted = remaining.map { entity -> MessageTextEntity in
++            if entity.range.lowerBound >= markerLocation + markerLength {
++                return MessageTextEntity(range: (entity.range.lowerBound - markerLength) ..< (entity.range.upperBound - markerLength), type: entity.type)
++            }
++            return entity
++        }
++        return (strippedText, shifted)
++    }
++
++    /// Excludes decoded metadata from text styling and link hit testing without changing
++    /// the stored entities used to reconstruct the quote. Keep all UTF-16 offsets intact.
++    public static func visibleEntities(_ entities: [MessageTextEntity]) -> [MessageTextEntity] {
++        return entities.filter { entity in
++            if case let .TextUrl(url) = entity.type, region(fromUrl: url) != nil {
++                return false
++            }
++            return true
++        }
++    }
++
++    /// The reply subject without the region: what every outgoing message carries once the region has
++    /// moved into the text, and what a send that cannot carry text (an inline bot result) uses.
++    public static func withoutRegion(_ subject: EngineMessageReplySubject?) -> EngineMessageReplySubject? {
++        guard let subject, VisualQuoteRegion(innerSubject: subject.innerSubject) != nil else {
++            return subject
++        }
++        return EngineMessageReplySubject(messageId: subject.messageId, quote: subject.quote, innerSubject: nil)
++    }
++
++    /// Moves the region from the composer's reply subject into the text of the first message that has
++    /// room for it (a text message or a media caption); every message goes out with a plain reply.
++    /// Sends that have no text to carry the marker (stickers, media without a caption, dice, rich
++    /// messages) become ordinary replies to the photo.
++    public static func applyToOutgoing(_ messages: [EnqueueMessage], textLimit: Int, captionLimit: Int) -> [EnqueueMessage] {
++        var attached = false
++        return messages.map { message in
++            guard case let .message(originalText, originalAttributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = message, let subject = replyToMessageId, let region = VisualQuoteRegion(innerSubject: subject.innerSubject) else {
++                return message
++            }
++            var text = originalText
++            var attributes = originalAttributes
++            let limit = mediaReference != nil ? captionLimit : textLimit
++            let isRich = attributes.contains(where: { $0 is RichTextMessageAttribute })
++            if !attached && !text.isEmpty && !isRich && (text as NSString).length + markerLength <= limit {
++                var entities: [MessageTextEntity] = []
++                for attribute in attributes {
++                    if let attribute = attribute as? TextEntitiesMessageAttribute {
++                        entities = attribute.entities
++                        break
++                    }
++                }
++                (text, entities) = attach(region, toText: text, entities: entities)
++                attributes.removeAll(where: { $0 is TextEntitiesMessageAttribute })
++                attributes.append(TextEntitiesMessageAttribute(entities: entities))
++                // The marker's URL must not become a link preview; an explicit preview the user kept wins.
++                if !attributes.contains(where: { $0 is WebpagePreviewMessageAttribute }) {
++                    var flags = OutgoingContentInfoFlags()
++                    if let index = attributes.firstIndex(where: { $0 is OutgoingContentInfoMessageAttribute }), let current = attributes[index] as? OutgoingContentInfoMessageAttribute {
++                        flags = current.flags
++                        attributes.remove(at: index)
++                    }
++                    flags.insert(.disableLinkPreviews)
++                    attributes.append(OutgoingContentInfoMessageAttribute(flags: flags))
++                }
++                attached = true
++            }
++            return .message(text: text, attributes: attributes, inlineStickers: inlineStickers, mediaReference: mediaReference, threadId: threadId, replyToMessageId: withoutRegion(subject), replyToStoryId: replyToStoryId, localGroupingKey: localGroupingKey, correlationId: correlationId, bubbleUpEmojiOrStickersets: bubbleUpEmojiOrStickersets)
++        }
++    }
++
++    /// Splits composer text into messages with `split`, making sure the first chunk leaves room for the
++    /// marker under `limit`: `split` alone fills a chunk to the limit, and `applyToOutgoing` would then
++    /// find no room. Only the first chunk is cut shorter; the rest is split as usual.
++    public static func chunks(of text: NSAttributedString, limit: Int, split: (NSAttributedString) -> [NSAttributedString]) -> [NSAttributedString] {
++        let chunks = split(text)
++        let room = limit - markerLength
++        guard let first = chunks.first, first.length > room, text.length > room, room > 0 else {
++            return chunks
++        }
++        var headLength = room
++        let composed = (text.string as NSString).rangeOfComposedCharacterSequence(at: room - 1)
++        if composed.upperBound > room {
++            headLength = composed.location
++        }
++        guard headLength > 0 else {
++            return chunks
++        }
++        let head = text.attributedSubstring(from: NSRange(location: 0, length: headLength))
++        let rest = text.attributedSubstring(from: NSRange(location: headLength, length: text.length - headLength))
++        return [head] + split(rest)
++    }
++
++    /// The region carried by a message, if any.
++    public static func region(in message: Message) -> VisualQuoteRegion? {
++        guard let entities = message.textEntitiesAttribute?.entities else {
++            return nil
++        }
++        for entity in entities {
++            if case let .TextUrl(url) = entity.type, let region = region(fromUrl: url) {
++                return region
++            }
++        }
++        return nil
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+index 06ad2700..d916dd55 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerLoadDisplayNode.swift
+@@ -4,6 +4,7 @@ import SwiftSignalKit
+ import Display
+ import AsyncDisplayKit
+ import TelegramCore
++import VisualQuote
+ import SafariServices
+ import MobileCoreServices
+ import Intents
+@@ -1770,13 +1771,19 @@ extension ChatControllerImpl {
+                                     webpageUrl = content.url
+                                 }
+                             }
++                            // Visual Quote: the region marker is re-attached on save and counts towards the limit.
++                            if VisualQuoteTransport.region(in: message) != nil {
++                                inputTextMaxLength -= Int32(VisualQuoteTransport.markerLength)
++                            }
+                             
+                             let editInputState: ChatTextInputState
+                             if let richTextAttribute = message.attributes.first(where: { $0 is RichTextMessageAttribute }) as? RichTextMessageAttribute {
+                                 let content = chatInputContent(fromInstantPage: richTextAttribute.instantPage)
+                                 editInputState = ChatTextInputState(content: content, selectionRange: content.length ..< content.length)
+                             } else {
+-                                let inputText = chatInputStateStringWithAppliedEntities(message.text, entities: entities)
++                                // Visual Quote: edit the visible text only; the region is re-attached when the edit is saved.
++                                let editSource = VisualQuoteTransport.detach(text: message.text, entities: entities)
++                                let inputText = chatInputStateStringWithAppliedEntities(editSource.text, entities: editSource.entities)
+                                 editInputState = ChatTextInputState(inputText: inputText)
+                             }
+                             var disableUrlPreviews: [String] = []
+@@ -2227,7 +2234,16 @@ extension ChatControllerImpl {
+                 let content = editMessage.inputState.content
+                 let richText: RichTextMessageAttribute? = content.isEntityExpressible() ? nil : RichTextMessageAttribute(instantPage: instantPage(from: content), fullInstantPage: nil)
+ 
+-                let entities = generateTextEntities(text.string, enabledTypes: .all, currentEntities: generateChatInputTextEntities(text))
++                var entities = generateTextEntities(text.string, enabledTypes: .all, currentEntities: generateChatInputTextEntities(text))
++                var messageText = text.string
++                // Visual Quote: the editor worked on the visible text only; put the region back on the edited text.
++                if let region = VisualQuoteTransport.region(in: message._asMessage()) {
++                    (messageText, entities) = VisualQuoteTransport.attach(region, toText: messageText, entities: entities)
++                    // The marker's URL must not become a link preview; a preview the user kept stays.
++                    if webpagePreviewAttribute == nil {
++                        disableUrlPreview = true
++                    }
++                }
+                 var entitiesAttribute: TextEntitiesMessageAttribute?
+                 if !entities.isEmpty {
+                     entitiesAttribute = TextEntitiesMessageAttribute(entities: entities)
+@@ -2311,8 +2327,8 @@ extension ChatControllerImpl {
+                             let currentRichText = currentMessage.attributes.first(where: { $0 is RichTextMessageAttribute }) as? RichTextMessageAttribute
+ 
+                             do {
+-                                if currentMessage.text != text.string || currentEntities != entities || currentRichText != nil || richText != nil || updatingMedia || webpagePreviewAttribute != currentWebpagePreviewAttribute || disableUrlPreview {
+-                                    strongSelf.context.account.pendingUpdateMessageManager.add(messageId: editMessage.messageId, text: richText != nil ? "" : text.string, media: media, entities: richText != nil ? nil : entitiesAttribute, richText: richText, inlineStickers: inlineStickers, webpagePreviewAttribute: webpagePreviewAttribute, invertMediaAttribute: invertedMediaAttribute, disableUrlPreview: disableUrlPreview)
++                                if currentMessage.text != messageText || currentEntities != entities || currentRichText != nil || richText != nil || updatingMedia || webpagePreviewAttribute != currentWebpagePreviewAttribute || disableUrlPreview {
++                                    strongSelf.context.account.pendingUpdateMessageManager.add(messageId: editMessage.messageId, text: richText != nil ? "" : messageText, media: media, entities: richText != nil ? nil : entitiesAttribute, richText: richText, inlineStickers: inlineStickers, webpagePreviewAttribute: webpagePreviewAttribute, invertMediaAttribute: invertedMediaAttribute, disableUrlPreview: disableUrlPreview)
+                                 }
+                             }
+                         }
+@@ -4522,8 +4538,14 @@ extension ChatControllerImpl {
+                             webpageUrl = content.url
+                         }
+                     }
++                    // Visual Quote: the region marker is re-attached on save and counts towards the limit.
++                    if VisualQuoteTransport.region(in: message) != nil {
++                        inputTextMaxLength -= Int32(VisualQuoteTransport.markerLength)
++                    }
+                     
+-                    let inputText = chatInputStateStringWithAppliedEntities(message.text, entities: entities)
++                    // Visual Quote: edit the visible text only; the region is re-attached when the edit is saved.
++                    let editSource = VisualQuoteTransport.detach(text: message.text, entities: entities)
++                    let inputText = chatInputStateStringWithAppliedEntities(editSource.text, entities: editSource.entities)
+                     var disableUrlPreviews: [String] = []
+                     if webpageUrl == nil {
+                         disableUrlPreviews = detectUrls(inputText)
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerNavigateToMessage.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerNavigateToMessage.swift
+index 0c5d21b9..b2a01a7f 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerNavigateToMessage.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerNavigateToMessage.swift
+@@ -393,12 +393,16 @@ extension ChatControllerImpl {
+                 } else {
+                     var setupReply = false
+                     var quote: (string: String, offset: Int?)?
++                    // The reply's inner subject (e.g. a Visual Quote region) must survive this path too,
++                    // otherwise a reply set up on a message outside the loaded history loses it.
++                    var replySubject: EngineMessageReplyInnerSubject?
+                     if case let .id(messageId, params) = messageLocation {
+                         if params.timestamp != nil {
+                             self.scheduledScrollToMessageId = (messageId, params)
+                         }
+                         quote = params.quote.flatMap { ($0.string, $0.offset) }
+                         setupReply = params.setupReply
++                        replySubject = params.subject
+                     }
+                     var progress: Promise<Bool>?
+                     if case let .id(_, params) = messageLocation {
+@@ -495,7 +499,7 @@ extension ChatControllerImpl {
+                     }
+                     |> deliverOnMainQueue).startStrict(next: { [weak self] index in
+                         if let strongSelf = self, let index = index.0 {
+-                            strongSelf.chatDisplayNode.historyNode.scrollToMessage(from: scrollFromIndex, to: index, animated: animated, quote: quote, scrollPosition: scrollPosition, setupReply: setupReply)
++                            strongSelf.chatDisplayNode.historyNode.scrollToMessage(from: scrollFromIndex, to: index, animated: animated, quote: quote, subject: replySubject, scrollPosition: scrollPosition, setupReply: setupReply)
+                         } else if index.1 {
+                             if !progressStarted {
+                                 progressStarted = true
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index 98bc2167..f5e26396 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -1,6 +1,7 @@
+ import Foundation
+ import UIKit
+ import Postbox
++import VisualQuote
+ import SwiftSignalKit
+ import Display
+ import AsyncDisplayKit
+@@ -893,8 +894,18 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             return true
+         }
+         
+-        let controllerInteraction = ChatControllerInteraction(openMessage: { [weak self] message, params in
+-            guard let self, self.isNodeLoaded, let message = self.chatDisplayNode.historyNode.messageInCurrentHistoryView(message.id)?._asMessage() else {
++        let controllerInteraction = ChatControllerInteraction(openMessage: { [weak self] requestedMessage, params in
++            guard let self, self.isNodeLoaded else {
++                return false
++            }
++            let message: Message
++            if let historyMessage = self.chatDisplayNode.historyNode.messageInCurrentHistoryView(requestedMessage.id)?._asMessage() {
++                message = historyMessage
++            } else if case .visualQuoteRegion = params.mediaSubject {
++                // A visual quote opens the quoted photo on its own (standalone gallery), so the original
++                // does not have to be in the loaded history: the reply header's copy of it is enough.
++                message = requestedMessage
++            } else {
+                 return false
+             }
+             
+@@ -9175,6 +9186,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             defaultReplyMessageSubject = EngineMessageReplySubject(messageId: editingOriginalMessageId, quote: nil, innerSubject: nil)
+         }
+         
++        // A reply to a photo detail: the region leaves the reply subject here, for every send path, and
++        // rides in the text of the first message that has room for it (see VisualQuoteTransport).
++        let messages = VisualQuoteTransport.applyToOutgoing(messages, textLimit: 4096, captionLimit: Int(self.context.userLimits.maxCaptionLength))
++
+         return messages.map { message in
+             var message = message
+             
+@@ -9734,7 +9749,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             let replyMessageSubject = self.presentationInterfaceState.interfaceState.replyMessageSubject
+             
+             let sendPaidMessageStars = self.presentationInterfaceState.sendPaidMessageStars
+-            if self.context.engine.messages.enqueueOutgoingMessageWithChatContextResult(to: peerId, threadId: self.chatLocation.threadId, botId: results.botId, result: result, replyToMessageId: replyMessageSubject?.subjectModel, hideVia: hideVia, silentPosting: silentPosting, scheduleTime: scheduleTime, sendPaidMessageStars: sendPaidMessageStars, postpone: postpone) {
++            if self.context.engine.messages.enqueueOutgoingMessageWithChatContextResult(to: peerId, threadId: self.chatLocation.threadId, botId: results.botId, result: result, replyToMessageId: VisualQuoteTransport.withoutRegion(replyMessageSubject?.subjectModel), hideVia: hideVia, silentPosting: silentPosting, scheduleTime: scheduleTime, sendPaidMessageStars: sendPaidMessageStars, postpone: postpone) {
+                 self.chatDisplayNode.setupSendActionOnViewUpdate({ [weak self] in
+                     if let strongSelf = self {
+                         strongSelf.chatDisplayNode.collapseInput()

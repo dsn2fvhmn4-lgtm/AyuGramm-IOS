@@ -1,0 +1,372 @@
+diff --git a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/BUILD
+index 4e2d93c3..6f9d65a5 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/BUILD
+@@ -23,6 +23,8 @@ swift_library(
+         "//submodules/LottieSettings:LottieSettings",
+         "//submodules/AsyncDisplayKit",
+         "//submodules/SSignalKit/SwiftSignalKit",
++        "//submodules/Postbox",
++        "//submodules/StickerResources",
+         "//submodules/TelegramCore",
+         "//submodules/TelegramPresentationData",
+         "//submodules/TextFormat",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+index 316ed62c..f1aaa265 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputPanelNode.swift
+@@ -267,6 +267,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+     private var mediaPreviewPanelNode: ChatRecordingPreviewInputPanelNodeImpl?
+     
+     private var accessoryItemButtons: [(ChatTextInputAccessoryItem, AccessoryItemIconButton)] = []
++    var quickStickerSource: QuickStickerSource?
++    var quickStickerOverlay: QuickStickerOverlayView?
+     
+     private var isUpdating: Bool = false
+     private var validLayout: (CGFloat, CGFloat, CGFloat, CGFloat, UIEdgeInsets, CGFloat, CGFloat, LayoutMetrics, Bool, Bool, DeviceMetrics)?
+@@ -514,6 +516,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+                     if itemAndButton == nil {
+                         let button = AccessoryItemIconButton(item: item, theme: currentState.theme, strings: currentState.strings)
+                         button.addTarget(self, action: #selector(self.accessoryItemButtonPressed(_:)), for: .touchUpInside)
++                        self.attachQuickSticker(to: button)
+                         itemAndButton = (item, button)
+                     }
+                     updatedButtons.append(itemAndButton!)
+@@ -2427,6 +2430,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+                 if itemAndButton == nil {
+                     let button = AccessoryItemIconButton(item: item, theme: interfaceState.theme, strings: interfaceState.strings)
+                     button.addTarget(self, action: #selector(self.accessoryItemButtonPressed(_:)), for: .touchUpInside)
++                    self.attachQuickSticker(to: button)
+                     itemAndButton = (item, button)
+                 }
+                 updatedButtons.append(itemAndButton!)
+@@ -6255,6 +6259,16 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
+         return nil
+     }
+     
++    /// Whether `button` is the enabled sticker (or emoji) button: the one Quick Sticker answers on.
++    func isQuickStickerButton(_ button: UIView) -> Bool {
++        for (item, currentButton) in self.accessoryItemButtons where currentButton === button {
++            if case let .input(isEnabled, inputMode) = item, isEnabled, inputMode == .stickers || inputMode == .emoji {
++                return true
++            }
++        }
++        return false
++    }
++
+     public func frameForStickersButton() -> CGRect? {
+         for (item, button) in self.accessoryItemButtons {
+             if case let .input(_, inputMode) = item, case .stickers = inputMode {
+diff --git a/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputQuickSticker.swift b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputQuickSticker.swift
+new file mode 100644
+index 00000000..437323dd
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Chat/ChatTextInputPanelNode/Sources/ChatTextInputQuickSticker.swift
+@@ -0,0 +1,307 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import Postbox
++import TelegramCore
++import AccountContext
++import StickerResources
++
++// VoidGram (Quick Sticker, after artem-suslov/tg-attach-stickers): hold the sticker button, slide
++// onto one of the stickers that fan out of it and let go to send it without opening the panel.
++// Releasing anywhere else folds the fan back and sends nothing.
++
++/// The fan's springs. X and Y run on separate springs, a fast bouncy Y and a slower smooth X, so a
++/// card's path bends into an arc while both axes keep real spring physics.
++private enum QuickStickerTuning {
++    static let xStiffness: CGFloat = 320.0
++    static let xDamping: CGFloat = 0.88
++    static let yStiffness: CGFloat = 500.0
++    static let yDamping: CGFloat = 0.60
++    static let birthScale: CGFloat = 0.42
++    static let staggerSeconds: Double = 0.028
++    static let yOvershootStep: CGFloat = 0.06
++}
++
++/// The stickers the fan offers: favorites first, then recent ones, four at most.
++final class QuickStickerSource {
++    private(set) var files: [FileMediaReference] = []
++    private var disposable: Disposable?
++
++    init(context: AccountContext) {
++        self.disposable = (context.engine.data.subscribe(
++            TelegramEngine.EngineData.Item.OrderedLists.ListItems(collectionId: Namespaces.OrderedItemList.CloudSavedStickers),
++            TelegramEngine.EngineData.Item.OrderedLists.ListItems(collectionId: Namespaces.OrderedItemList.CloudRecentStickers)
++        )
++        |> deliverOnMainQueue).startStrict(next: { [weak self] saved, recent in
++            var files: [FileMediaReference] = []
++            var seen = Set<MediaId>()
++            for entry in saved {
++                if let item = entry.contents.get(SavedStickerItem.self) {
++                    let file = item.file._parse()
++                    if seen.insert(file.fileId).inserted {
++                        files.append(.savedSticker(media: file))
++                    }
++                }
++            }
++            for entry in recent {
++                if let item = entry.contents.get(RecentMediaItem.self) {
++                    let file = item.media._parse()
++                    if seen.insert(file.fileId).inserted {
++                        files.append(.recentSticker(media: file))
++                    }
++                }
++            }
++            self?.files = Array(files.prefix(4))
++        })
++    }
++
++    deinit {
++        self.disposable?.dispose()
++    }
++}
++
++/// The full-window surface the fan is drawn on while the finger is down.
++final class QuickStickerOverlayView: UIView {
++    private let dimView = UIView()
++    private var itemNodes: [TransformImageNode] = []
++    private var itemFrames: [CGRect] = []
++    private var sourceRect: CGRect = .zero
++    private var highlightedIndex: Int?
++    private let selectionHaptic = UISelectionFeedbackGenerator()
++    private let impactHaptic = UIImpactFeedbackGenerator(style: .medium)
++
++    private let itemSpacing: CGFloat = 5.0
++    private let stripBottomGap: CGFloat = 16.0
++    private let hitSlop: CGFloat = 12.0
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        self.isUserInteractionEnabled = false
++        self.dimView.frame = self.bounds
++        self.dimView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        self.dimView.backgroundColor = UIColor(white: 0.0, alpha: 0.04)
++        self.dimView.alpha = 0.0
++        self.addSubview(self.dimView)
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    func present(context: AccountContext, files: [FileMediaReference], from sourceRect: CGRect) {
++        guard !files.isEmpty else {
++            return
++        }
++        self.sourceRect = sourceRect
++        self.impactHaptic.impactOccurred()
++        self.selectionHaptic.prepare()
++
++        // Every sticker keeps its own aspect ratio, so none gets a square backing it does not have.
++        let maximumEdge: CGFloat = 80.0
++        let unscaledSizes = files.map { file -> CGSize in
++            let dimensions = file.media.dimensions?.cgSize ?? CGSize(width: 512.0, height: 512.0)
++            let ratio = max(0.2, dimensions.width / max(1.0, dimensions.height))
++            if ratio >= 1.0 {
++                return CGSize(width: maximumEdge, height: maximumEdge / ratio)
++            } else {
++                return CGSize(width: maximumEdge * ratio, height: maximumEdge)
++            }
++        }
++        let availableWidth = self.bounds.width - 16.0 - self.itemSpacing * CGFloat(files.count - 1)
++        let unscaledWidth = unscaledSizes.reduce(0.0) { $0 + $1.width }
++        let scale = min(1.0, availableWidth / max(1.0, unscaledWidth))
++        let itemSizes = unscaledSizes.map { CGSize(width: floor($0.width * scale), height: floor($0.height * scale)) }
++        let stripWidth = itemSizes.reduce(0.0) { $0 + $1.width } + self.itemSpacing * CGFloat(files.count - 1)
++        let maxHeight = itemSizes.map(\.height).max() ?? maximumEdge
++        let rightmostWidth = itemSizes.last?.width ?? 0.0
++        let x = max(8.0, min(sourceRect.midX - stripWidth + rightmostWidth / 2.0, self.bounds.width - 8.0 - stripWidth))
++        let y = max(self.safeAreaInsets.top + 8.0, sourceRect.minY - self.stripBottomGap - maxHeight)
++        var nextX = x
++        self.itemFrames = itemSizes.map { size in
++            defer {
++                nextX += size.width + self.itemSpacing
++            }
++            return CGRect(x: nextX, y: y + (maxHeight - size.height) / 2.0, width: size.width, height: size.height)
++        }
++
++        self.itemNodes = zip(files, self.itemFrames).map { file, frame in
++            let node = TransformImageNode()
++            node.setSignal(chatMessageSticker(account: context.account, userLocation: .other, file: file.media, small: false))
++            let apply = node.asyncLayout()(TransformImageArguments(corners: ImageCorners(), imageSize: frame.size, boundingSize: frame.size, intrinsicInsets: UIEdgeInsets()))
++            apply()
++            node.frame = frame
++            node.alpha = 0.0
++            self.addSubview(node.view)
++            return node
++        }
++
++        UIView.animate(withDuration: 0.12, animations: {
++            self.dimView.alpha = 1.0
++        })
++
++        let source = CGPoint(x: sourceRect.midX, y: sourceRect.midY)
++        for (index, node) in self.itemNodes.enumerated() {
++            let destination = node.view.center
++            let begin = CACurrentMediaTime() + Double(index) * QuickStickerTuning.staggerSeconds
++            let yDamping = max(0.2, QuickStickerTuning.yDamping - CGFloat(index) * QuickStickerTuning.yOvershootStep)
++            node.layer.add(self.spring("position.x", from: source.x, to: destination.x, stiffness: QuickStickerTuning.xStiffness, dampingRatio: QuickStickerTuning.xDamping, begin: begin), forKey: "flightX")
++            node.layer.add(self.spring("position.y", from: source.y, to: destination.y, stiffness: QuickStickerTuning.yStiffness, dampingRatio: yDamping, begin: begin), forKey: "flightY")
++            node.layer.add(self.spring("transform.scale", from: QuickStickerTuning.birthScale, to: 1.0, stiffness: QuickStickerTuning.xStiffness, dampingRatio: QuickStickerTuning.xDamping, begin: begin), forKey: "flightScale")
++            UIView.animate(withDuration: 0.15, delay: max(0.0, begin - CACurrentMediaTime()), options: .curveEaseOut, animations: {
++                node.alpha = 1.0
++            })
++        }
++    }
++
++    func updateTracking(location: CGPoint) {
++        let next = self.itemIndex(at: location)
++        guard next != self.highlightedIndex else {
++            return
++        }
++        if next != nil {
++            self.selectionHaptic.selectionChanged()
++        }
++        self.highlightedIndex = next
++        for (index, node) in self.itemNodes.enumerated() {
++            let isHighlighted = index == next
++            UIView.animate(withDuration: 0.22, delay: 0.0, usingSpringWithDamping: 0.62, initialSpringVelocity: 0.4, options: .allowUserInteraction, animations: {
++                node.view.transform = isHighlighted ? CGAffineTransform(scaleX: 1.18, y: 1.18) : .identity
++                node.alpha = next == nil || isHighlighted ? 1.0 : 0.8
++            })
++            if isHighlighted {
++                self.bringSubviewToFront(node.view)
++            }
++        }
++    }
++
++    func itemIndex(at location: CGPoint) -> Int? {
++        return self.itemFrames.firstIndex(where: { $0.insetBy(dx: -self.hitSlop, dy: -self.hitSlop * 2.0).contains(location) })
++    }
++
++    /// Sends the chosen card off upwards, or folds the fan back into the button.
++    func dismiss(selectedIndex: Int?, completion: @escaping () -> Void) {
++        for node in self.itemNodes {
++            self.bakePresentationState(into: node.view)
++        }
++        UIView.animate(withDuration: 0.18, animations: {
++            self.dimView.alpha = 0.0
++        })
++
++        if let selectedIndex, self.itemNodes.indices.contains(selectedIndex) {
++            for (index, node) in self.itemNodes.enumerated() where index != selectedIndex {
++                UIView.animate(withDuration: 0.12, delay: 0.0, options: .curveEaseOut, animations: {
++                    node.alpha = 0.0
++                    node.view.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
++                })
++            }
++            let selected = self.itemNodes[selectedIndex]
++            self.bringSubviewToFront(selected.view)
++            UIView.animate(withDuration: 0.3, delay: 0.0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0.35, options: [], animations: {
++                selected.view.transform = CGAffineTransform(scaleX: 0.6, y: 0.6).translatedBy(x: 0.0, y: -120.0)
++                selected.alpha = 0.0
++            }, completion: { _ in
++                self.removeFromSuperview()
++                completion()
++            })
++            return
++        }
++
++        let target = CGPoint(x: self.sourceRect.midX, y: self.sourceRect.midY)
++        for (index, node) in self.itemNodes.enumerated() {
++            let begin = CACurrentMediaTime() + Double(self.itemNodes.count - 1 - index) * QuickStickerTuning.staggerSeconds
++            let yDamping = max(0.2, QuickStickerTuning.yDamping - CGFloat(index) * QuickStickerTuning.yOvershootStep)
++            let fromPosition = node.layer.position
++            let fromScale = node.view.transform.a
++            node.layer.position = target
++            node.view.transform = CGAffineTransform(scaleX: QuickStickerTuning.birthScale, y: QuickStickerTuning.birthScale)
++            node.layer.add(self.spring("position.x", from: fromPosition.x, to: target.x, stiffness: QuickStickerTuning.yStiffness, dampingRatio: yDamping, begin: begin), forKey: "foldX")
++            node.layer.add(self.spring("position.y", from: fromPosition.y, to: target.y, stiffness: QuickStickerTuning.xStiffness, dampingRatio: QuickStickerTuning.xDamping, begin: begin), forKey: "foldY")
++            node.layer.add(self.spring("transform.scale", from: fromScale, to: QuickStickerTuning.birthScale, stiffness: QuickStickerTuning.xStiffness, dampingRatio: QuickStickerTuning.xDamping, begin: begin), forKey: "foldScale")
++            UIView.animate(withDuration: 0.1, delay: max(0.0, begin - CACurrentMediaTime()), options: .curveEaseOut, animations: {
++                node.alpha = 0.0
++            })
++        }
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
++            self.removeFromSuperview()
++            completion()
++        }
++    }
++
++    private func spring(_ keyPath: String, from: CGFloat, to: CGFloat, stiffness: CGFloat, dampingRatio: CGFloat, begin: CFTimeInterval) -> CASpringAnimation {
++        let animation = CASpringAnimation(keyPath: keyPath)
++        animation.fromValue = from
++        animation.toValue = to
++        animation.mass = 1.0
++        animation.stiffness = stiffness
++        animation.damping = dampingRatio * 2.0 * sqrt(stiffness)
++        animation.duration = animation.settlingDuration
++        animation.beginTime = begin
++        animation.fillMode = .backwards
++        return animation
++    }
++
++    private func bakePresentationState(into view: UIView) {
++        guard let presentation = view.layer.presentation() else {
++            return
++        }
++        let scale = (presentation.value(forKeyPath: "transform.scale.x") as? CGFloat) ?? 1.0
++        view.layer.removeAllAnimations()
++        view.layer.position = presentation.position
++        view.transform = CGAffineTransform(scaleX: scale, y: scale)
++    }
++}
++
++extension ChatTextInputPanelNode {
++    func attachQuickSticker(to button: UIView) {
++        // Loaded ahead, so the first hold already has stickers to show.
++        if self.quickStickerSource == nil, let context = self.context {
++            self.quickStickerSource = QuickStickerSource(context: context)
++        }
++        let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(self.quickStickerLongPress(_:)))
++        recognizer.minimumPressDuration = 0.3
++        button.addGestureRecognizer(recognizer)
++    }
++
++    @objc private func quickStickerLongPress(_ recognizer: UILongPressGestureRecognizer) {
++        guard let button = recognizer.view, let window = button.window else {
++            return
++        }
++        switch recognizer.state {
++        case .began:
++            guard self.isQuickStickerButton(button), let context = self.context else {
++                return
++            }
++            if self.quickStickerSource == nil {
++                self.quickStickerSource = QuickStickerSource(context: context)
++            }
++            let files = self.quickStickerSource?.files ?? []
++            guard !files.isEmpty else {
++                return
++            }
++            self.quickStickerOverlay?.removeFromSuperview()
++            let overlay = QuickStickerOverlayView(frame: window.bounds)
++            window.addSubview(overlay)
++            self.quickStickerOverlay = overlay
++            overlay.present(context: context, files: files, from: button.convert(button.bounds, to: window))
++        case .changed:
++            self.quickStickerOverlay?.updateTracking(location: recognizer.location(in: window))
++        case .ended, .cancelled, .failed:
++            guard let overlay = self.quickStickerOverlay else {
++                return
++            }
++            self.quickStickerOverlay = nil
++            var selectedIndex: Int?
++            if recognizer.state == .ended {
++                selectedIndex = overlay.itemIndex(at: recognizer.location(in: window))
++            }
++            let files = self.quickStickerSource?.files ?? []
++            if let selectedIndex, files.indices.contains(selectedIndex) {
++                let _ = self.interfaceInteraction?.sendSticker(files[selectedIndex], false, nil, nil, nil, [])
++            }
++            overlay.dismiss(selectedIndex: selectedIndex, completion: {})
++        default:
++            break
++        }
++    }
++}

@@ -46,6 +46,10 @@ patches = [
     root / "patches" / "voidgram-offer-important-posts.patch",
     root / "patches" / "voidgram-offer-multi-reply.patch",
     root / "patches" / "voidgram-offer-voice-transcript.patch",
+    root / "patches" / "voidgram-offer-visual-quote.patch",
+    root / "patches" / "voidgram-offer-quick-sticker.patch",
+    root / "patches" / "voidgram-offer-time-capsule.patch",
+    root / "patches" / "voidgram-offer-postbox-allowlist.patch",
 ]
 for patch in patches:
     subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)

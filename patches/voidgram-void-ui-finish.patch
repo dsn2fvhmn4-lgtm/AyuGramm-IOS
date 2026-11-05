@@ -1,0 +1,109 @@
+diff --git a/submodules/Display/Source/ActionSheetItemGroupNode.swift b/submodules/Display/Source/ActionSheetItemGroupNode.swift
+index fb6e91f6..0edc27a6 100644
+--- a/submodules/Display/Source/ActionSheetItemGroupNode.swift
++++ b/submodules/Display/Source/ActionSheetItemGroupNode.swift
+@@ -41,7 +41,10 @@ final class ActionSheetItemGroupNode: ASDisplayNode, ASScrollViewDelegate {
+         self.clippingNode.clipsToBounds = true
+         self.clippingNode.cornerRadius = AyuMaterialControls.isEnabled ? 28.0 : 16.0
+         
+-        self.backgroundEffectView = UIVisualEffectView(effect: UIBlurEffect(style: self.theme.backgroundType == .light ? .light : .dark))
++        self.backgroundEffectView = UIVisualEffectView(effect: AyuAppearancePlus.glassSurfacesDisabled ? nil : UIBlurEffect(style: self.theme.backgroundType == .light ? .light : .dark))
++        if AyuAppearancePlus.glassSurfacesDisabled {
++            self.backgroundEffectView.backgroundColor = self.theme.itemBackgroundColor
++        }
+         
+         self.scrollNode = ASScrollNode()
+         self.scrollNode.canCancelAllTouchesInViews = true
+diff --git a/submodules/Display/Source/AlertControllerNode.swift b/submodules/Display/Source/AlertControllerNode.swift
+index 2122c3b5..099d9489 100644
+--- a/submodules/Display/Source/AlertControllerNode.swift
++++ b/submodules/Display/Source/AlertControllerNode.swift
+@@ -56,7 +56,7 @@ final class AlertControllerNode: ASDisplayNode {
+ //            return UIVisualEffectView(effect: UIBlurEffect(style: theme.backgroundType == .light ? .light : .dark))
+ //        })
+         
+-        self.effectView = UIVisualEffectView(effect: UIBlurEffect(style: theme.backgroundType == .light ? .light : .dark))
++        self.effectView = UIVisualEffectView(effect: AyuAppearancePlus.glassSurfacesDisabled ? nil : UIBlurEffect(style: theme.backgroundType == .light ? .light : .dark))
+         
+         self.contentNode = contentNode
+         
+@@ -104,7 +104,7 @@ final class AlertControllerNode: ASDisplayNode {
+     }
+     
+     func updateTheme(_ theme: AlertControllerTheme) {
+-        self.effectView.effect = UIBlurEffect(style: theme.backgroundType == .light ? .light : .dark)
++        self.effectView.effect = AyuAppearancePlus.glassSurfacesDisabled ? nil : UIBlurEffect(style: theme.backgroundType == .light ? .light : .dark)
+         self.backgroundNode.backgroundColor = theme.backgroundColor
+         self.contentNode.updateTheme(theme)
+     }
+diff --git a/submodules/PasscodeUI/Sources/PasscodeEntryControllerNode.swift b/submodules/PasscodeUI/Sources/PasscodeEntryControllerNode.swift
+index abccc1c3..8fa7581b 100644
+--- a/submodules/PasscodeUI/Sources/PasscodeEntryControllerNode.swift
++++ b/submodules/PasscodeUI/Sources/PasscodeEntryControllerNode.swift
+@@ -390,7 +390,7 @@ final class PasscodeEntryControllerNode: ASDisplayNode {
+     
+     func initialAppearance(fadeIn: Bool = false) {
+         if fadeIn {
+-            let effect = self.theme.overallDarkAppearance ? UIBlurEffect(style: .dark) : UIBlurEffect(style: .light)
++            let effect: UIBlurEffect? = AyuAppearancePlus.glassSurfacesDisabled ? nil : (self.theme.overallDarkAppearance ? UIBlurEffect(style: .dark) : UIBlurEffect(style: .light))
+             UIView.animate(withDuration: 0.3, animations: {
+                 if #available(iOS 9.0, *) {
+                     self.effectView.effect = effect
+@@ -414,7 +414,7 @@ final class PasscodeEntryControllerNode: ASDisplayNode {
+     func animateIn(iconFrame: CGRect, completion: @escaping () -> Void = {}) {
+         self.coverNode.isHidden = true
+         
+-        let effect = self.theme.overallDarkAppearance ? UIBlurEffect(style: .dark) : UIBlurEffect(style: .light)
++        let effect: UIBlurEffect? = AyuAppearancePlus.glassSurfacesDisabled ? nil : (self.theme.overallDarkAppearance ? UIBlurEffect(style: .dark) : UIBlurEffect(style: .light))
+         UIView.animate(withDuration: 0.3, animations: {
+             if #available(iOS 9.0, *) {
+                 self.effectView.effect = effect
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveMediaNode/Sources/ChatMessageInteractiveMediaNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveMediaNode/Sources/ChatMessageInteractiveMediaNode.swift
+index b9025a43..9d43fcd1 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveMediaNode/Sources/ChatMessageInteractiveMediaNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageInteractiveMediaNode/Sources/ChatMessageInteractiveMediaNode.swift
+@@ -742,7 +742,11 @@ public final class ChatMessageInteractiveMediaNode: ASDisplayNode, GalleryItemTr
+     @objc private func imageTap(_ recognizer: UITapGestureRecognizer) {
+         if case .ended = recognizer.state {
+             let point = recognizer.location(in: self.imageNode.view)
+-            if let _ = self.attributes?.updatingMedia {
++            // A sending item shows a cancel ring; check it before the "local media" path,
++            // which used to open the photo/video and swallow the cancel tap.
++            if let message = self.message?._asMessage(), message.flags.isSending, let statusNode = self.statusNode, statusNode.frame.contains(point) {
++                self.progressPressed(canActivate: true)
++            } else if let _ = self.attributes?.updatingMedia {
+                 if let statusNode = self.statusNode, statusNode.frame.contains(point) {
+                     self.progressPressed(canActivate: true)
+                 }
+diff --git a/submodules/TelegramUI/Components/LiquidLens/Sources/LiquidLensView.swift b/submodules/TelegramUI/Components/LiquidLens/Sources/LiquidLensView.swift
+index 9ab506f8..551a25d9 100644
+--- a/submodules/TelegramUI/Components/LiquidLens/Sources/LiquidLensView.swift
++++ b/submodules/TelegramUI/Components/LiquidLens/Sources/LiquidLensView.swift
+@@ -16,8 +16,11 @@ private final class RestingBackgroundView: UIVisualEffectView {
+     }
+ 
+     init() {
+-        let effect = UIBlurEffect(style: .light)
++        let effect = AyuAppearancePlus.glassSurfacesDisabled ? nil : UIBlurEffect(style: .light)
+         super.init(effect: effect)
++        if AyuAppearancePlus.glassSurfacesDisabled {
++            self.backgroundColor = UIColor(white: 0.5, alpha: 0.35)
++        }
+         
+         for subview in self.subviews {
+             if subview.description.contains("VisualEffectSubview") {
+diff --git a/submodules/WallpaperBackgroundNode/Sources/WallpaperBackgroundNode.swift b/submodules/WallpaperBackgroundNode/Sources/WallpaperBackgroundNode.swift
+index 85c72cd8..ee608bf6 100644
+--- a/submodules/WallpaperBackgroundNode/Sources/WallpaperBackgroundNode.swift
++++ b/submodules/WallpaperBackgroundNode/Sources/WallpaperBackgroundNode.swift
+@@ -1408,7 +1408,9 @@ public final class WallpaperBackgroundNodeImpl: ASDisplayNode, WallpaperBackgrou
+                 self.wallpaperDisposable.set(nil)
+                 updateContentStats(WallpaperContentStats(isDark: calculateWallpaperBrightness(from: gradientColors) <= 0.3, isSaturated: calculateWallpaperSaturation(from: gradientColors) > 0.35))
+             } else {
+-                self.contentNode.backgroundColor = .white
++                // A plain-colour or image wallpaper loads asynchronously; a white placeholder
++                // flashed as a bright stripe in dark themes. Let the parent's colour show.
++                self.contentNode.backgroundColor = .clear
+                 if let image = chatControllerBackgroundImage(theme: nil, wallpaper: wallpaper, mediaBox: self.context.sharedContext.accountManager.mediaBox, knockoutMode: false) {
+                     self.contentNode.contents = image.cgImage
+                     self.blurredBackgroundContents = generateBlurredContents(image: image, dimColor: wallpaperDimColor)

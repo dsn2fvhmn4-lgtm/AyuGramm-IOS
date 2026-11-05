@@ -420,10 +420,10 @@ index 0ca07f27..23135310 100644
          "//submodules/TelegramUI/Components/Chat/ChatAvatarNavigationNode",
          "//submodules/TelegramUI/Components/ChatControllerInteraction",
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-index bcc75de7..87f145db 100644
+index bcc75de7..cc656514 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-@@ -1,140 +1,753 @@
+@@ -1,140 +1,754 @@
  import Foundation
  import UIKit
  import Display
@@ -1251,14 +1251,15 @@ index bcc75de7..87f145db 100644
 +            return (controllerState, (listState, arguments))
 +        }
 +        let controller = ItemListController(context: context, state: signal)
++        // A page becomes the one on top once it shows; until then the page below pushes it.
 +        controller.didAppear = { [weak controller] _ in
 +            topController = controller
 +        }
-+        topController = controller
 +        return controller
 +    }
 +
 +    let controller = makePage(.hub)
++    topController = controller
 +    openPageImpl = { page in
 +        pushImpl?(makePage(page))
 +    }
@@ -1282,7 +1283,7 @@ index bcc75de7..87f145db 100644
          // The picker pops out of a point under the navigation bar and flies the pick back to it.
          let anchor = UIView(frame: CGRect(x: controller.view.bounds.midX - 1.0, y: controller.view.safeAreaInsets.top + 56.0, width: 2.0, height: 2.0))
          anchor.isUserInteractionEnabled = false
-@@ -146,7 +759,7 @@ enum AyuBadgeEditor {
+@@ -146,7 +760,7 @@ enum AyuBadgeEditor {
                  guard let file, file.fileId.id != 0 else {
                      return
                  }
@@ -1291,7 +1292,7 @@ index bcc75de7..87f145db 100644
              }),
              sourceView: anchor,
              emojiContent: EmojiPagerContentComponent.emojiInputData(
-@@ -162,234 +775,685 @@ enum AyuBadgeEditor {
+@@ -162,234 +776,685 @@ enum AyuBadgeEditor {
                  chatPeerId: context.account.peerId,
                  selectedItems: Set()
              ),
@@ -2297,6 +2298,37 @@ index e773778f..e6780b8c 100644
              interaction.openSettings(.phoneNumber)
          }))
      }
+diff --git a/submodules/TelegramUI/Components/Wallet/PeerWalletScreen/Sources/PeerWalletScreen.swift b/submodules/TelegramUI/Components/Wallet/PeerWalletScreen/Sources/PeerWalletScreen.swift
+index e27be570..05a99a03 100644
+--- a/submodules/TelegramUI/Components/Wallet/PeerWalletScreen/Sources/PeerWalletScreen.swift
++++ b/submodules/TelegramUI/Components/Wallet/PeerWalletScreen/Sources/PeerWalletScreen.swift
+@@ -77,7 +77,7 @@ private final class PeerWalletOverlayComponent: Component {
+                     self.peer = peer
+                 }
+                 if let cachedData = cachedData as? CachedUserData {
+-                    self.updateCard(cachedData.walletCard, context: context)
++                    self.updateCard(ayuCardWithGivenTon(cachedData.walletCard, peer: self.peer), context: context)
+                 }
+                 self.updated(transition: .immediate)
+             }))
+@@ -705,7 +705,16 @@ private final class PeerWalletOverlayComponent: Component {
+     }
+ }
+ 
+-public final class PeerWalletScreen: ViewControllerComponentContainer {
++public /// VoidGram: the card with the TON balance the owner gave this user added on top, as the profile's
++/// balance pill shows it.
++private func ayuCardWithGivenTon(_ card: WalletCard?, peer: EnginePeer) -> WalletCard? {
++    guard case let .user(user) = peer, user.botInfo == nil, let givenTon = AyuSupportersManager.shared.cosmetics(peerId: user.id.id._internalGetInt64Value())?.tonNano else {
++        return card
++    }
++    return WalletCard(address: card?.address ?? "", balance: (card?.balance ?? 0) + givenTon, stickers: card?.stickers ?? [], backgroundNft: card?.backgroundNft)
++}
++
++final class PeerWalletScreen: ViewControllerComponentContainer {
+     private var isFinishing = false
+     private var didAnimateIn = false
+     private var transitionSource: PeerWalletTransitionSource?
 diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
 index eb7fe3f0..ed496bfb 100644
 --- a/tools/ayu-tests/main.swift

@@ -1,7 +1,7 @@
 # Плагины порта
 
 Бывшие встроенные пункты меню сообщения, вынесенные в плагины. Приложение показывает этот список
-в каталоге плагинов рядом с каталогом [murk-sus/AyuGramm-Plugins](https://github.com/murk-sus/AyuGramm-Plugins).
+в каталоге плагинов рядом с каталогом [murk-sus/VoidGram-plugins](https://github.com/murk-sus/VoidGram-plugins).
 
 После правки `plugin.ayu.js` пересчитайте `sha256` и `size` в `index.json`: приложение не установит
 файл, который не совпадает с каталогом.

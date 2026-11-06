@@ -1,3 +1,157 @@
+diff --git a/submodules/Camera/CameraNeo/Sources/VideoRecorder.swift b/submodules/Camera/CameraNeo/Sources/VideoRecorder.swift
+index 35b48dd1..88fda0dc 100644
+--- a/submodules/Camera/CameraNeo/Sources/VideoRecorder.swift
++++ b/submodules/Camera/CameraNeo/Sources/VideoRecorder.swift
+@@ -693,9 +693,29 @@ final class VideoRecorder {
+             audioSettings[AVChannelLayoutKey] = Data(bytes: channelLayout, count: channelLayoutSize)
+         }
+ 
+-        guard assetWriter.canApply(outputSettings: audioSettings, forMediaType: .audio) else {
+-            self.fail(.audioInitializationError)
+-            return
++        if !assetWriter.canApply(outputSettings: audioSettings, forMediaType: .audio) {
++            // VoidGram: a Bluetooth headset's microphone (HFP) delivers 8–16 kHz mono, where AAC
++            // takes no 64 kbit/s and the recording used to fail. Lower the bitrate to what the rate
++            // allows, and failing that let the writer resample to 44.1 kHz mono.
++            let sampleRate = (audioSettings[AVSampleRateKey] as? Double) ?? 44_100.0
++            let channels = max(1, (audioSettings[AVNumberOfChannelsKey] as? UInt32).map(Int.init) ?? 1)
++            var lowered = audioSettings
++            lowered[AVEncoderBitRateKey] = min(64_000, Int(sampleRate) * channels * 4)
++            if assetWriter.canApply(outputSettings: lowered, forMediaType: .audio) {
++                audioSettings = lowered
++            } else {
++                let resampled: [String: Any] = [
++                    AVFormatIDKey: kAudioFormatMPEG4AAC,
++                    AVEncoderBitRateKey: 64_000,
++                    AVSampleRateKey: 44_100.0,
++                    AVNumberOfChannelsKey: 1
++                ]
++                guard assetWriter.canApply(outputSettings: resampled, forMediaType: .audio) else {
++                    self.fail(.audioInitializationError)
++                    return
++                }
++                audioSettings = resampled
++            }
+         }
+         let audioInput = AVAssetWriterInput(
+             mediaType: .audio,
+diff --git a/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift b/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
+index ea858a4a..97c8fb6e 100644
+--- a/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
++++ b/submodules/ChatMessageBackground/Sources/ChatMessageBackground.swift
+@@ -566,6 +566,51 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+     private var ayuEffectView: UIVisualEffectView?
+     private var ayuOverlayView: UIView?
+     private var ayuForcesMask = false
++    /// The bubble shape for the glass effect and the fill above it. UIKit draws no effect inside a
++    /// view whose ancestor is masked, so under glass the backdrop itself stays unmasked and each
++    /// layer carries its own copy of the shape.
++    private var ayuEffectMaskView: UIImageView?
++    private var ayuContentMaskView: UIImageView?
++
++    private func ayuUpdateShapeMasks() {
++        let maskFrame = self.bounds.insetBy(dx: -maskInset, dy: -maskInset)
++        var image: UIImage?
++        if let type = self.currentType, let essentialGraphics = self.essentialGraphics, !self.overrideMask {
++            image = bubbleMaskForType(type, graphics: essentialGraphics)
++        }
++        if let effectView = self.ayuEffectView {
++            let maskView = self.ayuEffectMaskView ?? UIImageView()
++            maskView.image = image
++            maskView.frame = maskFrame
++            if effectView.mask !== maskView {
++                effectView.mask = maskView
++            }
++            self.ayuEffectMaskView = maskView
++            if let overlay = self.ayuOverlayView {
++                let overlayMask = (overlay.mask as? UIImageView) ?? UIImageView()
++                overlayMask.image = image
++                overlayMask.frame = maskFrame
++                overlay.mask = overlayMask
++            }
++            if let backgroundContent = self.backgroundContent {
++                let contentMask = self.ayuContentMaskView ?? UIImageView()
++                contentMask.image = image
++                contentMask.frame = maskFrame
++                if backgroundContent.view.mask !== contentMask {
++                    backgroundContent.view.mask = contentMask
++                }
++                self.ayuContentMaskView = contentMask
++            }
++        } else {
++            if let contentMask = self.ayuContentMaskView {
++                if self.backgroundContent?.view.mask === contentMask {
++                    self.backgroundContent?.view.mask = nil
++                }
++                self.ayuContentMaskView = nil
++            }
++            self.ayuEffectMaskView = nil
++        }
++    }
+ 
+     private func ayuInsertBackgroundContent(_ backgroundContent: WallpaperBubbleBackgroundNode) {
+         self.insertSubnode(backgroundContent, at: 0)
+@@ -621,7 +666,8 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+             self.layer.borderWidth = 0.0
+             self.layer.cornerRadius = 0.0
+         }
+-        self.ayuForcesMask = effect != nil || AyuGlass.outline
++        self.ayuForcesMask = false
++        self.ayuUpdateShapeMasks()
+         // The wallpaper-coloured bubble content fades like the regular fill.
+         self.backgroundContent?.alpha = effect != nil ? AyuGlass.bubbleFillAlpha : 1.0
+     }
+@@ -648,6 +694,9 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+             if let backgroundContent = self.backgroundContent {
+                 backgroundContent.frame = self.bounds
+             }
++            if self.ayuEffectView != nil {
++                self.ayuUpdateShapeMasks()
++            }
+         }
+     }
+     
+@@ -685,7 +734,7 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+     }
+         
+     public func setType(type: ChatMessageBackgroundType, theme: ChatPresentationThemeData, essentialGraphics: PrincipalThemeEssentialGraphics, maskMode inputMaskMode: Bool, backgroundNode: WallpaperBackgroundNode?) {
+-        let maskMode = self.fixedMaskMode ?? (inputMaskMode || self.ayuForcesMask)
++        let maskMode = self.ayuEffectView != nil ? false : (self.fixedMaskMode ?? (inputMaskMode || self.ayuForcesMask))
+ 
+         if self.currentType != type || self.theme != theme || self.currentMaskMode != maskMode || self.essentialGraphics !== essentialGraphics || self.backgroundNode !== backgroundNode {
+             let typeUpdated = self.currentType != type || self.theme != theme || self.currentMaskMode != maskMode || self.backgroundNode !== backgroundNode
+@@ -750,6 +799,7 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+ 
+             // A mask created or re-imaged just now has no bands yet.
+             self.updateTearBands(animation: .None)
++            self.ayuUpdateShapeMasks()
+         }
+     }
+         
+@@ -761,7 +811,10 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+         if let backgroundContent = self.backgroundContent {
+             animator.updateFrame(layer: backgroundContent.layer, frame: CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: value.size.width, height: value.size.height)), completion: nil)
+         }
+-        animator.updateFrame(layer: self.layer, frame: value, completion: { _ in
++        animator.updateFrame(layer: self.layer, frame: value, completion: { [weak self] _ in
++            if let self, self.ayuEffectView != nil {
++                self.ayuUpdateShapeMasks()
++            }
+             completion()
+         })
+     }
+@@ -773,7 +826,10 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
+         if let backgroundContent = self.backgroundContent {
+             transition.updateFrame(layer: backgroundContent.layer, frame: CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: value.size.width, height: value.size.height)))
+         }
+-        transition.updateFrame(node: self, frame: value, completion: { _ in
++        transition.updateFrame(node: self, frame: value, completion: { [weak self] _ in
++            if let self, self.ayuEffectView != nil {
++                self.ayuUpdateShapeMasks()
++            }
+             completion()
+         })
+     }
 diff --git a/submodules/Display/Source/AyuExtras.swift b/submodules/Display/Source/AyuExtras.swift
 index 093f7f77..55475ca3 100644
 --- a/submodules/Display/Source/AyuExtras.swift
@@ -26,6 +180,61 @@ index cc1d5121..95219cc3 100644
 -    static let restrictedExtras: Set<AyuExtras.Key> = [.saveViewOnce, .stayAfterBan, .notifyDeleted, .readAfterReaction, .alwaysOnline]
 +    static let restrictedExtras: Set<AyuExtras.Key> = [.saveViewOnce, .viewOnceMenuSave, .viewOnceKeepInChat, .viewOnceReview, .stayAfterBan, .notifyDeleted, .readAfterReaction, .alwaysOnline]
  }
+diff --git a/submodules/Display/Source/AyuSpeechBleep.swift b/submodules/Display/Source/AyuSpeechBleep.swift
+index 13b4df1e..be3a2cf5 100644
+--- a/submodules/Display/Source/AyuSpeechBleep.swift
++++ b/submodules/Display/Source/AyuSpeechBleep.swift
+@@ -27,7 +27,7 @@ public enum AyuSpeechBleep {
+             // Russian swearing is what Ukrainian, Belarusian and Kazakh speakers hear and say as well.
+             let cyrillic = ["ru", "uk", "be", "kk"]
+             let localeId = Locale.preferredLanguages.contains(where: { language in cyrillic.contains(where: { language.hasPrefix($0) }) }) ? "ru-RU" : "en-US"
+-            guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId)), recognizer.isAvailable, recognizer.supportsOnDeviceRecognition,
++            guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId)), recognizer.isAvailable,
+                   let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000.0, channels: 1, interleaved: false),
+                   let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)), let channel = buffer.floatChannelData?[0] else {
+                 return completion([])
+@@ -37,7 +37,9 @@ public enum AyuSpeechBleep {
+                 channel[index] = Float(sample) / 32768.0
+             }
+             let request = SFSpeechAudioBufferRecognitionRequest()
+-            request.requiresOnDeviceRecognition = true
++            // On the device where the language allows it; many iPhones recognise Russian only on
++            // Apple's servers, and requiring the device there meant nothing was ever bleeped.
++            request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+             request.shouldReportPartialResults = false
+             request.append(buffer)
+             request.endAudio()
+diff --git a/submodules/Display/Source/Font.swift b/submodules/Display/Source/Font.swift
+index dc933d1b..12ee335c 100644
+--- a/submodules/Display/Source/Font.swift
++++ b/submodules/Display/Source/Font.swift
+@@ -160,9 +160,25 @@ public struct Font {
+     private static let cache = Cache()
+     
+     /// AyuGram WhiteGram custom font: replaces the system face in regular text.
++    /// The size is adjusted so the face has the system font's line height: layouts measured
++    /// for San Francisco (chat list rows with their avatars, bubbles) keep their geometry.
+     private static func ayuCustomFont(_ size: CGFloat) -> UIFont? {
+         guard let name = AyuWhiteGram.cachedCustomFont else { return nil }
+-        return UIFont(name: name, size: size)
++        let key = "ayu_custom_\(name)_\(size)"
++        if let cachedFont = self.cache.get(key) {
++            return cachedFont
++        }
++        guard let font = UIFont(name: name, size: size) else {
++            return nil
++        }
++        let systemLineHeight = UIFont.systemFont(ofSize: size).lineHeight
++        var result = font
++        if font.lineHeight > 0.0, abs(font.lineHeight - systemLineHeight) > 0.5 {
++            let scaled = size * systemLineHeight / font.lineHeight
++            result = UIFont(name: name, size: max(1.0, min(size * 1.3, scaled))) ?? font
++        }
++        self.cache.set(result, key: key)
++        return result
+     }
+ 
+     public static func with(size: CGFloat, design: Design = .regular, weight: Weight = .regular, width: Width = .standard, traits: Traits = []) -> UIFont {
 diff --git a/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift b/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift
 index 6382dbb9..d0e67414 100644
 --- a/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift
@@ -42,6 +251,44 @@ index 6382dbb9..d0e67414 100644
              } else {
                  var beginTimeAndTimeout: (Double, Double, Bool)?
                  var videoDuration: Double?
+diff --git a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+index a69a82ae..4e7dd808 100644
+--- a/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
++++ b/submodules/SettingsUI/Sources/AyuAppearancePlusController.swift
+@@ -18,6 +18,7 @@ private enum AyuAppearancePlusRow: Int32 {
+     case telegramGlass = 11
+     case classicDesign = 21
+     case noGlass = 22
++    case blurGlass = 23
+     case slowMotion = 25
+     case relaunchInfo = 30
+     case settingsRows = 35
+@@ -105,7 +106,16 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+         case .hideTitles: AyuAppearancePlus.hideTabTitles = value
+         case .telegramGlass: AyuAppearancePlus.glassStyle = value ? .telegram : .system
+         case .classicDesign: AyuAppearancePlus.classicDesign = value
+-        case .noGlass: AyuAppearancePlus.noGlass = value
++        case .noGlass:
++            AyuAppearancePlus.noGlass = value
++            if value {
++                AyuAppearancePlus.blurGlass = false
++            }
++        case .blurGlass:
++            AyuAppearancePlus.blurGlass = value
++            if value {
++                AyuAppearancePlus.noGlass = false
++            }
+         default: break
+         }
+     })
+@@ -131,6 +141,7 @@ func ayuAppearancePlusController(context: AccountContext) -> ViewController {
+             .header(3, 20, ru ? "ДИЗАЙН" : "DESIGN"),
+             .toggle(3, AyuAppearancePlusRow.classicDesign.rawValue, symbol("clock.arrow.circlepath", 0xFF2D55), ru ? "Старый дизайн Telegram" : "Classic Telegram design", ru ? "Как Telegram до Liquid Glass: полная нижняя панель и плоские панели без стекла" : "Telegram before Liquid Glass: full-width tab bar and flat panels without glass", AyuAppearancePlus.classicDesign),
+             .toggle(3, AyuAppearancePlusRow.noGlass.rawValue, symbol("square.slash", 0x8E8E93), ru ? "Без стекла" : "No glass", ru ? "Плоские панели везде: папки, чаты, настройки, кнопки" : "Flat panels everywhere: folders, chats, settings, buttons", AyuAppearancePlus.noGlass),
++            .toggle(3, AyuAppearancePlusRow.blurGlass.rawValue, symbol("aqi.medium", 0x32ADE6), ru ? "Размытие вместо стекла" : "Blur instead of glass", ru ? "Панели и кнопки размывают то, что под ними, без эффекта стекла" : "Panels and buttons blur what is under them, without the glass effect", AyuAppearancePlus.blurGlass),
+             .link(3, AyuAppearancePlusRow.slowMotion.rawValue, symbol("tortoise.fill", 0x34C759), ru ? "Slow-Motion анимаций" : "Animation slow motion", AyuAppearancePlus.slowMotionFactor > 1.0 ? String(format: "%.0f×", AyuAppearancePlus.slowMotionFactor) : (ru ? "выкл." : "off"))
+         ]
+         if AyuAppearancePlus.needsRelaunch {
 diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
 index 4c7c3532..8ccd2f4e 100644
 --- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
@@ -66,7 +313,7 @@ index 4c7c3532..8ccd2f4e 100644
      let arguments = AyuSectionedArguments(open: { id in
          guard let item = items.first(where: { $0.id == id }) else { return }
 diff --git a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
-index f16e5455..f2d5035e 100644
+index f16e5455..ad60d4df 100644
 --- a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
 +++ b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
 @@ -53,12 +53,31 @@ private func ayuChoose<T>(_ present: (UIViewController) -> Void, title: String,
@@ -107,6 +354,15 @@ index f16e5455..f2d5035e 100644
      })
  }
  
+@@ -114,7 +133,7 @@ func ayuVoiceSettingsController(context: AccountContext) -> ViewController {
+             .header(1, 0, ru ? "ГОЛОСОВЫЕ" : "VOICE MESSAGES"),
+             .link(1, 1, symbol("waveform.badge.mic", 0xFF2D55), ru ? "Смена голоса" : "Voice changer", AyuTools.voice.title(ru)),
+             .link(1, 2, symbol("speaker.slash.fill", 0xFF3B30), ru ? "Запикивать мат" : "Bleep profanity", AyuMediaSettings.bleep.title(ru)),
+-            .info(1, 3, ru ? "Речь распознаётся на устройстве; ругательства закрываются бипом или тишиной перед отправкой. Нужен доступ к распознаванию речи." : "Speech is recognised on the device; swear words are covered by a beep or silence before sending. Speech recognition access is needed."),
++            .info(1, 3, ru ? "Речь распознаётся на устройстве, а если iPhone не умеет это для вашего языка, то сервисом Apple. Ругательства закрываются бипом или тишиной перед отправкой. Нужен доступ к распознаванию речи." : "Speech is recognised on the device, or by Apple's service where the iPhone cannot do it for your language. Swear words are covered by a beep or silence before sending. Speech recognition access is needed."),
+             .header(2, 10, ru ? "ЭКВАЛАЙЗЕР ГОЛОСОВЫХ" : "VOICE MESSAGE EQUALIZER")
+         ]
+         for (index, band) in bands.enumerated() {
 @@ -433,3 +452,111 @@ func ayuLocalNotificationsController(context: AccountContext) -> ViewController
          }
      })
@@ -219,6 +475,28 @@ index f16e5455..f2d5035e 100644
 +    presentNative = { context.sharedContext.applicationBindings.presentNativeController($0) }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+index 34aef4ba..9ed52bf6 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsController.swift
+@@ -563,7 +563,7 @@ func ayuMessageShotSettingsController(context: AccountContext) -> ViewController
+ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool = false) -> ViewController {
+     let store = context.account.network.ayuGhostMode
+     var presentError: (() -> Void)?
+-    let tabBarLift = ValuePromise<Double>(min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 24.0))), ignoreRepeated: true)
++    let tabBarLift = ValuePromise<Double>(min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 0.0))), ignoreRepeated: true)
+     let arguments = AyuSectionedArguments(open: { id in
+         if id == 51 {
+             let ru = context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("ru")
+@@ -603,7 +603,7 @@ func ayuInterfacePageController(context: AccountContext, navigationOnly: Bool =
+         let slider = UISlider(frame: CGRect(x: 20.0, y: 65.0, width: 230.0, height: 44.0))
+         slider.minimumValue = 0.0
+         slider.maximumValue = 48.0
+-        slider.value = Float(min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 24.0))))
++        slider.value = Float(min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 0.0))))
+         slider.accessibilityLabel = ru ? "Поднять таббар" : "Raise tab bar"
+         alert.view.addSubview(slider)
+         alert.addAction(UIAlertAction(title: ru ? "Отмена" : "Cancel", style: .cancel))
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift b/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
 index 8c903359..cc720de4 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
@@ -338,6 +616,41 @@ index 8c903359..cc720de4 100644
      // MARK: - MessageShot
  
      /// The picture the real MessageShot renderer makes for two sample messages with these
+diff --git a/submodules/TabBarUI/Sources/TabBarContollerNode.swift b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
+index 362966c5..9778ad7b 100644
+--- a/submodules/TabBarUI/Sources/TabBarContollerNode.swift
++++ b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
+@@ -36,7 +36,7 @@ final class TabBarControllerNode: ASDisplayNode {
+             self.isTabBarHidden = isTabBarHidden
+             self.currentControllerSearchState = currentControllerSearchState
+             self.itemCount = itemCount
+-            self.ayuLift = min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 24.0)))
++            self.ayuLift = min(48.0, max(0.0, (UserDefaults.standard.object(forKey: "ayu.tabBarLift") as? Double ?? 0.0)))
+             self.ayuHideTitles = AyuAppearancePlus.hideTabTitles
+             self.ayuHidden = AyuWhiteGram.hideBottomTabBar
+             self.ayuScale = AyuWhiteGram.tabBarScale
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+index a90ad357..a03a78e9 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
+@@ -58,7 +58,7 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+     public var foldersAtBottom = true
+     public var compactAttachmentMenu = true
+     public var doubleTapToEdit = true
+-    public var formattingToolbar = true
++    public var formattingToolbar = false
+     public init() {}
+ 
+     private enum CodingKeys: String, CodingKey {
+@@ -121,7 +121,7 @@ public struct AyuInterfaceSettings: Codable, Equatable {
+         self.foldersAtBottom = try values.decodeIfPresent(Bool.self, forKey: .foldersAtBottom) ?? true
+         self.compactAttachmentMenu = try values.decodeIfPresent(Bool.self, forKey: .compactAttachmentMenu) ?? true
+         self.doubleTapToEdit = try values.decodeIfPresent(Bool.self, forKey: .doubleTapToEdit) ?? true
+-        self.formattingToolbar = try values.decodeIfPresent(Bool.self, forKey: .formattingToolbar) ?? true
++        self.formattingToolbar = try values.decodeIfPresent(Bool.self, forKey: .formattingToolbar) ?? false
+         self.voiceMemosPlayer = try values.decodeIfPresent(Bool.self, forKey: .voiceMemosPlayer) ?? false
+     }
+ }
 diff --git a/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift b/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift
 index 713bf6f4..c847c191 100644
 --- a/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift
@@ -353,6 +666,46 @@ index 713bf6f4..c847c191 100644
                                      if let _ = updatedMedia[i] as? TelegramMediaImage {
                                          updatedMedia[i] = TelegramMediaExpiredContent(data: .image)
                                      } else if let file = updatedMedia[i] as? TelegramMediaFile {
+diff --git a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
+index 88537b0f..3b82df0b 100644
+--- a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
++++ b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
+@@ -635,7 +635,8 @@ public class GlassBackgroundView: UIView {
+         } else if GlassBackgroundView.blurMode, self.legacyView != nil {
+             self.legacyView?.isHidden = true
+             self.shadowView?.isHidden = true
+-            let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
++            // A thin material, so the blur reads as blur rather than a near-opaque panel.
++            let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+             blurView.isUserInteractionEnabled = false
+             // Glass rounds itself; a blur only follows the corner radius when it clips, otherwise
+             // every button and the tab bar show the blur's square corners around the shape.
+@@ -858,6 +859,25 @@ public class GlassBackgroundView: UIView {
+                         radii = GlassBackgroundView.clampedCornerRadii(size: size, cornerRadii: cornerRadii)
+                     }
+                     foregroundView.image = GlassBackgroundView.generateFlatImage(cornerRadii: radii, inset: shadowInset, fillColor: flatColor)
++                } else if GlassBackgroundView.blurMode && self.ayuBlurView != nil {
++                    // Over the blur only a light tint: the glass fill would hide the blur under it.
++                    let blurTint: UIColor
++                    switch tintColor.kind {
++                    case .panel:
++                        blurTint = isDark ? UIColor(white: 0.0, alpha: 0.12) : UIColor(white: 1.0, alpha: 0.12)
++                    case .clear:
++                        blurTint = UIColor(white: 0.0, alpha: 0.0)
++                    case let .custom(_, color):
++                        blurTint = color.withAlphaComponent(min(0.35, color.cgColor.alpha))
++                    }
++                    let radii: CornerRadii
++                    switch shape {
++                    case let .roundedRect(cornerRadius):
++                        radii = CornerRadii(radius: cornerRadius)
++                    case let .customRoundedRect(cornerRadii):
++                        radii = GlassBackgroundView.clampedCornerRadii(size: size, cornerRadii: cornerRadii)
++                    }
++                    foregroundView.image = GlassBackgroundView.generateFlatImage(cornerRadii: radii, inset: shadowInset, fillColor: blurTint)
+                 } else {
+                 switch shape {
+                 case let .roundedRect(cornerRadius):
 diff --git a/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift b/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift
 index bea6e89f..bfd9a497 100644
 --- a/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift
@@ -368,6 +721,73 @@ index bea6e89f..bfd9a497 100644
              let _ = self.context.engine.messages.markMessageContentAsConsumedInteractively(messageId: item.message.id).startStandalone()
          }
      }
+diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
+index 01b4ff78..8af99401 100644
+--- a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
++++ b/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
+@@ -292,8 +292,22 @@ extension ChatControllerImpl {
+                 })
+                 
+                 var resource: LocalFileMediaResource?
++                // AyuGram: a stopped recording is bleeped before its preview, so the preview plays
++                // and later sends what goes out. A paused one keeps its resume data unbleeped.
++                let bleepsPreview: Bool
++                if case .preview = updatedAction {
++                    bleepsPreview = true
++                } else {
++                    bleepsPreview = false
++                }
+                 self.recorderDataDisposable.set(
+                     (audioRecorderValue.takenRecordedData()
++                     |> mapToSignal { data -> Signal<RecordedAudioData?, NoError> in
++                         guard let data, bleepsPreview else {
++                             return .single(data)
++                         }
++                         return AyuProfanityBleep.process(data)
++                     }
+                      |> deliverOnMainQueue).startStrict(
+                         next: { [weak self] data in
+                             if let strongSelf = self, let data = data {
+diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+index e755131d..643956a8 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+@@ -257,6 +257,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+     private let inputPanelOverlayNode: SparseNode
+     private let inputPanelClippingNode: SparseNode
+     let inputPanelBackgroundNode: NavigationBackgroundNode
++    private var ayuClassicInputSeparatorNode: ASDisplayNode?
+     
+     private var intrinsicInputPanelBackgroundNodeSize: CGSize?
+     private var inputPanelBottomBackgroundSeparatorBaseOffset: CGFloat = 0.0
+@@ -2782,6 +2783,27 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+         transition.updatePosition(node: self.inputPanelOverlayNode, position: CGRect(origin: apparentInputBackgroundFrame.origin, size: layout.size).center, beginWithCurrentState: true)
+         transition.updateBounds(node: self.inputPanelOverlayNode, bounds: CGRect(origin: CGPoint(x: 0.0, y: apparentInputBackgroundFrame.origin.y), size: layout.size), beginWithCurrentState: true)
+         transition.updateFrame(node: self.inputPanelBackgroundNode, frame: apparentInputBackgroundFrame, beginWithCurrentState: true)
++        // VoidGram classic design: the input area sits on an opaque full-width bar with a hairline on
++        // top, as in Telegram before Liquid Glass.
++        if AyuAppearancePlus.launchClassicDesign {
++            let inputTheme = self.chatPresentationInterfaceState.theme.chat.inputPanel
++            // The bar runs down to the bottom edge, under the home indicator.
++            let classicFrame = CGRect(x: 0.0, y: apparentInputBackgroundFrame.minY, width: layout.size.width, height: max(apparentInputBackgroundFrame.height, layout.size.height - apparentInputBackgroundFrame.minY))
++            transition.updateFrame(node: self.inputPanelBackgroundNode, frame: classicFrame, beginWithCurrentState: true)
++            self.inputPanelBackgroundNode.updateColor(color: inputTheme.panelBackgroundColor, transition: .immediate)
++            self.inputPanelBackgroundNode.update(size: classicFrame.size, transition: transition)
++            let separatorNode: ASDisplayNode
++            if let current = self.ayuClassicInputSeparatorNode {
++                separatorNode = current
++            } else {
++                separatorNode = ASDisplayNode()
++                separatorNode.isLayerBacked = true
++                self.ayuClassicInputSeparatorNode = separatorNode
++                self.inputPanelBackgroundNode.addSubnode(separatorNode)
++            }
++            separatorNode.backgroundColor = inputTheme.panelSeparatorColor
++            transition.updateFrame(node: separatorNode, frame: CGRect(origin: CGPoint(), size: CGSize(width: classicFrame.width, height: UIScreenPixel)))
++        }
+         
+         if let headerPanelsComponentView = self.headerPanelsView?.view, let headerPanelsSize {
+             sidePanelTopInset += 8.0
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 index c4ad768b..5f7df3e3 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift

@@ -1342,27 +1342,26 @@ index e755131d..643956a8 100644
          if let headerPanelsComponentView = self.headerPanelsView?.view, let headerPanelsSize {
              sidePanelTopInset += 8.0
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index c4ad768b..5f7df3e3 100644
+index c4ad768b..4759abae 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-@@ -1541,6 +1541,35 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -1541,6 +1541,34 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
 +        // VoidGram "Save button in the menu": view-once photos and videos can be saved to Photos.
 +        if message.containsSecretMedia && !isCopyProtected && AyuExtras.isOn(.saveViewOnce) && AyuExtras.isOn(.viewOnceMenuSave) {
-+            var viewOnceMedia: (Media, Bool)?
++            var viewOnceMedia: (AnyMediaReference, Bool)?
 +            for media in message.media {
 +                if let image = media as? TelegramMediaImage {
-+                    viewOnceMedia = (image, false)
++                    viewOnceMedia = (AnyMediaReference.message(message: MessageReference(message), media: image), false)
 +                    break
 +                } else if let file = media as? TelegramMediaFile, file.isVideo || file.isInstantVideo {
-+                    viewOnceMedia = (file, true)
++                    viewOnceMedia = (AnyMediaReference.message(message: MessageReference(message), media: file), true)
 +                    break
 +                }
 +            }
-+            if let (media, isVideo) = viewOnceMedia {
-+                let mediaReference = AnyMediaReference.message(message: MessageReference(message), media: media)
++            if let (mediaReference, isVideo) = viewOnceMedia {
 +                actions.append(.action(ContextMenuActionItem(text: isVideo ? chatPresentationInterfaceState.strings.Gallery_SaveVideo : chatPresentationInterfaceState.strings.Gallery_SaveImage, icon: { theme in
 +                    return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Save"), color: theme.actionSheet.primaryTextColor)
 +                }, action: { _, f in

@@ -1,5 +1,5 @@
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
-index a2f96372..9d0c99e5 100644
+index a2f96372..6d66ca07 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 @@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
@@ -7,7 +7,7 @@ index a2f96372..9d0c99e5 100644
  /// Raised with every VoidGram update.
  func ayuAppVersion() -> String {
 -    return "27.6.0"
-+    return "27.6.3"
++    return "27.6.4"
  }
  
  /// The version with the build number of this IPA, as the settings header shows it.
@@ -50,7 +50,7 @@ index 99aab0cc..f2e7def1 100644
          "//submodules/TelegramUI/Components/GifVideoLayer",
          "//submodules/Components/HierarchyTrackingLayer",
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-index e70b4879..3f8077ad 100644
+index e70b4879..21ce3e05 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 @@ -17,6 +17,7 @@ import UndoUI
@@ -61,7 +61,19 @@ index e70b4879..3f8077ad 100644
  
  /// The owner's badge desk, opened from any profile: a settings page that hands out a VoidGram badge
  /// (custom emoji and text), the label line under the name, extra usernames, a shown phone number, a
-@@ -1218,17 +1219,71 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+@@ -1205,8 +1206,9 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+         controller?.view.endEditing(true)
+         controller?.push(c)
+     }
+-    presentImpl = { [weak controller] c in
+-        controller?.present(c, in: .window(.root))
++    presentImpl = { c in
++        // The desk may be under the catalog or the market by now, and a hidden page presents nothing.
++        context.sharedContext.presentGlobalController(c, nil)
+     }
+     grantImpl = { unique in
+         let _ = (context.engine.payments.cachedStarGifts()
+@@ -1218,17 +1220,71 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
                  if case let .generic(value) = gift { return value }
                  return nil
              }.sorted(by: { $0.price < $1.price })
@@ -138,7 +150,7 @@ index e70b4879..3f8077ad 100644
                  } else {
                      pushImpl?(ayuGiftFinishController(context: context, title: ayuGiftLabel(gift), askNumber: false, initialNumber: nil, grant: { _, text in
                          var add: [String: Any] = ["giftId": String(gift.id), "kind": "plain"]
-@@ -1260,7 +1315,7 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+@@ -1260,7 +1316,7 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
  
  private enum AyuGiftListEntry: ItemListNodeEntry {
      /// One row of the catalog: up to three gifts, drawn as Telegram draws them, with their price.
@@ -147,7 +159,7 @@ index e70b4879..3f8077ad 100644
  
      var section: ItemListSectionId {
          return 0
-@@ -1268,14 +1323,14 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
+@@ -1268,14 +1324,14 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
  
      var stableId: Int32 {
          switch self {
@@ -165,7 +177,7 @@ index e70b4879..3f8077ad 100644
          }
      }
  
-@@ -1286,20 +1341,19 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
+@@ -1286,20 +1342,19 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
      func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
          let (context, select) = arguments as! (AccountContext, (Int) -> Void)
          switch self {
@@ -189,7 +201,7 @@ index e70b4879..3f8077ad 100644
      let signal = context.sharedContext.presentationData
      |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
          var entries: [AyuGiftListEntry] = []
-@@ -1307,7 +1361,7 @@ private func ayuGiftListController(context: AccountContext, title: String, gifts
+@@ -1307,7 +1362,7 @@ private func ayuGiftListController(context: AccountContext, title: String, gifts
          var start = 0
          while start < indexed.count {
              let row = Array(indexed[start ..< min(start + 3, indexed.count)])

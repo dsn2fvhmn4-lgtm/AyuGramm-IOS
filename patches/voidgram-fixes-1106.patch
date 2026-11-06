@@ -475,6 +475,19 @@ index f16e5455..ad60d4df 100644
 +    presentNative = { context.sharedContext.applicationBindings.presentNativeController($0) }
 +    return controller
 +}
+diff --git a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+index 40fdf419..f02a6410 100644
+--- a/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
++++ b/submodules/SettingsUI/Sources/AyuGramSettingsController.swift
+@@ -201,7 +201,7 @@ public func ayuGramPreferencesController(context: AccountContext) -> ViewControl
+         search.updatePresentationData(presentationData)
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuSectionedEntry] = [
+-            .logo(0, -1, .ayuGram, "VoidGram \(ayuAppVersion())", AyuStrings.justExteragramBasedClientTosBreaking.text(ru)),
++            .logo(0, -1, .ayuGram, "VoidGram \(ayuAppVersionWithBuild())", AyuStrings.justExteragramBasedClientTosBreaking.text(ru)),
+             .header(1, 0, ru ? "КАТЕГОРИИ" : "CATEGORIES"),
+         ] + AyuCategory.allCases.map { category in
+             AyuSectionedEntry.link(1, category.rawValue, category.icon, category.title(ru), "")
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsController.swift b/submodules/SettingsUI/Sources/AyuSettingsController.swift
 index 34aef4ba..9ed52bf6 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsController.swift
@@ -616,6 +629,29 @@ index 8c903359..cc720de4 100644
      // MARK: - MessageShot
  
      /// The picture the real MessageShot renderer makes for two sample messages with these
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index ef728852..a2f96372 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -132,8 +132,17 @@ enum AyuSettingsEntry: ItemListNodeEntry {
+ 
+ /// The AyuGram version shown on its settings page. The bundle keeps Telegram's own version,
+ /// which the app reports to Telegram's servers.
++/// Raised with every VoidGram update.
+ func ayuAppVersion() -> String {
+-    return "27.5.0"
++    return "27.6.0"
++}
++
++/// The version with the build number of this IPA, as the settings header shows it.
++func ayuAppVersionWithBuild() -> String {
++    if let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String, !build.isEmpty {
++        return "\(ayuAppVersion()) (\(build))"
++    }
++    return ayuAppVersion()
+ }
+ 
+ /// The AyuGram version for other modules ("What's new", the AltStore source).
 diff --git a/submodules/TabBarUI/Sources/TabBarContollerNode.swift b/submodules/TabBarUI/Sources/TabBarContollerNode.swift
 index 362966c5..9778ad7b 100644
 --- a/submodules/TabBarUI/Sources/TabBarContollerNode.swift
@@ -629,8 +665,50 @@ index 362966c5..9778ad7b 100644
              self.ayuHideTitles = AyuAppearancePlus.hideTabTitles
              self.ayuHidden = AyuWhiteGram.hideBottomTabBar
              self.ayuScale = AyuWhiteGram.tabBarScale
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
+index d400188b..a182f1a5 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
+@@ -113,9 +113,37 @@ private func ayuGrantedGiftRows(account: Account, peerId: EnginePeer.Id, granted
+     }
+ }
+ 
++/// The peer's granted gifts drawn for the badge desk: each with its registry index, so a tap can
++/// take that very gift back. Follows the registry.
++public func ayuGrantedGiftPreviews(account: Account, peerId: EnginePeer.Id) -> Signal<[(index: Int, gift: ProfileGiftsContext.State.StarGift)], NoError> {
++    return ayuGrantedGiftsUpdates()
++    |> map { _ -> [AyuGrantedGift] in
++        return AyuSupportersManager.shared.grantedGifts(peerId: peerId.id._internalGetInt64Value())
++    }
++    |> distinctUntilChanged
++    |> mapToSignal { granted -> Signal<[(index: Int, gift: ProfileGiftsContext.State.StarGift)], NoError> in
++        if granted.isEmpty {
++            return .single([])
++        }
++        return combineLatest(granted.map { item in
++            return ayuGrantedGiftRows(account: account, peerId: peerId, granted: [item])
++            |> map { rows -> (index: Int, gift: ProfileGiftsContext.State.StarGift)? in
++                return rows.first.map { (index: item.index, gift: $0) }
++            }
++        })
++        |> map { rows in
++            return rows.compactMap { $0 }
++        }
++    }
++}
++
+ /// The peer's granted gifts as profile gift rows, pinned above the gifts Telegram returns. Emits an
+ /// empty list at once, so the profile never waits for the attribute lookups, then follows the registry.
+ public func ayuGrantedProfileGifts(account: Account, peerId: EnginePeer.Id) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
++    // Gifts drawn as Telegram NFTs stay out of a locked (review) build.
++    guard AyuFeatureGate.isUnlocked else {
++        return .single([])
++    }
+     let rows = ayuGrantedGiftsUpdates()
+     |> map { _ -> [AyuGrantedGift] in
+         return AyuSupportersManager.shared.grantedGifts(peerId: peerId.id._internalGetInt64Value())
 diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
-index a90ad357..a03a78e9 100644
+index a90ad357..4ccaafe3 100644
 --- a/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 +++ b/submodules/TelegramCore/Sources/AyuGram/AyuInterfaceSettings.swift
 @@ -58,7 +58,7 @@ public struct AyuInterfaceSettings: Codable, Equatable {
@@ -651,6 +729,46 @@ index a90ad357..a03a78e9 100644
          self.voiceMemosPlayer = try values.decodeIfPresent(Bool.self, forKey: .voiceMemosPlayer) ?? false
      }
  }
+@@ -293,6 +293,10 @@ public final class AyuSupportersManager {
+ 
+     /// The usernames, number and TON balance the owner gave a peer.
+     public func cosmetics(peerId: Int64) -> AyuProfileCosmetics? {
++        // Given numbers, usernames and balances stay out of a locked (review) build.
++        guard AyuFeatureGate.isUnlocked else {
++            return nil
++        }
+         self.refreshAyuRegistryIfStale()
+         self.lock.lock()
+         defer { self.lock.unlock() }
+@@ -301,7 +305,7 @@ public final class AyuSupportersManager {
+ 
+     /// The peer whose given username is exactly `name` (any case, "@" allowed).
+     public func peerId(givenUsername name: String) -> Int64? {
+-        guard let query = AyuProfileCosmetics.usernameQuery(name) else {
++        guard AyuFeatureGate.isUnlocked, let query = AyuProfileCosmetics.usernameQuery(name) else {
+             return nil
+         }
+         self.lock.lock()
+@@ -311,6 +315,9 @@ public final class AyuSupportersManager {
+ 
+     /// The peer whose given number is exactly these digits.
+     public func peerId(givenPhone phone: String) -> Int64? {
++        guard AyuFeatureGate.isUnlocked else {
++            return nil
++        }
+         let digits = phone.filter { $0.isNumber }
+         guard !digits.isEmpty else {
+             return nil
+@@ -323,6 +330,9 @@ public final class AyuSupportersManager {
+     /// Peers a search query finds by a given username (from its fourth letter, as Telegram's own
+     /// search) or number (from its fifth digit), best match first.
+     public func peerIds(matchingSearch query: String) -> [Int64] {
++        guard AyuFeatureGate.isUnlocked else {
++            return []
++        }
+         self.refreshAyuRegistryIfStale()
+         let phone = AyuProfileCosmetics.phoneDigits(query)
+         let name = AyuProfileCosmetics.usernameQuery(query)
 diff --git a/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift b/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift
 index 713bf6f4..c847c191 100644
 --- a/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift
@@ -667,24 +785,62 @@ index 713bf6f4..c847c191 100644
                                          updatedMedia[i] = TelegramMediaExpiredContent(data: .image)
                                      } else if let file = updatedMedia[i] as? TelegramMediaFile {
 diff --git a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
-index 88537b0f..3b82df0b 100644
+index 88537b0f..3a2b07d3 100644
 --- a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
 +++ b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/GlassBackgroundComponent.swift
-@@ -635,7 +635,8 @@ public class GlassBackgroundView: UIView {
-         } else if GlassBackgroundView.blurMode, self.legacyView != nil {
+@@ -573,8 +573,6 @@ public class GlassBackgroundView: UIView {
+     /// AyuGram "Replace Liquid Glass with blur": a plain blur in the glass shape instead of glass.
+     /// Requires `useCustomGlassImpl`; set once at launch.
+     public static var blurMode: Bool = false
+-    private var ayuBlurView: UIVisualEffectView?
+-    private var ayuBlurClippingContext: ClippingShapeContext?
+     
+     public override init(frame: CGRect) {
+         if #available(iOS 26.0, *), !GlassBackgroundView.useCustomGlassImpl {
+@@ -633,19 +631,9 @@ public class GlassBackgroundView: UIView {
              self.legacyView?.isHidden = true
              self.shadowView?.isHidden = true
+         } else if GlassBackgroundView.blurMode, self.legacyView != nil {
+-            self.legacyView?.isHidden = true
++            // The blur is the legacy glass's own backdrop layer with a strong radius and no lens:
++            // UIVisualEffectView draws nothing under the masks and fades the panels use.
+             self.shadowView?.isHidden = true
 -            let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
-+            // A thin material, so the blur reads as blur rather than a near-opaque panel.
-+            let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
-             blurView.isUserInteractionEnabled = false
-             // Glass rounds itself; a blur only follows the corner radius when it clips, otherwise
-             // every button and the tab bar show the blur's square corners around the shape.
-@@ -858,6 +859,25 @@ public class GlassBackgroundView: UIView {
+-            blurView.isUserInteractionEnabled = false
+-            // Glass rounds itself; a blur only follows the corner radius when it clips, otherwise
+-            // every button and the tab bar show the blur's square corners around the shape.
+-            blurView.clipsToBounds = true
+-            if #available(iOS 13.0, *) {
+-                blurView.layer.cornerCurve = .continuous
+-            }
+-            self.ayuBlurView = blurView
+-            self.ayuBlurClippingContext = ClippingShapeContext(view: blurView)
+-            self.addSubview(blurView)
+         }
+         if let legacyView = self.legacyView {
+             self.addSubview(legacyView)
+@@ -744,15 +732,9 @@ public class GlassBackgroundView: UIView {
+                     style = .normal
+                 }
+             }
+-            legacyView.update(size: size, shape: shape, style: style, transition: transition)
++            legacyView.update(size: size, shape: shape, style: GlassBackgroundView.blurMode ? .blur : style, transition: transition)
+             transition.setFrame(view: legacyView, frame: CGRect(origin: CGPoint(), size: size))
+             transition.setAlpha(view: legacyView, alpha: isVisible ? 1.0 : 0.0)
+-            if let ayuBlurView = self.ayuBlurView {
+-                self.ayuBlurClippingContext?.update(shape: shape, size: size, transition: transition)
+-                transition.setFrame(view: ayuBlurView, frame: CGRect(origin: CGPoint(), size: size))
+-                transition.setAlpha(view: ayuBlurView, alpha: isVisible ? 1.0 : 0.0)
+-                ayuBlurView.overrideUserInterfaceStyle = isDark ? .dark : .light
+-            }
+             
+             transition.setPosition(view: self.contentView, position: CGPoint(x: size.width * 0.5, y: size.height * 0.5))
+             transition.setBounds(view: self.contentView, bounds: CGRect(origin: CGPoint(), size: size))
+@@ -858,6 +840,25 @@ public class GlassBackgroundView: UIView {
                          radii = GlassBackgroundView.clampedCornerRadii(size: size, cornerRadii: cornerRadii)
                      }
                      foregroundView.image = GlassBackgroundView.generateFlatImage(cornerRadii: radii, inset: shadowInset, fillColor: flatColor)
-+                } else if GlassBackgroundView.blurMode && self.ayuBlurView != nil {
++                } else if GlassBackgroundView.blurMode && self.legacyView != nil {
 +                    // Over the blur only a light tint: the glass fill would hide the blur under it.
 +                    let blurTint: UIColor
 +                    switch tintColor.kind {
@@ -706,6 +862,49 @@ index 88537b0f..3b82df0b 100644
                  } else {
                  switch shape {
                  case let .roundedRect(cornerRadius):
+diff --git a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/LegacyGlassView.swift b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/LegacyGlassView.swift
+index 7b5261d1..ac2b2d98 100644
+--- a/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/LegacyGlassView.swift
++++ b/submodules/TelegramUI/Components/GlassBackgroundComponent/Sources/LegacyGlassView.swift
+@@ -84,6 +84,8 @@ final class LegacyGlassView: UIView {
+     enum Style {
+         case normal
+         case clear
++        /// AyuGram "Blur instead of glass": a strong plain blur, no colour boost and no lens.
++        case blur
+     }
+     
+     private struct Params: Equatable {
+@@ -153,6 +155,8 @@ final class LegacyGlassView: UIView {
+                     }
+                 case .normal:
+                     blurFilter.setValue(2.0 as NSNumber, forKey: "inputRadius")
++                case .blur:
++                    blurFilter.setValue(18.0 as NSNumber, forKey: "inputRadius")
+                 }
+                 
+                 var matrix: [Float32] = [
+@@ -169,6 +173,8 @@ final class LegacyGlassView: UIView {
+                     backdropLayer.filters = [blurFilter]
+                 case .normal:
+                     backdropLayer.filters = [colorMatrixFilter, blurFilter]
++                case .blur:
++                    backdropLayer.filters = [blurFilter]
+                 }
+             }
+         }
+@@ -195,7 +201,10 @@ final class LegacyGlassView: UIView {
+         }
+         transition.setFrame(layer: backdropLayer, frame: CGRect(origin: CGPoint(), size: size))
+         
+-        if #available(iOS 17.0, *), DeviceMetrics.performance.isGraphicallyCapable {
++        if style == .blur {
++            // A plain blur bends nothing: no lens at the edges.
++            backdropLayer.setValue(nil, forKey: "meshTransform")
++        } else if #available(iOS 17.0, *), DeviceMetrics.performance.isGraphicallyCapable {
+             let size = CGSize(width: max(1.0, size.width), height: max(1.0, size.height))
+             let cornerRadius = min(min(size.width, size.height) * 0.5, shape.maximumCornerRadius(for: size))
+             let displacementMagnitudePoints: CGFloat = 20.0
 diff --git a/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift b/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift
 index bea6e89f..bfd9a497 100644
 --- a/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift
@@ -721,6 +920,360 @@ index bea6e89f..bfd9a497 100644
              let _ = self.context.engine.messages.markMessageContentAsConsumedInteractively(messageId: item.message.id).startStandalone()
          }
      }
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
+index 451cae7b..99aab0cc 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
+@@ -170,6 +170,7 @@ swift_library(
+         "//submodules/TelegramUI/Components/CameraScreen",
+         "//submodules/TelegramUI/Components/PeerInfo/VerifyAlertController",
+         "//submodules/TelegramUI/Components/Gifts/GiftViewScreen",
++        "//submodules/TelegramUI/Components/Gifts/GiftItemComponent",
+         "//submodules/TelegramUI/Components/BatchVideoRendering",
+         "//submodules/TelegramUI/Components/GifVideoLayer",
+         "//submodules/Components/HierarchyTrackingLayer",
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
+index cc656514..e70b4879 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
+@@ -964,6 +964,7 @@ private func ayuDeskCommit(context: AccountContext, peerId: Int64, change: [Stri
+ // MARK: - Gifts
+ 
+ private final class AyuGiftDeskArguments {
++    let context: AccountContext
+     let removeGift: (AyuGrantedGift) -> Void
+     let removeAll: () -> Void
+     let grantPlain: () -> Void
+@@ -971,7 +972,8 @@ private final class AyuGiftDeskArguments {
+     let updateLink: (String) -> Void
+     let grantFromLink: () -> Void
+ 
+-    init(removeGift: @escaping (AyuGrantedGift) -> Void, removeAll: @escaping () -> Void, grantPlain: @escaping () -> Void, grantUnique: @escaping () -> Void, updateLink: @escaping (String) -> Void, grantFromLink: @escaping () -> Void) {
++    init(context: AccountContext, removeGift: @escaping (AyuGrantedGift) -> Void, removeAll: @escaping () -> Void, grantPlain: @escaping () -> Void, grantUnique: @escaping () -> Void, updateLink: @escaping (String) -> Void, grantFromLink: @escaping () -> Void) {
++        self.context = context
+         self.removeGift = removeGift
+         self.removeAll = removeAll
+         self.grantPlain = grantPlain
+@@ -984,6 +986,8 @@ private final class AyuGiftDeskArguments {
+ private enum AyuGiftDeskEntry: ItemListNodeEntry {
+     case grantedHeader(String)
+     case granted(Int32, AyuGrantedGift, String)
++    /// The granted gifts as Telegram draws them; `String` keys the drawn state.
++    case grantedGrid([(index: Int, gift: ProfileGiftsContext.State.StarGift)], String)
+     case removeAll(String)
+     case grantHeader(String)
+     case grantPlain(String)
+@@ -995,7 +999,7 @@ private enum AyuGiftDeskEntry: ItemListNodeEntry {
+ 
+     var section: ItemListSectionId {
+         switch self {
+-        case .grantedHeader, .granted, .removeAll: return 0
++        case .grantedHeader, .granted, .grantedGrid, .removeAll: return 0
+         case .grantHeader, .grantPlain, .grantUnique: return 1
+         case .linkHeader, .link, .linkAction, .linkInfo: return 2
+         }
+@@ -1005,6 +1009,7 @@ private enum AyuGiftDeskEntry: ItemListNodeEntry {
+         switch self {
+         case .grantedHeader: return 0
+         case let .granted(index, _, _): return 1 + index
++        case .grantedGrid: return 98
+         case .removeAll: return 99
+         case .grantHeader: return 100
+         case .grantPlain: return 101
+@@ -1020,6 +1025,7 @@ private enum AyuGiftDeskEntry: ItemListNodeEntry {
+         switch (lhs, rhs) {
+         case let (.grantedHeader(a), .grantedHeader(b)): return a == b
+         case let (.granted(i, g, a), .granted(j, h, b)): return i == j && g == h && a == b
++        case let (.grantedGrid(_, a), .grantedGrid(_, b)): return a == b
+         case let (.removeAll(a), .removeAll(b)): return a == b
+         case let (.grantHeader(a), .grantHeader(b)): return a == b
+         case let (.grantPlain(a), .grantPlain(b)): return a == b
+@@ -1041,6 +1047,12 @@ private enum AyuGiftDeskEntry: ItemListNodeEntry {
+         switch self {
+         case let .grantedHeader(text), let .grantHeader(text), let .linkHeader(text):
+             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
++        case let .grantedGrid(gifts, _):
++            return AyuGiftGridItem(context: arguments.context, presentationData: presentationData, gifts: gifts.map { (index: $0.index, gift: $0.gift.gift) }, sectionId: self.section, action: { index in
++                if let gift = AyuSupportersManager.shared.allGrantedGifts().values.lazy.compactMap({ $0.first(where: { $0.index == index }) }).first {
++                    arguments.removeGift(gift)
++                }
++            })
+         case let .granted(_, gift, title):
+             return ItemListDisclosureItem(presentationData: presentationData, title: title, label: "", sectionId: self.section, style: .blocks, disclosureStyle: .none, action: {
+                 arguments.removeGift(gift)
+@@ -1113,7 +1125,7 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+         })
+     }
+ 
+-    let arguments = AyuGiftDeskArguments(removeGift: { gift in
++    let arguments = AyuGiftDeskArguments(context: context, removeGift: { gift in
+         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         presentImpl?(textAlertController(context: context, title: ayuDescribeGift(gift, ru: ru), text: ru ? "Забрать этот подарок?" : "Take this gift back?", actions: [
+@@ -1152,15 +1164,22 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+         }
+     }
+ 
+-    let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, linkPromise.get(), giftsChanged)
+-    |> map { presentationData, link, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
++    let enginePeerId = EnginePeer.Id(namespace: Namespaces.Peer.CloudUser, id: EnginePeer.Id.Id._internalFromInt64Value(peerId))
++    let previews: Signal<[(index: Int, gift: ProfileGiftsContext.State.StarGift)], NoError> = .single([]) |> then(ayuGrantedGiftPreviews(account: context.account, peerId: enginePeerId))
++    let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, linkPromise.get(), giftsChanged, previews)
++    |> map { presentationData, link, _, previews -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+         var entries: [AyuGiftDeskEntry] = []
+         if !nftOnly {
+             let granted = AyuSupportersManager.shared.grantedGifts(peerId: peerId)
+             if !granted.isEmpty {
+                 entries.append(.grantedHeader(ru ? "ВЫДАНО · НАЖМИ, ЧТОБЫ ЗАБРАТЬ" : "GRANTED · TAP TO TAKE BACK"))
+-                for (index, gift) in granted.enumerated() {
++                // The gifts themselves, as the profile shows them; a row each until they are drawn.
++                let shown = previews.filter { preview in granted.contains(where: { $0.index == preview.index }) }
++                if !shown.isEmpty {
++                    entries.append(.grantedGrid(shown, shown.map { "\($0.index)" }.joined(separator: ",") + "|" + granted.map { ayuDescribeGift($0, ru: ru) }.joined(separator: ",")))
++                }
++                for (index, gift) in granted.enumerated() where !shown.contains(where: { $0.index == gift.index }) {
+                     entries.append(.granted(Int32(index), gift, ayuDescribeGift(gift, ru: ru)))
+                 }
+                 entries.append(.removeAll(ru ? "Забрать все" : "Take back all"))
+@@ -1240,7 +1259,8 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+ }
+ 
+ private enum AyuGiftListEntry: ItemListNodeEntry {
+-    case gift(Int32, String, String)
++    /// One row of the catalog: up to three gifts, drawn as Telegram draws them, with their price.
++    case row(Int32, [(index: Int, gift: StarGift)], [Int64: String])
+ 
+     var section: ItemListSectionId {
+         return 0
+@@ -1248,7 +1268,14 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
+ 
+     var stableId: Int32 {
+         switch self {
+-        case let .gift(index, _, _): return index
++        case let .row(index, _, _): return index
++        }
++    }
++
++    static func ==(lhs: AyuGiftListEntry, rhs: AyuGiftListEntry) -> Bool {
++        switch (lhs, rhs) {
++        case let (.row(a, x, p), .row(b, y, q)):
++            return a == b && x.map(\.index) == y.map(\.index) && p == q
+         }
+     }
+ 
+@@ -1257,27 +1284,31 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
+     }
+ 
+     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+-        let select = arguments as! (Int32) -> Void
++        let (context, select) = arguments as! (AccountContext, (Int) -> Void)
+         switch self {
+-        case let .gift(index, title, price):
+-            return ItemListDisclosureItem(presentationData: presentationData, title: title, label: price, sectionId: self.section, style: .blocks, action: {
+-                select(index)
+-            })
++        case let .row(_, gifts, prices):
++            return AyuGiftGridItem(context: context, presentationData: presentationData, gifts: gifts, prices: prices, sectionId: self.section, action: select)
+         }
+     }
+ }
+ 
+-/// Telegram's gift catalog as a list: name and price in Stars.
++/// Telegram's gift catalog as the gift shop shows it: each gift drawn with its price in Stars.
+ private func ayuGiftListController(context: AccountContext, title: String, gifts: [StarGift.Gift], select: @escaping (StarGift.Gift) -> Void) -> ViewController {
+-    let arguments: (Int32) -> Void = { index in
+-        if Int(index) < gifts.count {
+-            select(gifts[Int(index)])
++    let arguments: (AccountContext, (Int) -> Void) = (context, { index in
++        if index < gifts.count {
++            select(gifts[index])
+         }
+-    }
++    })
++    let prices = Dictionary(gifts.map { ($0.id, "\($0.price) ⭐") }, uniquingKeysWith: { first, _ in first })
+     let signal = context.sharedContext.presentationData
+     |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+-        let entries = gifts.enumerated().map { index, gift in
+-            return AyuGiftListEntry.gift(Int32(index), ayuGiftLabel(gift), "\(gift.price) ⭐")
++        var entries: [AyuGiftListEntry] = []
++        let indexed = gifts.enumerated().map { (index: $0.offset, gift: StarGift.generic($0.element)) }
++        var start = 0
++        while start < indexed.count {
++            let row = Array(indexed[start ..< min(start + 3, indexed.count)])
++            entries.append(.row(Int32(start / 3), row, prices))
++            start += 3
+         }
+         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
+         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks, animateChanges: false)
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
+new file mode 100644
+index 00000000..1433bc6e
+--- /dev/null
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
+@@ -0,0 +1,162 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import AccountContext
++import ComponentFlow
++import ItemListUI
++import GiftItemComponent
++
++/// Gifts drawn as the profile draws them: Telegram's gift cells with the model, backdrop, pattern
++/// and number, three to a row. A tap hands the cell's id back.
++final class AyuGiftGridItem: ListViewItem, ItemListItem {
++    let context: AccountContext
++    let presentationData: ItemListPresentationData
++    let gifts: [(index: Int, gift: StarGift)]
++    /// Price labels for catalog gifts, by gift id.
++    let prices: [Int64: String]
++    let sectionId: ItemListSectionId
++    let action: (Int) -> Void
++
++    init(context: AccountContext, presentationData: ItemListPresentationData, gifts: [(index: Int, gift: StarGift)], prices: [Int64: String] = [:], sectionId: ItemListSectionId, action: @escaping (Int) -> Void) {
++        self.context = context
++        self.presentationData = presentationData
++        self.gifts = gifts
++        self.prices = prices
++        self.sectionId = sectionId
++        self.action = action
++    }
++
++    func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
++        Queue.mainQueue().async {
++            let node = AyuGiftGridItemNode()
++            let (layout, apply) = node.asyncLayout()(self, params, itemListNeighbors(item: self, topFacet: neighbors.previous?.base(ItemListNeighborFacet.self), bottomFacet: neighbors.next?.base(ItemListNeighborFacet.self)))
++            node.contentSize = layout.contentSize
++            node.insets = layout.insets
++            completion(node, {
++                return (nil, { _ in apply() })
++            })
++        }
++    }
++
++    func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, neighbors: ListViewItemNeighbors, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {
++        Queue.mainQueue().async {
++            if let nodeValue = node() as? AyuGiftGridItemNode {
++                let (layout, apply) = nodeValue.asyncLayout()(self, params, itemListNeighbors(item: self, topFacet: neighbors.previous?.base(ItemListNeighborFacet.self), bottomFacet: neighbors.next?.base(ItemListNeighborFacet.self)))
++                completion(layout, { _ in
++                    apply()
++                })
++            }
++        }
++    }
++}
++
++private let ayuGiftGridSpacing: CGFloat = 10.0
++private let ayuGiftGridInset: CGFloat = 12.0
++private let ayuGiftGridColumns = 3
++
++final class AyuGiftGridItemNode: ListViewItemNode {
++    private let backgroundNode: ASDisplayNode
++    private let maskNode: ASImageNode
++    private var cells: [ComponentView<Empty>] = []
++
++    init() {
++        self.backgroundNode = ASDisplayNode()
++        self.backgroundNode.isLayerBacked = true
++        self.maskNode = ASImageNode()
++        super.init(layerBacked: false)
++        self.clipsToBounds = true
++        self.addSubnode(self.backgroundNode)
++        self.addSubnode(self.maskNode)
++    }
++
++    func asyncLayout() -> (_ item: AyuGiftGridItem, _ params: ListViewItemLayoutParams, _ neighbors: ItemListNeighbors) -> (ListViewItemNodeLayout, () -> Void) {
++        return { [weak self] item, params, neighbors in
++            let blockWidth = params.width - params.leftInset - params.rightInset
++            let cellSide = floor((blockWidth - ayuGiftGridInset * 2.0 - ayuGiftGridSpacing * CGFloat(ayuGiftGridColumns - 1)) / CGFloat(ayuGiftGridColumns))
++            let rows = max(1, (item.gifts.count + ayuGiftGridColumns - 1) / ayuGiftGridColumns)
++            let contentSize = CGSize(width: params.width, height: ayuGiftGridInset * 2.0 + CGFloat(rows) * cellSide + CGFloat(rows - 1) * ayuGiftGridSpacing)
++            let insets = itemListNeighborsGroupedInsets(neighbors, params)
++            let layout = ListViewItemNodeLayout(contentSize: contentSize, insets: insets)
++            return (layout, { [weak self] in
++                guard let self else {
++                    return
++                }
++                let theme = item.presentationData.theme
++                let blockFrame = CGRect(x: params.leftInset, y: 0.0, width: blockWidth, height: contentSize.height)
++                self.backgroundNode.backgroundColor = theme.list.itemBlocksBackgroundColor
++                self.backgroundNode.frame = blockFrame
++
++                while self.cells.count < item.gifts.count {
++                    self.cells.append(ComponentView<Empty>())
++                }
++                while self.cells.count > item.gifts.count {
++                    self.cells.removeLast().view?.removeFromSuperview()
++                }
++                for (position, entry) in item.gifts.enumerated() {
++                    let subject: GiftItemComponent.Subject
++                    var ribbon: GiftItemComponent.Ribbon?
++                    switch entry.gift {
++                    case let .generic(gift):
++                        subject = .starGift(gift: gift, price: item.prices[gift.id] ?? "")
++                    case let .unique(gift):
++                        subject = .uniqueGift(gift: gift, price: nil)
++                        var color: GiftItemComponent.Ribbon.Color = .blue
++                        for attribute in gift.attributes {
++                            if case let .backdrop(_, _, innerColor, outerColor, _, _, _) = attribute {
++                                color = .custom(outerColor, innerColor)
++                                break
++                            }
++                        }
++                        ribbon = GiftItemComponent.Ribbon(text: "#\(gift.number)", font: .monospaced, color: color)
++                    }
++                    let index = entry.index
++                    let cell = self.cells[position]
++                    let _ = cell.update(
++                        transition: .immediate,
++                        component: AnyComponent(GiftItemComponent(
++                            context: item.context,
++                            style: .glass,
++                            theme: theme,
++                            strings: item.presentationData.strings,
++                            subject: subject,
++                            ribbon: ribbon,
++                            mode: .profile,
++                            action: {
++                                item.action(index)
++                            }
++                        )),
++                        environment: {},
++                        containerSize: CGSize(width: cellSide, height: cellSide)
++                    )
++                    if let view = cell.view {
++                        if view.superview == nil {
++                            self.view.insertSubview(view, belowSubview: self.maskNode.view)
++                        }
++                        let column = position % ayuGiftGridColumns
++                        let row = position / ayuGiftGridColumns
++                        view.frame = CGRect(x: blockFrame.minX + ayuGiftGridInset + CGFloat(column) * (cellSide + ayuGiftGridSpacing), y: ayuGiftGridInset + CGFloat(row) * (cellSide + ayuGiftGridSpacing), width: cellSide, height: cellSide)
++                    }
++                }
++
++                var hasTopCorners = false
++                var hasBottomCorners = false
++                if case .sameSection(false) = neighbors.top {} else { hasTopCorners = true }
++                if case .sameSection(false) = neighbors.bottom {} else { hasBottomCorners = true }
++                self.maskNode.image = itemListHasRoundedBlockLayout(params) ? PresentationResourcesItemList.cornersImage(theme, top: hasTopCorners, bottom: hasBottomCorners, glass: true) : nil
++                self.maskNode.frame = blockFrame
++            })
++        }
++    }
++
++    override func animateInsertion(_ currentTimestamp: Double, duration: Double, options: ListViewItemAnimationOptions) {
++        self.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)
++    }
++
++    override func animateRemoved(_ currentTimestamp: Double, duration: Double) {
++        self.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.15, removeOnCompletion: false)
++    }
++}
 diff --git a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift b/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift
 index 01b4ff78..8af99401 100644
 --- a/submodules/TelegramUI/Sources/Chat/ChatControllerMediaRecording.swift

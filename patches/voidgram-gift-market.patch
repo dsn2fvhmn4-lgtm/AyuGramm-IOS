@@ -1,0 +1,162 @@
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index a2f96372..1c105c97 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
+ /// which the app reports to Telegram's servers.
+ /// Raised with every VoidGram update.
+ func ayuAppVersion() -> String {
+-    return "27.6.0"
++    return "27.6.1"
+ }
+ 
+ /// The version with the build number of this IPA, as the settings header shows it.
+diff --git a/submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift
+index 01ce385c..46b81e32 100644
+--- a/submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift
++++ b/submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift
+@@ -260,6 +260,11 @@ public final class GiftStoreContentComponent: Component {
+                                         guard let self, let component = self.component else {
+                                             return
+                                         }
++                                        // VoidGram: the badge desk opens the market to pick an NFT to grant, not to buy.
++                                        if let store = controller() as? GiftStoreScreen, let ayuSelect = store.ayuSelect {
++                                            ayuSelect(uniqueGift)
++                                            return
++                                        }
+                                         if component.confirmPurchaseImmediately, let starsTopUpOptions = component.starsTopUpOptions {
+                                             buyStarGiftImpl(
+                                                 context: component.context,
+@@ -1580,6 +1585,9 @@ public class GiftStoreScreen: ViewControllerComponentContainer {
+     public var parentController: () -> ViewController? = {
+         return nil
+     }
++
++    /// VoidGram: when set, tapping an NFT hands it here instead of opening it to buy.
++    public var ayuSelect: ((StarGift.UniqueGift) -> Void)?
+     
+     public init(
+         context: AccountContext,
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
+index 99aab0cc..f2e7def1 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/BUILD
+@@ -171,6 +171,7 @@ swift_library(
+         "//submodules/TelegramUI/Components/PeerInfo/VerifyAlertController",
+         "//submodules/TelegramUI/Components/Gifts/GiftViewScreen",
+         "//submodules/TelegramUI/Components/Gifts/GiftItemComponent",
++        "//submodules/TelegramUI/Components/Gifts/GiftStoreScreen",
+         "//submodules/TelegramUI/Components/BatchVideoRendering",
+         "//submodules/TelegramUI/Components/GifVideoLayer",
+         "//submodules/Components/HierarchyTrackingLayer",
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
+index e70b4879..d94ac84a 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
+@@ -17,6 +17,7 @@ import UndoUI
+ import EntityKeyboard
+ import EmojiStatusSelectionComponent
+ import GiftViewScreen
++import GiftStoreScreen
+ 
+ /// The owner's badge desk, opened from any profile: a settings page that hands out a VoidGram badge
+ /// (custom emoji and text), the label line under the name, extra usernames, a shown phone number, a
+@@ -1218,17 +1219,65 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+                 if case let .generic(value) = gift { return value }
+                 return nil
+             }.sorted(by: { $0.price < $1.price })
+-            let upgradable = generic.filter { $0.upgradeStars != nil }
++            // NFTs as Telegram's market lists them: the gifts with the most listings first.
++            let upgradable = generic.filter { $0.upgradeStars != nil || ($0.availability?.resale ?? 0) > 0 }.sorted(by: { ($0.availability?.resale ?? 0) > ($1.availability?.resale ?? 0) })
+             let list = unique && !upgradable.isEmpty ? upgradable : generic
+             guard !list.isEmpty else {
+                 presentImpl?(textAlertController(context: context, title: nil, text: ru ? "Telegram не отдал каталог подарков." : "Telegram returned no gift catalog.", actions: [TextAlertAction(type: .defaultAction, title: "OK", action: {})]))
+                 return
+             }
+-            pushImpl?(ayuGiftListController(context: context, title: unique ? "NFT" : (ru ? "Обычный подарок" : "Plain gift"), gifts: list, select: { gift in
++            let prices: [Int64: String]
++            if unique {
++                prices = Dictionary(list.map { gift -> (Int64, String) in
++                    if let availability = gift.availability, availability.resale > 0 {
++                        return (gift.id, (ru ? "от " : "from ") + "\(availability.minResaleStars ?? gift.price) ⭐")
++                    }
++                    return (gift.id, ru ? "Свой" : "Custom")
++                }, uniquingKeysWith: { first, _ in first })
++            } else {
++                prices = Dictionary(list.map { ($0.id, "\($0.price) ⭐") }, uniquingKeysWith: { first, _ in first })
++            }
++            pushImpl?(ayuGiftListController(context: context, title: unique ? (ru ? "Маркет" : "Market") : (ru ? "Обычный подарок" : "Plain gift"), gifts: list, prices: prices, select: { gift in
+                 if unique {
+-                    ayuConfigureUnique(context: context, giftId: gift.id, title: gift.title, number: nil, preset: nil, present: { c in presentImpl?(c) }, grant: { add in
+-                        commit(["gifts": ["add": add]], ru ? "NFT выдан." : "NFT granted.")
+-                    })
++                    let custom = {
++                        ayuConfigureUnique(context: context, giftId: gift.id, title: gift.title, number: nil, preset: nil, present: { c in presentImpl?(c) }, grant: { add in
++                            commit(["gifts": ["add": add]], ru ? "NFT выдан." : "NFT granted.")
++                        })
++                    }
++                    let listed = gift.availability?.resale ?? 0
++                    guard listed > 0 else {
++                        return custom()
++                    }
++                    presentImpl?(textAlertController(context: context, title: gift.title, text: ru ? "Взять готовый NFT с маркета или собрать свой." : "Take a ready NFT from the market or build your own.", actions: [
++                        TextAlertAction(type: .defaultAction, title: ru ? "Выбрать на маркете (\(listed))" : "Pick on the market (\(listed))", action: {
++                            // Telegram's market itself, with its filters and sorting; a tap grants that exact NFT.
++                            let store = GiftStoreScreen(context: context, peerId: enginePeerId, gift: gift)
++                            store.ayuSelect = { [weak store] uniqueGift in
++                                var add: [String: Any] = ["giftId": String(uniqueGift.giftId), "kind": "unique", "title": uniqueGift.title]
++                                for attribute in uniqueGift.attributes {
++                                    switch attribute {
++                                    case let .model(name, _, _, _): add["model"] = name
++                                    case let .pattern(name, _, _): add["pattern"] = name
++                                    case let .backdrop(name, _, _, _, _, _, _): add["backdrop"] = name
++                                    default: break
++                                    }
++                                }
++                                guard add["model"] != nil, add["pattern"] != nil, add["backdrop"] != nil else {
++                                    return
++                                }
++                                store?.push(ayuGiftFinishController(context: context, title: "\(uniqueGift.title) #\(uniqueGift.number)", askNumber: true, initialNumber: uniqueGift.number, grant: { number, text in
++                                    if let number { add["number"] = number }
++                                    if let text { add["text"] = text }
++                                    commit(["gifts": ["add": add]], ru ? "NFT выдан." : "NFT granted.")
++                                }))
++                            }
++                            pushImpl?(store)
++                        }),
++                        TextAlertAction(type: .genericAction, title: ru ? "Свой вариант" : "Custom variant", action: {
++                            custom()
++                        }),
++                        TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {})
++                    ], actionLayout: .vertical))
+                 } else {
+                     pushImpl?(ayuGiftFinishController(context: context, title: ayuGiftLabel(gift), askNumber: false, initialNumber: nil, grant: { _, text in
+                         var add: [String: Any] = ["giftId": String(gift.id), "kind": "plain"]
+@@ -1293,13 +1342,12 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
+ }
+ 
+ /// Telegram's gift catalog as the gift shop shows it: each gift drawn with its price in Stars.
+-private func ayuGiftListController(context: AccountContext, title: String, gifts: [StarGift.Gift], select: @escaping (StarGift.Gift) -> Void) -> ViewController {
++private func ayuGiftListController(context: AccountContext, title: String, gifts: [StarGift.Gift], prices: [Int64: String], select: @escaping (StarGift.Gift) -> Void) -> ViewController {
+     let arguments: (AccountContext, (Int) -> Void) = (context, { index in
+         if index < gifts.count {
+             select(gifts[index])
+         }
+     })
+-    let prices = Dictionary(gifts.map { ($0.id, "\($0.price) ⭐") }, uniquingKeysWith: { first, _ in first })
+     let signal = context.sharedContext.presentationData
+     |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+         var entries: [AyuGiftListEntry] = []
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
+index 1433bc6e..66daee84 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
+@@ -67,6 +67,8 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+         self.backgroundNode = ASDisplayNode()
+         self.backgroundNode.isLayerBacked = true
+         self.maskNode = ASImageNode()
++        // The corner mask covers the whole block; it must not swallow the taps meant for the gifts.
++        self.maskNode.isUserInteractionEnabled = false
+         super.init(layerBacked: false)
+         self.clipsToBounds = true
+         self.addSubnode(self.backgroundNode)

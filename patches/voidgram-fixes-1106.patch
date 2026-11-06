@@ -1381,3 +1381,26 @@ index c4ad768b..5f7df3e3 100644
          var downloadableMediaResourceInfos: [String] = []
          for media in message.effectiveMedia {
              if let file = media as? TelegramMediaFile {
+diff --git a/tools/ayu-tests/main.swift b/tools/ayu-tests/main.swift
+index ed496bfb..ecb9d2da 100644
+--- a/tools/ayu-tests/main.swift
++++ b/tools/ayu-tests/main.swift
+@@ -1110,14 +1110,15 @@ check(iosplugPackageChecks == 9, "All nine reviewed source adapters have tested
+ check(pluginThrows { _ = try AyuIOSPluginEnvelope.parse(Data(repeating: 32, count: 65537)) }, "Oversized packages fail before JSON decoding")
+ check(pluginThrows { _ = try AyuIOSPluginEnvelope.parse(Data("{}".utf8)) }, "Missing package fields are rejected")
+ 
+-// New controls default to on for existing accounts; explicit opt-outs must survive reloads.
++// New controls default to on for existing accounts (the formatting toolbar to off); explicit
++// choices must survive reloads.
+ let oldNavigationSettings = try JSONDecoder().decode(AyuInterfaceSettings.self, from: Data("{}".utf8))
+-check(oldNavigationSettings.foldersAtBottom && oldNavigationSettings.compactAttachmentMenu && oldNavigationSettings.doubleTapToEdit && oldNavigationSettings.formattingToolbar, "Missing navigation preferences enable the new controls")
++check(oldNavigationSettings.foldersAtBottom && oldNavigationSettings.compactAttachmentMenu && oldNavigationSettings.doubleTapToEdit && !oldNavigationSettings.formattingToolbar, "Missing navigation preferences enable the new controls, the formatting toolbar stays off")
+ var customNavigationSettings = oldNavigationSettings
+ customNavigationSettings.foldersAtBottom = false
+ customNavigationSettings.compactAttachmentMenu = false
+ customNavigationSettings.doubleTapToEdit = false
+-customNavigationSettings.formattingToolbar = false
++customNavigationSettings.formattingToolbar = true
+ customNavigationSettings.hidePhoneNumber = true
+ let restoredNavigationSettings = try JSONDecoder().decode(AyuInterfaceSettings.self, from: JSONEncoder().encode(customNavigationSettings))
+ check(restoredNavigationSettings == customNavigationSettings, "Navigation controls survive settings export and reload without losing existing preferences")

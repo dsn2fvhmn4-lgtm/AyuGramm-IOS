@@ -1,5 +1,5 @@
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
-index a2f96372..406dca05 100644
+index a2f96372..9d0c99e5 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 @@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
@@ -7,7 +7,7 @@ index a2f96372..406dca05 100644
  /// Raised with every VoidGram update.
  func ayuAppVersion() -> String {
 -    return "27.6.0"
-+    return "27.6.2"
++    return "27.6.3"
  }
  
  /// The version with the build number of this IPA, as the settings header shows it.
@@ -50,7 +50,7 @@ index 99aab0cc..f2e7def1 100644
          "//submodules/TelegramUI/Components/GifVideoLayer",
          "//submodules/Components/HierarchyTrackingLayer",
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
-index e70b4879..d94ac84a 100644
+index e70b4879..3f8077ad 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuBadgeEditor.swift
 @@ -17,6 +17,7 @@ import UndoUI
@@ -61,7 +61,7 @@ index e70b4879..d94ac84a 100644
  
  /// The owner's badge desk, opened from any profile: a settings page that hands out a VoidGram badge
  /// (custom emoji and text), the label line under the name, extra usernames, a shown phone number, a
-@@ -1218,17 +1219,65 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+@@ -1218,17 +1219,71 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
                  if case let .generic(value) = gift { return value }
                  return nil
              }.sorted(by: { $0.price < $1.price })
@@ -78,14 +78,20 @@ index e70b4879..d94ac84a 100644
 +            if unique {
 +                prices = Dictionary(list.map { gift -> (Int64, String) in
 +                    if let availability = gift.availability, availability.resale > 0 {
-+                        return (gift.id, (ru ? "от " : "from ") + "\(availability.minResaleStars ?? gift.price) ⭐")
++                        return (gift.id, "# \(presentationStringsFormattedNumber(availability.minResaleStars ?? gift.price, presentationData.dateTimeFormat.groupingSeparator))+")
 +                    }
-+                    return (gift.id, ru ? "Свой" : "Custom")
++                    return (gift.id, ru ? "Свой вариант" : "Custom")
 +                }, uniquingKeysWith: { first, _ in first })
 +            } else {
-+                prices = Dictionary(list.map { ($0.id, "\($0.price) ⭐") }, uniquingKeysWith: { first, _ in first })
++                prices = Dictionary(list.map { ($0.id, "# \(presentationStringsFormattedNumber($0.price, presentationData.dateTimeFormat.groupingSeparator))") }, uniquingKeysWith: { first, _ in first })
 +            }
-+            pushImpl?(ayuGiftListController(context: context, title: unique ? (ru ? "Маркет" : "Market") : (ru ? "Обычный подарок" : "Plain gift"), gifts: list, prices: prices, select: { gift in
++            var ribbons: [Int64: String] = [:]
++            if unique {
++                for gift in list where (gift.availability?.resale ?? 0) > 0 {
++                    ribbons[gift.id] = presentationData.strings.Gift_Options_Gift_Resale
++                }
++            }
++            pushImpl?(ayuGiftListController(context: context, title: unique ? (ru ? "Маркет" : "Market") : (ru ? "Обычный подарок" : "Plain gift"), gifts: list, prices: prices, ribbons: ribbons, select: { gift in
                  if unique {
 -                    ayuConfigureUnique(context: context, giftId: gift.id, title: gift.title, number: nil, preset: nil, present: { c in presentImpl?(c) }, grant: { add in
 -                        commit(["gifts": ["add": add]], ru ? "NFT выдан." : "NFT granted.")
@@ -132,12 +138,48 @@ index e70b4879..d94ac84a 100644
                  } else {
                      pushImpl?(ayuGiftFinishController(context: context, title: ayuGiftLabel(gift), askNumber: false, initialNumber: nil, grant: { _, text in
                          var add: [String: Any] = ["giftId": String(gift.id), "kind": "plain"]
-@@ -1293,13 +1342,12 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
+@@ -1260,7 +1315,7 @@ private func ayuGiftDeskController(context: AccountContext, peerId: Int64, nftOn
+ 
+ private enum AyuGiftListEntry: ItemListNodeEntry {
+     /// One row of the catalog: up to three gifts, drawn as Telegram draws them, with their price.
+-    case row(Int32, [(index: Int, gift: StarGift)], [Int64: String])
++    case row(Int32, [(index: Int, gift: StarGift)], [Int64: String], [Int64: String])
+ 
+     var section: ItemListSectionId {
+         return 0
+@@ -1268,14 +1323,14 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
+ 
+     var stableId: Int32 {
+         switch self {
+-        case let .row(index, _, _): return index
++        case let .row(index, _, _, _): return index
+         }
+     }
+ 
+     static func ==(lhs: AyuGiftListEntry, rhs: AyuGiftListEntry) -> Bool {
+         switch (lhs, rhs) {
+-        case let (.row(a, x, p), .row(b, y, q)):
+-            return a == b && x.map(\.index) == y.map(\.index) && p == q
++        case let (.row(a, x, p, r), .row(b, y, q, t)):
++            return a == b && x.map(\.index) == y.map(\.index) && p == q && r == t
+         }
+     }
+ 
+@@ -1286,20 +1341,19 @@ private enum AyuGiftListEntry: ItemListNodeEntry {
+     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+         let (context, select) = arguments as! (AccountContext, (Int) -> Void)
+         switch self {
+-        case let .row(_, gifts, prices):
+-            return AyuGiftGridItem(context: context, presentationData: presentationData, gifts: gifts, prices: prices, sectionId: self.section, action: select)
++        case let .row(_, gifts, prices, ribbons):
++            return AyuGiftGridItem(context: context, presentationData: presentationData, gifts: gifts, prices: prices, ribbons: ribbons, sectionId: self.section, action: select)
+         }
+     }
  }
  
  /// Telegram's gift catalog as the gift shop shows it: each gift drawn with its price in Stars.
 -private func ayuGiftListController(context: AccountContext, title: String, gifts: [StarGift.Gift], select: @escaping (StarGift.Gift) -> Void) -> ViewController {
-+private func ayuGiftListController(context: AccountContext, title: String, gifts: [StarGift.Gift], prices: [Int64: String], select: @escaping (StarGift.Gift) -> Void) -> ViewController {
++private func ayuGiftListController(context: AccountContext, title: String, gifts: [StarGift.Gift], prices: [Int64: String], ribbons: [Int64: String], select: @escaping (StarGift.Gift) -> Void) -> ViewController {
      let arguments: (AccountContext, (Int) -> Void) = (context, { index in
          if index < gifts.count {
              select(gifts[index])
@@ -147,13 +189,46 @@ index e70b4879..d94ac84a 100644
      let signal = context.sharedContext.presentationData
      |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
          var entries: [AyuGiftListEntry] = []
+@@ -1307,7 +1361,7 @@ private func ayuGiftListController(context: AccountContext, title: String, gifts
+         var start = 0
+         while start < indexed.count {
+             let row = Array(indexed[start ..< min(start + 3, indexed.count)])
+-            entries.append(.row(Int32(start / 3), row, prices))
++            entries.append(.row(Int32(start / 3), row, prices, ribbons))
+             start += 3
+         }
+         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
-index 1433bc6e..1fb43178 100644
+index 1433bc6e..1c867213 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
-@@ -62,17 +62,44 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+@@ -16,16 +16,19 @@ final class AyuGiftGridItem: ListViewItem, ItemListItem {
+     let context: AccountContext
+     let presentationData: ItemListPresentationData
+     let gifts: [(index: Int, gift: StarGift)]
+-    /// Price labels for catalog gifts, by gift id.
++    /// Price labels for catalog gifts, by gift id; a "#" is drawn as a star, as in Telegram's market.
+     let prices: [Int64: String]
++    /// Green market ribbons for catalog gifts, by gift id.
++    let ribbons: [Int64: String]
+     let sectionId: ItemListSectionId
+     let action: (Int) -> Void
+ 
+-    init(context: AccountContext, presentationData: ItemListPresentationData, gifts: [(index: Int, gift: StarGift)], prices: [Int64: String] = [:], sectionId: ItemListSectionId, action: @escaping (Int) -> Void) {
++    init(context: AccountContext, presentationData: ItemListPresentationData, gifts: [(index: Int, gift: StarGift)], prices: [Int64: String] = [:], ribbons: [Int64: String] = [:], sectionId: ItemListSectionId, action: @escaping (Int) -> Void) {
+         self.context = context
+         self.presentationData = presentationData
+         self.gifts = gifts
+         self.prices = prices
++        self.ribbons = ribbons
+         self.sectionId = sectionId
+         self.action = action
+     }
+@@ -60,34 +63,61 @@ private let ayuGiftGridColumns = 3
+ 
+ final class AyuGiftGridItemNode: ListViewItemNode {
      private let backgroundNode: ASDisplayNode
-     private let maskNode: ASImageNode
+-    private let maskNode: ASImageNode
      private var cells: [ComponentView<Empty>] = []
 +    private var cellTargets: [(frame: CGRect, position: Int, index: Int)] = []
 +    private var item: AyuGiftGridItem?
@@ -161,15 +236,13 @@ index 1433bc6e..1fb43178 100644
      init() {
          self.backgroundNode = ASDisplayNode()
          self.backgroundNode.isLayerBacked = true
-         self.maskNode = ASImageNode()
-+        // The corner mask covers the whole block; it must not swallow the taps meant for the gifts.
-+        self.maskNode.isUserInteractionEnabled = false
+-        self.maskNode = ASImageNode()
          super.init(layerBacked: false)
          self.clipsToBounds = true
          self.addSubnode(self.backgroundNode)
-         self.addSubnode(self.maskNode)
-     }
- 
+-        self.addSubnode(self.maskNode)
++    }
++
 +    override func didLoad() {
 +        super.didLoad()
 +        // The list hands nested buttons no taps, so the row finds the tapped gift itself.
@@ -191,12 +264,20 @@ index 1433bc6e..1fb43178 100644
 +            })
 +        }
 +        item.action(target.index)
-+    }
-+
+     }
+ 
      func asyncLayout() -> (_ item: AyuGiftGridItem, _ params: ListViewItemLayoutParams, _ neighbors: ItemListNeighbors) -> (ListViewItemNodeLayout, () -> Void) {
          return { [weak self] item, params, neighbors in
              let blockWidth = params.width - params.leftInset - params.rightInset
-@@ -85,6 +112,8 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+             let cellSide = floor((blockWidth - ayuGiftGridInset * 2.0 - ayuGiftGridSpacing * CGFloat(ayuGiftGridColumns - 1)) / CGFloat(ayuGiftGridColumns))
++            // The market's cell: the gift on its card with the price button under it.
++            let cellHeight: CGFloat = 154.0
+             let rows = max(1, (item.gifts.count + ayuGiftGridColumns - 1) / ayuGiftGridColumns)
+-            let contentSize = CGSize(width: params.width, height: ayuGiftGridInset * 2.0 + CGFloat(rows) * cellSide + CGFloat(rows - 1) * ayuGiftGridSpacing)
++            let contentSize = CGSize(width: params.width, height: ayuGiftGridInset * 2.0 + CGFloat(rows) * cellHeight + CGFloat(rows - 1) * ayuGiftGridSpacing)
+             let insets = itemListNeighborsGroupedInsets(neighbors, params)
+             let layout = ListViewItemNodeLayout(contentSize: contentSize, insets: insets)
+             return (layout, { [weak self] in
                  guard let self else {
                      return
                  }
@@ -204,8 +285,25 @@ index 1433bc6e..1fb43178 100644
 +                self.cellTargets = []
                  let theme = item.presentationData.theme
                  let blockFrame = CGRect(x: params.leftInset, y: 0.0, width: blockWidth, height: contentSize.height)
-                 self.backgroundNode.backgroundColor = theme.list.itemBlocksBackgroundColor
-@@ -124,10 +153,7 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+-                self.backgroundNode.backgroundColor = theme.list.itemBlocksBackgroundColor
++                // No block card: the cells carry their own cards, as on the market.
++                self.backgroundNode.backgroundColor = .clear
+                 self.backgroundNode.frame = blockFrame
+ 
+                 while self.cells.count < item.gifts.count {
+@@ -101,7 +131,10 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+                     var ribbon: GiftItemComponent.Ribbon?
+                     switch entry.gift {
+                     case let .generic(gift):
+-                        subject = .starGift(gift: gift, price: item.prices[gift.id] ?? "")
++                        subject = .starGift(gift: gift, price: item.prices[gift.id] ?? "# \(gift.price)")
++                        if let text = item.ribbons[gift.id] {
++                            ribbon = GiftItemComponent.Ribbon(text: text, color: .green)
++                        }
+                     case let .unique(gift):
+                         subject = .uniqueGift(gift: gift, price: nil)
+                         var color: GiftItemComponent.Ribbon.Color = .blue
+@@ -124,30 +157,23 @@ final class AyuGiftGridItemNode: ListViewItemNode {
                              strings: item.presentationData.strings,
                              subject: subject,
                              ribbon: ribbon,
@@ -213,16 +311,32 @@ index 1433bc6e..1fb43178 100644
 -                            action: {
 -                                item.action(index)
 -                            }
-+                            mode: .profile
++                            mode: .generic
                          )),
                          environment: {},
-                         containerSize: CGSize(width: cellSide, height: cellSide)
-@@ -139,6 +165,8 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+-                        containerSize: CGSize(width: cellSide, height: cellSide)
++                        containerSize: CGSize(width: cellSide, height: cellHeight)
+                     )
+                     if let view = cell.view {
+                         if view.superview == nil {
+-                            self.view.insertSubview(view, belowSubview: self.maskNode.view)
++                            self.view.addSubview(view)
+                         }
                          let column = position % ayuGiftGridColumns
                          let row = position / ayuGiftGridColumns
-                         view.frame = CGRect(x: blockFrame.minX + ayuGiftGridInset + CGFloat(column) * (cellSide + ayuGiftGridSpacing), y: ayuGiftGridInset + CGFloat(row) * (cellSide + ayuGiftGridSpacing), width: cellSide, height: cellSide)
+-                        view.frame = CGRect(x: blockFrame.minX + ayuGiftGridInset + CGFloat(column) * (cellSide + ayuGiftGridSpacing), y: ayuGiftGridInset + CGFloat(row) * (cellSide + ayuGiftGridSpacing), width: cellSide, height: cellSide)
++                        view.frame = CGRect(x: blockFrame.minX + ayuGiftGridInset + CGFloat(column) * (cellSide + ayuGiftGridSpacing), y: ayuGiftGridInset + CGFloat(row) * (cellHeight + ayuGiftGridSpacing), width: cellSide, height: cellHeight)
 +                        view.isUserInteractionEnabled = false
 +                        self.cellTargets.append((frame: view.frame, position: position, index: index))
                      }
                  }
  
+-                var hasTopCorners = false
+-                var hasBottomCorners = false
+-                if case .sameSection(false) = neighbors.top {} else { hasTopCorners = true }
+-                if case .sameSection(false) = neighbors.bottom {} else { hasBottomCorners = true }
+-                self.maskNode.image = itemListHasRoundedBlockLayout(params) ? PresentationResourcesItemList.cornersImage(theme, top: hasTopCorners, bottom: hasBottomCorners, glass: true) : nil
+-                self.maskNode.frame = blockFrame
+             })
+         }
+     }

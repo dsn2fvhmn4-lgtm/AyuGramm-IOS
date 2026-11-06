@@ -1,5 +1,5 @@
 diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
-index a2f96372..1c105c97 100644
+index a2f96372..406dca05 100644
 --- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 +++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
 @@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
@@ -7,7 +7,7 @@ index a2f96372..1c105c97 100644
  /// Raised with every VoidGram update.
  func ayuAppVersion() -> String {
 -    return "27.6.0"
-+    return "27.6.1"
++    return "27.6.2"
  }
  
  /// The version with the build number of this IPA, as the settings header shows it.
@@ -148,10 +148,17 @@ index e70b4879..d94ac84a 100644
      |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
          var entries: [AyuGiftListEntry] = []
 diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
-index 1433bc6e..66daee84 100644
+index 1433bc6e..1fb43178 100644
 --- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
 +++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/AyuGiftGridItem.swift
-@@ -67,6 +67,8 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+@@ -62,17 +62,44 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+     private let backgroundNode: ASDisplayNode
+     private let maskNode: ASImageNode
+     private var cells: [ComponentView<Empty>] = []
++    private var cellTargets: [(frame: CGRect, position: Int, index: Int)] = []
++    private var item: AyuGiftGridItem?
+ 
+     init() {
          self.backgroundNode = ASDisplayNode()
          self.backgroundNode.isLayerBacked = true
          self.maskNode = ASImageNode()
@@ -160,3 +167,62 @@ index 1433bc6e..66daee84 100644
          super.init(layerBacked: false)
          self.clipsToBounds = true
          self.addSubnode(self.backgroundNode)
+         self.addSubnode(self.maskNode)
+     }
+ 
++    override func didLoad() {
++        super.didLoad()
++        // The list hands nested buttons no taps, so the row finds the tapped gift itself.
++        self.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:))))
++    }
++
++    @objc private func tapGesture(_ recognizer: UITapGestureRecognizer) {
++        guard recognizer.state == .ended, let item = self.item else {
++            return
++        }
++        let point = recognizer.location(in: self.view)
++        guard let target = self.cellTargets.first(where: { $0.frame.contains(point) }) else {
++            return
++        }
++        if target.position < self.cells.count, let view = self.cells[target.position].view {
++            view.alpha = 0.6
++            UIView.animate(withDuration: 0.25, animations: {
++                view.alpha = 1.0
++            })
++        }
++        item.action(target.index)
++    }
++
+     func asyncLayout() -> (_ item: AyuGiftGridItem, _ params: ListViewItemLayoutParams, _ neighbors: ItemListNeighbors) -> (ListViewItemNodeLayout, () -> Void) {
+         return { [weak self] item, params, neighbors in
+             let blockWidth = params.width - params.leftInset - params.rightInset
+@@ -85,6 +112,8 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+                 guard let self else {
+                     return
+                 }
++                self.item = item
++                self.cellTargets = []
+                 let theme = item.presentationData.theme
+                 let blockFrame = CGRect(x: params.leftInset, y: 0.0, width: blockWidth, height: contentSize.height)
+                 self.backgroundNode.backgroundColor = theme.list.itemBlocksBackgroundColor
+@@ -124,10 +153,7 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+                             strings: item.presentationData.strings,
+                             subject: subject,
+                             ribbon: ribbon,
+-                            mode: .profile,
+-                            action: {
+-                                item.action(index)
+-                            }
++                            mode: .profile
+                         )),
+                         environment: {},
+                         containerSize: CGSize(width: cellSide, height: cellSide)
+@@ -139,6 +165,8 @@ final class AyuGiftGridItemNode: ListViewItemNode {
+                         let column = position % ayuGiftGridColumns
+                         let row = position / ayuGiftGridColumns
+                         view.frame = CGRect(x: blockFrame.minX + ayuGiftGridInset + CGFloat(column) * (cellSide + ayuGiftGridSpacing), y: ayuGiftGridInset + CGFloat(row) * (cellSide + ayuGiftGridSpacing), width: cellSide, height: cellSide)
++                        view.isUserInteractionEnabled = false
++                        self.cellTargets.append((frame: view.frame, position: position, index: index))
+                     }
+                 }
+ 

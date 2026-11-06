@@ -1,0 +1,57 @@
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index 6d66ca07..c2395120 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
+ /// which the app reports to Telegram's servers.
+ /// Raised with every VoidGram update.
+ func ayuAppVersion() -> String {
+-    return "27.6.4"
++    return "27.6.5"
+ }
+ 
+ /// The version with the build number of this IPA, as the settings header shows it.
+diff --git a/submodules/TelegramCore/Sources/Network/Network.swift b/submodules/TelegramCore/Sources/Network/Network.swift
+index 2f43d298..bb0ae061 100644
+--- a/submodules/TelegramCore/Sources/Network/Network.swift
++++ b/submodules/TelegramCore/Sources/Network/Network.swift
+@@ -1539,7 +1539,8 @@ public func retryRequest<T>(signal: Signal<T, MTRpcError>) -> Signal<T, NoError>
+ public func retryRequestIfNotFrozen<T>(signal: Signal<T, MTRpcError>) -> Signal<T?, NoError> {
+     return signal
+     |> retry(retryOnError: { error in
+-        if error.errorDescription == "FROZEN_METHOD_INVALID" {
++        // VoidGram: a method a bot account may not call fails the same way every time.
++        if error.errorDescription == "FROZEN_METHOD_INVALID" || error.errorDescription == "BOT_METHOD_INVALID" {
+             return false
+         }
+         return true
+diff --git a/submodules/TelegramCore/Sources/State/FetchChatList.swift b/submodules/TelegramCore/Sources/State/FetchChatList.swift
+index 303c271d..d7121dca 100644
+--- a/submodules/TelegramCore/Sources/State/FetchChatList.swift
++++ b/submodules/TelegramCore/Sources/State/FetchChatList.swift
+@@ -286,11 +286,23 @@ func fetchChatList(accountPeerId: PeerId, postbox: Postbox, network: Network, lo
+                     flags |= 1 << 0
+                     requestFolderId = groupId.rawValue
+             }
+-            let requestChats = network.request(Api.functions.messages.getDialogs(flags: flags, folderId: requestFolderId, offsetDate: timestamp, offsetId: id, offsetPeer: peer, limit: limit, hash: hash))
+-            |> retryRequest
++            // VoidGram: a bot account may not list its dialogs (BOT_METHOD_INVALID). Retrying that forever
++            // left the chat list loading with nothing in it; the bot gets an empty list instead, and its
++            // chats appear as messages arrive.
++            let requestChats: Signal<Api.messages.Dialogs?, NoError> = network.request(Api.functions.messages.getDialogs(flags: flags, folderId: requestFolderId, offsetDate: timestamp, offsetId: id, offsetPeer: peer, limit: limit, hash: hash))
++            |> retry(retryOnError: { error in
++                return error.errorDescription != "BOT_METHOD_INVALID"
++            }, delayIncrement: 0.2, maxDelay: 5.0, maxRetries: nil, onQueue: .concurrentDefaultQueue())
++            |> map(Optional.init)
++            |> `catch` { _ -> Signal<Api.messages.Dialogs?, NoError> in
++                return .single(nil)
++            }
+             
+             return combineLatest(requestChats, additionalPinnedChats)
+             |> mapToSignal { remoteChats, pinnedChats -> Signal<FetchedChatList?, NoError> in
++                guard let remoteChats else {
++                    return .single(nil)
++                }
+                 if case .dialogsNotModified = remoteChats {
+                     return .single(nil)
+                 }

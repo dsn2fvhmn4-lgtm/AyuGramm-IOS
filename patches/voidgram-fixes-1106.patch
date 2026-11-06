@@ -1,0 +1,410 @@
+diff --git a/submodules/Display/Source/AyuExtras.swift b/submodules/Display/Source/AyuExtras.swift
+index 093f7f77..55475ca3 100644
+--- a/submodules/Display/Source/AyuExtras.swift
++++ b/submodules/Display/Source/AyuExtras.swift
+@@ -37,6 +37,12 @@ public enum AyuExtras {
+         case dimRepliesToMe
+         /// View-once photos and videos are saved to Photos when opened.
+         case saveViewOnce
++        /// The message menu of a view-once photo or video has Save (needs saveViewOnce).
++        case viewOnceMenuSave
++        /// A view-once photo or video stays in the chat after it burns (needs saveViewOnce).
++        case viewOnceKeepInChat
++        /// Opening view-once media does not count as viewing it, so it can be opened again (needs saveViewOnce).
++        case viewOnceReview
+         /// Chat scrolling glides longer and settles softly.
+         case springScroll
+         /// A notification when someone deletes a message (the history must be saving deletions).
+diff --git a/submodules/Display/Source/AyuFeatureGateUI.swift b/submodules/Display/Source/AyuFeatureGateUI.swift
+index cc1d5121..95219cc3 100644
+--- a/submodules/Display/Source/AyuFeatureGateUI.swift
++++ b/submodules/Display/Source/AyuFeatureGateUI.swift
+@@ -7,5 +7,5 @@ public enum AyuFeatureGateUI {
+         return UserDefaults.standard.bool(forKey: "ayu.gate.unlocked")
+     }
+ 
+-    static let restrictedExtras: Set<AyuExtras.Key> = [.saveViewOnce, .stayAfterBan, .notifyDeleted, .readAfterReaction, .alwaysOnline]
++    static let restrictedExtras: Set<AyuExtras.Key> = [.saveViewOnce, .viewOnceMenuSave, .viewOnceKeepInChat, .viewOnceReview, .stayAfterBan, .notifyDeleted, .readAfterReaction, .alwaysOnline]
+ }
+diff --git a/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift b/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift
+index 6382dbb9..d0e67414 100644
+--- a/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift
++++ b/submodules/GalleryUI/Sources/SecretMediaPreviewController.swift
+@@ -554,7 +554,10 @@ public final class SecretMediaPreviewController: ViewController {
+                     self?.didSetReady = true
+                 }
+                 self._ready.set(ready |> map { true })
+-                self.markMessageAsConsumedDisposable.set(self.context.engine.messages.markMessageContentAsConsumedInteractively(messageId: message.id).start())
++                // VoidGram "View again": opening view-once media does not count as viewing it.
++                if !(AyuExtras.isOn(.saveViewOnce) && AyuExtras.isOn(.viewOnceReview)) {
++                    self.markMessageAsConsumedDisposable.set(self.context.engine.messages.markMessageContentAsConsumedInteractively(messageId: message.id).start())
++                }
+             } else {
+                 var beginTimeAndTimeout: (Double, Double, Bool)?
+                 var videoDuration: Double?
+diff --git a/submodules/SettingsUI/Sources/AyuCategoriesController.swift b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+index 4c7c3532..8ccd2f4e 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoriesController.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoriesController.swift
+@@ -93,7 +93,8 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+             AyuCategoryItem(id: 2, symbol: "eye.trianglebadge.exclamationmark.fill", color: 0x5856D6, titleRu: "Режим призрака+", titleEn: "Ghost Mode+", subtitleRu: "Тонкая настройка", subtitleEn: "Fine-tuning", open: page { ayuGhostModePlusController(context: $0) }, ghostPlus: true),
+             AyuCategoryItem(id: 3, symbol: "person.crop.circle.badge.checkmark", color: 0x8E5CF7, titleRu: "Призрак по чатам", titleEn: "Ghost Mode by chat", subtitleRu: "Включить или выключить в отдельных чатах", subtitleEn: "On or off in single chats", open: page { ayuGhostExceptionsController(context: $0) }),
+             AyuCategoryItem(id: 4, symbol: "figure.walk.motion", color: 0x34C759, titleRu: "Активность и следы", titleEn: "Activity & traces", subtitleRu: "Статусы, всегда онлайн, прочитать локально, истории, номер", subtitleEn: "Statuses, always online, read locally, stories, number", open: page { ayuPrivacyPlusController(context: $0) }),
+-            AyuCategoryItem(id: 5, symbol: "hand.raised.fill", color: 0x34C759, titleRu: "Приватность и мелочи", titleEn: "Privacy & extras", subtitleRu: "Метаданные фото, чистые ссылки, анти-скам, звонки", subtitleEn: "Photo metadata, clean links, anti-scam, calls", open: page { ayuExtrasController(context: $0) })
++            AyuCategoryItem(id: 5, symbol: "hand.raised.fill", color: 0x34C759, titleRu: "Приватность и мелочи", titleEn: "Privacy & extras", subtitleRu: "Метаданные фото, чистые ссылки, анти-скам, звонки", subtitleEn: "Photo metadata, clean links, anti-scam, calls", open: page { ayuExtrasController(context: $0) }),
++            AyuCategoryItem(id: 6, symbol: "trash.fill", color: 0xFF3B30, titleRu: "Удалённые", titleEn: "Deleted", subtitleRu: "Как видно в чате, прозрачность, иконка, уведомления", subtitleEn: "How they look, transparency, icon, notifications", open: page { ayuDeletedMessagesController(context: $0) })
+         ]
+     case .messages:
+         return [
+@@ -153,7 +154,7 @@ func ayuCategoryItems(_ category: AyuCategory) -> [AyuCategoryItem] {
+ func ayuCategoryController(context: AccountContext, category: AyuCategory) -> ViewController {
+     var push: ((ViewController) -> Void)?
+     // Ghost Mode, activity, history, view-once, plugins and Local Premium wait for AyuFeatureGate.
+-    let restricted: Set<Int32> = [1, 2, 3, 4, 11, 12, 13, 61, 63]
++    let restricted: Set<Int32> = [1, 2, 3, 4, 6, 11, 12, 13, 61, 63]
+     let items = ayuCategoryItems(category).filter { AyuFeatureGate.isUnlocked || !restricted.contains($0.id) }
+     let arguments = AyuSectionedArguments(open: { id in
+         guard let item = items.first(where: { $0.id == id }) else { return }
+diff --git a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+index f16e5455..f2d5035e 100644
+--- a/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
++++ b/submodules/SettingsUI/Sources/AyuCategoryScreens.swift
+@@ -53,12 +53,31 @@ private func ayuChoose<T>(_ present: (UIViewController) -> Void, title: String,
+ // MARK: - Messages → Restriction bypass
+ 
+ func ayuRestrictionBypassController(context: AccountContext) -> ViewController {
+-    return ayuPage(context: context, title: { $0 ? "Обход ограничений" : "Restriction bypass" }, notifications: [], entries: { ru in [
+-        .header(1, 0, ru ? "ИСЧЕЗАЮЩИЕ МЕДИА" : "DISAPPEARING MEDIA"),
+-        .toggle(1, 1, symbol("photo.badge.arrow.down.fill", 0x30B0C7), ru ? "Сохранять одноразовые медиа" : "Save view-once media", ru ? "Фото, видео и кружки «на один просмотр» сохраняются в «Фото» при открытии" : "View-once photos, videos and video messages are saved to Photos when opened", AyuExtras.isOn(.saveViewOnce)),
+-        .info(1, 2, ru ? "Запрет копирования и пересылки, который владелец чата включил сам (в том числе в платных каналах), VoidGram не обходит, и уведомления о скриншотах в секретных чатах не скрывает." : "Copy and forward restrictions the chat owner turned on (paid channels included) are respected, and secret-chat screenshot notices are not hidden.")
+-    ] }, open: { _, _, _ in }, toggle: { id, value in
+-        if id == 1 { AyuExtras.set(.saveViewOnce, value) }
++    return ayuPage(context: context, title: { $0 ? "Обход ограничений" : "Restriction bypass" }, notifications: [], entries: { ru in
++        let saveViewOnce = AyuExtras.isOn(.saveViewOnce)
++        var entries: [AyuSectionedEntry] = [
++            .header(1, 0, ru ? "ИСЧЕЗАЮЩИЕ МЕДИА" : "DISAPPEARING MEDIA"),
++            .toggle(1, 1, symbol("photo.badge.arrow.down.fill", 0x30B0C7), ru ? "Сохранять одноразовые" : "Save view-once media", ru ? "Фото, видео и кружки «на один просмотр» можно сохранить" : "View-once photos, videos and video messages can be saved", saveViewOnce),
++            .picture(2, 10, .viewOnce)
++        ]
++        if saveViewOnce {
++            entries.append(contentsOf: [
++                .toggle(3, 20, symbol("square.and.arrow.down.fill", 0xAF52DE), ru ? "Кнопка «Сохранить» в меню" : "Save button in the menu", ru ? "В меню одноразового сообщения: сохранить в «Фото»" : "In a view-once message's menu: save to Photos", AyuExtras.isOn(.viewOnceMenuSave)),
++                .toggle(3, 21, symbol("bubble.left.and.text.bubble.right.fill", 0xFFCC00), ru ? "Сохранить в чате после просмотра" : "Keep in the chat after viewing", ru ? "Сгоревшее медиа остаётся в чате обычным фото или видео" : "Burnt media stays in the chat as a regular photo or video", AyuExtras.isOn(.viewOnceKeepInChat)),
++                .toggle(3, 22, symbol("arrow.counterclockwise.circle.fill", 0x007AFF), ru ? "Возможность повторного просмотра" : "View again", ru ? "Открытие не засчитывается как просмотр, медиа можно открыть снова" : "Opening does not count as viewing, so the media opens again", AyuExtras.isOn(.viewOnceReview)),
++                .info(3, 23, ru ? "С повторным просмотром отправитель не видит, что вы открыли медиа." : "With View again on, the sender does not see that you opened the media.")
++            ])
++        }
++        entries.append(.info(4, 30, ru ? "Запрет копирования и пересылки, который владелец чата включил сам (в том числе в платных каналах), VoidGram не обходит, и уведомления о скриншотах в секретных чатах не скрывает." : "Copy and forward restrictions the chat owner turned on (paid channels included) are respected, and secret-chat screenshot notices are not hidden."))
++        return entries
++    }, open: { _, _, _ in }, toggle: { id, value in
++        switch id {
++        case 1: AyuExtras.set(.saveViewOnce, value)
++        case 20: AyuExtras.set(.viewOnceMenuSave, value)
++        case 21: AyuExtras.set(.viewOnceKeepInChat, value)
++        case 22: AyuExtras.set(.viewOnceReview, value)
++        default: break
++        }
+     })
+ }
+ 
+@@ -433,3 +452,111 @@ func ayuLocalNotificationsController(context: AccountContext) -> ViewController
+         }
+     })
+ }
++
++// MARK: - Privacy → Deleted messages
++
++/// Everything about deleted messages on one page: keeping them, how they look in the chat (fade
++/// and its strength, the mark beside the time), the notification and the archive.
++func ayuDeletedMessagesController(context: AccountContext) -> ViewController {
++    let store = context.account.network.ayuGhostMode
++    var push: ((ViewController) -> Void)?
++    var presentNative: ((UIViewController) -> Void)?
++    let update: ((inout AyuGhostModeSettings) -> Void) -> Void = { f in
++        let _ = try? store.update(f)
++    }
++    var arguments = AyuSectionedArguments(open: { id in
++        let ru = ayuIsRussian(context)
++        switch id {
++        case 20:
++            let styles: [AyuAppearanceSettings.DeletedMarkStyle] = [.text, .trash, .eye]
++            ayuChoose({ presentNative?($0) }, title: ru ? "Метка удалённых" : "Deleted mark", ru: ru, options: styles, current: store.current.appearance.deletedMarkStyle, label: { style in
++                switch style {
++                case .text: return AyuStrings.textText.text(ru)
++                case .trash: return AyuStrings.trash.text(ru)
++                case .eye: return AyuStrings.eye.text(ru)
++                }
++            }, equal: { $0 == $1 }, pick: { style in
++                update { $0.appearance.deletedMarkStyle = style }
++            })
++        case 21:
++            push?(ayuAppearanceController(context: context))
++        case 40:
++            push?(ayuMessageHistoryController(context: context, archiveOnly: true))
++        case 41:
++            push?(ayuMessageHistoryController(context: context))
++        default:
++            break
++        }
++    }, toggle: { id, value in
++        switch id {
++        case 1:
++            let _ = context.engine.messages.updateAyuMessageHistory(saveDeleted: value).startStandalone()
++        case 10:
++            update { $0.interface.semiTransparentDeletedMessages = value }
++        case 30:
++            AyuExtras.set(.notifyDeleted, value)
++        case 31:
++            AyuExtras.set(.skipOwnDeleted, value)
++        case 32:
++            update { $0.interface.replyToDeletedMessages = value }
++        default:
++            break
++        }
++        NotificationCenter.default.post(name: ayuLocalSettingsChanged, object: nil)
++    })
++    arguments.slider = { id, value in
++        if id == 11 {
++            update { $0.interface.deletedMessageTransparency = min(99, max(25, value)) }
++        }
++    }
++    arguments.context = context
++
++    let signal = combineLatest(ayuSettingsPresentationData(context: context), store.signal, context.engine.messages.ayuMessageHistory(), ayuChanges([ayuLocalSettingsChanged, AyuExtras.didChangeNotification]))
++    |> deliverOnMainQueue
++    |> map { presentationData, settings, history, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
++        let ru = presentationData.strings.baseLanguageCode.hasPrefix("ru")
++        let interface = settings.interface
++        let appearance = settings.appearance
++        let markLabel: String
++        switch appearance.deletedMarkStyle {
++        case .text: markLabel = appearance.deletedMark.isEmpty ? AyuStrings.textText.text(ru) : appearance.deletedMark
++        case .trash: markLabel = AyuStrings.trash.text(ru)
++        case .eye: markLabel = AyuStrings.eye.text(ru)
++        }
++        var entries: [AyuSectionedEntry] = [
++            .chat(0, 0, AyuSectionedChatPreview(presentationData: presentationData, messages: [
++                ChatPreviewMessageItem(outgoing: false, reply: nil, text: AyuStrings.sendMeWiFiPasswordLater.text(ru), nameColor: .preset(.blue), backgroundEmojiId: nil, ayuDeleted: true),
++                ChatPreviewMessageItem(outgoing: true, reply: nil, text: AyuStrings.okSeeYouThere.text(ru), nameColor: .preset(.blue), backgroundEmojiId: nil)
++            ])),
++            .toggle(1, 1, symbol("trash.fill", 0xFF9500), AyuStrings.saveDeletedText.text(ru), ru ? "Удалённые собеседником сообщения остаются в чате" : "Messages the other side deletes stay in the chat", history.saveDeleted),
++            .header(2, 9, ru ? "КАК ВИДНО В ЧАТЕ" : "IN THE CHAT"),
++            .toggle(2, 10, symbol("circle.lefthalf.filled", 0x8E8E93), AyuStrings.semiTransparentDeleted.text(ru), nil, interface.semiTransparentDeletedMessages)
++        ]
++        if interface.semiTransparentDeletedMessages {
++            entries.append(.slider(2, 11, interface.deletedMessageTransparency, 25, 99))
++            entries.append(.info(2, 12, ru ? "Прозрачность удалённых: \(interface.deletedMessageTransparency)%" : "Deleted message transparency: \(interface.deletedMessageTransparency)%"))
++        }
++        entries.append(contentsOf: [
++            .header(3, 19, ru ? "МЕТКА" : "MARK"),
++            .link(3, 20, symbol("tag.fill", 0x5856D6), ru ? "Иконка или текст" : "Icon or text", markLabel),
++            .link(3, 21, symbol("character.cursor.ibeam", 0x007AFF), ru ? "Свой текст метки" : "Custom mark text", ""),
++            .header(4, 29, ru ? "ДРУГОЕ" : "OTHER"),
++            .toggle(4, 30, symbol("bell.badge.fill", 0xFF3B30), ru ? "Уведомлять об удалении" : "Notify about deletions", nil, AyuExtras.isOn(.notifyDeleted)),
++            .toggle(4, 31, symbol("person.crop.circle.badge.xmark", 0x8E8E93), ru ? "Не сохранять свои удалённые" : "Skip my own deleted", nil, AyuExtras.isOn(.skipOwnDeleted)),
++            .toggle(4, 32, symbol("arrowshape.turn.up.left.fill", 0x34C759), ru ? "Ответ на удалённые сообщения" : "Reply to deleted messages", nil, interface.replyToDeletedMessages),
++            .header(5, 39, ru ? "АРХИВ" : "ARCHIVE"),
++            .link(5, 40, symbol("tray.full.fill", 0xFF9500), AyuStrings.savedMessagesArchive.text(ru), "\(history.records.count)"),
++            .link(5, 41, symbol("gearshape.fill", 0x8E8E93), ru ? "Удалённые и изменённые" : "Deleted & edited", "")
++        ])
++        if !AyuFeatureGate.isUnlocked {
++            entries.removeAll(where: { $0.stableId == 30 })
++        }
++        let data = ItemListPresentationData(presentationData)
++        let state = ItemListControllerState(presentationData: data, title: .text(ru ? "Удалённые" : "Deleted"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
++        return (state, (ItemListNodeState(presentationData: data, entries: entries, style: .blocks, animateChanges: false), arguments))
++    }
++    let controller = ItemListController(context: context, state: signal)
++    push = { [weak controller] in controller?.push($0) }
++    presentNative = { context.sharedContext.applicationBindings.presentNativeController($0) }
++    return controller
++}
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift b/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
+index 8c903359..cc720de4 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsPreviews.swift
+@@ -12,12 +12,15 @@ enum AyuPreviewPicture: Equatable {
+     case chatHistory
+     /// A chat where the other person does not see you read or online (Privacy pages).
+     case chatGhost(Bool)
++    /// A view-once video message with its menu open on Save (Restriction bypass).
++    case viewOnce
+ 
+     var height: CGFloat {
+         switch self {
+         case .messageShot: return 300.0
+         case .chatHistory: return 250.0
+         case .chatGhost: return 200.0
++        case .viewOnce: return 230.0
+         }
+     }
+ 
+@@ -28,6 +31,7 @@ enum AyuPreviewPicture: Equatable {
+             case let .messageShot(settings): return AyuSettingsPreviews.messageShot(size: size, theme: theme, settings: settings, ru: ru)
+             case .chatHistory: return AyuSettingsPreviews.chat(size: size, theme: theme, ru: ru, ghost: nil)
+             case let .chatGhost(active): return AyuSettingsPreviews.chat(size: size, theme: theme, ru: ru, ghost: active)
++            case .viewOnce: return AyuSettingsPreviews.viewOnce(size: size, theme: theme, ru: ru)
+             }
+         })
+     }
+@@ -118,6 +122,90 @@ enum AyuSettingsPreviews {
+         }
+     }
+ 
++    // MARK: - View-once
++
++    /// A view-once video message under its dust with a play button, and the message menu beside it
++    /// with Save picked, drawn in the theme's context-menu colours.
++    static func viewOnce(size: CGSize, theme: PresentationTheme, ru: Bool) -> UIImage? {
++        let format = UIGraphicsImageRendererFormat()
++        format.opaque = false
++        return UIGraphicsImageRenderer(size: size, format: format).image { rendererContext in
++            let context = rendererContext.cgContext
++            let menuWidth: CGFloat = min(180.0, size.width * 0.44)
++            let circleSide = min(size.height - 24.0, size.width - menuWidth - 36.0)
++            let circle = CGRect(x: 12.0, y: floor((size.height - circleSide) / 2.0), width: circleSide, height: circleSide)
++
++            context.saveGState()
++            UIBezierPath(ovalIn: circle).addClip()
++            UIColor.black.setFill()
++            context.fill(circle)
++            // The dust view-once media sits under until it is opened.
++            var seed: UInt64 = 0x9E3779B97F4A7C15
++            func next() -> CGFloat {
++                seed = seed &* 6364136223846793005 &+ 1442695040888963407
++                return CGFloat((seed >> 33) % 10000) / 10000.0
++            }
++            UIColor.white.withAlphaComponent(0.85).setFill()
++            for _ in 0 ..< 420 {
++                let point = CGPoint(x: circle.minX + next() * circle.width, y: circle.minY + next() * circle.height)
++                let side: CGFloat = next() > 0.8 ? 1.6 : 1.0
++                context.fillEllipse(in: CGRect(x: point.x, y: point.y, width: side, height: side))
++            }
++            context.restoreGState()
++            UIColor.white.setStroke()
++            let ring = UIBezierPath(ovalIn: circle.insetBy(dx: 3.0, dy: 3.0))
++            ring.lineWidth = 2.0
++            ring.stroke()
++            let play = CGRect(x: circle.midX - 26.0, y: circle.midY - 26.0, width: 52.0, height: 52.0)
++            UIColor(white: 1.0, alpha: 0.25).setFill()
++            context.fillEllipse(in: play)
++            if let icon = UIImage(systemName: "play.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22.0, weight: .bold))?.withTintColor(.white, renderingMode: .alwaysOriginal) {
++                icon.draw(at: CGPoint(x: play.midX - icon.size.width / 2.0 + 2.0, y: play.midY - icon.size.height / 2.0))
++            }
++
++            let menuTheme = theme.contextMenu
++            let rows: [(String, String, Bool)] = [
++                ("arrowshape.turn.up.left", ru ? "Ответить" : "Reply", false),
++                ("square.and.arrow.down", ru ? "Сохранить видео" : "Save Video", false),
++                ("pin", ru ? "Закрепить" : "Pin", false),
++                ("arrowshape.turn.up.right", ru ? "Переслать" : "Forward", false),
++                ("trash", ru ? "Удалить" : "Delete", true)
++            ]
++            let rowHeight: CGFloat = 32.0
++            let gap: CGFloat = 6.0
++            let menuHeight = CGFloat(rows.count + 1) * rowHeight + gap
++            let menu = CGRect(x: size.width - menuWidth - 12.0, y: floor((size.height - menuHeight) / 2.0), width: menuWidth, height: menuHeight)
++            context.saveGState()
++            UIBezierPath(roundedRect: menu, cornerRadius: 14.0).addClip()
++            menuTheme.backgroundColor.setFill()
++            context.fill(menu)
++            func drawRow(_ row: (String, String, Bool), y: CGFloat, highlighted: Bool) {
++                if highlighted {
++                    menuTheme.itemHighlightedBackgroundColor.setFill()
++                    UIBezierPath(roundedRect: CGRect(x: menu.minX + 4.0, y: y + 1.0, width: menu.width - 8.0, height: rowHeight - 2.0), cornerRadius: 9.0).fill()
++                }
++                let color = row.2 ? menuTheme.destructiveColor : menuTheme.primaryColor
++                if let icon = UIImage(systemName: row.0, withConfiguration: UIImage.SymbolConfiguration(pointSize: 13.0, weight: .regular))?.withTintColor(color, renderingMode: .alwaysOriginal) {
++                    icon.draw(at: CGPoint(x: menu.minX + 12.0, y: y + floor((rowHeight - icon.size.height) / 2.0)))
++                }
++                let font = UIFont.systemFont(ofSize: 13.0)
++                let title = row.1 as NSString
++                let titleSize = title.size(withAttributes: [.font: font])
++                title.draw(at: CGPoint(x: menu.minX + 36.0, y: y + floor((rowHeight - titleSize.height) / 2.0)), withAttributes: [.font: font, .foregroundColor: color])
++            }
++            var y = menu.minY
++            for (index, row) in rows.enumerated() {
++                drawRow(row, y: y, highlighted: index == 1)
++                y += rowHeight
++            }
++            menuTheme.sectionSeparatorColor.setFill()
++            context.fill(CGRect(x: menu.minX, y: y, width: menu.width, height: gap))
++            y += gap
++            drawRow(("checkmark.circle", ru ? "Выбрать" : "Select", false), y: y, highlighted: false)
++            context.restoreGState()
++        }
++    }
++
+     // MARK: - MessageShot
+ 
+     /// The picture the real MessageShot renderer makes for two sample messages with these
+diff --git a/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift b/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift
+index 713bf6f4..c847c191 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedAutoremoveMessageOperations.swift
+@@ -91,7 +91,9 @@ func managedAutoremoveMessageOperations(network: Network, postbox: Postbox, isRe
+                                     storeForwardInfo = StoreMessageForwardInfo(authorId: forwardInfo.author?.id, sourceId: forwardInfo.source?.id, sourceMessageId: forwardInfo.sourceMessageId, date: forwardInfo.date, authorSignature: forwardInfo.authorSignature, psaType: forwardInfo.psaType, flags: forwardInfo.flags)
+                                 }
+                                 var updatedMedia = currentMessage.media
+-                                for i in 0 ..< updatedMedia.count {
++                                // VoidGram "Keep in the chat after viewing": the media stays, only the timer goes.
++                                let keepViewOnce = AyuFeatureGate.isUnlocked && UserDefaults.standard.bool(forKey: "ayu.extra.saveViewOnce") && UserDefaults.standard.bool(forKey: "ayu.extra.viewOnceKeepInChat")
++                                for i in 0 ..< updatedMedia.count where !keepViewOnce {
+                                     if let _ = updatedMedia[i] as? TelegramMediaImage {
+                                         updatedMedia[i] = TelegramMediaExpiredContent(data: .image)
+                                     } else if let file = updatedMedia[i] as? TelegramMediaFile {
+diff --git a/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift b/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift
+index bea6e89f..bfd9a497 100644
+--- a/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift
++++ b/submodules/TelegramUI/Components/MediaManager/PeerMessagesMediaPlaylist/Sources/PeerMessagesMediaPlaylist.swift
+@@ -917,6 +917,10 @@ public final class PeerMessagesMediaPlaylist: SharedMediaPlaylist {
+                 default:
+                     break
+             }
++            // VoidGram "View again": a view-once voice or video message is not counted as played.
++            if AyuExtras.isOn(.saveViewOnce) && AyuExtras.isOn(.viewOnceReview) && item.message.attributes.contains(where: { $0 is AutoclearTimeoutMessageAttribute }) {
++                return
++            }
+             let _ = self.context.engine.messages.markMessageContentAsConsumedInteractively(messageId: item.message.id).startStandalone()
+         }
+     }
+diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+index c4ad768b..5f7df3e3 100644
+--- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
++++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+@@ -1541,6 +1541,35 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             }
+         }
+         
++        // VoidGram "Save button in the menu": view-once photos and videos can be saved to Photos.
++        if message.containsSecretMedia && !isCopyProtected && AyuExtras.isOn(.saveViewOnce) && AyuExtras.isOn(.viewOnceMenuSave) {
++            var viewOnceMedia: (Media, Bool)?
++            for media in message.media {
++                if let image = media as? TelegramMediaImage {
++                    viewOnceMedia = (image, false)
++                    break
++                } else if let file = media as? TelegramMediaFile, file.isVideo || file.isInstantVideo {
++                    viewOnceMedia = (file, true)
++                    break
++                }
++            }
++            if let (media, isVideo) = viewOnceMedia {
++                let mediaReference = AnyMediaReference.message(message: MessageReference(message), media: media)
++                actions.append(.action(ContextMenuActionItem(text: isVideo ? chatPresentationInterfaceState.strings.Gallery_SaveVideo : chatPresentationInterfaceState.strings.Gallery_SaveImage, icon: { theme in
++                    return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Save"), color: theme.actionSheet.primaryTextColor)
++                }, action: { _, f in
++                    let _ = (saveToCameraRoll(context: context, userLocation: .peer(message.id.peerId), mediaReference: mediaReference)
++                             |> deliverOnMainQueue).startStandalone(completed: {
++                        Queue.mainQueue().after(0.2) {
++                            let presentationData = context.sharedContext.currentPresentationData.with { $0 }
++                            controllerInteraction.presentControllerInCurrent(UndoOverlayController(presentationData: presentationData, content: .mediaSaved(text: isVideo ? presentationData.strings.Gallery_VideoSaved : presentationData.strings.Gallery_ImageSaved), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return true }), nil)
++                        }
++                    })
++                    f(.default)
++                })))
++            }
++        }
++
+         var downloadableMediaResourceInfos: [String] = []
+         for media in message.effectiveMedia {
+             if let file = media as? TelegramMediaFile {

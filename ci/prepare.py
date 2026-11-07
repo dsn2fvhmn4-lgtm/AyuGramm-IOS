@@ -53,6 +53,7 @@ patches = [
     root / "patches" / "voidgram-fixes-1106.patch",
     root / "patches" / "voidgram-gift-market.patch",
     root / "patches" / "voidgram-bot-chat-list.patch",
+    root / "patches" / "voidgram-gift-actions.patch",
 ]
 for patch in patches:
     subprocess.run(["git", "apply", "--recount", "--check", str(patch)], cwd=source, check=True)

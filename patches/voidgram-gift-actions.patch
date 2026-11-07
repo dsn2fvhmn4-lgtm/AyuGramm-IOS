@@ -1,0 +1,371 @@
+diff --git a/submodules/SettingsUI/Sources/AyuSettingsRows.swift b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+index c2395120..b9cb9415 100644
+--- a/submodules/SettingsUI/Sources/AyuSettingsRows.swift
++++ b/submodules/SettingsUI/Sources/AyuSettingsRows.swift
+@@ -134,7 +134,7 @@ enum AyuSettingsEntry: ItemListNodeEntry {
+ /// which the app reports to Telegram's servers.
+ /// Raised with every VoidGram update.
+ func ayuAppVersion() -> String {
+-    return "27.6.5"
++    return "27.6.6"
+ }
+ 
+ /// The version with the build number of this IPA, as the settings header shows it.
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift
+index 640443ac..9b75ff3e 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGift.swift
+@@ -27,6 +27,8 @@ public struct AyuGrantedGift: Equatable {
+     public let worn: Bool
+     /// Who handed the gift on, when it came by transfer rather than from the owner.
+     public let fromId: Int64?
++    /// Taken off the top of the holder's profile; granted gifts are pinned until then.
++    public let unpinned: Bool
+ 
+     init?(json: [String: Any], index: Int) {
+         let giftId = (json["giftId"] as? NSNumber)?.int64Value ?? (json["giftId"] as? String).flatMap(Int64.init)
+@@ -45,6 +47,7 @@ public struct AyuGrantedGift: Equatable {
+         self.text = (json["text"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(120)) }
+         self.worn = (json["worn"] as? Bool) ?? false
+         self.fromId = (json["fromId"] as? NSNumber)?.int64Value ?? (json["fromId"] as? String).flatMap(Int64.init)
++        self.unpinned = (json["unpinned"] as? Bool) ?? false
+     }
+ 
+     /// Shown as the gift's message, so nobody takes it for a gift Telegram knows about.
+diff --git a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
+index a182f1a5..2e024b72 100644
+--- a/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
++++ b/submodules/TelegramCore/Sources/AyuGram/AyuGrantedGifts.swift
+@@ -28,10 +28,12 @@ func ayuUniqueGift(_ granted: AyuGrantedGift, title: String, attributes: [StarGi
+         return nil
+     }
+     let slug = "AyuGram-\(granted.giftId)-\(granted.number)"
+-    return StarGift.UniqueGift(id: granted.giftId &+ Int64(granted.number), giftId: granted.giftId, title: granted.title ?? title, number: granted.number, slug: slug, owner: .peerId(ownerPeerId), attributes: [model, pattern, backdrop], availability: StarGift.UniqueGift.Availability(issued: granted.number, total: max(granted.number, 100000)), giftAddress: nil, resellAmounts: nil, resellForTonOnly: false, releasedBy: nil, valueAmount: nil, valueCurrency: nil, valueUsdAmount: nil, flags: [], themePeerId: nil, peerColor: nil, hostPeerId: nil, minOfferStars: nil, craftChancePermille: nil)
++    return StarGift.UniqueGift(id: granted.giftId &+ Int64(granted.number), giftId: granted.giftId, title: granted.title ?? title, number: granted.number, slug: slug, owner: .peerId(ownerPeerId), attributes: [model, pattern, backdrop], availability: StarGift.UniqueGift.Availability(issued: granted.number, total: max(granted.number, 100000)), giftAddress: nil, resellAmounts: nil, resellForTonOnly: false, releasedBy: nil, valueAmount: nil, valueCurrency: nil, valueUsdAmount: nil, flags: [], themePeerId: nil, peerColor: nil, hostPeerId: nil, minOfferStars: nil, craftChancePermille: ayuGrantedCraftChancePermille)
+ }
+ 
+ private let ayuGrantReferencePrefix = "ayugram-grant-"
++/// What each granted NFT put into a craft adds to its chance; the badge server rolls with the same.
++private let ayuGrantedCraftChancePermille: Int32 = 200
+ private let ayuGrantedSlugPrefix = "AyuGram-"
+ 
+ /// The upgrade price the gift screen shows for a plain granted gift. Nothing is charged.
+@@ -108,7 +110,7 @@ private func ayuGrantedGiftRows(account: Account, peerId: EnginePeer.Id, granted
+                     transferStars = 0
+                 }
+             }
+-            return ProfileGiftsContext.State.StarGift(gift: gift, reference: reference, fromPeer: nil, date: item.date, text: item.text ?? AyuGrantedGift.note(ru), entities: nil, nameHidden: false, savedToProfile: true, pinnedToTop: true, convertStars: nil, canUpgrade: canUpgrade, canExportDate: nil, upgradeStars: nil, transferStars: transferStars, canTransferDate: nil, canResaleDate: nil, collectionIds: nil, prepaidUpgradeHash: nil, upgradeSeparate: false, dropOriginalDetailsStars: nil, number: item.kind == .unique ? item.number : nil, isRefunded: false, canCraftAt: nil)
++            return ProfileGiftsContext.State.StarGift(gift: gift, reference: reference, fromPeer: nil, date: item.date, text: item.text ?? AyuGrantedGift.note(ru), entities: nil, nameHidden: false, savedToProfile: true, pinnedToTop: !item.unpinned, convertStars: nil, canUpgrade: canUpgrade, canExportDate: nil, upgradeStars: nil, transferStars: transferStars, canTransferDate: nil, canResaleDate: nil, collectionIds: nil, prepaidUpgradeHash: nil, upgradeSeparate: false, dropOriginalDetailsStars: nil, number: item.kind == .unique ? item.number : nil, isRefunded: false, canCraftAt: isOwn && item.kind == .unique ? 0 : nil)
+         }
+     }
+ }
+@@ -558,3 +560,85 @@ public func ayuAnnounceGrantedGift(account: Account, recipientId: Int64) -> Sign
+         |> ignoreValues
+     }
+ }
++
++/// The registry index of the account's own granted gift behind `reference`: a profile row's
++/// reference, or the NFT's slug as the craft screen passes its first gift.
++private func ayuOwnGrantedIndex(account: Account, reference: StarGiftReference) -> Int? {
++    if let index = ayuGrantedGiftIndex(reference) {
++        return index
++    }
++    guard case let .slug(slug) = reference, slug.hasPrefix(ayuGrantedSlugPrefix) else {
++        return nil
++    }
++    let parts = slug.dropFirst(ayuGrantedSlugPrefix.count).split(separator: "-")
++    guard parts.count == 2, let giftId = Int64(parts[0]), let number = Int32(parts[1]) else {
++        return nil
++    }
++    return AyuSupportersManager.shared.grantedGifts(peerId: account.peerId.id._internalGetInt64Value()).first(where: { $0.kind == .unique && $0.giftId == giftId && $0.number == number })?.index
++}
++
++/// Whether `reference` stands for a gift from the badge registry rather than a Telegram one.
++public func ayuIsGrantedGiftReference(_ reference: StarGiftReference?) -> Bool {
++    if ayuGrantedGiftIndex(reference) != nil {
++        return true
++    }
++    if case let .slug(slug)? = reference {
++        return slug.hasPrefix(ayuGrantedSlugPrefix)
++    }
++    return false
++}
++
++/// Pins the account's granted gift above the others on its profile, or unpins it.
++public func ayuPinGrantedGift(account: Account, reference: StarGiftReference, pinned: Bool) -> Signal<Never, String> {
++    return ayuHeldGiftRequest(account: account, route: "pin", reference: reference, body: ["pinned": pinned])
++    |> ignoreValues
++}
++
++/// Throws away one of the account's granted gifts.
++public func ayuDeleteGrantedGift(account: Account, reference: StarGiftReference) -> Signal<Never, String> {
++    return ayuHeldGiftRequest(account: account, route: "delete", reference: reference, body: [:])
++    |> ignoreValues
++}
++
++/// The account's granted NFTs of one collection, for the craft screen to pick from.
++func ayuGrantedCraftCandidates(account: Account, giftId: Int64) -> Signal<[ProfileGiftsContext.State.StarGift], NoError> {
++    let accountPeerId = account.peerId.id._internalGetInt64Value()
++    return ayuGrantedGiftsUpdates()
++    |> map { _ -> [AyuGrantedGift] in
++        return AyuSupportersManager.shared.grantedGifts(peerId: accountPeerId).filter { $0.kind == .unique && $0.giftId == giftId }
++    }
++    |> distinctUntilChanged
++    |> mapToSignal { granted -> Signal<[ProfileGiftsContext.State.StarGift], NoError> in
++        return ayuGrantedGiftRows(account: account, peerId: account.peerId, granted: granted)
++    }
++}
++
++/// Crafts the account's granted NFTs on the badge server: they are used up, and with luck a new NFT
++/// of the collection comes out. Fails with `.craftFailed` when it does not.
++func ayuCraftGrantedGifts(account: Account, references: [StarGiftReference]) -> Signal<ProfileGiftsContext.State.StarGift, CraftStarGiftError> {
++    let accountPeerId = account.peerId.id._internalGetInt64Value()
++    let indices = references.compactMap { ayuOwnGrantedIndex(account: account, reference: $0) }
++    guard !indices.isEmpty, indices.count == references.count else {
++        return .fail(.generic)
++    }
++    let before = Set(AyuSupportersManager.shared.grantedGifts(peerId: accountPeerId).map { "\($0.giftId)-\($0.number)" })
++    return AyuBadgeServer.post(account: account, route: "craft", body: ["indices": indices], ru: ayuRussian())
++    |> mapError { _ -> CraftStarGiftError in
++        return .generic
++    }
++    |> mapToSignal { _ -> Signal<ProfileGiftsContext.State.StarGift, CraftStarGiftError> in
++        // A crafted NFT is the one gift the account did not hold before.
++        guard let crafted = AyuSupportersManager.shared.grantedGifts(peerId: accountPeerId).first(where: { $0.kind == .unique && !before.contains("\($0.giftId)-\($0.number)") }) else {
++            return .fail(.craftFailed)
++        }
++        return ayuGrantedGiftRows(account: account, peerId: account.peerId, granted: [crafted])
++        |> take(1)
++        |> castError(CraftStarGiftError.self)
++        |> mapToSignal { rows -> Signal<ProfileGiftsContext.State.StarGift, CraftStarGiftError> in
++            guard let row = rows.first else {
++                return .fail(.generic)
++            }
++            return .single(row)
++        }
++    }
++}
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift b/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift
+index 29f596bb..3642333e 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Payments/StarGifts.swift
+@@ -3158,9 +3158,17 @@ public final class ProfileGiftsContext {
+             guard !granted.isEmpty else {
+                 return state
+             }
++            // Pinned granted gifts go first, unpinned ones right after Telegram's pinned gifts.
++            let pinned = granted.filter { $0.pinnedToTop }
++            let unpinned = granted.filter { !$0.pinnedToTop }
++            func merged(_ gifts: [ProfileGiftsContext.State.StarGift]) -> [ProfileGiftsContext.State.StarGift] {
++                let telegramPinned: [ProfileGiftsContext.State.StarGift] = Array(gifts.prefix(while: { $0.pinnedToTop }))
++                let rest: [ProfileGiftsContext.State.StarGift] = Array(gifts.dropFirst(telegramPinned.count))
++                return pinned + telegramPinned + unpinned + rest
++            }
+             var state = state
+-            state.gifts = granted + state.gifts
+-            state.filteredGifts = granted + state.filteredGifts
++            state.gifts = merged(state.gifts)
++            state.filteredGifts = merged(state.filteredGifts)
+             state.count = (state.count ?? 0) + Int32(granted.count)
+             return state
+         }
+@@ -3201,18 +3209,29 @@ public final class ProfileGiftsContext {
+     }
+     
+     public func updateStarGiftAddedToProfile(reference: StarGiftReference, added: Bool) {
++        // AyuGram: a granted gift is always shown on the profile.
++        if ayuIsGrantedGiftReference(reference) {
++            return
++        }
+         self.impl.with { impl in
+             impl.updateStarGiftAddedToProfile(reference: reference, added: added)
+         }
+     }
+     
+     public func updateStarGiftPinnedToTop(reference: StarGiftReference, pinnedToTop: Bool) {
++        // AyuGram: a granted gift is pinned in the badge registry.
++        if ayuIsGrantedGiftReference(reference) {
++            let _ = ayuPinGrantedGift(account: self.ayuAccount, reference: reference, pinned: pinnedToTop).startStandalone()
++            return
++        }
+         self.impl.with { impl in
+             impl.updateStarGiftPinnedToTop(reference: reference, pinnedToTop: pinnedToTop)
+         }
+     }
+     
+     public func updatePinnedToTopStarGifts(references: [StarGiftReference]) {
++        // AyuGram: granted gifts are not Telegram's to order.
++        let references = references.filter { !ayuIsGrantedGiftReference($0) }
+         self.impl.with { impl in
+             impl.updatePinnedToTopStarGifts(references: references)
+         }
+@@ -3239,6 +3258,11 @@ public final class ProfileGiftsContext {
+     }
+     
+     public func deleteStarGift(reference: StarGiftReference) {
++        // AyuGram: a granted gift is removed from the badge registry.
++        if ayuIsGrantedGiftReference(reference) {
++            let _ = ayuDeleteGrantedGift(account: self.ayuAccount, reference: reference).startStandalone()
++            return
++        }
+         self.impl.with { impl in
+             impl.deleteStarGift(reference: reference)
+         }
+@@ -3265,6 +3289,8 @@ public final class ProfileGiftsContext {
+     }
+     
+     public func insertStarGifts(gifts: [ProfileGiftsContext.State.StarGift], afterPinned: Bool = false) {
++        // AyuGram: granted gifts come from the registry, not from this list.
++        let gifts = gifts.filter { !ayuIsGrantedGiftReference($0.reference) }
+         self.impl.with { impl in
+             impl.insertStarGifts(gifts: gifts, afterPinned: afterPinned)
+         }
+@@ -3283,6 +3309,10 @@ public final class ProfileGiftsContext {
+     }
+ 
+     public func transferStarGift(prepaid: Bool, reference: StarGiftReference, peerId: EnginePeer.Id) -> Signal<Never, TransferStarGiftError> {
++        // AyuGram: a granted NFT moves to the recipient in the badge registry.
++        if ayuGrantedGiftIndex(reference) != nil {
++            return ayuTransferGrantedGift(account: self.ayuAccount, reference: reference, peerId: peerId)
++        }
+         return Signal { subscriber in
+             let disposable = MetaDisposable()
+             self.impl.with { impl in
+@@ -3504,6 +3534,13 @@ public final class CraftGiftsContext {
+     private let impl: QueueLocalObject<CraftGiftsContextImpl>
+ 
+     public var state: Signal<CraftGiftsContext.State, NoError> {
++        // AyuGram: a granted NFT crafts with the account's other granted NFTs of its collection.
++        if let ayuAccount = self.ayuGrantedAccount {
++            return ayuGrantedCraftCandidates(account: ayuAccount, giftId: self.giftId)
++            |> map { gifts in
++                return CraftGiftsContext.State(gifts: gifts, count: Int32(gifts.count), dataState: .ready(canLoadMore: false, nextOffset: nil))
++            }
++        }
+         return Signal { subscriber in
+             let disposable = MetaDisposable()
+ 
+@@ -3518,13 +3555,16 @@ public final class CraftGiftsContext {
+     }
+ 
+     public let giftId: Int64
++    private let ayuGrantedAccount: Account?
+ 
+     public init(
+         account: Account,
+         giftId: Int64,
+-        limit: Int32 = 36
++        limit: Int32 = 36,
++        ayuGranted: Bool = false
+     ) {
+         self.giftId = giftId
++        self.ayuGrantedAccount = ayuGranted ? account : nil
+ 
+         let queue = self.queue
+         self.impl = QueueLocalObject(queue: queue, generate: {
+@@ -3551,6 +3591,9 @@ public final class CraftGiftsContext {
+     }
+ 
+     public func craft(references: [StarGiftReference]) -> Signal<ProfileGiftsContext.State.StarGift, CraftStarGiftError> {
++        if let ayuAccount = self.ayuGrantedAccount {
++            return ayuCraftGrantedGifts(account: ayuAccount, references: references)
++        }
+         return Signal { subscriber in
+             let disposable = MetaDisposable()
+             self.impl.with { impl in
+diff --git a/submodules/TelegramUI/Components/Gifts/GiftCraftScreen/Sources/GiftCraftScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftCraftScreen/Sources/GiftCraftScreen.swift
+index 88eaaf81..bd4fa84b 100644
+--- a/submodules/TelegramUI/Components/Gifts/GiftCraftScreen/Sources/GiftCraftScreen.swift
++++ b/submodules/TelegramUI/Components/Gifts/GiftCraftScreen/Sources/GiftCraftScreen.swift
+@@ -1986,7 +1986,8 @@ public class GiftCraftScreen: ViewControllerComponentContainer {
+     ) {
+         self.profileGiftsContext = profileGiftsContext
+         
+-        let craftContext = CraftGiftsContext(account: context.account, giftId: gift.giftId)
++        // AyuGram: a granted NFT crafts on the badge server, with the account's other granted NFTs.
++        let craftContext = CraftGiftsContext(account: context.account, giftId: gift.giftId, ayuGranted: ayuIsGrantedGiftSlug(gift.slug))
+         super.init(
+             context: context,
+             component: SheetContainerComponent(
+diff --git a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
+index dab862c9..b348e1c2 100644
+--- a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
++++ b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
+@@ -992,6 +992,10 @@ private final class GiftViewSheetContent: CombinedComponent {
+         }
+ 
+         var canDeleteGift: Bool {
++            // AyuGram: the holder may throw away any granted gift.
++            if let reference = self.subject.arguments?.reference, let _ = ayuGrantedGiftIndex(reference) {
++                return true
++            }
+             guard let arguments = self.subject.arguments, arguments.reference != nil, case let .generic(gift) = arguments.gift, gift.availability == nil else {
+                 return false
+             }
+@@ -1026,7 +1030,10 @@ private final class GiftViewSheetContent: CombinedComponent {
+                         guard let self else {
+                             return
+                         }
+-                        if let profileGiftsContext = controller?.profileGiftsContext {
++                        if ayuIsGrantedGiftReference(reference) {
++                            // AyuGram: a granted gift is removed from the badge registry.
++                            let _ = ayuDeleteGrantedGift(account: self.context.account, reference: reference).startStandalone()
++                        } else if let profileGiftsContext = controller?.profileGiftsContext {
+                             profileGiftsContext.deleteStarGift(reference: reference)
+                         } else {
+                             let _ = self.context.engine.payments.deleteStarGift(reference: reference).startStandalone()
+@@ -2212,6 +2219,17 @@ private final class GiftViewSheetContent: CombinedComponent {
+                     })))
+                 }
+ 
++                if let reference = arguments.reference, let _ = ayuGrantedGiftIndex(reference) {
++                    // AyuGram: the holder throws away one granted NFT.
++                    items.append(.action(ContextMenuActionItem(text: presentationData.strings.Gift_View_Context_Delete, textColor: .destructive, icon: { theme in
++                        return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Delete"), color: theme.contextMenu.destructiveColor)
++                    }, action: { [weak self] c, _ in
++                        c?.dismiss(completion: nil)
++
++                        self?.deleteGift()
++                    })))
++                }
++
+                 if case let .unique(gift) = arguments.gift, let resellAmount = gift.resellAmounts?.first, resellAmount.amount.value > 0 {
+                     if arguments.reference != nil || gift.owner?.peerId == self.context.account.peerId {
+                         items.append(.action(ContextMenuActionItem(text: presentationData.strings.Gift_View_Context_ChangePrice, icon: { theme in
+diff --git a/submodules/TelegramUI/Components/PeerInfo/PeerInfoVisualMediaPaneNode/Sources/PeerInfoGiftsPaneNode.swift b/submodules/TelegramUI/Components/PeerInfo/PeerInfoVisualMediaPaneNode/Sources/PeerInfoGiftsPaneNode.swift
+index a1645107..9e98b4b0 100644
+--- a/submodules/TelegramUI/Components/PeerInfo/PeerInfoVisualMediaPaneNode/Sources/PeerInfoGiftsPaneNode.swift
++++ b/submodules/TelegramUI/Components/PeerInfo/PeerInfoVisualMediaPaneNode/Sources/PeerInfoGiftsPaneNode.swift
+@@ -1324,6 +1324,32 @@ public final class PeerInfoGiftsPaneNode: ASDisplayNode, PeerInfoPaneNode, UIScr
+                 })
+             })))
+             
++            if let reference = gift.reference, let _ = ayuGrantedGiftIndex(reference) {
++                // AyuGram: the holder throws away one granted gift.
++                items.append(.action(ContextMenuActionItem(text: strings.Gift_View_Context_Delete, textColor: .destructive, icon: { theme in generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Delete"), color: theme.contextMenu.destructiveColor) }, action: { [weak self] c, f in
++                    c?.dismiss(completion: { [weak self] in
++                        guard let self else {
++                            return
++                        }
++                        let alertController = textAlertController(
++                            context: self.context,
++                            title: strings.Gift_Delete_Title,
++                            text: strings.Gift_Delete_Text,
++                            actions: [
++                                TextAlertAction(type: .genericAction, title: strings.Common_Cancel, action: {}),
++                                TextAlertAction(type: .destructiveAction, title: strings.Common_Delete, action: { [weak self] in
++                                    guard let self else {
++                                        return
++                                    }
++                                    let _ = ayuDeleteGrantedGift(account: self.context.account, reference: reference).startStandalone()
++                                })
++                            ]
++                        )
++                        self.parentController?.present(alertController, in: .window(.root))
++                    })
++                })))
++            }
++
+             if case let .unique(uniqueGift) = gift.gift {
+                 items.append(.action(ContextMenuActionItem(text: strings.PeerInfo_Gifts_Context_Transfer, icon: { theme in generateTintedImage(image: UIImage(bundleImageName: "Peer Info/TransferIcon"), color: theme.contextMenu.primaryColor) }, action: { [weak self] c, f in
+                     c?.dismiss(completion: { [weak self] in
